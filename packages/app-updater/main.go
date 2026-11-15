@@ -150,12 +150,12 @@ func runRequest(path string) error {
 		if op.journal.SchemaVersion != 1 || op.journal.RequestDigest != hex.EncodeToString(hash[:]) || op.journal.Status.OperationID != r.OperationID || op.journal.Status.Expected != r.Expected {
 			return errors.New("operation request does not match durable journal")
 		}
-		sibling := filepath.Join(filepath.Dir(r.Destination), ".passession-update-"+r.OperationID)
+		sibling := swapDirectory(r)
 		if (op.journal.Candidate != "" && op.journal.Candidate != filepath.Join(sibling, "candidate")) || (op.journal.Backup != "" && op.journal.Backup != filepath.Join(sibling, "previous")) {
 			return errors.New("journal replacement paths do not belong to this operation")
 		}
 		if terminal(op.journal.Status.Phase) {
-			return atomicJSON(filepath.Join(r.OperationDirectory, "status.json"), op.journal.Status)
+			return op.settleTerminal()
 		}
 		me, err := inspectProcess(os.Getpid())
 		if err != nil {
@@ -202,6 +202,51 @@ func runRequest(path string) error {
 }
 func terminal(phase string) bool {
 	return phase == "committed" || phase == "failed" || phase == "rolledBack"
+}
+
+// The replaced application and helper staging exist only while the update can
+// roll back. Failed and rolled-back operations keep them for recovery.
+func swapDirectory(r request) string {
+	return filepath.Join(filepath.Dir(r.Destination), ".passession-update-"+r.OperationID)
+}
+
+// Re-running a committed operation also discards material an older helper
+// retained after commit.
+func (o *operation) settleTerminal() error {
+	if o.journal.Status.Phase == "committed" {
+		if o.journal.Backup != "" || o.journal.Candidate != "" {
+			o.journal.Backup, o.journal.Candidate = "", ""
+			if err := o.persist(); err != nil {
+				return err
+			}
+		}
+		o.discardReplaced()
+	}
+	return atomicJSON(filepath.Join(o.request.OperationDirectory, "status.json"), o.journal.Status)
+}
+func (o *operation) commit(message string) error {
+	o.journal.Step = "committed"
+	o.journal.Backup, o.journal.Candidate = "", ""
+	if err := o.phase("committed", message, false); err != nil {
+		return err
+	}
+	o.discardReplaced()
+	return nil
+}
+
+// Best-effort: the update is already durably committed, so a removal failure is
+// only reported. Native installers own no swap directory; their staged artifact
+// is caller input that binds the request identity.
+func (o *operation) discardReplaced() {
+	paths := []string{filepath.Join(o.request.OperationDirectory, "expanded-helper")}
+	if o.request.Mode != "nativeInstaller" {
+		paths = append(paths, swapDirectory(o.request))
+	}
+	for _, path := range paths {
+		if err := removeTree(path); err != nil {
+			fmt.Fprintln(os.Stderr, "Desktop update helper: warning: cannot remove", path+":", err)
+		}
+	}
 }
 func (o *operation) persist() error {
 	return atomicJSON(filepath.Join(o.request.OperationDirectory, "journal.json"), o.journal)
@@ -340,7 +385,7 @@ func (o *operation) prepare() error {
 	if err != nil {
 		return err
 	}
-	sibling := filepath.Join(filepath.Dir(r.Destination), ".passession-update-"+r.OperationID)
+	sibling := swapDirectory(r)
 	if err = os.Mkdir(sibling, 0700); err != nil {
 		return err
 	}
@@ -503,10 +548,7 @@ func (o *operation) startAndCheck() error {
 		return err
 	}
 	if waitUntil(o.healthTimeout, o.interval, func() bool { return o.checkHealth() == nil }) {
-		o.journal.Step = "committed"
-		// Preserve previous files until the durable commit is visible. Retaining the
-		// backup also avoids deleting non-package user files accidentally placed there.
-		return o.phase("committed", "Updated application and daemon identities confirmed.", false)
+		return o.commit("Updated application and daemon identities confirmed.")
 	}
 	return o.installFailure(errors.New("updated application health deadline expired"))
 }
@@ -683,7 +725,7 @@ func (o *operation) recover() error {
 	case "nativeStarted":
 		return o.fail("Native installer was interrupted; inspect system package state before retrying.", true, nil)
 	case "committed":
-		return o.phase("committed", "Updated application and daemon identities confirmed.", false)
+		return o.commit("Updated application and daemon identities confirmed.")
 	case "restored":
 		if o.journal.Launched.PID != 0 && !exited(o.journal.Launched) {
 			return o.phase("rolledBack", "Previous application was restored and is running.", false)
@@ -694,8 +736,7 @@ func (o *operation) recover() error {
 		return o.phase("rolledBack", "Previous application restored and relaunched.", false)
 	case "movingOld", "movingNew", "installed", "starting", "checking", "rollingBack":
 		if o.journal.Launched.PID != 0 && o.checkHealth() == nil {
-			o.journal.Step = "committed"
-			return o.phase("committed", "Recovered matching live application and daemon.", false)
+			return o.commit("Recovered matching live application and daemon.")
 		}
 		if o.request.Mode == "nativeInstaller" {
 			return o.fail("Native update readiness interrupted; recovery required.", true, nil)

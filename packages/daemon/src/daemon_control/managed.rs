@@ -939,8 +939,7 @@ pub(crate) struct Selection {
     pub server_id: String,
     pub control: ControlEntry,
     pub active: RuntimeIdentity,
-    #[serde(default)]
-    pub previous: Option<RuntimeIdentity>,
+    /// Only while an update is in flight; committed updates keep no backup runtime.
     #[serde(default)]
     pub trial: Option<Trial>,
     #[serde(default)]
@@ -1105,9 +1104,7 @@ impl Installation {
         let runtimes = self.runtimes();
         let owned = |runtime: &RuntimeIdentity| runtime.root.parent() == Some(runtimes.as_path());
         ensure!(
-            owned(&selection.active)
-                && selection.previous.as_ref().is_none_or(owned)
-                && selection.trial.as_ref().is_none_or(|t| owned(&t.runtime)),
+            owned(&selection.active) && selection.trial.as_ref().is_none_or(|t| owned(&t.runtime)),
             "Managed installation selects a runtime outside its runtime store"
         );
         ensure!(
@@ -1276,7 +1273,6 @@ impl Installation {
             server_id: owner.server_id.clone(),
             control: self.install_control().await?,
             active,
-            previous: None,
             trial: None,
             service: None,
             adopted_from: Some(source),
@@ -1408,8 +1404,7 @@ impl Installation {
                     trial.operation_id == operation_id && trial.runtime.root == candidate.root,
                     "Selected trial belongs to another update"
                 );
-                let previous = std::mem::replace(&mut selection.active, trial.runtime);
-                selection.previous = Some(previous);
+                selection.active = trial.runtime;
                 Ok(true)
             }
             None => {
@@ -1442,10 +1437,11 @@ impl Installation {
     }
 
     /// Removes unreferenced runtime trees, staging and executor copies. Kept:
-    /// selected runtimes, `retain_runtimes` (journal-referenced roots such as
-    /// failed/rolled-back/unknown candidates and previous runtimes), staging and
-    /// executor material of `retain_operations`, and every store entry that a
-    /// running process executes from or uses as its working directory.
+    /// selected runtimes, `retain_runtimes` (journal-referenced roots: candidates
+    /// and known-good runtimes of uncommitted, failed, rolled-back or unknown
+    /// operations), staging and executor material of `retain_operations`, and
+    /// every store entry that a running process executes from or uses as its
+    /// working directory. A committed update's replaced runtime is not retained.
     pub(crate) async fn cleanup(
         &self,
         lease: &InstallationLease,
@@ -1459,7 +1455,6 @@ impl Installation {
         let root = self.root.clone();
         let mut keep: Vec<PathBuf> = [&selection.active]
             .into_iter()
-            .chain(selection.previous.iter())
             .chain(selection.trial.iter().map(|trial| &trial.runtime))
             .map(|runtime| runtime.root.as_path())
             .chain(retain_runtimes.iter().map(PathBuf::as_path))
@@ -1975,7 +1970,7 @@ pub(crate) async fn start_owner(
     owner: &LaunchOwner,
     deadline: Duration,
 ) -> Result<()> {
-    // Every runtime may be legacy (the adopted previous runtime is); never start
+    // Every runtime may be legacy (the adopted known-good runtime is); never start
     // one into a guaranteed readiness rejection.
     assert_legacy_bootable(&owner.home)?;
     match &owner.service {
@@ -2575,15 +2570,14 @@ pub(crate) async fn run_executor(home: &Path, operation_id: &str) -> Result<i32>
     crate::daemon_admin::update_operation::execute(&installation.home, operation_id).await
 }
 
-/// Trial runtime only while a live executor verifies it; otherwise known-good
-/// active, then previous.
+/// Trial runtime only while a live executor verifies it; otherwise the
+/// known-good active runtime.
 fn launch_order(selection: &Selection, executor_alive: bool) -> Vec<&RuntimeIdentity> {
     let mut order = Vec::new();
     if executor_alive && let Some(trial) = &selection.trial {
         order.push(&trial.runtime);
     }
     order.push(&selection.active);
-    order.extend(selection.previous.iter());
     order
 }
 
@@ -2690,7 +2684,6 @@ mod tests {
                 protocol: CONTROL_PROTOCOL,
             },
             active: runtime(&runtimes.join("old"), "1.0.0"),
-            previous: None,
             trial: None,
             service: None,
             adopted_from: None,
@@ -2739,8 +2732,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(committed.active.root, candidate.root);
-        assert_eq!(committed.previous.unwrap().root, selection.active.root);
         assert!(committed.trial.is_none());
+        // The replaced runtime is not kept as a backup selection.
+        let written = fs::read_to_string(installation.root().join(SELECTION)).unwrap();
+        assert!(!written.contains(selection.active.root.to_str().unwrap()));
         // A retried commit after the selection was already written is a no-op.
         let again = installation
             .commit_trial(&lease, "op-1", &candidate)
@@ -2784,12 +2779,10 @@ mod tests {
     fn launcher_runs_trial_only_under_a_live_executor() {
         let (_base, installation, _lease, mut selection) = fixture();
         let trial = runtime(&installation.runtimes().join("new"), "1.1.0");
-        let previous = runtime(&installation.runtimes().join("older"), "0.9.0");
         selection.trial = Some(Trial {
             operation_id: "op-1".into(),
             runtime: trial.clone(),
         });
-        selection.previous = Some(previous.clone());
         let roots = |alive| {
             launch_order(&selection, alive)
                 .into_iter()
@@ -2798,17 +2791,10 @@ mod tests {
         };
         assert_eq!(
             roots(true),
-            [
-                trial.root.clone(),
-                selection.active.root.clone(),
-                previous.root.clone()
-            ]
+            [trial.root.clone(), selection.active.root.clone()]
         );
-        // Orphaned trial (executor died, e.g. power loss): known-good first.
-        assert_eq!(
-            roots(false),
-            [selection.active.root.clone(), previous.root.clone()]
-        );
+        // Orphaned trial (executor died, e.g. power loss): known-good only.
+        assert_eq!(roots(false), [selection.active.root.clone()]);
     }
 
     #[tokio::test]

@@ -41,6 +41,8 @@ pub(super) struct Selection {
     pub target: String,
     pub generation: u64,
     pub active: Installed,
+    /// Wire compatibility only: the helper commits null and clears a value left
+    /// by an older helper. It is never run, restored or validated.
     pub previous: Option<Installed>,
     pub trial: Option<Trial>,
 }
@@ -317,9 +319,6 @@ impl Store {
             "Component selection installation binding mismatch"
         );
         self.validate_map(&selection.active)?;
-        if let Some(previous) = &selection.previous {
-            self.validate_map(previous)?;
-        }
         // Orphan trials are ignored before touching their possibly interrupted
         // objects. Corrupt active state is never permission to run stale base.
         Ok(selection)
@@ -1344,6 +1343,18 @@ mod selection_tests {
         });
         atomic_sync(&store.directory.join("selection.json"), &selection).unwrap();
         open_private(&store.directory.join("lease"), true).unwrap();
+        let loaded = store.selection().unwrap();
+        assert_eq!(store.runnable(&loaded).unwrap(), active);
+    }
+    #[test]
+    fn legacy_previous_with_pruned_objects_never_blocks_active() {
+        let (_temp, store) = fixture();
+        let mut selection = store.selection().unwrap();
+        let active = selection.active.clone();
+        let mut pruned = active.clone();
+        pruned.get_mut(&ComponentId::Daemon).unwrap().root = "objects/missing".into();
+        selection.previous = Some(pruned);
+        atomic_sync(&store.directory.join("selection.json"), &selection).unwrap();
         let loaded = store.selection().unwrap();
         assert_eq!(store.runnable(&loaded).unwrap(), active);
     }

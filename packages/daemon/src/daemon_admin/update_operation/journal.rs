@@ -192,7 +192,11 @@ pub(super) async fn retained(home: &Path) -> Result<(Vec<String>, Vec<PathBuf>)>
                 .is_some_and(|value| value.state == super::ContinuationState::Unknown);
         if retain {
             operations.push(operation.operation_id);
-            runtimes.extend(operation.previous.into_iter().map(|value| value.root));
+            // A committed update is never rolled back, so its replaced runtime is
+            // not recovery material; every other retained operation may need it.
+            if operation.phase != super::Phase::Committed {
+                runtimes.extend(operation.previous.into_iter().map(|value| value.root));
+            }
             runtimes.extend(operation.candidate.into_iter().map(|value| value.root));
         }
     }

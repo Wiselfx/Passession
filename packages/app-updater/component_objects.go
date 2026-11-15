@@ -596,6 +596,91 @@ func (o *componentOperation) stageObjects() error {
 	}
 	return nil
 }
+
+// pruneComponentStore deletes every digest-named object, archive and receipt
+// that no kept set references. Interrupted `.stage-`/`.import-` payloads belong
+// to their operations and stay; `.pruning-` trees are earlier detached objects.
+// It continues past failures and returns them joined.
+func pruneComponentStore(r componentRequest, keep ...componentSet) error {
+	referenced := make(map[string]bool)
+	for _, set := range keep {
+		for _, c := range set {
+			referenced[c.Component.Artifact.SHA256] = true
+		}
+	}
+	objects := filepath.Join(r.StoreDirectory, "objects")
+	superseded := make(map[string]bool)
+	var detached []string
+	var failures []error
+	for _, kind := range []string{"objects", "archives", "receipts"} {
+		entries, err := os.ReadDir(filepath.Join(r.StoreDirectory, kind))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if kind == "receipts" {
+				var ok bool
+				if name, ok = strings.CutSuffix(name, ".json"); !ok {
+					continue
+				}
+			}
+			if kind == "objects" && strings.HasPrefix(name, ".pruning-") {
+				detached = append(detached, filepath.Join(objects, name))
+			} else if sha256Pattern.MatchString(name) && !referenced[name] {
+				superseded[name] = true
+			}
+		}
+	}
+	for _, p := range detached {
+		if err := removeComponentTree(p); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	for digest := range superseded {
+		// Detach first: an object that cannot leave its digest name keeps its
+		// archive and receipt, so it is never left partially verifiable.
+		object, temporary := filepath.Join(objects, digest), filepath.Join(objects, ".pruning-"+digest)
+		if err := os.Rename(object, temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, err)
+			continue
+		}
+		for _, p := range []string{filepath.Join(r.StoreDirectory, "receipts", digest+".json"), filepath.Join(r.StoreDirectory, "archives", digest)} {
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				failures = append(failures, err)
+			}
+		}
+		if err := removeComponentTree(temporary); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// removeComponentTree makes a sealed (read-only) tree writable, then removes it.
+func removeComponentTree(root string) error {
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if errors.Is(err, os.ErrNotExist) && p == root {
+			return filepath.SkipAll
+		}
+		if err != nil || d.Type()&os.ModeSymlink != 0 {
+			return err
+		}
+		mode := os.FileMode(0600)
+		if d.IsDir() {
+			mode = 0700
+		}
+		return os.Chmod(p, mode)
+	})
+	if err != nil {
+		return err
+	}
+	return removeTree(root)
+}
 func validateComponentSignature(r componentRequest, id, stagedRoot string) error {
 	c := r.TargetComponents[id]
 	newImage := filepath.Join(stagedRoot, filepath.FromSlash(c.Component.Executable))

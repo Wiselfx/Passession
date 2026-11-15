@@ -89,6 +89,9 @@ type componentTrial struct {
 	OperationID string       `json:"operationId"`
 	Components  componentSet `json:"components"`
 }
+
+// Previous is kept only for wire compatibility: commits write null and the next
+// transaction clears a legacy value. Rollback uses the journal's original.
 type componentSelection struct {
 	SchemaVersion  int             `json:"schemaVersion"`
 	InstallationID string          `json:"installationId"`
@@ -399,11 +402,7 @@ func (o *componentOperation) readSelection() (componentSelection, error) {
 	if err = validateComponentSet(s.Active, o.request); err != nil {
 		return s, err
 	}
-	if s.Previous != nil {
-		if err = validateComponentSet(s.Previous, o.request); err != nil {
-			return s, err
-		}
-	}
+	// A legacy previous set is never selected or restored; it is only cleared.
 	if s.Trial != nil {
 		if !uuidPattern.MatchString(s.Trial.OperationID) {
 			return s, errors.New("invalid trial identity")
@@ -450,6 +449,13 @@ func (o *componentOperation) initialSelection() error {
 	}
 	if s.Generation != o.request.CurrentGeneration || !reflect.DeepEqual(s.Active, o.request.Current) {
 		return errors.New("stale current selection")
+	}
+	if s.Previous != nil {
+		// Committed selections no longer keep the superseded set.
+		s.Previous = nil
+		if err = o.writeSelection(s); err != nil {
+			return err
+		}
 	}
 	o.journal.Original = s
 	return nil

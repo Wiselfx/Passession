@@ -85,7 +85,7 @@ func runComponentRequest(path string) error {
 	}
 	if len(r.Staged) == 0 {
 		o.journal.Status.ObservedComponents = componentIdentities(r.Current)
-		return o.phase("committed", "No component changes; existing objects and selection were left untouched.", false)
+		return o.phase("committed", "No component changes; the active selection was left untouched.", false)
 	}
 	if err = o.writeLeaseOwner(); err != nil {
 		return err
@@ -169,6 +169,8 @@ func (o *componentOperation) prepare() error {
 	if err := o.initialSelection(); err != nil {
 		return err
 	}
+	// Store maintenance: only the active set and this request's target remain.
+	_ = o.pruneSuperseded(o.journal.Original.Active, r.TargetComponents)
 	for _, c := range r.Current {
 		if err := verifyObject(r, c); err != nil {
 			return err
@@ -314,14 +316,43 @@ func (o *componentOperation) commit() error {
 	}
 	s := o.journal.Original
 	s.Generation++
-	s.Previous = s.Active
+	s.Previous = nil
 	s.Active = o.request.TargetComponents
 	s.Trial = nil
 	if err := o.writeSelection(s); err != nil {
 		return err
 	}
+	return o.finishCommit("Expected component identities confirmed; coherent selection committed.")
+}
+
+// finishCommit drops the superseded set's store objects once the selection
+// commit is durable. Deletion is best-effort and never undoes the commit.
+func (o *componentOperation) finishCommit(message string) error {
 	o.journal.Step = "committed"
-	return o.phase("committed", "Expected component identities confirmed; coherent selection committed.", false)
+	if o.pruneSuperseded(o.request.TargetComponents) != nil {
+		message += " Some superseded component files could not be removed; the next update retries."
+	}
+	return o.phase("committed", message, false)
+}
+
+// pruneSuperseded keeps the selected sets plus any original image whose owning
+// process is still live (or cannot be proven gone), then prunes the store.
+func (o *componentOperation) pruneSuperseded(selected ...componentSet) error {
+	r := o.request
+	live := componentSet{}
+	if !exited(r.ParentProcess) {
+		live["app"], live["tailnet"] = r.Current["app"], r.Current["tailnet"]
+	}
+	for _, binding := range r.RuntimeProcesses {
+		if !exited(binding.Process) {
+			live["daemon"], live["tailnet"] = r.Current["daemon"], r.Current["tailnet"]
+		}
+	}
+	err := pruneComponentStore(r, append(selected, live)...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Desktop update helper: warning: cannot remove superseded component files:", err)
+	}
+	return err
 }
 func (o *componentOperation) launch(set componentSet) error {
 	image := componentImage(o.request, set["app"])
@@ -548,14 +579,13 @@ func (o *componentOperation) recover() error {
 		}
 		return o.fail("Interrupted before activation; original selection retained. Any stopped runtime requires recovery.", recovery, nil)
 	}
-	if err == nil && s.Generation == o.request.CurrentGeneration+1 && s.Trial == nil && reflect.DeepEqual(s.Active, o.request.TargetComponents) && reflect.DeepEqual(s.Previous, o.request.Current) && (o.journal.Step == "committing" || o.journal.Step == "committed") {
+	if err == nil && s.Generation == o.request.CurrentGeneration+1 && s.Trial == nil && reflect.DeepEqual(s.Active, o.request.TargetComponents) && s.Previous == nil && (o.journal.Step == "committing" || o.journal.Step == "committed") {
 		// Commit was durable only after exact health (or a helper-only query). It
 		// is never reinstalled/relaunched, even if the user has since closed GUI.
 		if o.request.RestartGroup != "none" && o.journal.Health == nil {
 			return o.fail("Commit lacks durable health evidence.", true, nil)
 		}
-		o.journal.Step = "committed"
-		return o.phase("committed", "Recovered durable component commit; no activation replayed.", false)
+		return o.finishCommit("Recovered durable component commit; no activation replayed.")
 	}
 	if o.request.RestartGroup == "none" && o.journal.Step == "committing" && ((err == nil && reflect.DeepEqual(s, o.journal.Original)) || (errors.Is(err, os.ErrNotExist) && o.journal.Original.Generation == 0)) {
 		for _, c := range o.journal.Original.Active {

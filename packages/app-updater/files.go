@@ -104,6 +104,18 @@ func cleanPath(path string) error {
 	}
 	return nil
 }
+
+// removeTree deletes an updater-owned tree without following a symlinked path
+// component; an absent tree is already removed.
+func removeTree(path string) error {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := cleanPath(path); err != nil {
+		return err
+	}
+	return os.RemoveAll(path)
+}
 func regular(path string) error {
 	if err := cleanPath(path); err != nil {
 		return err

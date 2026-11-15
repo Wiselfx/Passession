@@ -243,8 +243,13 @@ func marker(t *testing.T, path string) string {
 
 func TestSwapCommitsOnlyWithLiveMatchingGUIAndDaemon(t *testing.T) {
 	o := fixtureOperation(t)
+	staging := filepath.Join(o.request.OperationDirectory, "expanded-helper")
+	mustMkdir(t, staging)
 	if err := o.install(); err != nil {
 		t.Fatal(err)
+	}
+	if marker(t, o.journal.Backup) != "old" {
+		t.Fatal("previous application not held for rollback before commit")
 	}
 	if err := o.startAndCheck(); err != nil {
 		t.Fatal(err)
@@ -252,14 +257,58 @@ func TestSwapCommitsOnlyWithLiveMatchingGUIAndDaemon(t *testing.T) {
 	if o.journal.Status.Phase != "committed" || o.journal.Health == nil {
 		t.Fatalf("not committed: %+v", o.journal.Status)
 	}
-	if marker(t, o.request.Destination) != "new" || marker(t, o.journal.Backup) != "old" {
-		t.Fatal("swap or retained backup incorrect")
+	if marker(t, o.request.Destination) != "new" {
+		t.Fatal("swap incorrect")
+	}
+	var durable journal
+	if _, err := readJSON(filepath.Join(o.request.OperationDirectory, "journal.json"), &durable); err != nil || durable.Backup != "" || durable.Candidate != "" {
+		t.Fatal("committed journal still references replaced application", err)
+	}
+	for _, path := range []string{swapDirectory(o.request), staging} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("committed update retained", path, err)
+		}
 	}
 	if marker(t, o.request.DaemonHome) != "user data" {
 		t.Fatal("daemon home changed")
 	}
 	if exited(o.journal.Health.GUIProcess) || exited(o.journal.Health.DaemonProcess) {
 		t.Fatal("committed without live fixture processes")
+	}
+}
+func TestCommittedRetryDiscardsRetainedPreviousApplication(t *testing.T) {
+	o := fixtureOperation(t)
+	if err := o.install(); err != nil {
+		t.Fatal(err)
+	}
+	// An older helper committed while keeping the replaced application.
+	o.journal.Step = "committed"
+	if err := o.phase("committed", "fixture", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.settleTerminal(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(swapDirectory(o.request)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("retained previous application survived committed retry", err)
+	}
+	if o.journal.Backup != "" || marker(t, o.request.Destination) != "new" || marker(t, o.request.DaemonHome) != "user data" {
+		t.Fatal("committed retry changed the installation or kept its reference")
+	}
+}
+func TestFailedRetryKeepsRecoveryMaterial(t *testing.T) {
+	o := fixtureOperation(t)
+	if err := o.install(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.fail("fixture", true, nil); err == nil {
+		t.Fatal("failure swallowed")
+	}
+	if err := o.settleTerminal(); err != nil {
+		t.Fatal(err)
+	}
+	if marker(t, o.journal.Backup) != "old" {
+		t.Fatal("failed operation lost its recovery backup")
 	}
 }
 func TestWrongHostRollsBackAfterCooperativeStop(t *testing.T) {

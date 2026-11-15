@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Stop keeping the previous app, daemon and component versions after an update succeeds. The old copy now lives only until the new version passes its health check, so failed or interrupted updates still roll back; existing leftover copies are removed by the next cleanup.
+
 ## 0.13.27 - 2026-11-16
 
 ### Added

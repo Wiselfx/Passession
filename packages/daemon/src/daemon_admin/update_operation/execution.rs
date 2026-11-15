@@ -354,12 +354,7 @@ pub async fn execute(home: &Path, operation_id: &str) -> Result<i32> {
             }
             journal::save(&mut operation).await?;
         }
-        let cleanup = async {
-            let (operations, runtimes) = journal::retained(&home).await?;
-            installation.cleanup(&lease, &operations, &runtimes).await
-        }
-        .await;
-        if let Err(error) = cleanup {
+        if let Err(error) = cleanup(&home, &installation, &lease).await {
             operation.error = Some(format!("Runtime committed; owned cleanup failed: {error}"));
             journal::save(&mut operation).await?;
         }
@@ -367,6 +362,17 @@ pub async fn execute(home: &Path, operation_id: &str) -> Result<i32> {
     } else {
         Ok(1)
     }
+}
+
+/// Removes store material that neither the selection nor a recoverable
+/// operation references; a committed update's replaced runtime is included.
+async fn cleanup(
+    home: &Path,
+    installation: &Installation,
+    lease: &InstallationLease,
+) -> Result<Vec<std::path::PathBuf>> {
+    let (operations, runtimes) = journal::retained(home).await?;
+    installation.cleanup(lease, &operations, &runtimes).await
 }
 
 pub async fn recover_bootstrap(home: &Path) -> Result<()> {
@@ -377,7 +383,7 @@ pub async fn recover_bootstrap(home: &Path) -> Result<()> {
     let Some(lease) = installation.try_lease()? else {
         return Ok(());
     };
-    match operation.phase {
+    let handoff = match operation.phase {
         Phase::Committed => {
             let candidate = operation
                 .candidate
@@ -386,13 +392,10 @@ pub async fn recover_bootstrap(home: &Path) -> Result<()> {
             installation
                 .commit_trial(&lease, &operation.operation_id, candidate)
                 .await?;
-            if operation
+            operation
                 .continuation
                 .as_ref()
-                .is_none_or(|value| value.state != super::ContinuationState::Pending)
-            {
-                return Ok(());
-            }
+                .is_some_and(|value| value.state == super::ContinuationState::Pending)
         }
         Phase::Activating | Phase::Verifying | Phase::RollingBack => {
             installation
@@ -404,20 +407,31 @@ pub async fn recover_bootstrap(home: &Path) -> Result<()> {
                     .into(),
             );
             journal::save(&mut operation).await?;
+            true
         }
         Phase::Admitted | Phase::Preparing | Phase::Staged | Phase::Draining => {
             operation.phase = Phase::Failed;
             operation.error =
                 Some("Executor ended before activation; the selected runtime is unchanged".into());
             journal::save(&mut operation).await?;
-            return Ok(());
+            false
         }
         Phase::Failed | Phase::RolledBack => {
             installation
                 .abandon_trial(&lease, Some(&operation.operation_id))
                 .await?;
-            return Ok(());
+            false
         }
+    };
+    if !handoff {
+        // Launch is a cleanup point too, so a backup runtime an earlier executor
+        // retained after its commit goes without waiting for the next update.
+        if let Err(error) = cleanup(home, &installation, &lease).await {
+            eprintln!(
+                "Paseo runtime store cleanup failed; nothing selected was affected: {error:#}"
+            );
+        }
+        return Ok(());
     }
     // Release before handoff: the independently launched executor must acquire
     // this same lease. It observes the launcher starting the selected runtime.

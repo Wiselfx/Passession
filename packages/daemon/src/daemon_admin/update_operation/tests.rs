@@ -286,3 +286,100 @@ async fn paused_updates_allow_read_subscriptions_but_still_block_work() -> Resul
     app.cancel.cancel();
     Ok(())
 }
+
+fn runtime(root: &Path, version: &str) -> RuntimeIdentity {
+    RuntimeIdentity {
+        root: root.to_owned(),
+        version: version.into(),
+        source_sha: String::new(),
+        platform: "linux".into(),
+        arch: "x64".into(),
+        release: false,
+        executable_sha256: format!("{version}-sha"),
+        tree_digest: format!("{version}-tree"),
+    }
+}
+
+#[tokio::test]
+async fn committed_update_keeps_no_backup_runtime_while_rollback_keeps_known_good() -> Result<()> {
+    use crate::daemon_control::managed::Installation;
+    let base = tempfile::tempdir()?;
+    let base = base.path().canonicalize()?;
+    let home = base.join("home");
+    std::fs::create_dir(&home)?;
+    let root = base.join("install");
+    std::fs::write(
+        home.join("native-installation.json"),
+        serde_json::to_vec(&json!({"schemaVersion":1,"root":root}))?,
+    )?;
+    let installation = Installation::for_home(&home)?;
+    let runtimes = root.join("runtimes");
+    for name in ["older", "old", "new"] {
+        std::fs::create_dir_all(runtimes.join(name))?;
+    }
+    let old = runtime(&runtimes.join("old"), "1.0.0");
+    let new = runtime(&runtimes.join("new"), "1.1.0");
+    let retry = runtime(&runtimes.join("retry"), "1.2.0");
+    // An earlier executor's committed update left its replaced runtime selected
+    // as `previous`; the next cleanup must drop it.
+    std::fs::write(
+        root.join("installation.json"),
+        serde_json::to_vec(&json!({
+            "schemaVersion":1,"home":home,"serverId":"server-one",
+            "control":{"path":root.join("bin/paseo"),"sha256":"control","protocol":1},
+            "active":old,"previous":runtime(&runtimes.join("older"), "0.9.0"),
+            "updatedAt":""
+        }))?,
+    )?;
+
+    // Commit: once verified, the replaced runtime is no longer recovery material.
+    let mut committed = fixture(&home);
+    committed.installation_root = root.clone();
+    committed.phase = Phase::Verifying;
+    committed.previous = Some(old.clone());
+    committed.candidate = Some(new.clone());
+    journal::admit(&mut committed).await?;
+    let lease = installation.try_lease()?.unwrap();
+    installation
+        .select_trial(&lease, &committed.operation_id, &new)
+        .await?;
+    assert!(journal::retained(&home).await?.1.contains(&old.root));
+    committed.phase = Phase::Committed;
+    journal::save(&mut committed).await?;
+    drop(lease);
+    recover_bootstrap(&home).await?;
+    let selection = installation.load()?.unwrap();
+    assert_eq!(selection.active.root, new.root);
+    assert!(selection.trial.is_none());
+    assert!(!std::fs::read_to_string(root.join("installation.json"))?.contains("previous"));
+    assert!(new.root.exists());
+    assert!(!old.root.exists());
+    assert!(!runtimes.join("older").exists());
+
+    // Rollback before commit: the known-good runtime stays selected and on disk.
+    std::fs::create_dir_all(&retry.root)?;
+    let mut rolled_back = fixture(&home);
+    rolled_back.installation_root = root.clone();
+    rolled_back.phase = Phase::Verifying;
+    rolled_back.previous = Some(new.clone());
+    rolled_back.candidate = Some(retry.clone());
+    journal::admit(&mut rolled_back).await?;
+    let lease = installation.try_lease()?.unwrap();
+    installation
+        .select_trial(&lease, &rolled_back.operation_id, &retry)
+        .await?;
+    installation
+        .abandon_trial(&lease, Some(&rolled_back.operation_id))
+        .await?;
+    rolled_back.phase = Phase::RolledBack;
+    journal::save(&mut rolled_back).await?;
+    drop(lease);
+    recover_bootstrap(&home).await?;
+    let selection = installation.load()?.unwrap();
+    assert_eq!(selection.active.root, new.root);
+    assert!(selection.trial.is_none());
+    assert!(new.root.exists());
+    // Failed or rolled-back candidates remain for diagnosis.
+    assert!(retry.root.exists());
+    Ok(())
+}

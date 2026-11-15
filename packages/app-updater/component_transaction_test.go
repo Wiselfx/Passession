@@ -391,7 +391,7 @@ func TestComponentHelperOnlyCommitsWithoutStoppingEitherProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Generation != 1 || s.Trial != nil || !reflect.DeepEqual(s.Active, o.request.TargetComponents) || !reflect.DeepEqual(s.Previous, o.request.Current) {
+	if s.Generation != 1 || s.Trial != nil || !reflect.DeepEqual(s.Active, o.request.TargetComponents) || s.Previous != nil {
 		t.Fatal("incoherent committed selection")
 	}
 	after, err := os.Stat(componentImage(o.request, o.request.Current["daemon"]))
@@ -837,5 +837,227 @@ func TestComponentArchivesRejectTraversalDuplicateAndEscapingLinks(t *testing.T)
 				t.Fatal("archive escaped its private object")
 			}
 		})
+	}
+}
+
+// nextComponentFixture chains a second transaction on o's committed selection,
+// replacing id with a freshly staged 3.0.0 object.
+func nextComponentFixture(t *testing.T, o *componentOperation, id string) *componentOperation {
+	t.Helper()
+	committed, err := o.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := o.request
+	base := filepath.Dir(r.OperationDirectory)
+	r.OperationID = "22222222-2222-4222-8222-222222222222"
+	r.OperationDirectory = filepath.Join(base, "operation-next")
+	mustMkdir(t, r.OperationDirectory)
+	r.InventoryPath = filepath.Join(r.OperationDirectory, "inventory.json")
+	r.CurrentGeneration = committed.Generation
+	r.Current = committed.Active
+	r.TargetComponents = componentSet{}
+	for k, v := range r.Current {
+		r.TargetComponents[k] = v
+	}
+	c := r.Current[id].Component
+	candidate := filepath.Join(base, "next-"+id)
+	mustMkdir(t, candidate)
+	fixtureBinary(t, filepath.Join(candidate, c.Executable))
+	c.Identity = componentFixtureIdentity(id, "3.0.0")
+	if err = atomicJSON(filepath.Join(candidate, "identity.json"), c.Identity); err != nil {
+		t.Fatal(err)
+	}
+	if c.ExecutableSHA256, err = componentFileHash(filepath.Join(candidate, c.Executable)); err != nil {
+		t.Fatal(err)
+	}
+	writeComponentFixtureDescriptor(t, candidate, c)
+	archive := filepath.Join(r.OperationDirectory, id+".zip")
+	zipComponentFixture(t, candidate, archive)
+	archiveHash, err := componentFileHash(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Artifact = componentArtifact{URL: "https://github.com/paseo/fixtures/releases/download/v3.0.0/" + id + ".zip", SHA256: archiveHash, Size: uint64(st.Size()), Format: "zip", OriginTag: "v3.0.0"}
+	r.TargetComponents[id] = installedComponent{c, "objects/" + archiveHash}
+	r.Staged = map[string]string{id: archive}
+	r.RestartGroup = map[string]string{"app": "gui", "tailnet": "gui", "daemon": "daemon", "update-helper": "none"}[id]
+	inventory, err := readComponentInventory(o.request.InventoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory.Version, inventory.SourceSHA = "3.0.0", c.Identity.SourceSHA
+	inventory.Targets[r.Target].Components[id] = c
+	if err = atomicJSON(r.InventoryPath, inventory); err != nil {
+		t.Fatal(err)
+	}
+	if r.ManifestSHA512, err = digest(r.InventoryPath); err != nil {
+		t.Fatal(err)
+	}
+	if r.RestartGroup == "gui" {
+		// The committed GUI and its daemon own the next handoff.
+		r.ParentProcess, r.RuntimeProcesses = o.journal.Launched, o.journal.Health.RuntimeProcesses
+		r.CurrentExecutable = componentImage(r, r.Current["app"])
+	}
+	if err = atomicJSON(filepath.Join(r.OperationDirectory, "request.json"), r); err != nil {
+		t.Fatal(err)
+	}
+	me, err := inspectProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &componentOperation{request: r, journal: componentJournal{SchemaVersion: 2, Step: "preparing", Status: componentStatus{SchemaVersion: 2, OperationID: r.OperationID, HelperProcess: me.identity, Nonce: strings.Repeat("d", 64), RestartGroup: r.RestartGroup, ExpectedComponents: componentIdentities(r.TargetComponents)}}, parentTimeout: time.Second, healthTimeout: 2 * time.Second, stopTimeout: 2 * time.Second, interval: 10 * time.Millisecond}
+	t.Cleanup(func() {
+		killFixture(n.journal.Launched)
+		for _, name := range []string{"health.json", "rollback-health.json"} {
+			var h componentHealth
+			if _, e := readJSON(filepath.Join(r.OperationDirectory, name), &h); e == nil {
+				killFixture(h.GUIProcess)
+				for _, binding := range h.RuntimeProcesses {
+					killFixture(binding.Process)
+				}
+			}
+		}
+	})
+	return n
+}
+func storeObjectPaths(r componentRequest, digest string) []string {
+	return []string{filepath.Join(r.StoreDirectory, "objects", digest), filepath.Join(r.StoreDirectory, "archives", digest), filepath.Join(r.StoreDirectory, "receipts", digest+".json")}
+}
+func requireAbsent(t *testing.T, paths []string) {
+	t.Helper()
+	for _, p := range paths {
+		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("superseded store entry survived:", p, err)
+		}
+	}
+}
+
+func TestComponentCommitDropsSupersededSetAndLegacyPrevious(t *testing.T) {
+	o := componentFixture(t, "update-helper")
+	prepareComponentFixture(t, o)
+	if err := o.activateAndCheck(); err != nil {
+		t.Fatal(err)
+	}
+	n := nextComponentFixture(t, o, "update-helper")
+	superseded := n.request.Current["update-helper"]
+	// An install committed by an older helper still names a previous set and
+	// holds an orphaned sealed object; an interrupted payload belongs to its
+	// own operation and must survive maintenance.
+	legacy, err := o.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Previous = o.request.Current
+	if err = o.writeSelection(legacy); err != nil {
+		t.Fatal(err)
+	}
+	orphan := storeObjectPaths(n.request, strings.Repeat("0", 64))
+	mustMkdir(t, filepath.Join(orphan[0], "nested"))
+	mustWrite(t, filepath.Join(orphan[0], "nested", "file"), []byte("old"), 0400)
+	for _, p := range []string{filepath.Join(orphan[0], "nested"), orphan[0]} {
+		if err = os.Chmod(p, 0500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(t, orphan[1], []byte("old"), 0400)
+	mustWrite(t, orphan[2], []byte("{}"), 0600)
+	interrupted := filepath.Join(n.request.StoreDirectory, "objects", ".stage-33333333-3333-4333-8333-333333333333-daemon")
+	mustMkdir(t, interrupted)
+
+	prepareComponentFixture(t, n)
+	s, err := n.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Previous != nil || s.Generation != 1 || !reflect.DeepEqual(s.Active, n.request.Current) {
+		t.Fatal("maintenance kept the legacy previous set or changed the active selection")
+	}
+	requireAbsent(t, orphan)
+	if err = verifyObject(n.request, superseded); err != nil {
+		t.Fatal("active object was pruned before commit:", err)
+	}
+
+	if err = n.activateAndCheck(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = n.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.journal.Status.Phase != "committed" || s.Generation != 2 || s.Previous != nil || !reflect.DeepEqual(s.Active, n.request.TargetComponents) {
+		t.Fatal("commit kept a previous set")
+	}
+	requireAbsent(t, storeObjectPaths(n.request, superseded.Component.Artifact.SHA256))
+	if err = verifyObject(n.request, n.request.TargetComponents["update-helper"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Lstat(interrupted); err != nil {
+		t.Fatal("pruning removed another operation's interrupted payload:", err)
+	}
+	if err = verifyObject(n.request, n.request.Current["daemon"]); err != nil {
+		t.Fatal("bootstrap installation was touched:", err)
+	}
+}
+
+func TestComponentRollbackBeforeCommitRestoresSupersededObjects(t *testing.T) {
+	o := componentFixture(t, "app")
+	prepareComponentFixture(t, o)
+	handoffComponentFixture(t, o)
+	if err := o.activateAndCheck(); err != nil || o.journal.Status.Phase != "committed" {
+		t.Fatal("first update did not commit", err)
+	}
+	n := nextComponentFixture(t, o, "app")
+	t.Setenv("PASEO_COMPONENT_HEALTH", "wrong")
+	prepareComponentFixture(t, n)
+	handoffComponentFixture(t, n)
+	if err := n.activateAndCheck(); err != nil {
+		t.Fatal(err)
+	}
+	if n.journal.Status.Phase != "rolledBack" || n.journal.Status.RecoveryRequired {
+		t.Fatalf("unsafe/incomplete rollback: %+v", n.journal.Status)
+	}
+	s, err := n.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s, n.journal.Original) || !reflect.DeepEqual(s.Active, n.request.Current) {
+		t.Fatal("rollback did not restore the committed store selection")
+	}
+	// Rollback health already proved the restored app object ran; it and the
+	// unhealthy candidate both remain until a later transaction's maintenance.
+	for _, c := range []installedComponent{n.request.Current["app"], n.request.TargetComponents["app"]} {
+		if err = verifyObject(n.request, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestComponentPruneFailureDoesNotFailCommit(t *testing.T) {
+	o := componentFixture(t, "update-helper")
+	prepareComponentFixture(t, o)
+	orphan := storeObjectPaths(o.request, strings.Repeat("0", 64))
+	mustMkdir(t, orphan[0])
+	objects := filepath.Dir(orphan[0])
+	if err := os.Chmod(objects, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(objects, 0700) })
+	if err := o.activateAndCheck(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := o.readSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.journal.Status.Phase != "committed" || o.journal.Status.RecoveryRequired || !strings.Contains(o.journal.Status.Message, "could not be removed") || !reflect.DeepEqual(s.Active, o.request.TargetComponents) {
+		t.Fatalf("prune failure changed the committed result: %+v", o.journal.Status)
+	}
+	if _, err = os.Lstat(orphan[0]); err != nil {
+		t.Fatal("undeletable object vanished:", err)
 	}
 }

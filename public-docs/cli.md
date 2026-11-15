@@ -385,12 +385,17 @@ launcher. Later updates select immutable runtimes without rewriting the service 
 Migrating a daemon without drain support requires explicit `--force-running`.
 
 The installation store lives outside `PASEO_HOME`, located by `native-installation.json`.
-Active/previous runtime selection is separate from the operation journal. If a trial cannot
+Active/trial runtime selection is separate from the operation journal. If a trial cannot
 become ready, the launch owner restores the known-good runtime; a later launcher invocation
 also recovers an interrupted, uncommitted activation. Readiness checks the actual supervisor
 and worker images, their process identities, the authenticated server identity and the launch
-owner—not merely an open port. Runtime cleanup retains current, previous, trial and live
-operation/process references. It does not copy or restore the user's chat/receipt database.
+owner—not merely an open port. The replaced runtime is kept only until the update commits;
+no backup runtime remains afterwards. Runtime cleanup runs after a commit and when the
+launcher starts with no update in progress. It removes runtimes of committed updates, including
+a backup an earlier version kept, and best-effort failures are reported without undoing the
+commit. It retains the active and trial runtimes, the candidate and known-good runtimes of
+uncommitted, failed or rolled-back operations, and anything a running process uses. It does
+not copy or restore the user's chat/receipt database.
 
 ### Foreground deployments and migration
 
