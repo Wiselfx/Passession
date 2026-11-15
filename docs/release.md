@@ -106,7 +106,7 @@ Workflow artifact uploads are temporary: both Native Release and Native Desktop 
 
 Android `record` and `verify` require matching release-profile metadata, source SHA, architecture and format; the metadata and artifact are both covered by provenance hashes. Archive validation checks APK versus AAB layout, bundled notices and the exact Makepad native ABI inventory against ELF headers. These structural checks reject a renamed APK and mislabeled native libraries; they do not replace Android signing verification, bundletool validation, installation or store acceptance.
 
-For a reduced Windows x64, Linux x64 and Android release, select `platform=linux-windows-x64-android`. The collection inventory covers exactly those three targets, while the native matrix contains only affected ones. Recovery verifies the persisted plan, newly produced outputs and authenticated unchanged references; it does not relabel reused artifacts with the collection source SHA.
+For a reduced Windows x64, Linux x64 and Android release, select `platform=linux-windows-x64-android`; `platform=linux-windows-x64-android-macos-arm64` adds Apple Silicon macOS. The collection inventory covers exactly the selected targets, while the native matrix contains only affected ones. Recovery verifies the persisted plan, newly produced outputs and authenticated unchanged references; it does not relabel reused artifacts with the collection source SHA.
 
 Manual inputs include `tag`, `mode` (`build` or `publish-only`), `recovery_run_id`, `platform`, `checkout_ref`, `publish`, and `rollout_hours`. **`publish` defaults to true**; explicitly select false for an authorized non-publishing build. Tag pushes do not trigger the workflow. Do not dispatch a publishing workflow as a build test.
 

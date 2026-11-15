@@ -162,6 +162,9 @@ pub(super) fn channel(v: &semver::Version) -> &'static str {
     if v.pre.is_empty() { "stable" } else { "beta" }
 }
 
+/// Linux/Windows x64, Android and Apple Silicon macOS in one collection.
+const X64_ANDROID_MACOS_ARM64: &str = "linux-windows-x64-android-macos-arm64";
+
 fn plan(
     source: &str,
     selection: &str,
@@ -185,6 +188,7 @@ fn plan(
             "android",
             "ios",
             "linux-windows-x64-android",
+            X64_ANDROID_MACOS_ARM64,
         ]
         .contains(&selection)
             || TARGETS.iter().any(|t| t.id() == selection),
@@ -192,8 +196,9 @@ fn plan(
     );
     ensure!(
         mode != "publish-only"
-            || (["all", "linux-windows-x64-android"].contains(&selection) && publish),
-        "publish-only requires platform=all or linux-windows-x64-android and publish=true"
+            || (["all", "linux-windows-x64-android", X64_ANDROID_MACOS_ARM64].contains(&selection)
+                && publish),
+        "publish-only requires platform=all, linux-windows-x64-android or {X64_ANDROID_MACOS_ARM64} and publish=true"
     );
     let selection = if event == "push" || (mode == "publish-only" && selection == "all") {
         if source.starts_with("desktop-macos-") {
@@ -219,9 +224,10 @@ fn plan(
                 || selection == t.platform
                 || selection == t.id()
                 || (selection == "desktop" && t.desktop)
-                || (selection == "linux-windows-x64-android"
+                || (["linux-windows-x64-android", X64_ANDROID_MACOS_ARM64].contains(&selection)
                     && ((t.arch == "x64" && ["linux", "windows"].contains(&t.platform))
                         || t.platform == "android"))
+                || (selection == X64_ANDROID_MACOS_ARM64 && t.id() == "macos-arm64")
         })
         .collect();
     let mut recovery = Vec::new();
@@ -253,7 +259,7 @@ fn plan(
             .collect()
     };
     Ok(
-        json!({"sourceTag":source,"releaseTag":format!("v{v}"),"version":v.to_string(),"channel":channel(&v),"prerelease":!v.pre.is_empty(),"publish":publish,"mode":mode,"matrix":{"include":selected},"recovery":recovery,"expected":expected,"createRelease":(["all","desktop","android","linux-windows-x64-android"].contains(&selection))}),
+        json!({"sourceTag":source,"releaseTag":format!("v{v}"),"version":v.to_string(),"channel":channel(&v),"prerelease":!v.pre.is_empty(),"publish":publish,"mode":mode,"matrix":{"include":selected},"recovery":recovery,"expected":expected,"createRelease":(["all","desktop","android","linux-windows-x64-android",X64_ANDROID_MACOS_ARM64].contains(&selection))}),
     )
 }
 
@@ -498,6 +504,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn x64_android_and_apple_silicon_scope_adds_only_macos_arm64() {
+        let scope = X64_ANDROID_MACOS_ARM64;
+        let targets = json!(["linux-x64", "macos-arm64", "windows-x64", "android-arm64"]);
+        let build = plan("v0.13.4", scope, "build", false, "", "workflow_dispatch").unwrap();
+        let mut expected: Vec<_> = build["expected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap().to_owned())
+            .collect();
+        expected.sort();
+        let mut wanted: Vec<_> = targets
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap().to_owned())
+            .collect();
+        wanted.sort();
+        assert_eq!(expected, wanted);
+        assert_eq!(build["recovery"], json!([]));
+        assert_eq!(build["createRelease"], true);
+        let recovery = plan(
+            "v0.13.4",
+            scope,
+            "publish-only",
+            true,
+            "123",
+            "workflow_dispatch",
+        )
+        .unwrap();
+        assert_eq!(recovery["expected"], build["expected"]);
     }
     #[test]
     fn android_publication_only_accepts_arm64_apk() {
