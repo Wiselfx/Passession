@@ -163,6 +163,26 @@ pub fn toolbar_icon_size(compact: bool) -> f64 {
     if compact { 18.0 } else { 14.0 }
 }
 
+/// The touch target of a toolbar button: a 44px square around the 32px
+/// compact button (the visual stays); desktop hits the button itself.
+pub fn toolbar_hit(button: Rect, compact: bool) -> Rect {
+    if !compact {
+        return button;
+    }
+    let center = button.center();
+    rect(center.x - 22.0, center.y - 22.0, 44.0, 44.0)
+}
+
+/// The gap before the next toolbar button: compact neighbours keep their
+/// centres 44px apart so their touch targets never overlap.
+pub fn toolbar_gap(compact: bool, gap: f64) -> f64 {
+    if compact {
+        (44.0 - toolbar_button_size(true)).max(gap)
+    } else {
+        gap
+    }
+}
+
 /// Original `paneToolbarTrailingPadding`.
 pub fn toolbar_trailing_padding(compact: bool, framed: bool) -> f64 {
     if framed {

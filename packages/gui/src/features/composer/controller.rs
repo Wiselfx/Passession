@@ -10,6 +10,7 @@ use super::drafts::*;
 use super::forge::*;
 use super::i18n::{t, t_args};
 use super::json::*;
+use super::model_picks::{MODEL_PICKS_KEY, ModelPicks, ModelRef, record_recent, toggle_favorite};
 use super::service::{self, PanelNotice, SendJob, SendOrigin};
 use crate::common::{UiContext, UiEffect};
 use paseo_gui_core::{CoreError, CoreEvent};
@@ -325,6 +326,46 @@ impl Controller {
     fn remember_preferences(&self, ui: &mut UiContext, next: Value) {
         ui.push(UiEffect::SetPreference {
             key: FORM_PREFERENCES_KEY.into(),
+            value: next,
+        });
+    }
+
+    /// This host's favorite and recent models (model sheet).
+    pub fn model_picks(&self, ui: &UiContext) -> ModelPicks {
+        ModelPicks::read(
+            ui.preference(MODEL_PICKS_KEY).unwrap_or(&Value::Null),
+            self.host(),
+        )
+    }
+
+    pub fn toggle_favorite_model(&self, ui: &mut UiContext, model: &ModelRef) {
+        let next = toggle_favorite(
+            ui.preference(MODEL_PICKS_KEY).unwrap_or(&Value::Null),
+            self.host(),
+            model,
+        );
+        ui.push(UiEffect::SetPreference {
+            key: MODEL_PICKS_KEY.into(),
+            value: next,
+        });
+    }
+
+    /// A model chosen in the sheet moves to the front of this host's recents; `previous`, the
+    /// model in use until now, stays listed behind it.
+    pub fn record_recent_model(
+        &self,
+        ui: &mut UiContext,
+        previous: Option<&ModelRef>,
+        model: &ModelRef,
+    ) {
+        let next = record_recent(
+            ui.preference(MODEL_PICKS_KEY).unwrap_or(&Value::Null),
+            self.host(),
+            previous,
+            model,
+        );
+        ui.push(UiEffect::SetPreference {
+            key: MODEL_PICKS_KEY.into(),
             value: next,
         });
     }

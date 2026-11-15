@@ -14,6 +14,7 @@ use crate::features::composer::controller::Outputs;
 use crate::features::composer::controls_model::ControlsModel;
 use crate::features::composer::i18n::{t, t_args};
 use crate::features::composer::json::*;
+use crate::features::composer::model_picks::ModelRef;
 use crate::features::composer::service;
 use crate::features::settings::SettingsPanelWidgetRefExt;
 use crate::theme::fade;
@@ -21,6 +22,14 @@ use makepad_widgets::*;
 use serde_json::Value;
 
 const SUGGEST_MAX: f64 = 220.0;
+
+/// Lucide `star` as one filled path (the icon font only has outlines), for pinned favorites.
+const STAR_FILLED: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="black" d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>"#;
+
+/// The filled SVG of an active trailing glyph, `None` when the outline glyph is drawn.
+fn filled_glyph(icon: &str) -> Option<&'static str> {
+    (icon == "star").then_some(STAR_FILLED)
+}
 
 fn overlay_viewport(size: DVec2) -> Rect {
     let insets = crate::shell::platform::safe_insets();
@@ -55,22 +64,15 @@ impl Details {
     };
 }
 
-/// A sheet header: title, optional back arrow, leading provider glyph and settings gear.
+/// A sheet header: title and optional back arrow.
 struct Header<'a> {
     title: &'a str,
     back: bool,
-    leading: Option<(String, String)>,
-    gear: bool,
 }
 
 impl<'a> Header<'a> {
     fn plain(title: &'a str) -> Self {
-        Self {
-            title,
-            back: false,
-            leading: None,
-            gear: false,
-        }
+        Self { title, back: false }
     }
 }
 
@@ -614,15 +616,33 @@ impl ComposerPanel {
         self.st.ohits.push(full, OItem::Scrim);
     }
 
-    /// Sheet frame: centred dialog on wide layouts, bottom sheet at 80% on compact ones.
-    fn sheet_frame(&mut self, cx: &mut Cx2d, look: &Look, size: DVec2, content_h: f64) -> Rect {
+    /// Sheet frame: a dialog on wide layouts, a bottom sheet at 80% on compact ones. The
+    /// dialog opens centred; while `page` (`(depth, page)`) stays open its top edge stays put
+    /// and it only grows downward to its maximum, then scrolls, so a content change (a pinned
+    /// favorite, a search) never moves the rows under the pointer.
+    fn sheet_frame(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        size: DVec2,
+        content_h: f64,
+        page: (usize, Page),
+    ) -> Rect {
+        const MIN_H: f64 = 120.0;
+        const MARGIN: f64 = 8.0;
         let r = if look.compact {
             let h = (size.y * 0.8).max(content_h.min(size.y * 0.9));
             rect(0.0, size.y - h, size.x, h)
         } else {
             let w = 480.0f64.min(size.x - 32.0);
-            let h = content_h.min(size.y * 0.8).max(120.0);
-            rect((size.x - w) * 0.5, (size.y - h) * 0.5, w, h)
+            let max_h = size.y * 0.8;
+            let top = match self.st.sheet_top {
+                Some((key, top)) if key == page && top + MIN_H <= size.y - MARGIN => top,
+                _ => (size.y - content_h.min(max_h).max(MIN_H)) * 0.5,
+            };
+            self.st.sheet_top = Some((page, top));
+            let h = content_h.min(max_h).min(size.y - MARGIN - top).max(MIN_H);
+            rect((size.x - w) * 0.5, top, w, h)
         };
         let r = fit_in_viewport(
             r,
@@ -642,12 +662,7 @@ impl ComposerPanel {
     }
 
     fn sheet_header(&mut self, cx: &mut Cx2d, look: &Look, r: Rect, header: Header) {
-        let Header {
-            title,
-            back,
-            leading,
-            gear,
-        } = header;
+        let Header { title, back } = header;
         let p = look.p;
         let mut x = r.pos.x + 12.0;
         let y = r.pos.y + 10.0;
@@ -657,57 +672,14 @@ impl ComposerPanel {
             self.st.ohits.push(b, OItem::Back);
             x += 32.0;
         }
-        if let Some((provider, svg)) = leading {
-            let g = rect(x, y + 4.0, 20.0, 20.0);
-            crate::common::provider_icon::ProviderIcon::paint(
-                &mut self.painter,
-                &mut self.draw_icon,
-                cx,
-                g,
-                &provider,
-                (!svg.is_empty()).then_some(svg.as_str()),
-                p.foreground,
-            );
-            x += 26.0;
-        }
         let close = rect(r.pos.x + r.size.x - 40.0, y, 28.0, 28.0);
         self.painter.icon(cx, close, "x", 16.0, p.muted);
         self.st.ohits.push(close, OItem::Close);
-        let mut end = close.pos.x - 4.0;
-        if gear {
-            let g = rect(end - 28.0, y, 28.0, 28.0);
-            self.painter.icon(cx, g, "settings", 16.0, p.muted);
-            self.st.ohits.push(g, OItem::Gear);
-            end = g.pos.x - 4.0;
-        }
+        let end = close.pos.x - 4.0;
         let spec = TextSpec::new(Font::Medium, look.t.ui_size(16.0), p.foreground);
         let height = self.sheet_header_height(cx, look) - 20.0;
         self.painter
             .text_in(cx, rect(x, y, (end - x).max(0.0), height), spec, title, 0.0);
-    }
-
-    /// The search row of a sheet under another one: same look, placeholder only (the one
-    /// search editor belongs to the top sheet).
-    fn search_row_idle(&mut self, cx: &mut Cx2d, look: &Look, r: Rect, placeholder: &str) {
-        let p = look.p;
-        self.painter.fill(cx, r, p.surface1, 0.0);
-        self.painter
-            .hline(cx, r.pos.x, r.pos.y + r.size.y - 1.0, r.size.x, p.border);
-        self.painter.icon(
-            cx,
-            rect(r.pos.x + 12.0, r.pos.y, 16.0, r.size.y),
-            "search",
-            16.0,
-            p.muted,
-        );
-        let spec = TextSpec::new(Font::Regular, look.body(), p.surface4);
-        self.painter.text_in(
-            cx,
-            rect(r.pos.x + 36.0, r.pos.y, r.size.x - 48.0, r.size.y),
-            spec,
-            placeholder,
-            0.0,
-        );
     }
 
     fn search_row(&mut self, cx: &mut Cx2d, look: &Look, r: Rect, placeholder: &str) {
@@ -755,56 +727,28 @@ impl ComposerPanel {
         };
         let profiles_supported = self.profiles_supported(ui);
         let query = self.st.search_text.clone();
-        let stacked = state.stacked.clone();
-        // Under a stacked model sheet the controls sheet shows its unfiltered root.
-        let root_query = if stacked.is_some() {
-            String::new()
-        } else {
-            query.clone()
-        };
-        let view = state.build(
-            self.ctl_ref(),
-            look.compact,
-            &root_query,
-            profiles_supported,
-        );
-        let rows = state.rows.clone();
-        let top = stacked.map(|provider| {
-            // model-sheet.tsx: the compact model browser pushed over the controls sheet,
-            // drilled into the single provider, without a back arrow.
-            let mut models = super::sheet::SheetState::new(state.can_switch);
-            models.config = state.config.clone();
-            models.drill = Some(provider);
-            models.pages = vec![Page::Models];
-            let mut view = models.build(self.ctl_ref(), look.compact, &query, profiles_supported);
-            view.back = false;
-            (view, models.rows)
-        });
-        if let Some((_, top_rows)) = &top {
-            state.stacked_rows = top_rows.clone();
-        }
+        let picks = self.ctl_ref().model_picks(ui);
+        let view = state.build(self.ctl_ref(), &query, profiles_supported, &picks);
+        let page = (state.pages.len(), state.page());
+        let rows = std::mem::take(&mut state.rows);
         self.st.overlay = Some(Overlay::Sheet(state));
         let error = self.sheet_feature_error();
-        self.paint_sheet(cx, look, &view, &rows, top.is_none(), error);
-        if let Some((top_view, top_rows)) = top {
-            // Only the top sheet takes pointer input.
-            self.st.ohits.clear();
-            self.layer(cx);
-            self.paint_sheet(cx, look, &top_view, &top_rows, true, None);
+        self.paint_sheet(cx, look, &view, &rows, error, page);
+        // The click handler reads the rows this frame painted.
+        if let Some(Overlay::Sheet(state)) = self.st.overlay.as_mut() {
+            state.rows = rows;
         }
     }
 
-    /// One sheet: scrim, frame, header, optional search row and the rows list.
-    /// `top`: the sheet that owns the search editor and the list scroll (a sheet under a
-    /// stacked one shows its placeholder and unscrolled list).
+    /// The controls sheet: scrim, frame, header, optional search row and the rows list.
     fn paint_sheet(
         &mut self,
         cx: &mut Cx2d,
         look: &Look,
         view: &super::sheet::SheetView,
         rows: &[super::sheet::Row],
-        top: bool,
         error: Option<String>,
+        page: (usize, Page),
     ) {
         let p = look.p;
         let size = cx.current_pass_size();
@@ -853,7 +797,7 @@ impl ComposerPanel {
             })
             .unwrap_or(0.0);
         let content_h = heights.iter().sum::<f64>() + 32.0 + error_h + empty_h;
-        let frame = self.sheet_frame(cx, look, size, header_h + search_h + content_h);
+        let frame = self.sheet_frame(cx, look, size, header_h + search_h + content_h, page);
         self.sheet_header(
             cx,
             look,
@@ -861,18 +805,12 @@ impl ComposerPanel {
             Header {
                 title: &view.title,
                 back: view.back,
-                leading: view.leading_provider.clone(),
-                gear: view.gear.is_some(),
             },
         );
         let mut y = frame.pos.y + header_h;
         if view.searchable {
             let row = rect(frame.pos.x, y, frame.size.x, search_h);
-            if top {
-                self.search_row(cx, look, row, &view.placeholder);
-            } else {
-                self.search_row_idle(cx, look, row, &view.placeholder);
-            }
+            self.search_row(cx, look, row, &view.placeholder);
             y += search_h;
         }
         let list = rect(
@@ -882,16 +820,26 @@ impl ComposerPanel {
             (frame.pos.y + frame.size.y - y).max(0.0),
         );
         let max_scroll = (content_h - list.size.y).max(0.0);
-        let scroll = if top {
-            self.st.sheet_scroll.clamp(0.0, max_scroll)
-        } else {
-            0.0
-        };
-        if top {
-            self.st.sheet_viewport = list;
-            self.st.sheet_scroll = scroll;
-            self.st.sheet_scroll_max = max_scroll;
+        // Row offsets in the list content, below the loading/empty block.
+        let mut offset = [view.loading, view.empty.is_some()]
+            .iter()
+            .filter(|shown| **shown)
+            .count() as f64
+            * empty_h;
+        self.st.sheet_row_tops.clear();
+        for h in &heights {
+            self.st.sheet_row_tops.push(offset);
+            offset += h;
         }
+        if let Some((key, screen_y)) = self.st.sheet_keep.take()
+            && let Some(index) = rows.iter().position(|row| row.key == key)
+        {
+            self.st.sheet_scroll = list.pos.y + self.st.sheet_row_tops[index] - screen_y;
+        }
+        let scroll = self.st.sheet_scroll.clamp(0.0, max_scroll);
+        self.st.sheet_viewport = list;
+        self.st.sheet_scroll = scroll;
+        self.st.sheet_scroll_max = max_scroll;
         cx.begin_turtle(
             Walk::abs_rect(list),
             Layout::flow_down().with_clip(true, true),
@@ -929,6 +877,8 @@ impl ComposerPanel {
             );
             ry += empty_h;
         }
+        // Trailing icon buttons are touch-sized on phones.
+        let button_w = if look.compact { 40.0 } else { 28.0 };
         // The hovered row action's label, drawn over the list once it is painted.
         let mut action_tip: Option<(String, Rect)> = None;
         for (index, (row, h)) in rows.iter().zip(heights.iter()).enumerate() {
@@ -943,34 +893,33 @@ impl ComposerPanel {
                 continue;
             }
             if row.heading {
+                let mut right = r.pos.x + r.size.x - inset;
+                for (slot, button) in row.trailing.iter().enumerate() {
+                    let b = rect(right - button_w, r.pos.y, button_w, r.size.y);
+                    self.sheet_row_button(cx, look, b, button, (index, slot), &mut action_tip);
+                    right -= button_w + 4.0;
+                }
                 self.painter.text_in(
                     cx,
                     rect(
                         r.pos.x + inset,
                         r.pos.y + 8.0,
-                        r.size.x - inset * 2.0,
+                        (right - r.pos.x - inset).max(0.0),
                         small_h.max(16.0),
                     ),
                     small,
                     &row.label,
                     0.0,
                 );
-                if let Some((icon, _, label)) = &row.secondary {
-                    let b = rect(r.pos.x + r.size.x - inset - 24.0, r.pos.y + 2.0, 24.0, 24.0);
-                    self.painter.icon(cx, b, icon, 12.0, p.muted);
-                    self.st.ohits.push(b, OItem::RowAction(index));
-                    if top && self.st.ohover == Some(OItem::RowAction(index)) {
-                        action_tip = Some((label.clone(), b));
-                    }
-                }
                 continue;
             }
             let item = OItem::Row(index);
-            // Before the trailing action so the action's hit wins (HitMap takes the last match).
-            if row.action.is_some() {
+            let interactive = row.action.is_some() && !row.disabled;
+            // Before the trailing buttons so theirs win (HitMap takes the last match).
+            if interactive {
                 self.st.ohits.push(r, item.clone());
             }
-            if row.selected || self.st.ohover.as_ref() == Some(&item) {
+            if row.selected || (interactive && self.st.ohover.as_ref() == Some(&item)) {
                 self.painter.fill(
                     cx,
                     rect(r.pos.x + 4.0, r.pos.y + 1.0, r.size.x - 8.0, r.size.y - 2.0),
@@ -978,14 +927,16 @@ impl ComposerPanel {
                     6.0,
                 );
             }
+            let glyph = if row.disabled { p.extra_muted } else { p.muted };
             let mut x = r.pos.x + inset;
             let mid = r.pos.y + r.size.y * 0.5;
             match &row.leading {
                 Leading::None => {}
                 Leading::Icon(icon, tint) => {
                     let color = tint
+                        .filter(|_| !row.disabled)
                         .map(|c| vec4(c[0], c[1], c[2], c[3]))
-                        .unwrap_or(p.muted);
+                        .unwrap_or(glyph);
                     self.painter
                         .icon(cx, rect(x, mid - 8.0, 16.0, 16.0), icon, 16.0, color);
                     x += 24.0;
@@ -998,7 +949,7 @@ impl ComposerPanel {
                         rect(x, mid - 8.0, 16.0, 16.0),
                         provider,
                         (!svg.is_empty()).then_some(svg.as_str()),
-                        p.muted,
+                        glyph,
                     );
                     x += 24.0;
                 }
@@ -1014,24 +965,37 @@ impl ComposerPanel {
                 );
                 right -= 18.0;
             }
-            if row.selected {
+            if let Some(expanded) = row.expanded {
                 self.painter.icon(
                     cx,
-                    rect(right - 16.0, mid - 8.0, 16.0, 16.0),
-                    "check",
-                    16.0,
-                    p.foreground,
+                    rect(right - 14.0, mid - 7.0, 14.0, 14.0),
+                    if expanded {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    14.0,
+                    p.muted,
                 );
+                right -= 18.0;
+            }
+            if row.selected || row.check_slot {
+                if row.selected {
+                    self.painter.icon(
+                        cx,
+                        rect(right - 16.0, mid - 8.0, 16.0, 16.0),
+                        "check",
+                        16.0,
+                        p.accent,
+                    );
+                }
                 right -= 20.0;
             }
-            if let Some((icon, _, label)) = &row.secondary {
-                let b = rect(right - 28.0, mid - 14.0, 28.0, 28.0);
-                self.painter.icon(cx, b, icon, 12.0, p.muted);
-                self.st.ohits.push(b, OItem::RowAction(index));
-                if top && self.st.ohover == Some(OItem::RowAction(index)) {
-                    action_tip = Some((label.clone(), b));
-                }
-                right -= 32.0;
+            let button_h = r.size.y.min(if look.compact { 44.0 } else { 28.0 });
+            for (slot, button) in row.trailing.iter().enumerate() {
+                let b = rect(right - button_w, mid - button_h * 0.5, button_w, button_h);
+                self.sheet_row_button(cx, look, b, button, (index, slot), &mut action_tip);
+                right -= button_w + 4.0;
             }
             if !row.value.is_empty() {
                 let w = self
@@ -1057,16 +1021,24 @@ impl ComposerPanel {
                         rect(right - 14.0, mid - 7.0, 14.0, 14.0),
                         "triangle-alert",
                         14.0,
-                        p.muted,
+                        p.warning,
                     );
                     right -= 18.0;
                 }
             }
-            let label_spec = if row.label_muted {
-                TextSpec::new(Font::Regular, look.body(), p.muted)
-            } else {
-                body
-            };
+            let label_spec = TextSpec::new(
+                if row.strong || row.selected {
+                    Font::Medium
+                } else {
+                    Font::Regular
+                },
+                look.body(),
+                if row.label_muted || row.disabled {
+                    p.muted
+                } else {
+                    p.foreground
+                },
+            );
             if row.description.is_empty() {
                 self.painter.text_in(
                     cx,
@@ -1086,10 +1058,15 @@ impl ComposerPanel {
                     &row.label,
                     0.0,
                 );
+                let detail = if row.disabled {
+                    TextSpec::new(Font::Regular, look.small(), p.extra_muted)
+                } else {
+                    small
+                };
                 self.painter.text_in(
                     cx,
                     rect(x, top + lh, (right - x).max(0.0), sh),
-                    small,
+                    detail,
                     &row.description,
                     0.0,
                 );
@@ -1114,6 +1091,73 @@ impl ComposerPanel {
         }) {
             self.layer(cx);
             self.draw_tooltip(cx, look, &label, anchor);
+        }
+    }
+
+    /// One trailing icon button of a sheet row (favorite star, profile, provider settings):
+    /// its hover plate, glyph and hit; a hovered button leaves its label in `tip`.
+    fn sheet_row_button(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        b: Rect,
+        button: &super::sheet::Trailing,
+        (index, slot): (usize, usize),
+        tip: &mut Option<(String, Rect)>,
+    ) {
+        let p = look.p;
+        let item = OItem::RowAction(index, slot);
+        let hovered = self.st.ohover.as_ref() == Some(&item);
+        // A pinned favorite gets a tinted plate and a filled star, not just a tint.
+        if hovered || button.active {
+            let plate = 28.0_f64.min(b.size.y);
+            self.painter.fill(
+                cx,
+                rect(
+                    b.pos.x + (b.size.x - plate) * 0.5,
+                    b.pos.y + (b.size.y - plate) * 0.5,
+                    plate,
+                    plate,
+                ),
+                if hovered {
+                    p.surface3
+                } else {
+                    fade(p.warning, 0.16)
+                },
+                6.0,
+            );
+        }
+        let color = if button.active {
+            p.warning
+        } else if hovered {
+            p.foreground
+        } else {
+            p.muted
+        };
+        match button
+            .active
+            .then(|| filled_glyph(button.icon))
+            .flatten()
+            .and_then(crate::common::provider_icon::icon_path)
+        {
+            Some(path) => {
+                self.draw_icon.svg_path = ArcStringMut::Arc(path);
+                self.draw_icon.color = color;
+                self.draw_icon.draw_walk(
+                    cx,
+                    Walk::abs_rect(rect(
+                        b.pos.x + (b.size.x - 14.0) * 0.5,
+                        b.pos.y + (b.size.y - 14.0) * 0.5,
+                        14.0,
+                        14.0,
+                    )),
+                );
+            }
+            None => self.painter.icon(cx, b, button.icon, 14.0, color),
+        }
+        self.st.ohits.push(b, item);
+        if hovered {
+            *tip = Some((button.label.clone(), b));
         }
     }
 
@@ -1643,17 +1687,7 @@ impl ComposerPanel {
     ) {
         self.st.cancel_gestures();
         match item {
-            OItem::Scrim | OItem::Close => {
-                // A stacked model sheet closes back to the controls sheet.
-                if let Some(Overlay::Sheet(state)) = self.st.overlay.as_mut()
-                    && state.stacked.is_some()
-                {
-                    state.stacked = None;
-                    self.clear_search(cx);
-                } else {
-                    self.close_overlay(cx, ui);
-                }
-            }
+            OItem::Scrim | OItem::Close => self.close_overlay(cx, ui),
             OItem::Panel => {}
             OItem::Search => {
                 if !self.st.hidden {
@@ -1666,39 +1700,26 @@ impl ComposerPanel {
                 }
                 self.clear_search(cx);
             }
-            OItem::Gear => {
-                // model-browser.tsx ProviderSettingsAction → the provider's settings sheet.
-                let provider = match self.st.overlay() {
-                    Overlay::Sheet(state) => state
-                        .stacked
-                        .clone()
-                        .or_else(|| state.drill.clone())
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                };
-                self.close_overlay(cx, ui);
-                let host = self.ctl_ref().host().to_owned();
-                crate::features::settings::open_provider_settings(ui, &host, &provider);
-            }
-            OItem::Row(index) | OItem::RowAction(index) => {
-                let secondary = matches!(item, OItem::RowAction(_));
+            OItem::Row(index) | OItem::RowAction(index, _) => {
                 let action = match self.st.overlay() {
-                    Overlay::Sheet(state) => if state.stacked.is_some() {
-                        &state.stacked_rows
-                    } else {
-                        &state.rows
-                    }
-                    .get(index)
-                    .and_then(|row| {
-                        if secondary {
-                            row.secondary.as_ref().map(|(_, a, _)| a.clone())
-                        } else {
-                            row.action.clone()
+                    Overlay::Sheet(state) => state.rows.get(index).and_then(|row| match item {
+                        OItem::RowAction(_, slot) => {
+                            row.trailing.get(slot).map(|button| button.action.clone())
                         }
+                        _ => row.action.clone(),
                     }),
                     _ => None,
                 };
                 if let Some(action) = action {
+                    if matches!(action, RowAction::ToggleFavorite { .. })
+                        && let Overlay::Sheet(state) = self.st.overlay()
+                        && let Some(row) = state.rows.get(index)
+                        && let Some(top) = self.st.sheet_row_tops.get(index)
+                    {
+                        // Pinning adds or removes rows above; keep this one under the pointer.
+                        let screen_y = self.st.sheet_viewport.pos.y - self.st.sheet_scroll + top;
+                        self.st.sheet_keep = Some((row.key.clone(), screen_y));
+                    }
                     self.sheet_action(cx, ui, path, uid, action);
                 }
             }
@@ -1745,10 +1766,9 @@ impl ComposerPanel {
     ) {
         let compact = ui.compact;
         let host = self.ctl_ref().host().to_owned();
-        let (page, can_switch, config, feature) = match self.st.overlay() {
+        let (page, config, feature) = match self.st.overlay() {
             Overlay::Sheet(state) => (
                 state.page(),
-                state.can_switch,
                 state.config(self.ctl_ref()),
                 state.feature.clone(),
             ),
@@ -1798,49 +1818,43 @@ impl ComposerPanel {
                     Some(profile),
                 );
             }
-            RowAction::Drill(provider) => {
+            RowAction::OpenModels => {
                 if let Some(Overlay::Sheet(state)) = self.st.overlay.as_mut() {
-                    state.drill = Some(provider);
                     state.push(Page::Models);
                 }
                 self.clear_search(cx);
             }
-            RowAction::OpenModels => {
-                let available: Vec<Value> = if can_switch {
-                    providers.clone()
-                } else {
-                    providers
-                        .iter()
-                        .find(|p| get(p, "provider") == get(&config, "provider"))
-                        .cloned()
-                        .into_iter()
-                        .collect()
-                };
+            RowAction::ToggleGroup { provider, expand } => {
                 if let Some(Overlay::Sheet(state)) = self.st.overlay.as_mut() {
-                    let single = !can_switch || available.len() == 1;
-                    let provider = available.first().map(|p| owned(get(p, "provider")));
-                    if single && compact {
-                        state.stacked = provider;
-                    } else if single {
-                        state.drill = provider;
-                        state.push(Page::Models);
-                    } else {
-                        state.push(Page::Providers);
-                    }
+                    state.expanded.insert(provider, expand);
                 }
-                self.clear_search(cx);
+            }
+            RowAction::ToggleFavorite { provider, model } => {
+                self.ctl_ref()
+                    .toggle_favorite_model(ui, &ModelRef::new(provider, model));
+            }
+            RowAction::ProviderSettings(provider) => {
+                // model-browser.tsx ProviderSettingsAction → the provider's settings sheet.
+                self.close_overlay(cx, ui);
+                crate::features::settings::open_provider_settings(ui, &host, &provider);
             }
             RowAction::SelectModel {
                 provider,
                 model: model_id,
             } => {
                 let next = model.with_model(&provider, &model_id);
+                let previous = model
+                    .selected_model()
+                    .map(|m| ModelRef::new(owned(get(&config, "provider")), owned(get(&m, "id"))));
+                self.ctl_ref().record_recent_model(
+                    ui,
+                    previous.as_ref(),
+                    &ModelRef::new(provider, model_id),
+                );
                 out = self.sheet_apply(ui, next);
                 if compact {
                     if let Some(Overlay::Sheet(state)) = self.st.overlay.as_mut() {
                         state.pages = vec![Page::Root];
-                        state.drill = None;
-                        state.stacked = None;
                     }
                     self.clear_search(cx);
                 } else {
@@ -2002,5 +2016,17 @@ impl ComposerPanel {
                     && (self.st.touch_scroll.is_dragging() || self.st.touch_scroll.is_flinging())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_star_has_a_filled_path() {
+        let path = filled_glyph("star").and_then(crate::common::provider_icon::icon_path);
+        assert!(path.is_some_and(|p| p.starts_with('M') && p.contains('C')));
+        assert_eq!(filled_glyph("pencil"), None);
     }
 }

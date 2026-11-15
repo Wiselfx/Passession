@@ -1,18 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.13.27 - 2026-11-16
 
 ### Added
 
 - Embed a private Tailscale node in native clients, with OS-protected encrypted state, explicit browser login, account/device status and disconnect/reconnect/logout controls. Select Embedded Tailscale per host without enabling an OS VPN; Normal hosts and external internet access remain available. Tailnet-selected connections, including host HTTP images, retain their route and TLS authority instead of falling back to ordinary networking.
 - Add a host Version page with pinned update requests, per-component selection, durable progress and reconnection. App-owned hosts use a small Go helper with authenticated handoff, dirty-document approval, health verification and rollback.
 - Render Mermaid sequences inside conversations, with expandable source and native SVG/PNG export. Preserve sequence event order, activation boundaries and nested alternative/loop regions.
+- Pin favorite models and reuse recent ones from the model sheet. Its first page offers a one-tap quick switch, and the full list groups models by provider with collapsible sections, cross-provider search and clearly unavailable rows. Favorites and recents are saved per host.
 
 ### Changed
 
 - Version app, daemon, Tailnet and update-helper independently. Rebuild and deliver only changed component inputs, retain verified unchanged artifacts, and use a coherent desktop component store. Keep mobile installation atomic and macOS signed app cohorts intact.
 - Plan CI checks and native release jobs from affected dependency closures; skip native work and publication for a no-change release plan.
 - Rename client update feeds from `flutter-*` to `app-*` and runtime identity to `app`, without compatibility aliases. Older clients using the previous feed need a manual installer update.
+- Redesign the Commit tab like IntelliJ's commit tool window: Changes and Unversioned Files groups, directory tree with compacted folder chains, tri-state checkboxes, status colours, expand/collapse and flat-list toggles, keyboard navigation and a resizable message area. Not-a-repository, offline, loading, no-change and failure states are distinct, and the commit button shows how many files it commits.
+- Turn Add project into its own form with a bottom primary action. A successful add shows a success callout that can open a New Session for that directory or reset the form, without leftover notices after the tab is reused.
+- Use session and directory wording instead of the removed Workspace concept across the command center, sidebar, headers and confirmations; the sidebar's schedules entry now matches the Schedules page.
+- Rework the Tailscale settings page into Status, Device and Account sections that show only the action valid for the current state, and show neutral, warning or error states on the host Version page instead of raw updater and service-manager text.
 
 ### Fixed
 
@@ -26,6 +31,11 @@
 - Keep read-only subscriptions and session discovery available while an update drains work, including requests authorized by alternative Hub permissions. Replacement clients can reconnect without admitting new mutations during the trial.
 - Show an OMP `ask` HTML form as one question card with its text, default selections and default text values. Paseo answers OMP's per-field RPC dialogs from the submitted card and checks each dialog against OMP's form rules; checkbox groups now keep every chosen option instead of only the last pick. A required-field re-prompt is shown, and an unexpected dialog stops the automatic answers and is asked step by step. OMP-withdrawn dialogs remove their card, and completed forms list every answer.
 - Keep multi-select answers whose labels or custom text contain ", " intact for OMP and Codex questions: clients now also send structured `updatedInput.selections`. Claude receives only its own `answers` strings.
+- Stop streamed OMP messages from repeating their opening text and then hiding the rest of the message until the turn ended. The daemon no longer re-sends `message_start` text that also arrives as deltas, so thinking and answers stream live without a later correction.
+- Make phone touch targets at least 44px in the sidebar, header, explorer tabs, host picker, settings controls, Git toolbars, command center, folder picker and Mermaid toolbar.
+- Keep the header's session menu next to the Git actions, let explorer tabs shrink before moving into an overflow chip, hide tooltips whose control disappeared, and draw the History search box as one centred field with balanced columns.
+- Show offline hosts as offline in the pull-request tab, execution logs and the Projects settings page, and localize Git Log, folder picker, Mermaid, connection and settings errors with the raw detail kept secondary.
+- Start the command center list at its top, keep keyboard selections and their section headers fully visible, and size the dialog to whole rows.
 
 ## 0.13.26 - 2026-11-15
 

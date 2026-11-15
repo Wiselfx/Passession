@@ -826,6 +826,8 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
         crate::common::paint::TextSpec::new(Font::Regular, typography.ui_size(12.0), p.muted),
     );
     let nav_h = RowMetrics::new(title_h, 0.0, 0.0).height(32.0, 6.0, 16.0);
+    // Phone: nav rows are 44px touch targets; desktop density is unchanged.
+    let nav_h = if compact { nav_h.max(44.0) } else { nav_h };
 
     // Navigation rows (`SidebarHeaderRow`, 2px apart, top 8 bottom 6, bottom border).
     let order = nav_order(&preferences);
@@ -868,6 +870,8 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
                     16.0,
                     &tr("sidebar.actions.closeSidebar"),
                 );
+                // Phone: a 44px square at the row's trailing edge.
+                ui.hit(rect(r.pos.x + r.size.x - 44.0, y, 44.0, nav_h), "nav:close");
             }
             y += nav_h + 2.0;
         }
@@ -900,6 +904,13 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
         let muted = ui.p.muted;
         ui.icon(cx, trigger, "settings-2", 14.0, muted);
         ui.hit_tip(trigger, "side:display", &tr("sidebar.display.trigger"));
+        if compact {
+            // Phone: the filter trigger takes a 44px square over the full header height.
+            ui.hit(
+                rect(r.pos.x + r.size.x - 44.0, y, 44.0, header_h),
+                "side:display",
+            );
+        }
     }
     y += header_h;
 
@@ -960,6 +971,14 @@ fn toolbar_button(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, id: &str, icon: &s
     // Row `ToolbarButton`: 20px hitbox, 6px radius, sm muted glyph.
     let r = rect(x, y, 20.0, 20.0);
     ui.icon_button(cx, r, id, icon, 14.0, 6.0, tooltip);
+    if ui.compact {
+        // Phone: a 44x44 touch target ending 8px past the glyph (the row's trailing inset),
+        // so it stays inside the list clip.
+        ui.hit(
+            rect(x + 28.0 - 44.0, y + 10.0 - 22.0, 44.0, 44.0),
+            id.to_string(),
+        );
+    }
 }
 
 /// Pill counting sessions that wait on the user, drawn right-aligned ending at `right`.
@@ -1034,6 +1053,12 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
     let group_metrics = RowMetrics::new(title_h, 0.0, 0.0);
     let session_metrics = RowMetrics::new(title_h, small_h, 2.0);
     let group_h = group_metrics.height(36.0, 8.0, 14.0);
+    // Phone: host/project rows are 44px touch targets.
+    let group_h = if ui.compact {
+        group_h.max(44.0)
+    } else {
+        group_h
+    };
     let session_h = session_metrics.height(0.0, 7.0, 14.0);
     let button_h = theme::control_height(ControlSize::Sm);
     let mut any = false;

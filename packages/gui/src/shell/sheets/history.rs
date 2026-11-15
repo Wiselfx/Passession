@@ -173,7 +173,7 @@ impl HistoryPage {
             cwd: cwd.to_string(),
             project_key: project_key.to_string(),
             selected_host,
-            search_field: Field::new("", &tr("sessions.searchPlaceholder")),
+            search_field: Field::new("", &tr("sessions.searchPlaceholder")).plain(),
             search: String::new(),
             debounce: Timer::default(),
             clock: Timer::default(),
@@ -930,8 +930,19 @@ pub fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, area:
             p.muted,
         );
     }
+    // Phone: a 44x44 touch target centred on the 32px island.
+    let island_hit = if compact {
+        rect(
+            island.pos.x + island.size.x * 0.5 - 22.0,
+            island.pos.y + island.size.y * 0.5 - 22.0,
+            44.0,
+            44.0,
+        )
+    } else {
+        island
+    };
     ui.hit_tip(
-        island,
+        island_hit,
         "hist:menu",
         &tr(if compact {
             "shell.menu.open"
@@ -1011,10 +1022,19 @@ pub fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, area:
             );
             let has_text = !page.search_field.text().is_empty();
             let field_w = r.size.x - 12.0 - 14.0 - 8.0 - if has_text { 30.0 } else { 12.0 };
+            // One surface: the outline above is the field; the plain input inside has no fill
+            // and its 12px vertical padding is placed so the text line centres on the glyph.
+            let input_spec = ui.spec(Font::Regular, 14.0, p.foreground);
+            let line_h = ui.painter.line_height(cx, input_spec);
             page.search_field.draw(
                 cx,
                 scope,
-                rect(r.pos.x + 34.0, r.pos.y + 1.0, field_w, field_h),
+                rect(
+                    r.pos.x + 34.0,
+                    r.pos.y + r.size.y * 0.5 - line_h * 0.5 - 12.0,
+                    field_w,
+                    line_h + 24.0,
+                ),
             );
             if has_text {
                 let clear = rect(
@@ -1534,25 +1554,39 @@ fn session_row(
         if badges_w > 0.0 {
             badges(ui, cx, tx + agent_w + 8.0, ty);
         }
+        // Columns keep their aligned edges, but a cell may borrow the unused tail of the cell
+        // before it (host grows left over a short project) or the blank lead of the
+        // right-aligned time (branch grows right), so nothing ellipsizes beside free space.
+        let time_w = ui.measure(cx, muted, &time);
         let mut colx = cx0 + title_w;
-        for (column, on) in WIDE_COLUMNS.iter().zip(shown) {
+        let mut prev_end = colx;
+        for (index, (column, on)) in WIDE_COLUMNS.iter().zip(shown).enumerate() {
             if !on {
                 continue;
             }
             let cell = rect(colx + column.gap, ty, column.width - column.gap, line);
             match column.kind {
-                WideColumn::Project => highlighted(ui, cx, cell, muted, project_name, query),
-                WideColumn::Host => {
-                    let hw = ui.measure(cx, muted, host_label).min(cell.size.x);
-                    let fitted = ui.painter.fit(cx, muted, host_label, cell.size.x);
-                    ui.text(
-                        cx,
-                        rect(cell.pos.x + cell.size.x - hw, ty, hw, line),
-                        muted,
-                        &fitted,
-                    );
+                WideColumn::Project => {
+                    highlighted(ui, cx, cell, muted, project_name, query);
+                    prev_end = cell.pos.x + ui.measure(cx, muted, project_name).min(cell.size.x);
                 }
-                WideColumn::Branch => highlighted(ui, cx, cell, muted, branch, query),
+                WideColumn::Host => {
+                    let right = cell.pos.x + cell.size.x;
+                    let room = (right - (prev_end + 12.0)).max(cell.size.x);
+                    let hw = ui.measure(cx, muted, host_label).min(room);
+                    let fitted = ui.painter.fit(cx, muted, host_label, room);
+                    ui.text(cx, rect(right - hw, ty, hw, line), muted, &fitted);
+                }
+                WideColumn::Branch => {
+                    let time_shown = shown.get(index + 1).copied().unwrap_or(false);
+                    let extra = if time_shown {
+                        (WIDE_COLUMNS[index + 1].width - time_w).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    let wide = rect(cell.pos.x, ty, cell.size.x + extra, line);
+                    highlighted(ui, cx, wide, muted, branch, query);
+                }
                 WideColumn::Time => {
                     ui.text_right(cx, cell, muted, &time);
                 }

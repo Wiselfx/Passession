@@ -1,6 +1,7 @@
 //! The Command Center (Flutter `ui/command_center.dart`, original
-//! `command-center/command-center.tsx`): a top-anchored 640×560 palette (bottom sheet on
-//! phones) over actions, sessions and directory files. Root `CommandCenterPanel`.
+//! `command-center/command-center.tsx`): a top-anchored palette up to 640×560 that fits its
+//! rows (bottom sheet on phones) over actions, sessions and directory files. Root
+//! `CommandCenterPanel`.
 
 pub mod matching;
 pub mod panel;
@@ -98,11 +99,12 @@ live_design! {
         }
     }
 
-    // A section's rule (8px either side) and/or its small muted label (8+16+8).
+    // A section's rule (8px either side) and/or its small muted label on a 32px line
+    // (`results::row_height`).
     WaSectionRow = <View> {
         width: Fill, height: Fit, flow: Down
-        divider = <View> { width: Fill, height: Fit, padding: { top: 8., bottom: 8. }, <WaRule> {} }
-        title = <View> { width: Fill, height: Fit, padding: { left: 16., right: 16., top: 8., bottom: 8. }, text = <WaSmallLine> {} }
+        divider = <View> { width: Fill, height: 17., padding: { top: 8., bottom: 8. }, <WaRule> {} }
+        title = <View> { width: Fill, height: 32., align: { y: 0.5 }, padding: { left: 16., right: 16. }, text = <WaSmallLine> {} }
     }
 
     // Original `ResultRow`: 16px side padding, surface1 while active, hovered or pressed.
@@ -142,6 +144,9 @@ live_design! {
         }
     }
 
+    // Desktop: a top-anchored dialog that fits its rows up to a maximum. Phones: a bottom
+    // sheet of fixed height above the keyboard. The list's height is set per frame from the
+    // fixed row heights; `chrome_top` and `chrome_bottom` are the measured chrome around it.
     pub CommandCenterPanel = {{CommandCenterPanel}} {
         width: Fill, height: Fill, flow: Overlay
         wa_root = <View> {
@@ -149,43 +154,57 @@ live_design! {
             modal = <WaModal> {
                 align: { x: 0.5, y: 0.0 }
                 content: {
-                    panel = <Surface> {
-                        width: 640., height: 560., flow: Down
-                        margin: { top: 48. }
-                        role: Surface0, border_role: Border, radius: 8.
-                        header = <View> {
-                            width: Fill, height: Fit, flow: Right, spacing: 8., align: { y: 0.5 }
-                            padding: { left: 16., right: 16., top: 12., bottom: 12. }
-                            // The Files scope chip: 28px, borderAccent, surface2, 6px radius.
-                            scope_chip = <WaScopeChip> { visible: false }
-                            query = <WaBareInput> { input = { padding: { top: 4., bottom: 4., left: 0., right: 0. } } }
-                            file_spinner = <View> { width: 14., height: 14., visible: false, <WaSpinner> { width: 14., height: 14. } }
-                        }
-                        <WaRule> {}
-                        file_error = <View> {
-                            width: Fill, height: Fit, visible: false, flow: Down
-                            padding: { left: 16., right: 16., top: 12., bottom: 12. }
-                            text = <WaText> {}
-                        }
-                        file_error_rule = <WaRule> { visible: false }
-                        no_matches = <View> {
-                            width: Fill, height: Fit, visible: false, align: { x: 0.5 }
-                            padding: { left: 16., right: 16., top: 24., bottom: 24. }
-                            text = <WaMuted> { width: Fit }
-                        }
-                        list = <PortalList> {
-                            width: Fill, height: Fill
-                            SectionRow = <WaSectionRow> {}
-                            ActionRow = <WaActionRow> {}
-                            TwoLineRow = <WaTwoLineRow> {}
-                            FileRow = <WaFileRow> {}
-                        }
-                        // Desktop key hints (hidden on phones and compact layouts).
-                        footer_rule = <WaRule> { visible: false }
-                        footer = <View> {
-                            width: Fill, height: Fit, visible: false
-                            padding: { left: 16., right: 16., top: 8., bottom: 8. }
-                            text = <WaSmallLine> {}
+                    // The modal content is an Overlay `Fit` view, which sizes (and clips) to
+                    // its child without the child's margin: the offset from the top and the
+                    // safe insets are this frame's padding, or the panel's bottom is cut.
+                    frame = <View> {
+                        width: Fit, height: Fit, flow: Down
+                        padding: { top: 48. }
+                        panel = <Surface> {
+                            width: 640., height: Fit, flow: Down
+                            role: Surface0, border_role: Border, radius: 8.
+                            chrome_top = <View> {
+                                width: Fill, height: Fit, flow: Down
+                                header = <View> {
+                                    width: Fill, height: Fit, flow: Right, spacing: 8., align: { y: 0.5 }
+                                    padding: { left: 16., right: 16., top: 12., bottom: 12. }
+                                    // The Files scope chip: 28px, borderAccent, surface2, 6px radius.
+                                    scope_chip = <WaScopeChip> { visible: false }
+                                    query = <WaBareInput> { input = { padding: { top: 4., bottom: 4., left: 0., right: 0. } } }
+                                    file_spinner = <View> { width: 14., height: 14., visible: false, <WaSpinner> { width: 14., height: 14. } }
+                                }
+                                <WaRule> {}
+                                file_error = <View> {
+                                    width: Fill, height: Fit, visible: false, flow: Down
+                                    padding: { left: 16., right: 16., top: 12., bottom: 12. }
+                                    text = <WaText> {}
+                                }
+                                file_error_rule = <WaRule> { visible: false }
+                                no_matches = <View> {
+                                    width: Fill, height: Fit, visible: false, align: { x: 0.5 }
+                                    padding: { left: 16., right: 16., top: 24., bottom: 24. }
+                                    text = <WaMuted> { width: Fit }
+                                }
+                            }
+                            list = <PortalList> {
+                                width: Fill, height: 0.
+                                SectionRow = <WaSectionRow> {}
+                                ActionRow = <WaActionRow> {}
+                                TwoLineRow = <WaTwoLineRow> {}
+                                FileRow = <WaFileRow> {}
+                            }
+                            chrome_bottom = <View> {
+                                width: Fill, height: Fit, flow: Down
+                                // Keeps the last row off the rule or the rounded edge.
+                                <View> { width: Fill, height: 6. }
+                                // Desktop key hints (hidden on phones and compact layouts).
+                                footer_rule = <WaRule> { visible: false }
+                                footer = <View> {
+                                    width: Fill, height: Fit, visible: false
+                                    padding: { left: 16., right: 16., top: 8., bottom: 8. }
+                                    text = <WaSmallLine> {}
+                                }
+                            }
                         }
                     }
                 }

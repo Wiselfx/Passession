@@ -6,8 +6,8 @@
 
 use super::chrome::{
     ButtonSize, ButtonVariant, TOOLBAR_HEIGHT, button, button_height, diff_stat, label_trigger,
-    measure_button, palette, toolbar_band, toolbar_button, toolbar_button_size, toolbar_icon_size,
-    toolbar_trailing_padding, ui as ui_px,
+    measure_button, palette, toolbar_band, toolbar_button, toolbar_button_size, toolbar_gap,
+    toolbar_hit, toolbar_icon_size, toolbar_trailing_padding, ui as ui_px,
 };
 use super::graph::GraphRow;
 use super::json::{int, text};
@@ -730,7 +730,7 @@ impl LogView {
                 cx.seconds_since_app_start(),
             );
             self.spinning = true;
-            return right - size - 4.0;
+            return right - size - toolbar_gap(compact, 4.0);
         }
         let hovered = self.is_hovered(&LogHit::Refresh);
         let button = toolbar_button(
@@ -744,8 +744,9 @@ impl LogView {
             true,
             hovered,
         );
-        self.hits.push(button, LogHit::Refresh);
-        button.pos.x - 4.0
+        self.hits
+            .push(toolbar_hit(button, compact), LogHit::Refresh);
+        button.pos.x - toolbar_gap(compact, 4.0)
     }
 
     /// The size of a split this frame: the dragged size (else `default`)
@@ -1618,12 +1619,13 @@ impl LogView {
                         LogHit::ShowAllBranches,
                     ));
                 }
+                let copy = tr("workspace.git.log.states.loadFailed", &[("error", error)]);
                 self.message(
                     cx,
                     paint,
                     body,
                     Some("circle-alert"),
-                    &error,
+                    &copy,
                     true,
                     actions,
                     false,
@@ -2018,12 +2020,16 @@ impl LogView {
                     t("workspace.git.log.states.retry"),
                     LogHit::DetailRetry(sha.clone()),
                 )];
+                let copy = tr(
+                    "workspace.git.log.states.detailFailed",
+                    &[("error", error.clone())],
+                );
                 self.message(
                     cx,
                     paint,
                     area,
                     Some("circle-alert"),
-                    error,
+                    &copy,
                     true,
                     retry,
                     false,
@@ -2594,8 +2600,9 @@ impl LogView {
             true,
             hovered,
         );
-        self.hits.push(toggle, LogHit::SearchToggle);
-        right = toggle.pos.x - 4.0;
+        self.hits
+            .push(toolbar_hit(toggle, true), LogHit::SearchToggle);
+        right = toggle.pos.x - toolbar_gap(true, 4.0);
         let open = matches!(
             self.overlay.purpose(),
             Some(super::log_view::Purpose::Author)
@@ -2611,8 +2618,8 @@ impl LogView {
             true,
             false,
         );
-        self.hits.push(user, LogHit::AuthorChip);
-        right = user.pos.x - 4.0;
+        self.hits.push(toolbar_hit(user, true), LogHit::AuthorChip);
+        right = user.pos.x - toolbar_gap(true, 4.0);
         let left = bar.pos.x + 8.0;
         if self.search_open {
             let focus = std::mem::take(&mut self.focus_search);
@@ -2811,7 +2818,7 @@ impl LogView {
             true,
             hovered,
         );
-        self.hits.push(back, LogHit::Back);
+        self.hits.push(toolbar_hit(back, true), LogHit::Back);
         let title = short(sha);
         let x = back.pos.x + back.size.x + 8.0;
         paint.text_centered(
@@ -2843,12 +2850,16 @@ impl LogView {
                     t("workspace.git.log.states.retry"),
                     LogHit::DetailRetry(sha.to_owned()),
                 )];
+                let copy = tr(
+                    "workspace.git.log.states.detailFailed",
+                    &[("error", error.clone())],
+                );
                 self.message(
                     cx,
                     paint,
                     body,
                     Some("circle-alert"),
-                    error,
+                    &copy,
                     true,
                     retry,
                     false,

@@ -1,5 +1,6 @@
 //! New session / add project: project, host and launch fields, the composer card
-//! (prompt, attachments, model controls), directory preparation, and creation with
+//! (prompt, attachments, model controls) or Add project's directory form and result callout,
+//! directory preparation, and creation with
 //! a persisted immutable intent whose receipt is
 //! recovered instead of creating a duplicate.
 //!
@@ -20,7 +21,8 @@ use super::i18n::{l, lf, t, ta};
 use super::identity::project_view_key;
 use super::kit::{
     TriggerLead, WaButtonWidgetExt, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt,
-    WaInputWidgetRefExt, WaRepeatWidgetRefExt, WaTriggerWidgetRefExt, set_optional, sync_input,
+    WaInputWidgetRefExt, WaRepeatWidgetRefExt, WaTriggerWidgetRefExt, set_alert, set_optional,
+    sync_input,
 };
 use super::new_tab_model as model;
 use super::observe::{ObsEvent, Observation};
@@ -88,6 +90,9 @@ live_design! {
                 padding: { top: 0., bottom: 60. }
                 column = <View> {
                     width: 820., height: Fit, flow: Down
+                    // Add project starts at the top on wide layouts so its result callout,
+                    // which takes the submit row's place, never shifts the form above it.
+                    add_top = <View> { width: Fill, height: 48., visible: false }
                     pending = <View> {
                         width: Fill, height: Fit, flow: Down, visible: false, padding: { left: 16., right: 16., bottom: 16. }
                         card = <WaCard> {
@@ -134,7 +139,6 @@ live_design! {
                                         draw_text: { text_style: { line_spacing: 1.4 } }
                                     }
                                 }
-                                title_preview = <View> { width: Fill, height: Fit, visible: false, text = <WaMuted> { content: true } }
                             }
                             toolbar = <View> {
                                 width: Fill, height: Fit, flow: Right, spacing: 0., align: { y: 1.0 }
@@ -172,11 +176,11 @@ live_design! {
                     bottom = <View> {
                         width: Fill, height: Fit, flow: RightWrap, spacing: 8., padding: { left: 16., right: 16. }
                         import_session = <WaButtonGhost> { icon: "import" }
-                        options_toggle = <WaButtonGhost> { icon: "sliders-horizontal", trailing: "chevron-down" }
                     }
-                    options = <View> {
+                    // Add project: a plain form (no composer card), always expanded.
+                    add_form = <View> {
                         width: Fill, height: Fit, flow: Down, spacing: 16., visible: false
-                        padding: { left: 16., right: 16., top: 16. }
+                        padding: { left: 16., right: 16., bottom: 16. }
                         source_field = <WaField> { source = <WaFieldButton> {} }
                         directory_field = <WaField> {
                             row = <View> {
@@ -193,6 +197,18 @@ live_design! {
                             width: Fill, height: Fit, flow: RightWrap, spacing: 8.
                             prepare = <WaButtonPrimary> { icon: "folder-plus" }
                             inspect_prepared = <WaButtonGhost> {}
+                        }
+                        field_error = <View> { width: Fill, height: Fit, visible: false, text = <WaError> {} }
+                        add_row = <View> {
+                            width: Fill, height: Fit, align: { x: 1.0 }, padding: { top: 8. }
+                            add_submit = <WaButtonPrimary> { size: Md, icon: "folder-plus" }
+                        }
+                        added = <WaSuccessAlert> {
+                            visible: false
+                            body = { actions = {
+                                new_session = <WaButtonPrimary> { size: Md, icon: "message-square-plus" }
+                                add_another = <WaButtonOutline> { size: Md, icon: "folder-plus" }
+                            } }
                         }
                     }
                 }
@@ -487,7 +503,8 @@ enum Req {
     RepositoryStatus(String),
     Providers(u64),
     Features(String),
-    AddProject,
+    /// `project.add.request` for the submitted directory.
+    AddProject(String),
     Prepare,
     SearchRepos,
     CreateFeatures,
@@ -568,10 +585,10 @@ pub struct WaNewTabView {
     finishing: bool,
     #[rust]
     opened: bool,
+    /// The project an Add project submission registered (its root filled from the submitted
+    /// directory when the host omits it); cleared whenever the target changes.
     #[rust]
-    project_added: bool,
-    #[rust]
-    options_open: bool,
+    added_project: Option<Value>,
     #[rust]
     config: Value,
     #[rust]
@@ -669,6 +686,18 @@ fn project_root(project: &Value) -> &str {
     host::project_root(project)
 }
 
+/// The catalog key and glyph of an Add project directory source.
+fn source_copy(source: &str) -> (&'static str, &'static str) {
+    match source {
+        "clone" => ("newWorkspace.addProject.sources.clone", "download"),
+        "new-directory" => (
+            "newWorkspace.addProject.sources.newDirectory",
+            "folder-plus",
+        ),
+        _ => ("newWorkspace.addProject.sources.directory", "folder"),
+    }
+}
+
 /// `BLANK_TERMINAL_PROFILE_ID`: the persisted `launchTarget.profileId` of the default shell.
 const BLANK_TERMINAL_PROFILE_ID: &str = "blank";
 
@@ -706,7 +735,12 @@ impl WaNewTabView {
         .to_owned();
         self.clone_protocol = "https".into();
         let add_project = data.get("addProject") == Some(&Value::Bool(true));
-        self.options_open = add_project;
+        self.reset_transient();
+        if add_project && self.target.cwd.is_empty() {
+            // Add project starts without a directory: Add stays disabled until one is chosen.
+            self.path.clear();
+            self.catalog_cwd.clear();
+        }
         let draft = object_of(&data, "creationDraft");
         self.title = str_of(draft, "title").to_owned();
         self.prompt = str_of(draft, "prompt").to_owned();
@@ -744,6 +778,67 @@ impl WaNewTabView {
         if self.intent.is_some() {
             self.recover(ctx);
         }
+    }
+
+    /// Operation status of the previous target never carries into a new one: a retarget (the
+    /// sidebar's new session, a host switch, a result action) starts a fresh form. Requests
+    /// that only update this form's fields are dropped; a persisted creation intent is
+    /// re-read for the new tab.
+    fn reset_transient(&mut self) {
+        let stale = |req: &Req| matches!(req, Req::AddProject(_) | Req::Prepare | Req::SearchRepos);
+        self.pending.forget(stale);
+        self.busy = false;
+        self.error = None;
+        self.added_project = None;
+        self.preparation_unknown = false;
+        self.opened = false;
+        self.finishing = false;
+        self.intent = None;
+        self.snapshot = None;
+        self.observation = None;
+        self.create = None;
+        self.repo.clear();
+        self.directory_name.clear();
+        self.repositories.clear();
+    }
+
+    /// Add project submits an existing directory once it is named; clone and new-directory
+    /// sources prepare it first, and a registered result is acted on through its callout.
+    fn can_add_project(&self) -> bool {
+        !self.busy
+            && self.intent.is_none()
+            && self.added_project.is_none()
+            && self.source == "directory"
+            && !self.path.trim().is_empty()
+    }
+
+    /// The added project's "New session in this project": this tab becomes the New session
+    /// form for that directory, as the sidebar's per-project new session opens it.
+    fn open_added_project(&mut self, ctx: &mut UiContext) {
+        let Some(project) = self.added_project.clone() else {
+            return;
+        };
+        let target = PanelTarget::new("new_tab", &self.target.host_id, "", project_root(&project))
+            .with_id(new_id())
+            .with_title(t("sessionNavigation.newSession"))
+            .with_data(json!({ "project": project }));
+        ctx.effects.push(UiEffect::ReplaceTab {
+            tab_key: self.target.tab_key.clone(),
+            target,
+        });
+    }
+
+    /// "Add another project": an empty form on the same host.
+    fn reset_add_form(&mut self, cx: &mut Cx) {
+        self.reset_transient();
+        self.source = "directory".into();
+        self.path.clear();
+        self.catalog_cwd.clear();
+        let view = self.root();
+        sync_input(cx, &view.wa_input(id!(path)), "");
+        sync_input(cx, &view.wa_input(id!(repo_field.row.input_box)), "");
+        sync_input(cx, &view.wa_input(id!(dirname_input)), "");
+        self.view.redraw(cx);
     }
 
     fn host<'a>(&self, ctx: &'a UiContext) -> Option<host::Host<'a>> {
@@ -996,6 +1091,24 @@ impl WaNewTabView {
         self.create = None;
     }
 
+    /// Add project registers the chosen existing directory; the result shows in the form's
+    /// callout and errors under its fields.
+    fn start_add_project(&mut self, ctx: &mut UiContext) {
+        if !self.can_add_project() {
+            return;
+        }
+        let cwd = self.path.trim().to_owned();
+        self.error = None;
+        self.busy = true;
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "project.add.request",
+            json!({ "cwd": cwd }),
+            Req::AddProject(cwd),
+        );
+    }
+
     /// `_create`: the synchronous checks, then branch validation and offered features.
     fn start_create(&mut self, ctx: &mut UiContext) {
         if self.busy {
@@ -1033,7 +1146,7 @@ impl WaNewTabView {
             && (!self.prompt.trim().is_empty()
                 || !self.images.is_empty()
                 || !self.attachments.is_empty());
-        let with_agent = !terminal && !self.add_project();
+        let with_agent = !terminal;
         if with_agent && self.catalog_cwd != cwd {
             forget_timer(&mut self.directory_timer);
             self.catalog_cwd = cwd;
@@ -1051,26 +1164,11 @@ impl WaNewTabView {
             );
         }
         if !model::SOURCES.contains(&self.source.as_str()) {
-            return self.fail(
-                ctx,
-                l("Worktree creation is no longer supported. Choose a local directory.").into(),
-                true,
-            );
+            return self.fail(ctx, t("newWorkspace.errors.worktreeUnsupported"), true);
         }
         // new-workspace-screen.tsx createWorkspaceChatAgent: the effective model, mode and
         // thinking option; the selection is remembered on submit.
         let mut effective = agent_form::effective_submit_config(&self.config, &self.providers);
-        if self.add_project() {
-            self.busy = true;
-            self.pending.send(
-                &ctx.core,
-                &self.target.host_id,
-                "project.add.request",
-                json!({ "cwd": cwd }),
-                Req::AddProject,
-            );
-            return;
-        }
         let local_features = effective
             .as_object_mut()
             .and_then(|m| m.remove("featureValues"))
@@ -1219,9 +1317,7 @@ impl WaNewTabView {
             && str_of(object_of(object_of(&intent, "request"), "source"), "kind") != "directory"
         {
             self.busy = false;
-            self.error = Some(
-                l("Worktree creation is no longer supported. Choose a local directory.").into(),
-            );
+            self.error = Some(t("newWorkspace.errors.worktreeUnsupported"));
             return;
         }
         let message = super::rpc::message(
@@ -1567,18 +1663,18 @@ impl WaNewTabView {
                     .map(|b| array_of(&b, "features").to_vec())
                     .unwrap_or_default();
             }
-            Req::AddProject => {
+            Req::AddProject(cwd) => {
                 self.busy = false;
                 match checked(result, "project.add.request") {
-                    Ok(body) if body.get("project").is_some_and(|p| !p.is_null()) => {
+                    Ok(body) if body.get("project").is_some_and(Value::is_object) => {
                         ctx.core.refresh_host(&self.target.host_id);
-                        self.project_added = true;
+                        let mut project = body["project"].clone();
+                        if project_root(&project).is_empty() {
+                            project["projectRootPath"] = Value::String(cwd);
+                        }
+                        self.added_project = Some(project);
                     }
-                    Ok(_) => self.fail(
-                        ctx,
-                        l("The host did not return a registered project.").into(),
-                        false,
-                    ),
+                    Ok(_) => self.fail(ctx, t("newWorkspace.addProject.errors.noProject"), false),
                     Err(error) => self.fail(ctx, error.to_string(), false),
                 }
             }
@@ -1600,7 +1696,11 @@ impl WaNewTabView {
                         )
                         .to_owned();
                         if directory.is_empty() {
-                            return self.fail(ctx, l("The host did not return the prepared directory. Browse to inspect its state.").into(), false);
+                            return self.fail(
+                                ctx,
+                                t("newWorkspace.addProject.errors.noPreparedDirectory"),
+                                false,
+                            );
                         }
                         self.set_directory(cx, ctx, &directory);
                         self.source = "directory".into();
@@ -2300,6 +2400,16 @@ impl WaNewTabView {
             self.start_create(ctx);
             self.view.redraw(cx);
         }
+        if view.wa_button(id!(add_submit)).clicked(actions) {
+            self.start_add_project(ctx);
+            self.view.redraw(cx);
+        }
+        if view.wa_button(id!(new_session)).clicked(actions) {
+            self.open_added_project(ctx);
+        }
+        if view.wa_button(id!(add_another)).clicked(actions) && self.added_project.is_some() {
+            self.reset_add_form(cx);
+        }
         // Field triggers.
         if view.wa_trigger(id!(project_field)).clicked(actions) && !pending_intent {
             self.open_project_picker(cx, ctx);
@@ -2415,34 +2525,26 @@ impl WaNewTabView {
             self.sync_forge(cx, ctx);
             self.view.redraw(cx);
         }
-        // Bottom row and options.
+        // Bottom row and the Add project form.
         if view.wa_button(id!(import_session)).clicked(actions) {
             ctx.effects.push(UiEffect::RunCommand {
                 action: "session.import".into(),
                 args: json!({ "serverId": self.target.host_id }),
             });
         }
-        if view.wa_button(id!(options_toggle)).clicked(actions) {
-            self.options_open = !self.options_open;
-            self.view.redraw(cx);
-        }
-        if view.wa_button(id!(source)).clicked(actions) {
-            let glyphs = ["folder", "download", "folder-plus"];
-            let labels = [
-                l("Existing checkout or directory"),
-                l("Clone GitHub repository"),
-                l("Create remote directory"),
-            ];
+        if view.wa_button(id!(source)).clicked(actions) && !locked && self.added_project.is_none() {
             let options = model::SOURCES
                 .iter()
-                .zip(labels)
-                .zip(glyphs)
-                .map(|((id, label), glyph)| SelectOption::new(*id, label).glyph(glyph))
+                .map(|id| {
+                    let (key, glyph) = source_copy(id);
+                    SelectOption::new(*id, t(key)).glyph(glyph)
+                })
                 .collect();
             view.wa_select(id!(select)).open(
                 cx,
                 "source",
-                SelectRequest::new(l("Directory source"), options).selected(Some(&self.source)),
+                SelectRequest::new(t("newWorkspace.addProject.source"), options)
+                    .selected(Some(&self.source)),
             );
         }
         if view.wa_button(id!(browse)).clicked(actions) {
@@ -2590,15 +2692,15 @@ impl WaNewTabView {
     fn prepare_directory(&mut self, ctx: &mut UiContext) {
         self.error = None;
         if self.path.trim().is_empty() {
-            return self.fail(ctx, l("Choose a remote parent directory.").into(), false);
+            return self.fail(ctx, t("newWorkspace.addProject.errors.chooseParent"), false);
         }
         if self.source == "new-directory" && self.directory_name.trim().is_empty() {
-            return self.fail(ctx, l("Enter a directory name.").into(), false);
+            return self.fail(ctx, t("newWorkspace.addProject.errors.enterName"), false);
         }
         if self.source == "clone" && self.repo.trim().is_empty() {
             return self.fail(
                 ctx,
-                l("Choose a repository or enter owner/repository.").into(),
+                t("newWorkspace.addProject.errors.chooseRepository"),
                 false,
             );
         }
@@ -2646,7 +2748,11 @@ impl WaNewTabView {
                 );
                 let target = PanelTarget::new("new_tab", &value, "", "")
                     .with_id(new_id())
-                    .with_title(t("sessionNavigation.newSession"))
+                    .with_title(t(if self.add_project() {
+                        "sidebar.actions.addProject"
+                    } else {
+                        "sessionNavigation.newSession"
+                    }))
                     .with_data(Value::Object(data));
                 ctx.effects.push(UiEffect::ReplaceTab {
                     tab_key: self.target.tab_key.clone(),
@@ -2802,12 +2908,18 @@ impl WaNewTabView {
                 } else {
                     (12.0, 16.0, 16.0, 10.0, 4.0, 60.0)
                 };
+                // Compact Add project pins one full-width primary action under the form,
+                // which the bottom-docked scroll keeps above the keyboard.
                 if self.compact {
                     view.widget(id!(fields))
                         .apply_over(cx, live! { flow: Down });
+                    view.widget(id!(add_submit))
+                        .apply_over(cx, live! { width: Fill });
                 } else {
                     view.widget(id!(fields))
                         .apply_over(cx, live! { flow: Right });
+                    view.widget(id!(add_submit))
+                        .apply_over(cx, live! { width: Fit });
                 }
                 view.widget(id!(composer.card))
                     .apply_over(cx, live! { padding: { bottom: (card_bottom) } });
@@ -2829,11 +2941,14 @@ impl WaNewTabView {
         }
         if !self.synced {
             self.synced = true;
-            for (path, text) in [
-                (id!(path), self.path.clone()),
-                (id!(prompt), self.prompt.clone()),
-            ] {
-                sync_input(cx, &view.wa_input(path), &text);
+            let inputs: [(&[LiveId], &str); 4] = [
+                (id!(path), &self.path),
+                (id!(prompt), &self.prompt),
+                (id!(repo_field.row.input_box), &self.repo),
+                (id!(dirname_input), &self.directory_name),
+            ];
+            for (path, text) in inputs {
+                sync_input(cx, &view.wa_input(path), text);
             }
             // Native composer: 30px minimum input (6px vertical inset) and 20px glyphs.
             if host::is_mobile() {
@@ -2883,12 +2998,12 @@ impl WaNewTabView {
         }
         let notice = if self.opened {
             l("Session created. It is open in the tab bar.")
-        } else if self.project_added {
-            l("Project added. It is available in the sidebar.")
         } else {
             ""
         };
         set_optional(cx, &view.widget(id!(notice)), notice);
+        view.widget(id!(add_top))
+            .set_visible(cx, add_project && !self.compact);
         // Compact shows the New session title in the header; Add project names itself here.
         let heading = if add_project {
             t("sidebar.actions.addProject")
@@ -2929,9 +3044,8 @@ impl WaNewTabView {
             None => TriggerLead::Icon("folder"),
         };
         let project_trigger = view.wa_trigger(id!(project_field));
-        // Add project's options carry the remote directory field; a second selector for the
-        // same directory only shows while those options are collapsed.
-        let show_project = !(add_project && self.options_open);
+        // Add project names its directory in the form's own field: no second selector.
+        let show_project = !add_project;
         project_trigger.set_visible(cx, show_project);
         project_trigger.set(
             cx,
@@ -3047,11 +3161,12 @@ impl WaNewTabView {
                 false,
             );
         }
-        // A Terminal launch replaces the composer with one Open terminal action.
-        view.widget(id!(composer)).set_visible(cx, !terminal);
+        // A Terminal launch replaces the composer with one Open terminal action; Add project
+        // has its own form instead.
+        view.widget(id!(composer))
+            .set_visible(cx, !terminal && !add_project);
         view.widget(id!(terminal_launch)).set_visible(cx, terminal);
         let prompt = view.wa_input(id!(prompt));
-        prompt.set_visible(cx, !add_project);
         prompt.set_is_read_only(cx, locked);
         prompt.set_empty_text(
             cx,
@@ -3061,14 +3176,6 @@ impl WaNewTabView {
                 "composer.placeholders.desktop"
             }),
         );
-        let preview = if !add_project {
-            String::new()
-        } else {
-            t("sidebar.actions.addProject")
-        };
-        set_optional(cx, &view.widget(id!(title_preview)), &preview);
-        view.widget(id!(agent_controls))
-            .set_visible(cx, !add_project);
         let attach = view.wa_button(id!(attach));
         attach.set_enabled(cx, self.connected && !locked);
         attach.set_tooltip(cx, &t("composer.input.addAttachment"));
@@ -3183,24 +3290,8 @@ impl WaNewTabView {
         let submit = view.wa_button(id!(submit));
         let creating = self.busy || (pending_intent && !self.opened);
         submit.set_busy(cx, creating);
-        submit.set_text(
-            cx,
-            &if !add_project || creating {
-                String::new()
-            } else {
-                t("sidebar.actions.addProject")
-            },
-        );
-        submit.set_icon(cx, if !add_project { "corner-down-left" } else { "" });
         submit.set_enabled(cx, self.can_create());
-        submit.set_tooltip(
-            cx,
-            &t(if add_project {
-                "sidebar.actions.addProject"
-            } else {
-                "sessionNavigation.newSession"
-            }),
-        );
+        submit.set_tooltip(cx, &t("sessionNavigation.newSession"));
         let open_terminal = view.wa_button(id!(open_terminal));
         open_terminal.set_busy(cx, terminal && creating);
         open_terminal.set_text(
@@ -3212,35 +3303,24 @@ impl WaNewTabView {
             },
         );
         open_terminal.set_enabled(cx, self.can_create());
+        // Add project shows its errors under its fields.
         set_optional(
             cx,
             &view.widget(id!(error)),
-            self.error.as_deref().unwrap_or(""),
-        );
-        let import = view.wa_button(id!(import_session));
-        import.set_visible(cx, !self.compact);
-        import.set_text(cx, &t("importSession.title"));
-        import.set_pill(cx, !self.compact);
-        let toggle = view.wa_button(id!(options_toggle));
-        toggle.set_visible(cx, add_project);
-        toggle.set_text(cx, l("Directory options"));
-        toggle.set_trailing(
-            cx,
-            if self.options_open {
-                "chevron-up"
+            if add_project {
+                ""
             } else {
-                "chevron-down"
+                self.error.as_deref().unwrap_or("")
             },
         );
-        toggle.set_pill(cx, !self.compact);
+        let import = view.wa_button(id!(import_session));
+        import.set_text(cx, &t("importSession.title"));
+        import.set_pill(cx, true);
         view.widget(id!(bottom))
-            .set_visible(cx, !self.compact || add_project);
-        // Options.
-        let options = view.widget(id!(options));
-        let show_options = add_project && self.options_open;
-        options.set_visible(cx, show_options);
-        if show_options {
-            self.present_options(cx);
+            .set_visible(cx, !self.compact && !add_project);
+        view.widget(id!(add_form)).set_visible(cx, add_project);
+        if add_project {
+            self.present_add_form(cx);
         }
         let unlocked = !(self.busy || pending_intent);
         for path in [id!(mode), id!(thinking)] {
@@ -3350,47 +3430,49 @@ impl WaNewTabView {
         }
     }
 
-    fn present_options(&mut self, cx: &mut Cx) {
+    /// Add project's form: source, directory (with browse), preparation fields, inline
+    /// error, then either the Add action or, once registered, the result callout in its place.
+    fn present_add_form(&mut self, cx: &mut Cx) {
         let view = self.root();
+        let added = self.added_project.clone();
+        let locked = self.busy || self.intent.is_some() || added.is_some();
         let source_field = view.widget(id!(source_field));
         source_field.set_visible(cx, !self.existing);
         source_field
             .widget(id!(label))
-            .set_text(cx, l("Directory source"));
-        let source_label = match self.source.as_str() {
-            "clone" => l("Clone GitHub repository"),
-            "new-directory" => l("Create remote directory"),
-            source if !model::SOURCES.contains(&source) => {
-                l("Worktree creation is no longer supported. Choose a local directory.")
-            }
-            _ => l("Existing checkout or directory"),
-        };
-        view.wa_button(id!(source)).set_text(cx, source_label);
-        let source_icon = match self.source.as_str() {
-            "clone" => "download",
-            "new-directory" => "folder-plus",
-            _ => "folder",
-        };
-        view.wa_button(id!(source)).set_icon(cx, source_icon);
+            .set_text(cx, &t("newWorkspace.addProject.source"));
+        let source = view.wa_button(id!(source));
+        let (source_key, source_icon) = source_copy(&self.source);
+        source.set_text(
+            cx,
+            &t(if model::SOURCES.contains(&self.source.as_str()) {
+                source_key
+            } else {
+                "newWorkspace.errors.worktreeUnsupported"
+            }),
+        );
+        source.set_icon(cx, source_icon);
+        source.set_enabled(cx, !locked);
         let directory_label = match self.source.as_str() {
-            "new-directory" => l("Parent directory"),
-            "clone" => l("Clone target directory"),
-            _ => l("Remote directory"),
+            "new-directory" => "newWorkspace.addProject.directory.parent",
+            "clone" => "newWorkspace.addProject.directory.cloneTarget",
+            _ => "newWorkspace.addProject.directory.existing",
         };
         view.widget(id!(directory_field.label))
-            .set_text(cx, directory_label);
-        view.wa_input(id!(path))
-            .set_is_read_only(cx, self.busy || self.intent.is_some());
+            .set_text(cx, &t(directory_label));
+        let path = view.wa_input(id!(path));
+        path.set_is_read_only(cx, locked);
+        path.set_empty_text(cx, t("newWorkspace.addProject.directory.placeholder"));
         let browse = view.wa_button(id!(browse));
-        browse.set_enabled(cx, !self.busy && self.intent.is_none());
-        browse.set_tooltip(cx, l("Browse remote directories"));
+        browse.set_enabled(cx, !locked);
+        browse.set_tooltip(cx, &t("newWorkspace.addProject.directory.browse"));
         let clone = !self.existing && self.source == "clone";
         view.widget(id!(repo_field)).set_visible(cx, clone);
         view.widget(id!(repo_field.label))
-            .set_text(cx, l("Repository or search query"));
+            .set_text(cx, &t("newWorkspace.addProject.repository"));
         view.widget(id!(protocol_field)).set_visible(cx, clone);
         view.widget(id!(protocol_field.label))
-            .set_text(cx, l("Clone protocol"));
+            .set_text(cx, &t("newWorkspace.addProject.protocol"));
         let segment = |value: &str, label: &str| Segment {
             value: value.into(),
             label: label.into(),
@@ -3403,21 +3485,19 @@ impl WaNewTabView {
             &self.clone_protocol,
         );
         view.wa_button(id!(repo_field.search))
-            .set_tooltip(cx, l("Search GitHub repositories"));
+            .set_tooltip(cx, &t("newWorkspace.addProject.searchRepositories"));
         let new_dir = !self.existing && self.source == "new-directory";
         view.widget(id!(dirname_field)).set_visible(cx, new_dir);
         view.widget(id!(dirname_field.label))
-            .set_text(cx, l("New directory name"));
+            .set_text(cx, &t("newWorkspace.addProject.directoryName"));
         let prepare_visible = clone || new_dir;
         set_optional(
             cx,
             &view.widget(id!(unknown)),
-            if prepare_visible && self.preparation_unknown {
-                l(
-                    "The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.",
-                )
+            &if prepare_visible && self.preparation_unknown {
+                t("newWorkspace.addProject.unknownOutcome")
             } else {
-                ""
+                String::new()
             },
         );
         view.widget(id!(prepare_row))
@@ -3425,17 +3505,46 @@ impl WaNewTabView {
         let prepare = view.wa_button(id!(prepare));
         prepare.set_text(
             cx,
-            if clone {
-                l("Clone repository")
+            &t(if clone {
+                "newWorkspace.addProject.cloneRepository"
             } else {
-                l("Create directory")
-            },
+                "newWorkspace.addProject.createDirectory"
+            }),
         );
         prepare.set_busy(cx, self.busy);
         prepare.set_enabled(cx, !self.preparation_unknown);
         let inspect = view.wa_button(id!(inspect_prepared));
         inspect.set_visible(cx, self.preparation_unknown);
-        inspect.set_text(cx, l("Inspect and select prepared directory"));
+        inspect.set_text(cx, &t("newWorkspace.addProject.inspectPrepared"));
+        set_optional(
+            cx,
+            &view.widget(id!(field_error)),
+            self.error.as_deref().unwrap_or(""),
+        );
+        // The callout takes the Add row's place, so nothing above it moves.
+        view.widget(id!(add_row)).set_visible(cx, added.is_none());
+        let submit = view.wa_button(id!(add_submit));
+        submit.set_text(cx, &t("sidebar.actions.addProject"));
+        let adding = self.pending.any(|req| matches!(req, Req::AddProject(_)));
+        submit.set_busy(cx, adding);
+        submit.set_enabled(cx, self.can_add_project());
+        let callout = view.widget(id!(added));
+        callout.set_visible(cx, added.is_some());
+        if let Some(project) = &added {
+            set_alert(
+                cx,
+                &callout,
+                &t("newWorkspace.addProject.added.title"),
+                &ta(
+                    "newWorkspace.addProject.added.description",
+                    &[("name", &host::project_name(project))],
+                ),
+            );
+            view.wa_button(id!(new_session))
+                .set_text(cx, &t("newWorkspace.addProject.added.newSession"));
+            view.wa_button(id!(add_another))
+                .set_text(cx, &t("newWorkspace.addProject.added.addAnother"));
+        }
     }
 }
 
@@ -3676,7 +3785,8 @@ impl Widget for WaNewTabView {
         }
         let step = self.view.draw_walk(cx, scope, walk);
         // Align after measurement: a form taller than its viewport must start at the
-        // top, while a fitting compact form is bottom-docked.
+        // top, while a fitting compact form is bottom-docked. Wide Add project starts at the
+        // top so its error and result rows only grow downward.
         let view = self.root();
         let viewport = view.widget(id!(scroll)).area().rect(cx).size.y;
         let content =
@@ -3685,6 +3795,8 @@ impl Widget for WaNewTabView {
             0.0
         } else if self.compact {
             1.0
+        } else if self.add_project() {
+            0.0
         } else {
             0.5
         };
@@ -4034,5 +4146,145 @@ mod completion_tests {
         assert_eq!(h.layout.tabs.len(), 2);
         assert!(h.layout.target(&h.owner).is_none());
         assert_eq!(h.layout.selected().unwrap().key(), h.sibling);
+    }
+
+    fn add_project_harness() -> Harness {
+        let mut h = Harness::new(false, false);
+        h.view.intent = None;
+        h.view.target.data = json!({ "addProject": true });
+        h.view.source = "directory".into();
+        h
+    }
+
+    #[test]
+    fn add_project_submits_only_a_named_existing_directory_once() {
+        let mut h = add_project_harness();
+        h.view.path = "  ".into();
+        assert!(!h.view.can_add_project());
+        h.view.path = "/repo".into();
+        assert!(h.view.can_add_project());
+        for source in ["clone", "new-directory", "worktree"] {
+            h.view.source = source.into();
+            assert!(!h.view.can_add_project(), "{source} must be prepared first");
+        }
+        h.view.source = "directory".into();
+        h.view.start_add_project(&mut h.ctx);
+        assert!(h.view.busy);
+        assert!(!h.view.can_add_project());
+        h.view.answer(
+            &mut h.cx,
+            &mut h.ctx,
+            Req::AddProject("/repo".into()),
+            Ok(json!({ "project": { "projectId": "added" } })),
+        );
+        assert!(!h.view.busy);
+        assert!(h.view.error.is_none());
+        let added = h.view.added_project.clone().unwrap();
+        assert_eq!(added["projectRootPath"], "/repo");
+        // The callout replaces the Add action until the result is acted on.
+        assert!(!h.view.can_add_project());
+        assert_eq!(h.apply(), 0);
+    }
+
+    #[test]
+    fn add_project_failure_stays_inline_and_keeps_the_directory() {
+        let mut h = add_project_harness();
+        h.view.path = "/repo".into();
+        h.view.start_add_project(&mut h.ctx);
+        h.view.answer(
+            &mut h.cx,
+            &mut h.ctx,
+            Req::AddProject("/repo".into()),
+            Err(RpcError::new("Not a directory")),
+        );
+        assert_eq!(h.view.error.as_deref(), Some("Not a directory"));
+        assert!(h.view.added_project.is_none());
+        assert_eq!(h.view.path, "/repo");
+        assert!(h.view.can_add_project());
+        let toast = |effect: &UiEffect| matches!(effect, UiEffect::Toast { .. });
+        assert!(!h.ctx.effects.iter().any(toast));
+    }
+
+    #[test]
+    fn added_project_opens_new_session_form_in_the_same_tab() {
+        let mut h = add_project_harness();
+        let project = json!({ "projectId": "added", "projectRootPath": "/repo" });
+        h.view.added_project = Some(project.clone());
+        h.view.open_added_project(&mut h.ctx);
+        assert_eq!(h.apply(), 1);
+        assert!(h.layout.target(&h.owner).is_none());
+        let pane = h
+            .layout
+            .panes()
+            .into_iter()
+            .find(|pane| pane.id != h.sibling_pane)
+            .unwrap();
+        assert_eq!(pane.tabs.len(), 1);
+        let target = h.layout.target(&pane.tabs[0]).unwrap();
+        assert_eq!(target.kind, "new_tab");
+        assert_eq!(target.server_id, "owner-host");
+        assert_eq!(target.cwd, "/repo");
+        assert_eq!(target.data["project"], project);
+        assert!(target.data.get("addProject").is_none());
+        assert_eq!(h.layout.selected().unwrap().key(), h.sibling);
+    }
+
+    #[test]
+    fn add_another_project_clears_the_result_and_directory() {
+        let mut h = add_project_harness();
+        h.view.path = "/repo".into();
+        h.view.error = Some("old".into());
+        h.view.added_project = Some(json!({ "projectRootPath": "/repo" }));
+        h.view.reset_add_form(&mut h.cx);
+        assert!(h.view.added_project.is_none());
+        assert!(h.view.error.is_none());
+        assert!(h.view.path.is_empty());
+        assert!(!h.view.can_add_project());
+        h.view.path = "/other".into();
+        assert!(h.view.can_add_project());
+    }
+
+    #[test]
+    fn retarget_resets_add_project_result_and_operation_state() {
+        let mut h = add_project_harness();
+        h.view.path = "/repo".into();
+        h.view.start_add_project(&mut h.ctx);
+        h.view.added_project = Some(json!({ "projectRootPath": "/repo" }));
+        h.view.error = Some("old".into());
+        h.view.preparation_unknown = true;
+        h.view.opened = true;
+        h.view.repo = "owner/repo".into();
+        h.view.initialized = true;
+        // The sidebar's new session for the added project retargets this form.
+        let next = NewTabTarget {
+            host_id: "owner-host".into(),
+            cwd: "/repo".into(),
+            tab_key: "next".into(),
+            data: json!({ "project": { "projectRootPath": "/repo" } }),
+            ..Default::default()
+        };
+        h.view.set_new_tab(&mut h.cx, next);
+        assert!(!h.view.initialized);
+        h.view.initialize(&mut h.ctx);
+        assert!(!h.view.add_project());
+        assert!(h.view.added_project.is_none());
+        assert!(h.view.error.is_none());
+        assert!(!h.view.busy);
+        assert!(!h.view.preparation_unknown);
+        assert!(!h.view.opened);
+        assert!(h.view.repo.is_empty());
+        assert!(!h.view.pending.any(|req| matches!(req, Req::AddProject(_))));
+        assert_eq!(h.view.path, "/repo");
+        // A fresh Add project target starts without a directory.
+        let add = NewTabTarget {
+            host_id: "owner-host".into(),
+            tab_key: "add".into(),
+            data: json!({ "addProject": true }),
+            ..Default::default()
+        };
+        h.view.set_new_tab(&mut h.cx, add);
+        h.view.initialize(&mut h.ctx);
+        assert!(h.view.path.is_empty());
+        assert!(!h.view.can_add_project());
     }
 }

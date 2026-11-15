@@ -1,18 +1,24 @@
 //! The model/agent-controls sheet (Flutter `_AgentControlsSheet` + `_ModelListSheet`):
-//! profiles, providers, models (search across providers), thinking, mode and feature pages.
-//! Rows are rebuilt from the controller on every draw so the open sheet follows the live
-//! provider catalog and draft features.
+//! profiles, a quick switch over favorite or recent models, thinking, mode and feature pages,
+//! and the full model list (Favorites, Recent, then every provider as a collapsible group,
+//! searchable across providers). Rows are rebuilt from the controller on every draw so the
+//! open sheet follows the live provider catalog, draft features and saved picks.
 
 use crate::features::composer::controller::Controller;
 use crate::features::composer::controls_model::*;
 use crate::features::composer::i18n::{t, t_args};
 use crate::features::composer::json::*;
+use crate::features::composer::model_picks::{
+    Availability, Group, ModelPicks, ModelRef, Pick, ProviderState, QuickKind, quick_switch,
+    search, sections, starts_collapsed,
+};
 use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Root,
-    Providers,
+    /// The full model list.
     Models,
     Thinking,
     Mode,
@@ -22,16 +28,15 @@ pub enum Page {
 #[derive(Clone, Debug)]
 pub struct SheetState {
     pub pages: Vec<Page>,
-    pub drill: Option<String>,
     pub feature: Option<Value>,
     pub can_switch: bool,
     /// The selection shown while a running agent applies the change (Flutter sheet-local
     /// `config`); drafts read their persisted config directly.
     pub config: Option<Value>,
     pub rows: Vec<Row>,
-    /// Compact single-provider model browser stacked over this sheet (`_ModelListSheet`).
-    pub stacked: Option<String>,
-    pub stacked_rows: Vec<Row>,
+    /// Provider groups the user expanded (`true`) or collapsed (`false`) in this sheet;
+    /// others follow [`starts_collapsed`].
+    pub expanded: HashMap<String, bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,11 +50,20 @@ pub enum Leading {
 pub enum RowAction {
     ApplyProfile(Value),
     OpenProfiles,
-    Drill(String),
     SelectModel {
         provider: String,
         model: String,
     },
+    ToggleFavorite {
+        provider: String,
+        model: String,
+    },
+    /// Expand (`true`) or collapse a provider group of the full list.
+    ToggleGroup {
+        provider: String,
+        expand: bool,
+    },
+    ProviderSettings(String),
     OpenModels,
     Push(Page),
     OpenFeature(Value),
@@ -59,6 +73,17 @@ pub enum RowAction {
     EditProfile(Value),
 }
 
+/// A trailing icon button of a row (favorite star, profile create/edit, provider settings).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trailing {
+    pub icon: &'static str,
+    pub action: RowAction,
+    /// Tooltip and accessible name.
+    pub label: String,
+    /// Drawn in the highlight tint (a pinned favorite).
+    pub active: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub heading: bool,
@@ -66,17 +91,27 @@ pub struct Row {
     pub leading: Leading,
     pub label: String,
     pub label_muted: bool,
+    /// Medium weight label (provider group headers).
+    pub strong: bool,
+    /// Shown but not selectable (unavailable model or provider): muted, no row hit.
+    pub disabled: bool,
     pub description: String,
     /// Settings-row value (`_SheetRow`) or provider-row trailing text.
     pub value: String,
     pub chevron: bool,
+    /// A collapsible group header: `Some(expanded)` draws a down/right chevron.
+    pub expanded: Option<bool>,
     pub loading: bool,
     pub warning: bool,
     pub selected: bool,
+    /// Reserve the check column even when unselected, so trailing buttons line up.
+    pub check_slot: bool,
     pub action: Option<RowAction>,
-    /// The row's trailing icon button (profile create/edit).
-    pub secondary: Option<(&'static str, RowAction, String)>,
-    pub error: bool,
+    /// Trailing icon buttons, rightmost first.
+    pub trailing: Vec<Trailing>,
+    /// `section:provider/model` of a model row (empty otherwise): finds the same row again
+    /// after a favorite toggle reshuffles the sections above it.
+    pub key: String,
 }
 
 impl Row {
@@ -87,15 +122,19 @@ impl Row {
             leading: Leading::None,
             label: label.into(),
             label_muted: false,
+            strong: false,
+            disabled: false,
             description: String::new(),
             value: String::new(),
             chevron: false,
+            expanded: None,
             loading: false,
             warning: false,
             selected: false,
+            check_slot: false,
             action: None,
-            secondary: None,
-            error: false,
+            trailing: Vec::new(),
+            key: String::new(),
         }
     }
 
@@ -117,8 +156,6 @@ impl Row {
 pub struct SheetView {
     pub title: String,
     pub back: bool,
-    pub leading_provider: Option<(String, String)>,
-    pub gear: Option<String>,
     pub searchable: bool,
     pub placeholder: String,
     pub empty: Option<(&'static str, String)>,
@@ -135,17 +172,25 @@ fn labels() -> (String, String, String, String, String) {
     )
 }
 
+/// Model row presentation: provider-qualified descriptions (several providers in view) and
+/// the profile create/edit trailing action.
+#[derive(Clone, Copy)]
+struct RowFlags {
+    qualified: bool,
+    profiles: bool,
+    /// Names the section in [`Row::key`].
+    section: &'static str,
+}
+
 impl SheetState {
     pub fn new(can_switch: bool) -> Self {
         Self {
             pages: vec![Page::Root],
-            drill: None,
             feature: None,
             can_switch,
             config: None,
             rows: Vec::new(),
-            stacked: None,
-            stacked_rows: Vec::new(),
+            expanded: HashMap::new(),
         }
     }
 
@@ -160,9 +205,6 @@ impl SheetState {
     pub fn pop(&mut self) {
         if self.pages.len() > 1 {
             self.pages.pop();
-        }
-        if matches!(self.page(), Page::Providers | Page::Root) {
-            self.drill = None;
         }
     }
 
@@ -185,26 +227,26 @@ impl SheetState {
         .unwrap_or_else(|| ctl.modes())
     }
 
-    fn available_providers(&self, ctl: &Controller, config: &Value) -> Vec<Value> {
+    /// The one provider a running agent may use (its own, else the first listed); `None`
+    /// when any provider can be chosen.
+    fn scope(&self, ctl: &Controller, config: &Value) -> Option<String> {
         if self.can_switch {
-            return ctl.providers.clone();
+            return None;
         }
         ctl.providers
             .iter()
             .find(|p| get(p, "provider") == get(config, "provider"))
             .or_else(|| ctl.providers.first())
-            .cloned()
-            .into_iter()
-            .collect()
+            .map(|p| owned(get(p, "provider")))
     }
 
     /// Rebuild rows for the current page and query; returns the header/view facts.
     pub fn build(
         &mut self,
         ctl: &Controller,
-        compact: bool,
         query: &str,
         profiles_supported: bool,
+        picks: &ModelPicks,
     ) -> SheetView {
         let config = self.config(ctl);
         let features = ctl.features();
@@ -225,22 +267,26 @@ impl SheetState {
             extra_high: &extra_high,
         };
         let page = self.page();
-        let drilled = self
-            .drill
-            .as_ref()
-            .and_then(|id| providers.iter().find(|p| s(get(p, "provider")) == id))
-            .cloned();
-        let available = self.available_providers(ctl, &config);
+        let scope = self.scope(ctl, &config);
+        let scope = scope.as_deref();
+        let qualified = scope.is_none() && providers.len() > 1;
+        // The model in use counts as recent, so the quick switch is never empty.
+        let current = model
+            .selected_model()
+            .map(|m| ModelRef::new(owned(get(&config, "provider")), owned(get(&m, "id"))));
+        let seeded = picks.clone().seeded(current.as_ref());
+        let picks = &seeded;
+        let rc = RowCtx {
+            ctl,
+            picks,
+            selected: current,
+        };
         let query = query.trim().to_lowercase();
-        let searchable = matches!(page, Page::Root | Page::Providers | Page::Models);
+        let searchable = matches!(page, Page::Root | Page::Models);
         let mut view = SheetView {
             title: match page {
                 Page::Root => t("modelSelector.selectModel"),
-                Page::Providers => t("modelSelector.title"),
-                Page::Models => drilled
-                    .as_ref()
-                    .map(|p| s_or(get(p, "label"), s(get(p, "provider"))).to_owned())
-                    .unwrap_or_else(|| self.drill.clone().unwrap_or_default()),
+                Page::Models => t("modelSelector.model"),
                 Page::Thinking => t("agentControls.thinking.title"),
                 Page::Mode => t("agentControls.mode.title"),
                 Page::Feature => self
@@ -250,16 +296,8 @@ impl SheetState {
                     .unwrap_or_default(),
             },
             back: self.pages.len() > 1,
-            leading_provider: (page == Page::Models).then(|| {
-                let svg = drilled
-                    .as_ref()
-                    .map(|p| owned(get(p, "iconSvg")))
-                    .unwrap_or_default();
-                (self.drill.clone().unwrap_or_default(), svg)
-            }),
-            gear: (page == Page::Models).then(|| self.drill.clone().unwrap_or_default()),
             searchable,
-            placeholder: if page == Page::Models || !self.can_switch {
+            placeholder: if scope.is_some() {
                 t("modelSelector.searchPlaceholder")
             } else {
                 t("modelSelector.searchAllPlaceholder")
@@ -269,43 +307,13 @@ impl SheetState {
         };
         let mut rows = Vec::new();
         if searchable && !query.is_empty() {
-            let only = if page == Page::Models {
-                drilled.clone()
-            } else {
-                None
+            let flags = RowFlags {
+                qualified,
+                profiles: profiles_supported,
+                section: "search",
             };
-            let scope = match &only {
-                Some(p) => vec![p.clone()],
-                None => available.clone(),
-            };
-            for provider in &scope {
-                let provider_label =
-                    s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned();
-                let matches: Vec<Value> = models_of(provider)
-                    .into_iter()
-                    .filter(|row| {
-                        [
-                            model_label(row),
-                            owned(get(row, "id")),
-                            provider_label.clone(),
-                            owned(get(row, "description")),
-                        ]
-                        .iter()
-                        .any(|field| field.to_lowercase().contains(&query))
-                    })
-                    .collect();
-                let qualified = only.is_none() && available.len() > 1;
-                self.model_rows(
-                    &mut rows,
-                    ctl,
-                    &model,
-                    provider,
-                    &matches,
-                    RowFlags {
-                        qualified,
-                        profiles_supported,
-                    },
-                );
+            for pick in search(&providers, picks, scope, &query) {
+                rows.push(model_row(&rc, &pick, flags));
             }
             if rows.is_empty() {
                 view.empty = Some((
@@ -321,64 +329,72 @@ impl SheetState {
         }
         match page {
             Page::Root => {
-                self.profile_rows(&mut rows, ctl, &config, profiles_supported);
-                if compact {
-                    rows.push(Row::divider());
-                    self.settings_rows(&mut rows, &model, &model_labels, &features, true);
-                } else {
-                    if !ctl.profiles.is_empty() {
-                        rows.push(Row::heading(t("modelSelector.providers")));
-                    }
-                    if available.len() == 1 {
-                        let provider = available[0].clone();
-                        let models = models_of(&provider);
-                        self.model_rows(
-                            &mut rows,
-                            ctl,
-                            &model,
-                            &provider,
-                            &models,
-                            RowFlags {
-                                qualified: false,
-                                profiles_supported,
-                            },
-                        );
-                    } else {
-                        self.provider_rows(&mut rows, &available);
-                    }
-                    let mut settings = Vec::new();
-                    self.settings_rows(&mut settings, &model, &model_labels, &features, false);
-                    if !settings.is_empty() {
+                let profiles = self.profile_rows(&mut rows, ctl, &config, profiles_supported);
+                let sections = sections(&providers, picks, scope);
+                if let Some((kind, quick)) = quick_switch(&sections) {
+                    if !rows.is_empty() {
                         rows.push(Row::divider());
-                        rows.extend(settings);
                     }
+                    rows.push(Row::heading(match kind {
+                        QuickKind::Favorites => t("modelSelector.favorites"),
+                        QuickKind::Recents => t("modelSelector.recent"),
+                    }));
+                    let flags = RowFlags {
+                        qualified,
+                        profiles: false,
+                        section: "quick",
+                    };
+                    for pick in &quick {
+                        rows.push(model_row(&rc, pick, flags));
+                    }
+                }
+                if !rows.is_empty() {
+                    rows.push(Row::divider());
+                }
+                settings_rows(&mut rows, &model, &model_labels, &features);
+                // With no profiles yet, creating one stays offered below the controls.
+                if profiles == 0 && profiles_supported {
+                    rows.push(Row::divider());
+                    let mut row = Row::new(t("modelSelector.createProfile"));
+                    row.leading = Leading::Icon("plus", None);
+                    row.label_muted = true;
+                    row.action = Some(RowAction::OpenProfiles);
+                    rows.push(row);
                 }
             }
-            Page::Providers => self.provider_rows(&mut rows, &available),
             Page::Models => {
-                let provider = drilled.clone().unwrap_or_default();
-                let models = models_of(&provider);
-                if models.is_empty() {
-                    if get(&provider, "error").is_null() && s(get(&provider, "status")) == "loading"
-                    {
-                        view.loading = true;
-                    } else if get(&provider, "error").is_null() {
-                        view.empty = Some(("search", t("modelSelector.noMatches")));
+                let sections = sections(&providers, picks, scope);
+                if sections.groups.is_empty() {
+                    if ctl.providers_loaded {
+                        view.empty = Some(("bot", t("modelSelector.noProviders")));
                     } else {
-                        view.empty = Some(("triangle-alert", display(get(&provider, "error"))));
+                        view.loading = true;
                     }
                 }
-                self.model_rows(
-                    &mut rows,
-                    ctl,
-                    &model,
-                    &provider,
-                    &models,
-                    RowFlags {
-                        qualified: false,
-                        profiles_supported,
-                    },
-                );
+                let pinned = |section| RowFlags {
+                    qualified,
+                    profiles: profiles_supported,
+                    section,
+                };
+                if !sections.favorites.is_empty() {
+                    rows.push(Row::heading(t("modelSelector.favorites")));
+                    for pick in &sections.favorites {
+                        rows.push(model_row(&rc, pick, pinned("favorites")));
+                    }
+                }
+                if !sections.recents.is_empty() {
+                    rows.push(Row::heading(t("modelSelector.recent")));
+                    for pick in &sections.recents {
+                        rows.push(model_row(&rc, pick, pinned("recent")));
+                    }
+                }
+                if !rows.is_empty() && !sections.groups.is_empty() {
+                    rows.push(Row::heading(t("modelSelector.allModels")));
+                }
+                let count = sections.groups.len();
+                for group in &sections.groups {
+                    self.group_rows(&mut rows, &rc, group, count, profiles_supported);
+                }
             }
             Page::Thinking => {
                 let options = model.thinking_options();
@@ -437,38 +453,32 @@ impl SheetState {
         view
     }
 
-    /// model-browser.tsx AgentProfilesPickerContent.
+    /// model-browser.tsx AgentProfilesPickerContent; returns how many profiles it listed.
     fn profile_rows(
         &self,
         rows: &mut Vec<Row>,
         ctl: &Controller,
         config: &Value,
         profiles_supported: bool,
-    ) {
+    ) -> usize {
         let profiles: Vec<Value> = ctl
             .profiles
             .iter()
             .filter(|p| self.can_switch || get(p, "provider") == get(config, "provider"))
             .cloned()
             .collect();
-        if profiles.is_empty() && profiles_supported {
-            let mut row = Row::new(t("modelSelector.createProfile"));
-            row.leading = Leading::Icon("plus", None);
-            row.label_muted = true;
-            row.action = Some(RowAction::OpenProfiles);
-            rows.push(row);
-            return;
-        }
         if profiles.is_empty() {
-            return;
+            return 0;
         }
+        let count = profiles.len();
         let mut heading = Row::heading(t("modelSelector.profiles"));
         if profiles_supported {
-            heading.secondary = Some((
-                "pencil",
-                RowAction::OpenProfiles,
-                t("modelSelector.editProfilesLabel"),
-            ));
+            heading.trailing.push(Trailing {
+                icon: "pencil",
+                action: RowAction::OpenProfiles,
+                label: t("modelSelector.editProfilesLabel"),
+                active: false,
+            });
         }
         rows.push(heading);
         for profile in profiles {
@@ -478,194 +488,258 @@ impl SheetState {
             row.action = Some(RowAction::ApplyProfile(profile));
             rows.push(row);
         }
+        count
     }
 
-    /// model-browser.tsx GroupedProviderRows.
-    fn provider_rows(&self, rows: &mut Vec<Row>, providers: &[Value]) {
-        for (index, provider) in providers.iter().enumerate() {
-            if index > 0 {
-                rows.push(Row::divider());
-            }
-            let models = models_of(provider);
-            let loading = models.is_empty() && s(get(provider, "status")) == "loading";
-            let failed = models.is_empty() && !get(provider, "error").is_null();
-            let mut row =
-                Row::new(s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned());
-            row.leading = Leading::Provider(
-                owned(get(provider, "provider")),
-                owned(get(provider, "iconSvg")),
-            );
-            row.loading = loading;
-            row.warning = failed;
-            row.value = if loading {
-                t("modelSelector.loadingShort")
-            } else if failed {
-                t("modelSelector.error")
-            } else {
-                let count = models.len().to_string();
-                t_args(
-                    if models.len() == 1 {
+    /// One provider of the full list: its header (count or state, collapse chevron, settings)
+    /// and, while expanded, its models.
+    fn group_rows(
+        &self,
+        rows: &mut Vec<Row>,
+        rc: &RowCtx,
+        group: &Group,
+        group_count: usize,
+        profiles_supported: bool,
+    ) {
+        let id = group.id().to_owned();
+        let label = group.label().to_owned();
+        let mut header = Row::new(label.clone());
+        header.strong = true;
+        header.leading = Leading::Provider(id.clone(), owned(get(&group.provider, "iconSvg")));
+        let mut expanded = true;
+        match group.state {
+            ProviderState::Ready => {
+                let count = group.models.len().to_string();
+                header.value = t_args(
+                    if group.models.len() == 1 {
                         "modelSelector.modelCount"
                     } else {
                         "modelSelector.modelCountPlural"
                     },
                     &[("count", count.as_str())],
-                )
-            };
-            row.chevron = true;
-            row.action = Some(RowAction::Drill(owned(get(provider, "provider"))));
+                );
+                let holds_selection = rc.selected.as_ref().is_some_and(|r| r.provider == id);
+                let collapsed_default =
+                    starts_collapsed(group.models.len(), holds_selection, group_count);
+                if group_count > 1 && group.models.len() > 1 {
+                    expanded = self
+                        .expanded
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(!collapsed_default);
+                    header.expanded = Some(expanded);
+                    header.action = Some(RowAction::ToggleGroup {
+                        provider: id.clone(),
+                        expand: !expanded,
+                    });
+                }
+            }
+            ProviderState::Loading => {
+                header.loading = true;
+                header.value = t("modelSelector.loadingShort");
+            }
+            ProviderState::Failed => {
+                header.warning = true;
+                header.value = t("modelSelector.error");
+            }
+            ProviderState::Disabled => {
+                header.label_muted = true;
+                header.value = t("modelSelector.disabled");
+            }
+        }
+        header.trailing.push(Trailing {
+            icon: "settings",
+            action: RowAction::ProviderSettings(id.clone()),
+            label: t_args(
+                "modelSelector.openProviderSettings",
+                &[("provider", label.as_str())],
+            ),
+            active: false,
+        });
+        rows.push(header);
+        if group.state == ProviderState::Failed {
+            // The daemon's reason stays secondary to a named condition.
+            let mut row = Row::new(t("modelSelector.providerFailed"));
+            row.disabled = true;
+            row.leading = Leading::Icon("triangle-alert", None);
+            row.description = display(get(&group.provider, "error"));
             rows.push(row);
         }
+        if !expanded {
+            return;
+        }
+        let flags = RowFlags {
+            qualified: false,
+            profiles: profiles_supported,
+            section: "group",
+        };
+        for entry in &group.models {
+            rows.push(model_row(rc, &Pick::ready(&group.provider, entry), flags));
+        }
     }
+}
 
-    fn model_rows(
-        &self,
-        rows: &mut Vec<Row>,
-        ctl: &Controller,
-        model: &ControlsModel,
-        provider: &Value,
-        models: &[Value],
-        flags: RowFlags,
-    ) {
-        let RowFlags {
-            qualified,
-            profiles_supported,
-        } = flags;
-        let provider_id = owned(get(provider, "provider"));
-        let provider_label = s_or(get(provider, "label"), &provider_id).to_owned();
-        let selected_id = model.selected_model().map(|m| owned(get(&m, "id")));
-        for entry in models {
-            let mut row = Row::new(model_label(entry));
-            row.leading = Leading::Provider(provider_id.clone(), owned(get(provider, "iconSvg")));
-            let model_id = owned(get(entry, "id"));
-            row.description = if qualified {
-                format!("{provider_label} · {model_id}")
+/// The root page's control rows: model (opens the full list), thinking, mode, features.
+fn settings_rows(
+    rows: &mut Vec<Row>,
+    model: &ControlsModel,
+    labels: &ModelLabels,
+    features: &[Value],
+) {
+    let provider = owned(get(model.config, "provider"));
+    let mut row = Row::new(t("modelSelector.model"));
+    row.leading = Leading::Provider(provider, owned(get(&model.provider(), "iconSvg")));
+    row.value = model.selected_model_label(labels);
+    row.chevron = true;
+    row.action = Some(RowAction::OpenModels);
+    rows.push(row);
+    if !model.thinking_options().is_empty() {
+        let mut row = Row::new(t("agentControls.thinking.title"));
+        row.leading = Leading::Icon("brain", None);
+        row.value = model.thinking_label(labels);
+        row.chevron = true;
+        row.action = Some(RowAction::Push(Page::Thinking));
+        rows.push(row);
+    }
+    if !model.modes.is_empty() {
+        let mut row = Row::new(t("agentControls.mode.title"));
+        row.leading = Leading::Icon(mode_icon(model.selected_mode()), None);
+        row.value = format_agent_mode_label(model.selected_mode().unwrap_or(&Value::Null));
+        row.chevron = true;
+        row.action = Some(RowAction::Push(Page::Mode));
+        rows.push(row);
+    }
+    for feature in features {
+        let kind = s(get(feature, "type"));
+        if kind != "toggle" && kind != "select" {
+            continue;
+        }
+        let value = model.feature_value(feature);
+        let mut row = Row::new(s_or(get(feature, "label"), s(get(feature, "id"))).to_owned());
+        row.leading = Leading::Icon(feature_icon(feature), feature_icon_tint(feature, &value));
+        row.value = if kind == "toggle" {
+            if value == Value::Bool(true) {
+                t("agentControls.features.on")
             } else {
-                model_id.clone()
-            };
-            if let Some(description) = get(entry, "description")
-                .as_str()
+                t("agentControls.features.off")
+            }
+        } else {
+            maps(get(feature, "options"))
+                .iter()
+                .find(|o| get(o, "id") == &value)
+                .map(|o| owned(get(o, "label")))
+                .unwrap_or_else(|| owned(get(feature, "label")))
+        };
+        row.chevron = true;
+        row.action = Some(RowAction::OpenFeature(feature.clone()));
+        rows.push(row);
+    }
+}
+
+/// What every model row of one build reads: the controller (profiles), the saved picks and
+/// the model in use.
+struct RowCtx<'a> {
+    ctl: &'a Controller,
+    picks: &'a ModelPicks,
+    selected: Option<ModelRef>,
+}
+
+fn model_row(rc: &RowCtx, pick: &Pick, flags: RowFlags) -> Row {
+    let provider_id = pick.r.provider.clone();
+    let model_id = pick.r.model.clone();
+    let mut row = Row::new(pick.label());
+    row.leading = Leading::Provider(provider_id.clone(), pick.provider_icon());
+    row.check_slot = true;
+    row.key = format!("{}:{provider_id}/{model_id}", flags.section);
+    let qualifier = if flags.qualified {
+        format!("{} · ", pick.provider_label())
+    } else {
+        String::new()
+    };
+    match pick.availability {
+        Availability::Ready => {
+            row.description = format!("{qualifier}{model_id}");
+            if let Some(description) = pick
+                .model
+                .as_ref()
+                .and_then(|m| get(m, "description").as_str())
                 .filter(|s| !s.is_empty() && *s != model_id.as_str())
             {
                 row.description.push_str(" · ");
                 row.description.push_str(description);
             }
-            row.selected = s(get(model.config, "provider")) == provider_id
-                && selected_id.as_deref() == Some(s(get(entry, "id")));
+            row.selected = rc.selected.as_ref() == Some(&pick.r);
             row.action = Some(RowAction::SelectModel {
                 provider: provider_id.clone(),
                 model: model_id.clone(),
             });
-            // model-browser.tsx SelectableModelRow profileAction.
-            if profiles_supported && !model_id.is_empty() {
-                let profiled: Vec<&Value> = ctl
-                    .profiles
-                    .iter()
-                    .filter(|p| {
-                        s(get(p, "provider")) == provider_id && s(get(p, "model")) == model_id
-                    })
-                    .collect();
-                row.secondary = match profiled.len() {
-                    0 => Some((
-                        "plus",
-                        RowAction::CreateProfileFromModel(serde_json::json!({
-                            "provider": provider_id,
-                            "model": model_id,
-                            "name": model_label(entry),
-                        })),
-                        t("modelSelector.createProfileFromModel"),
-                    )),
-                    1 => Some((
-                        "pencil",
-                        RowAction::EditProfile(profiled[0].clone()),
-                        t_args(
-                            "modelSelector.editProfileLabel",
-                            &[("name", s(get(profiled[0], "name")))],
-                        ),
-                    )),
-                    n => {
-                        let count = n.to_string();
-                        Some((
-                            "pencil",
-                            RowAction::OpenProfiles,
-                            t_args(
-                                "modelSelector.editProfilesCount",
-                                &[("count", count.as_str())],
-                            ),
-                        ))
-                    }
-                };
-            }
-            rows.push(row);
+        }
+        Availability::Loading => {
+            row.disabled = true;
+            row.loading = true;
+            row.description = format!("{qualifier}{model_id}");
+            row.value = t("modelSelector.loadingShort");
+        }
+        Availability::Unavailable => {
+            row.disabled = true;
+            row.description = format!("{qualifier}{}", t("modelSelector.unavailable"));
         }
     }
-
-    fn settings_rows(
-        &self,
-        rows: &mut Vec<Row>,
-        model: &ControlsModel,
-        labels: &ModelLabels,
-        features: &[Value],
-        include_model: bool,
-    ) {
-        let provider = owned(get(model.config, "provider"));
-        if include_model {
-            let mut row = Row::new(t("modelSelector.model"));
-            row.leading =
-                Leading::Provider(provider.clone(), owned(get(&model.provider(), "iconSvg")));
-            row.value = model.selected_model_label(labels);
-            row.chevron = true;
-            row.action = Some(RowAction::OpenModels);
-            rows.push(row);
-        }
-        if !model.thinking_options().is_empty() {
-            let mut row = Row::new(t("agentControls.thinking.title"));
-            row.leading = Leading::Icon("brain", None);
-            row.value = model.thinking_label(labels);
-            row.chevron = true;
-            row.action = Some(RowAction::Push(Page::Thinking));
-            rows.push(row);
-        }
-        if !model.modes.is_empty() {
-            let mut row = Row::new(t("agentControls.mode.title"));
-            row.leading = Leading::Icon(mode_icon(model.selected_mode()), None);
-            row.value = format_agent_mode_label(model.selected_mode().unwrap_or(&Value::Null));
-            row.chevron = true;
-            row.action = Some(RowAction::Push(Page::Mode));
-            rows.push(row);
-        }
-        for feature in features {
-            let kind = s(get(feature, "type"));
-            if kind != "toggle" && kind != "select" {
-                continue;
-            }
-            let value = model.feature_value(feature);
-            let mut row = Row::new(s_or(get(feature, "label"), s(get(feature, "id"))).to_owned());
-            row.leading = Leading::Icon(feature_icon(feature), feature_icon_tint(feature, &value));
-            row.value = if kind == "toggle" {
-                if value == Value::Bool(true) {
-                    t("agentControls.features.on")
-                } else {
-                    t("agentControls.features.off")
+    let favorite = rc.picks.is_favorite(&provider_id, &model_id);
+    row.trailing.push(Trailing {
+        icon: "star",
+        action: RowAction::ToggleFavorite {
+            provider: provider_id.clone(),
+            model: model_id.clone(),
+        },
+        label: t(if favorite {
+            "modelSelector.removeFavorite"
+        } else {
+            "modelSelector.addFavorite"
+        }),
+        active: favorite,
+    });
+    // model-browser.tsx SelectableModelRow profileAction.
+    if flags.profiles && pick.selectable() && !model_id.is_empty() {
+        let profiled: Vec<&Value> = rc
+            .ctl
+            .profiles
+            .iter()
+            .filter(|p| s(get(p, "provider")) == provider_id && s(get(p, "model")) == model_id)
+            .collect();
+        row.trailing.push(match profiled.len() {
+            0 => Trailing {
+                icon: "plus",
+                action: RowAction::CreateProfileFromModel(serde_json::json!({
+                    "provider": provider_id,
+                    "model": model_id,
+                    "name": pick.label(),
+                })),
+                label: t("modelSelector.createProfileFromModel"),
+                active: false,
+            },
+            1 => Trailing {
+                icon: "pencil",
+                action: RowAction::EditProfile(profiled[0].clone()),
+                label: t_args(
+                    "modelSelector.editProfileLabel",
+                    &[("name", s(get(profiled[0], "name")))],
+                ),
+                active: false,
+            },
+            n => {
+                let count = n.to_string();
+                Trailing {
+                    icon: "pencil",
+                    action: RowAction::OpenProfiles,
+                    label: t_args(
+                        "modelSelector.editProfilesCount",
+                        &[("count", count.as_str())],
+                    ),
+                    active: false,
                 }
-            } else {
-                maps(get(feature, "options"))
-                    .iter()
-                    .find(|o| get(o, "id") == &value)
-                    .map(|o| owned(get(o, "label")))
-                    .unwrap_or_else(|| owned(get(feature, "label")))
-            };
-            row.chevron = true;
-            row.action = Some(RowAction::OpenFeature(feature.clone()));
-            rows.push(row);
-        }
+            }
+        });
     }
-}
-
-/// Model row presentation: provider-qualified descriptions (cross-provider search) and the
-/// profile create/edit trailing action.
-#[derive(Clone, Copy)]
-struct RowFlags {
-    qualified: bool,
-    profiles_supported: bool,
+    row
 }

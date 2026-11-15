@@ -2,7 +2,8 @@
 //! non-ready views, the history sync overlay, the sync-error and preparation
 //! callouts, the archived callout, the archiving overlay, the empty state, the
 //! jump-to-latest button, the panel toast viewport, the pane subtitle and the
-//! error alert. Every control registers a `HitTarget::Chrome(id)`.
+//! error alert. Every control registers a `HitTarget::Chrome(id)`; `small_button_in` also
+//! serves other surfaces (the Mermaid toolbar) with their own `HitTarget`.
 
 use super::canvas::*;
 use super::i18n::{t, ta};
@@ -24,7 +25,7 @@ pub fn spinner(cx: &mut Cx2d, d: &mut Draw, center: DVec2, size: f64, color: Vec
     d.animating = true;
 }
 
-/// PaseoButton secondary/sm; returns its size.
+/// PaseoButton secondary/sm hit-testing as `HitTarget::Chrome(id)`; returns its size.
 pub fn small_button(
     cx: &mut Cx2d,
     d: &mut Draw,
@@ -34,43 +35,61 @@ pub fn small_button(
     enabled: bool,
     id: &str,
 ) -> DVec2 {
+    let size = dvec2(small_button_width(cx, d, label), 32.0);
+    small_button_in(
+        cx,
+        d,
+        rect_xywh(x, y, size.x, size.y),
+        label,
+        enabled.then(|| HitTarget::Chrome(id.to_owned())),
+    );
+    size
+}
+
+/// PaseoButton secondary/sm painted in `frame`: 6px radius, `border_accent`, surface3 on
+/// hover, 0.5 alpha when disabled. The caller sizes the frame (32px, or a 44px compact touch
+/// row); a frame narrower than the label ellipsizes it. `target` registers the hit and drives
+/// hover through `chat_row::hover_key`; `None` paints the button disabled.
+pub fn small_button_in(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    frame: Rect,
+    label: &str,
+    target: Option<HitTarget>,
+) {
     let p = d.look.palette;
     let size = d.look.ui(14.0);
     let text = d.kit.measure(cx, Font::Medium, size, 1.3, label, None);
-    let w = text.x + 24.0;
-    let h = 32.0;
-    let hovered = d.state.hover_hit.as_deref() == Some(id);
+    let enabled = target.is_some();
+    let hovered = match (&target, d.state.hover_hit.as_deref()) {
+        (Some(target), Some(hover)) => hover == super::chat_row::hover_key(target),
+        _ => false,
+    };
     let alpha = if enabled { 1.0 } else { 0.5 };
     d.kit.bordered(
         cx,
-        rect_xywh(x, y, w, h),
-        with_alpha(
-            if hovered && enabled {
-                p.surface3
-            } else {
-                p.surface2
-            },
-            alpha,
-        ),
+        frame,
+        with_alpha(if hovered { p.surface3 } else { p.surface2 }, alpha),
         6.0,
         with_alpha(p.border_accent, alpha),
         1.0,
     );
-    d.kit.label(
-        cx,
-        Font::Medium,
-        size,
-        1.3,
-        with_alpha(p.foreground, alpha),
-        dvec2(x + 12.0, y + (h - text.y) * 0.5),
-        label,
-        None,
+    let color = with_alpha(p.foreground, alpha);
+    let pos = dvec2(
+        frame.pos.x + 12.0,
+        frame.pos.y + (frame.size.y - text.y) * 0.5,
     );
-    if enabled {
-        d.canvas
-            .add_hit(rect_xywh(x, y, w, h), HitTarget::Chrome(id.to_owned()));
+    let room = frame.size.x - 24.0;
+    if text.x <= room {
+        d.kit
+            .label(cx, Font::Medium, size, 1.3, color, pos, label, None);
+    } else {
+        d.kit
+            .label_line(cx, Font::Medium, size, 1.3, color, pos, label, room);
     }
-    dvec2(w, h)
+    if let Some(target) = target {
+        d.canvas.add_hit(frame, target);
+    }
 }
 
 pub fn small_button_width(cx: &mut Cx2d, d: &mut Draw, label: &str) -> f64 {

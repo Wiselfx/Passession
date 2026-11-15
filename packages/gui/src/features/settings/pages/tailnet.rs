@@ -6,17 +6,20 @@ use std::rc::Rc;
 use serde_json::{Value, json};
 
 use super::View;
-use crate::features::settings::i18n::t;
+use crate::features::settings::i18n::{t, ta, with_detail};
 use crate::features::settings::model::forms::{FormSheet, SettingField};
 use crate::features::settings::rpc::{Env, ReqError, handler};
 use crate::features::settings::state::{Settings, SheetKind};
-use crate::features::settings::ui::kit::{Ui, button, row, switch};
+use crate::features::settings::ui::draw::Icon;
+use crate::features::settings::ui::kit::{Ctl, Ui, button, icon_button, row, switch};
 
 const DEFAULT_CONTROL: &str = "https://controlplane.tailscale.com";
 
 #[derive(Default)]
 pub struct TailnetState {
     loaded: bool,
+    /// A status/configuration answer arrived since this page first asked.
+    answered: bool,
     pending: bool,
     error: Option<String>,
 }
@@ -103,6 +106,7 @@ fn request(s: &mut Settings, env: &mut Env, message: Value) {
     s.tailnet.error = None;
     s.tailnet_request(env, message, move |s, env, result| {
         s.tailnet.pending = false;
+        s.tailnet.answered = true;
         match result {
             Ok(payload) if login => {
                 if let Some(url) = payload.get("authUrl").and_then(Value::as_str) {
@@ -114,9 +118,75 @@ fn request(s: &mut Settings, env: &mut Env, message: Value) {
                 }
             }
             Ok(_) => {}
-            Err(error) => s.tailnet.error = Some(error.text()),
+            Err(error) => s.tailnet.error = Some(error_text(&error.text())),
         }
     });
+}
+
+/// Localized summary for a raw embedded-Tailscale failure; the raw runtime text
+/// stays as the trailing detail.
+fn error_text(raw: &str) -> String {
+    let raw = raw.trim();
+    let lower = raw.to_ascii_lowercase();
+    let key = if lower.contains("timed out") || lower.contains("timeout") {
+        "tailnet.errors.timedOut"
+    } else if lower.contains("not connected") {
+        "tailnet.errors.notConnected"
+    } else if lower.contains("secret store") {
+        "tailnet.errors.secretStore"
+    } else if lower.contains("superseded") {
+        "tailnet.errors.superseded"
+    } else if lower.contains("unsupported")
+        || lower.contains("not supported")
+        || lower.contains("worker stopped")
+    {
+        "tailnet.errors.unavailable"
+    } else {
+        return raw.to_string();
+    };
+    with_detail(&t(key), raw)
+}
+
+/// Backend state label; an unrecognized state keeps its raw value as detail.
+fn backend_label(backend: &str) -> String {
+    match backend {
+        "Running" => t("tailnet.states.running"),
+        "NeedsLogin" => t("tailnet.states.needsLogin"),
+        "NeedsMachineAuth" => t("tailnet.states.needsApproval"),
+        "Starting" => t("tailnet.states.starting"),
+        "Stopped" => t("tailnet.states.stopped"),
+        "Disabled" => t("tailnet.states.disabled"),
+        "Error" => t("tailnet.states.error"),
+        "NoState" | "" => t("tailnet.states.noState"),
+        other => ta("tailnet.states.unknown", &[("state", other)]),
+    }
+}
+
+/// The one action the Status row offers for a backend state.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Primary {
+    Login,
+    Reconnect,
+    Disconnect,
+}
+
+/// `actionable`: enabled and no operation in flight. A state whose action
+/// would be disabled offers none (Enable is the switch above).
+fn primary_action(actionable: bool, backend: &str) -> Option<Primary> {
+    if !actionable {
+        return None;
+    }
+    match backend {
+        "NeedsLogin" | "NeedsMachineAuth" => Some(Primary::Login),
+        "Stopped" | "Error" => Some(Primary::Reconnect),
+        "Running" | "Starting" => Some(Primary::Disconnect),
+        _ => None,
+    }
+}
+
+/// Log out applies only to a node that holds a login.
+fn logged_in(account: &str, backend: &str) -> bool {
+    !account.is_empty() || matches!(backend, "Running" | "Starting")
 }
 
 pub fn ensure(s: &mut Settings, env: &mut Env) {
@@ -218,8 +288,10 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
     let pending = busy(s, value);
     let enabled = value["enabled"].as_bool().unwrap_or(false);
     let backend = text(value, "backendState");
+    let account = text(value, "account");
+
+    ui.section_title(&t("tailnet.title"), None, None);
     ui.card_begin();
-    ui.row(row(t("tailnet.title")).hint(t("tailnet.scope")));
     let toggle = (!pending).then(|| {
         handler(move |s, env| {
             if enabled {
@@ -230,44 +302,74 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
             }
         })
     });
-    ui.row(row(t("tailnet.enable")).control(switch("tailnet.enable", enabled, toggle)));
-    let status = match backend.as_str() {
-        "Running" => t("tailnet.states.running"),
-        "NeedsLogin" => t("tailnet.states.needsLogin"),
-        "NeedsMachineAuth" => t("tailnet.states.needsApproval"),
-        "Starting" => t("tailnet.states.starting"),
-        "Stopped" => t("tailnet.states.stopped"),
-        "Disabled" => t("tailnet.states.disabled"),
-        "Error" => t("tailnet.states.error"),
-        "NoState" | "" => t("tailnet.states.noState"),
-        _ => backend.clone(),
-    };
-    ui.row(row(t("tailnet.status")).hint(if pending {
+    ui.row(
+        row(t("tailnet.enable"))
+            .hint(t("tailnet.scope"))
+            .control(switch("tailnet.enable", enabled, toggle)),
+    );
+    ui.card_end();
+    ui.gap(24.0);
+
+    // Status: the state, the one action it calls for, and a refresh glyph.
+    ui.section_title(&t("tailnet.status"), None, None);
+    ui.card_begin();
+    let checking = !s.tailnet.answered && (pending || !s.tailnet.loaded);
+    let mut status = if checking {
+        t("tailnet.checking")
+    } else if pending {
         t("tailnet.pending")
     } else {
-        status
-    }));
-    for (key, label) in [
-        ("account", "tailnet.account"),
-        ("tailnet", "tailnet.network"),
-        ("nodeName", "tailnet.device"),
-    ] {
-        let data = text(value, key);
-        if !data.is_empty() {
-            ui.row(row(t(label)).hint(data));
+        backend_label(&backend)
+    };
+    let mut controls = Vec::new();
+    match primary_action(enabled && !pending, &backend) {
+        Some(Primary::Login) => {
+            status = format!("{status}\n{}", t("tailnet.loginHint"));
+            let login = handler(|s, env| request(s, env, json!({"action": "login"})));
+            controls.push(button("tailnet.login", t("tailnet.login"), Some(login)).ctl());
         }
+        Some(Primary::Reconnect) => {
+            let reconnect = handler(|s, env| {
+                let message = configuration(&env.ctx.state["tailnet"], true);
+                request(s, env, message);
+            });
+            controls
+                .push(button("tailnet.reconnect", t("tailnet.reconnect"), Some(reconnect)).ctl());
+        }
+        Some(Primary::Disconnect) => {
+            let disconnect = handler(|s, _| {
+                confirm_action(
+                    s,
+                    "disconnect",
+                    "tailnet.disconnect",
+                    "tailnet.disconnectConfirm",
+                )
+            });
+            controls.push(
+                button(
+                    "tailnet.disconnect",
+                    t("tailnet.disconnect"),
+                    Some(disconnect),
+                )
+                .ctl(),
+            );
+        }
+        None => {}
     }
-    if let Some(ips) = value["ips"].as_array() {
-        let ips = ips
-            .iter()
-            .filter_map(Value::as_str)
-            .filter_map(|ip| ip.parse::<std::net::IpAddr>().ok())
-            .map(|ip| ip.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        if !ips.is_empty() {
-            ui.row(row(t("tailnet.ips")).hint(ips));
-        }
+    controls.push(if pending {
+        Ctl::Spinner(16.0)
+    } else {
+        let refresh = handler(|s, env| request(s, env, json!({"action": "status"})));
+        icon_button("tailnet.refresh", Icon::RotateCw, Some(refresh)).tipped(t("tailnet.refresh"))
+    });
+    ui.row(
+        row(t("tailnet.status"))
+            .hint(status)
+            .control(Ctl::Row(controls, 8.0)),
+    );
+    let network = text(value, "tailnet");
+    if !network.is_empty() {
+        ui.row(row(t("tailnet.network")).hint(network));
     }
     if let Some(health) = value["health"].as_array() {
         for item in health.iter().filter_map(Value::as_str) {
@@ -285,13 +387,31 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
         .tailnet
         .error
         .clone()
-        .unwrap_or_else(|| text(value, "error"));
+        .unwrap_or_else(|| error_text(&text(value, "error")));
     if !error.is_empty() {
         ui.row(row(t("tailnet.requestFailed")).error(Some(error)));
     }
     ui.card_end();
     ui.gap(24.0);
+
+    ui.section_title(&t("tailnet.device"), None, None);
     ui.card_begin();
+    let node = text(value, "nodeName");
+    if !node.is_empty() {
+        ui.row(row(t("tailnet.deviceName")).hint(node));
+    }
+    if let Some(ips) = value["ips"].as_array() {
+        let ips = ips
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|ip| ip.parse::<std::net::IpAddr>().ok())
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !ips.is_empty() {
+            ui.row(row(t("tailnet.ips")).hint(ips));
+        }
+    }
     let edit = (!pending).then(|| handler(|s, env| edit_config(s, env, false)));
     ui.row(
         row(t("tailnet.hostname"))
@@ -311,64 +431,82 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
     );
     ui.card_end();
     ui.gap(24.0);
-    ui.card_begin();
-    let login = (enabled && !pending)
-        .then(|| handler(|s, env| request(s, env, json!({"action": "login"}))));
-    ui.row(
-        row(t("tailnet.login"))
-            .hint(t("tailnet.loginHint"))
-            .control(button("tailnet.login", t("tailnet.login"), login).ctl()),
-    );
-    let refresh =
-        (!pending).then(|| handler(|s, env| request(s, env, json!({"action": "status"}))));
-    ui.row(
-        row(t("tailnet.refresh"))
-            .control(button("tailnet.refresh", t("tailnet.refresh"), refresh).ctl()),
-    );
-    let disconnect = (enabled && !pending && backend != "Stopped").then(|| {
-        handler(|s, _| {
-            confirm_action(
-                s,
-                "disconnect",
-                "tailnet.disconnect",
-                "tailnet.disconnectConfirm",
-            )
-        })
-    });
-    ui.row(
-        row(t("tailnet.disconnect"))
-            .hint(t("tailnet.disconnectHint"))
-            .control(button("tailnet.disconnect", t("tailnet.disconnect"), disconnect).ctl()),
-    );
-    let reconnect =
-        (!pending && (!enabled || backend == "Stopped" || backend == "Error")).then(|| {
-            handler(|s, env| {
-                let message = configuration(&env.ctx.state["tailnet"], true);
-                request(s, env, message);
-            })
+
+    // Destructive log out last, and only for a node that is logged in.
+    if logged_in(&account, &backend) {
+        ui.section_title(&t("tailnet.account"), None, None);
+        ui.card_begin();
+        let logout = (!pending).then(|| {
+            handler(|s, _| confirm_action(s, "logout", "tailnet.logout", "tailnet.logoutConfirm"))
         });
-    ui.row(
-        row(t("tailnet.reconnect"))
-            .control(button("tailnet.reconnect", t("tailnet.reconnect"), reconnect).ctl()),
-    );
-    let logout = (!pending).then(|| {
-        handler(|s, _| confirm_action(s, "logout", "tailnet.logout", "tailnet.logoutConfirm"))
-    });
-    ui.row(
-        row(t("tailnet.logout"))
-            .hint(t("tailnet.logoutHint"))
-            .control(
+        let label = if account.is_empty() {
+            t("tailnet.account")
+        } else {
+            account
+        };
+        ui.row(
+            row(label).hint(t("tailnet.logoutHint")).control(
                 button("tailnet.logout", t("tailnet.logout"), logout)
                     .danger_text()
                     .ctl(),
             ),
-    );
-    ui.card_end();
+        );
+        ui.card_end();
+        ui.gap(24.0);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_offers_only_the_action_the_state_calls_for() {
+        for state in ["NeedsLogin", "NeedsMachineAuth"] {
+            assert_eq!(primary_action(true, state), Some(Primary::Login), "{state}");
+        }
+        for state in ["Stopped", "Error"] {
+            assert_eq!(
+                primary_action(true, state),
+                Some(Primary::Reconnect),
+                "{state}"
+            );
+        }
+        for state in ["Running", "Starting"] {
+            assert_eq!(
+                primary_action(true, state),
+                Some(Primary::Disconnect),
+                "{state}"
+            );
+        }
+        for state in ["Disabled", "NoState", "", "InUseOtherUser"] {
+            assert_eq!(primary_action(true, state), None, "{state}");
+        }
+        // Disabled Tailscale or an operation in flight shows no action at all.
+        assert_eq!(primary_action(false, "Stopped"), None);
+        assert_eq!(primary_action(false, "NeedsLogin"), None);
+
+        assert!(logged_in("me@example.com", "Stopped"));
+        assert!(logged_in("", "Running"));
+        assert!(!logged_in("", "NeedsLogin"));
+        assert!(!logged_in("", "Disabled"));
+    }
+
+    #[test]
+    fn unknown_states_and_known_failures_are_localized_with_raw_detail() {
+        let unknown = backend_label("InUseOtherUser");
+        assert!(unknown.contains("InUseOtherUser"));
+        assert_ne!(unknown, "InUseOtherUser");
+        assert_eq!(backend_label("Running"), t("tailnet.states.running"));
+
+        let raw = "Embedded Tailscale worker stopped";
+        let mapped = error_text(raw);
+        assert!(mapped.starts_with(&t("tailnet.errors.unavailable")));
+        assert!(mapped.contains(raw));
+        assert!(error_text("status request timed out").starts_with(&t("tailnet.errors.timedOut")));
+        assert_eq!(error_text("  something new  "), "something new");
+        assert_eq!(error_text(""), "");
+    }
 
     #[test]
     fn configuration_rejects_unsafe_urls_and_invalid_device_names() {

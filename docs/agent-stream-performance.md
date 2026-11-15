@@ -39,7 +39,10 @@ capability; older OMP without the acknowledgement retains full snapshots. Invali
 acknowledgements and transport failures remain errors. Pi is unchanged.
 
 OMP reconstruction tracks RPC message IDs and content-block indices independently,
-preserving Unicode and text/thinking order. Block ends and the complete terminal
+preserving Unicode and text/thinking order. `message_start` only opens a message:
+OMP clones its partial when its loop reaches the start, possibly after the provider
+queued content that still arrives as updates, so the clone body is never published.
+Block ends and the complete terminal
 message recover missing suffixes and replace unpublished fragments without
 duplicating emitted text. A terminal body contradicting published bytes, block
 types or order uses [message-scoped authoritative repair](timeline-sync.md#omp-authoritative-message-repair),

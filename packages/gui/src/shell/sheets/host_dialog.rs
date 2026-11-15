@@ -263,10 +263,12 @@ fn toggle_row(
     let p = ui.p;
     let spec = ui.spec(Font::Medium, 14.0, p.foreground);
     let w = ui.measure(cx, spec, label) + 24.0;
-    let r = rect(x, y, w, 28.0);
+    // Phone: a 44px touch row with the 28px chevron/label centred in it.
+    let row_h = if ui.compact { 44.0 } else { 28.0 };
+    let r = rect(x, y, w, row_h);
     ui.icon(
         cx,
-        rect(x, y + 6.0, 16.0, 16.0),
+        rect(x, y + (row_h - 16.0) * 0.5, 16.0, 16.0),
         if open {
             "chevron-down"
         } else {
@@ -275,11 +277,11 @@ fn toggle_row(
         16.0,
         p.muted,
     );
-    ui.text(cx, rect(x + 24.0, y, w - 24.0, 28.0), spec, label);
+    ui.text(cx, rect(x + 24.0, y, w - 24.0, row_h), spec, label);
     if enabled {
         ui.hit(r, id.to_string());
     }
-    28.0
+    row_h
 }
 
 /// Original password visibility toggle: surface2 square, muted 18px eye glyph.
@@ -1108,7 +1110,10 @@ impl ConnectionSheet {
         let info = match inspect_host_config(&config) {
             Ok(info) => info,
             Err(error) => {
-                self.error = Some(error.message);
+                self.error = Some(with_details(
+                    &tr("pairing.direct.errors.invalidConnection"),
+                    &error.message,
+                ));
                 return SheetFlow::Stay;
             }
         };
@@ -2252,7 +2257,12 @@ impl ScanSheet {
         let config = Value::Object(config);
         let info = match inspect_host_config(&config) {
             Ok(info) => info,
-            Err(error) => return self.failed(error.message),
+            Err(error) => {
+                return self.failed(with_details(
+                    &tr("pairing.link.errors.invalid"),
+                    &error.message,
+                ));
+            }
         };
         self.candidate = Some((config, link));
         match host_confirmation(&self.state, &info, ops.origin) {

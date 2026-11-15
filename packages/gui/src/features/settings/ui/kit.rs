@@ -13,6 +13,9 @@ use super::field::{FieldHost, FieldSpec, Layer};
 use super::theme::{Palette, alpha};
 use crate::features::settings::rpc::{Handler, handler};
 
+/// Minimum phone touch target edge for settings controls.
+const TOUCH_TARGET: f64 = 44.0;
+
 pub fn key(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
@@ -721,6 +724,20 @@ impl<'u, 'a, 'b> Ui<'u, 'a, 'b> {
         self.clip = clip;
     }
 
+    /// Phone touch target: on compact layouts grows `rect` around its centre to
+    /// at least 44×44 px (like the switch's enlarged hit); the drawn control is
+    /// unchanged. Desktop keeps the drawn rect.
+    pub fn touch_rect(&self, rect: Rect) -> Rect {
+        if !self.compact {
+            return rect;
+        }
+        let size = dvec2(rect.size.x.max(TOUCH_TARGET), rect.size.y.max(TOUCH_TARGET));
+        Rect {
+            pos: rect.pos - (size - rect.size) / 2.0,
+            size,
+        }
+    }
+
     // ---------------------------------------------------------------- controls
 
     pub fn measure_ctl(&mut self, c: &Ctl) -> DVec2 {
@@ -997,7 +1014,8 @@ impl<'u, 'a, 'b> Ui<'u, 'a, 'b> {
                     );
                 }
                 if enabled || b.tip.is_some() {
-                    self.zone(&b.key, rect, if enabled { b.act } else { None });
+                    let hit = self.touch_rect(rect);
+                    self.zone(&b.key, hit, if enabled { b.act } else { None });
                 }
                 if let Some(text) = b.tip {
                     self.set_last_tip(&b.key, text, true);
@@ -1073,7 +1091,8 @@ impl<'u, 'a, 'b> Ui<'u, 'a, 'b> {
                     alpha(color, if enabled { 1.0 } else { 0.5 }),
                 );
                 if enabled || tip.is_some() {
-                    self.zone(&k, rect, act);
+                    let hit = self.touch_rect(rect);
+                    self.zone(&k, hit, act);
                 }
                 // Flutter `PaseoButton(tooltip:)`: a Material tooltip after the 500 ms theme wait.
                 if let Some(text) = tip {
@@ -1142,7 +1161,8 @@ impl<'u, 'a, 'b> Ui<'u, 'a, 'b> {
                     muted,
                 );
                 if enabled {
-                    self.zone(&k, rect, act);
+                    let hit = self.touch_rect(rect);
+                    self.zone(&k, hit, act);
                 }
             }
             Ctl::Segmented { key: k, items } => {

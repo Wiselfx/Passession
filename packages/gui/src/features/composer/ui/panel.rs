@@ -10,7 +10,7 @@
 
 use super::draw::DrawComposerImage;
 use super::look::Look;
-use super::sheet::SheetState;
+use super::sheet::{Page, SheetState};
 use crate::common::overlay::{self, MenuEntry, MenuItem};
 use crate::common::paint::{HitMap, Painter};
 use crate::common::{UiCommand, UiContext, UiEffect};
@@ -106,9 +106,9 @@ pub enum OItem {
     Panel,
     Close,
     Back,
-    Gear,
     Row(usize),
-    RowAction(usize),
+    /// A row's trailing button: `(row, slot)`, slot 0 rightmost.
+    RowAction(usize, usize),
     Forge(usize),
     FullscreenSend,
     UsageRefresh(usize),
@@ -213,6 +213,14 @@ pub struct PanelState {
     pub sheet_scroll: f64,
     pub suggest_scroll_max: f64,
     pub sheet_scroll_max: f64,
+    /// The desktop model sheet's top edge, kept while one page stays open (`(depth, page)`)
+    /// so content changes grow it downward instead of re-centring it under the pointer.
+    pub sheet_top: Option<((usize, Page), f64)>,
+    /// Content offset of each painted sheet row, for [`Self::sheet_keep`].
+    pub sheet_row_tops: Vec<f64>,
+    /// A row (`Row::key`) and the screen y it must keep after the next build: a favorite
+    /// toggle that adds or removes rows above the pointer scrolls the list to compensate.
+    pub sheet_keep: Option<(String, f64)>,
     pub touch_scroll: makepad_widgets::scroll_bars::TouchScroll,
     pub window: DVec2,
     pub search_text: String,
@@ -1066,6 +1074,8 @@ impl ComposerPanel {
 
     pub(super) fn open_sheet(&mut self, cx: &mut Cx, ui: &mut UiContext, state: SheetState) {
         self.st.cancel_gestures();
+        self.st.sheet_top = None;
+        self.st.sheet_keep = None;
         self.st.restore_input_focus = self.st.input_focused;
         self.ctl().refetch_if_loading(ui);
         self.ctl().reload_daemon_config(ui);

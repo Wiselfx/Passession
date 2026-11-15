@@ -515,3 +515,29 @@ async fn untracked_special_files_are_skipped_and_symlinks_are_not_followed() -> 
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn uncommitted_entries_mark_only_untracked_files() -> Result<()> {
+    let repo = Repo::new().await?;
+    repo.write("tracked", b"old\n").await?;
+    repo.commit("base").await?;
+    repo.write("tracked", b"new\n").await?;
+    repo.write("staged", b"staged\n").await?;
+    repo.git(&["add", "staged"]).await?;
+    repo.write("untracked", b"one\n").await?;
+    for detail in ["summary", "full"] {
+        let result = repo
+            .diff(json!({"mode":"uncommitted","detail":detail}))
+            .await?;
+        assert_eq!(result["error"], Value::Null, "{result}");
+        let files = result["files"].as_array().unwrap();
+        let entry = |path: &str| files.iter().find(|f| f["path"] == path).unwrap().clone();
+        // Staged additions and untracked files are both new; only the latter is untracked.
+        assert_eq!(entry("staged")["isNew"], true);
+        assert!(entry("staged").get("untracked").is_none());
+        assert!(entry("tracked").get("untracked").is_none());
+        assert_eq!(entry("untracked")["isNew"], true);
+        assert_eq!(entry("untracked")["untracked"], true);
+    }
+    Ok(())
+}

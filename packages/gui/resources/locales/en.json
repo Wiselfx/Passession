@@ -11,7 +11,18 @@
     "exporting": "Preparing export…",
     "saved": "Diagram saved",
     "exportError": "Could not export diagram",
-    "cancelled": "Export cancelled"
+    "cancelled": "Export cancelled",
+    "errors": {
+      "invalid": "The diagram has a syntax error or is incomplete.",
+      "unsupported": "This diagram uses features that can't be shown here.",
+      "tooLarge": "The diagram is too large to render.",
+      "font": "No installed font can draw this diagram's text.",
+      "worker": "The diagram renderer isn't available right now.",
+      "platform": "Saving files isn't available on this device.",
+      "exportBusy": "Another diagram export is still in progress.",
+      "exportLimit": "Too many diagram exports are waiting. Close open save dialogs and try again.",
+      "writeFailed": "The diagram file couldn't be saved."
+    }
   },
   "tailnet": {
     "title": "Tailscale",
@@ -23,9 +34,11 @@
     "disableConfirm": "Disconnect every Embedded Tailscale host in all app windows and stop this app’s node? Your saved login is retained. Normal host connections are not affected.",
     "status": "Status",
     "pending": "Tailscale operation in progress…",
+    "checking": "Checking status…",
     "account": "Account",
     "network": "Tailnet",
     "device": "Device",
+    "deviceName": "Device name",
     "ips": "Tailscale addresses",
     "health": "Connection health",
     "hostname": "Device hostname",
@@ -57,6 +70,13 @@
     "hostHint": "Only this host uses the app’s embedded tailnet. Use its Tailscale IP or MagicDNS name and a ws:// or wss:// endpoint. No system DNS lookup or normal-network fallback is used. Enable and log in under Settings → Tailscale first. The host computer must also be on the tailnet, with the daemon listening on a reachable address and its ACL and firewall allowing the connection.",
     "hostUnsupported": "Embedded Tailscale supports direct ws:// and wss:// hosts only. SSH, relay, pairing links and local IPC are not supported. Enter a direct WebSocket endpoint.",
     "hostNotReady": "Embedded Tailscale is not connected. Open Settings → Tailscale, enable it, log in or reconnect, then refresh status and retry this host.",
+    "errors": {
+      "timedOut": "Tailscale didn't respond in time. Refresh status and try again.",
+      "notConnected": "Embedded Tailscale isn't connected. Enable it and log in, then refresh status.",
+      "secretStore": "Embedded Tailscale needs this device's secure credential storage, which isn't available.",
+      "superseded": "A newer Tailscale setting replaced this operation.",
+      "unavailable": "Embedded Tailscale isn't available right now. Refresh status and try again."
+    },
     "states": {
       "running": "Connected",
       "needsLogin": "Browser login required",
@@ -65,7 +85,8 @@
       "stopped": "Disconnected",
       "disabled": "Disabled",
       "error": "Unavailable — see error below",
-      "noState": "Not initialized"
+      "noState": "Not initialized",
+      "unknown": "Unknown state ({{state}})"
     }
   },
   "addProject": {
@@ -186,11 +207,13 @@
       "connecting": "Connecting to the Paseo daemon…",
       "hostConnecting": "{{host}} · reconnecting…",
       "hostDisconnected": "{{host}} · disconnected",
-      "othersNeedInput": "Another session needs your input"
+      "othersNeedInput": "Another session needs your input",
+      "unrecognizedPanel": "This panel can't be shown ({{kind}}).",
+      "explorerEmpty": "Files, Git Log and Commit appear here when a session is open."
     },
     "commands": {
       "chooseHost": "Choose host",
-      "openSessionFirst": "Open a session or workspace first.",
+      "openSessionFirst": "Open a session first.",
       "waitForSend": "Wait for the current send or upload to finish before closing this session.",
       "unavailable": "This command is unavailable here: {{action}}",
       "openLinkFailed": "Could not open the link in the system browser.",
@@ -201,10 +224,10 @@
       "removeHostTitle": "Remove {{host}}?",
       "removeHostMessage": "Remove this saved host, all its connections and credentials from this device? Sessions on the daemon are not deleted.",
       "removeProjectTitle": "Remove project from {{host}}?",
-      "removeProjectMessage_one": "{{path}}\n1 active workspace is affected on this host. Other hosts are unchanged.",
-      "removeProjectMessage": "{{path}}\n{{count}} active workspaces are affected on this host. Other hosts are unchanged.",
+      "removeProjectMessage_one": "{{path}}\n1 active session in this directory is affected on this host. Other hosts are unchanged.",
+      "removeProjectMessage": "{{path}}\n{{count}} active sessions in this directory are affected on this host. Other hosts are unchanged.",
       "newWorktreeSession": "New worktree session",
-      "workspaceUnavailable": "The workspace is unavailable. Refresh this host.",
+      "workspaceUnavailable": "The directory is unavailable. Refresh this host.",
       "archiveSessionTitle": "Archive session?",
       "noAttention": "No other session needs your input.",
       "hostRejected": "The host rejected this action."
@@ -223,22 +246,22 @@
       "sessionFailed": "Session failed"
     },
     "commandCenter": {
-      "placeholder": "Search commands, files, workspaces, and agents...",
+      "placeholder": "Search commands, files, and sessions...",
       "filePlaceholder": "Search files...",
       "searchingFiles": "Searching files...",
       "noMatches": "No matches",
       "actions": "Actions",
       "files": "Files",
-      "workspaces": "Workspaces",
-      "agents": "Agents",
-      "newAgent": "New agent",
+      "sessions": "Sessions",
+      "copySessionId": "Copy session ID",
+      "restartSession": "Restart session",
+      "copyDirectoryPath": "Copy directory path",
+      "directoryPathUnavailable": "Directory path not available",
       "open": "Open {{name}}",
       "openInSidePane": "Open {{name}} in side pane",
       "openInFocusedPane": "Open {{name}} in focused pane",
       "addProject": "Add project",
       "home": "Home",
-      "groupByProject": "Group by project",
-      "groupByStatus": "Group by status",
       "modelGroupLabel": "Model",
       "modelSearchKeywords": "switch model change model set model select model",
       "thinkingGroupLabel": "Thinking",
@@ -251,7 +274,6 @@
       "fastModeSearchKeywords": "fast speed low latency",
       "settingOn": "On",
       "settingOff": "Off",
-      "newWorktreeSession": "New worktree session",
       "nextAttention": "Next session needing input",
       "settingsPage": "Settings: {{name}}",
       "hostSettingsPage": "Host settings: {{name}}",
@@ -362,7 +384,7 @@
       "creationFailed": "Creation failed",
       "creationSubscriptionFailed": "Creation subscription failed",
       "daemonClientClosed": "Daemon client closed",
-      "workspaceIdentityMissing": "Workspace creation returned no workspace identity.",
+      "workspaceIdentityMissing": "Session creation returned no directory identifier.",
       "agentNotReturned": "Creation has not returned an agent yet. Retry recovers the same creation intent.",
       "deliveryUnsupported": "This host cannot report or cancel message delivery.",
       "dismissalUnconfirmed": "The host has not confirmed dismissal.",
@@ -743,7 +765,7 @@
     "title": "Import session",
     "chooseHostTitle": "Import from host",
     "searchPlaceholder": "Search sessions...",
-    "scope": { "host": "Sessions on {{host}}", "workspace": "This workspace" },
+    "scope": { "host": "Sessions on {{host}}", "workspace": "This directory" },
     "filters": { "all": "All" },
     "status": {
       "connectHost": "Connect to a host to import sessions",
@@ -786,7 +808,14 @@
       "errorTitle": "Couldn't open this folder",
       "retry": "Retry",
       "cancel": "Cancel",
-      "choose": "Choose this folder"
+      "choose": "Choose this folder",
+      "errors": {
+        "notFound": "This folder doesn't exist on the host.",
+        "permissionDenied": "The host doesn't allow access to this folder.",
+        "notADirectory": "This path is a file, not a folder.",
+        "disconnected": "The host is offline. Reconnect to browse its folders.",
+        "unknown": "The host couldn't list this folder."
+      }
     },
     "route": {
       "loading": "Loading workspace",
@@ -955,7 +984,8 @@
     },
     "executionLog": {
       "succeeded": "Finished successfully",
-      "failed": "Failed (exit code {{code}})"
+      "failed": "Failed (exit code {{code}})",
+      "waitingHint": "Output appears when the host reconnects."
     },
     "schedules": {
       "runStarted": "Run started",
@@ -996,7 +1026,7 @@
       "fallback": {
         "newAgent": "New agent",
         "setup": "Setup",
-        "workspaceSetup": "Workspace setup",
+        "workspaceSetup": "Directory setup",
         "terminal": "Terminal",
         "browser": "Browser",
         "agent": "Agent",
@@ -1095,15 +1125,15 @@
         "newTerminal": "New terminal",
         "newBrowser": "New browser tab",
         "importSession": "Import session",
-        "copyPath": "Copy workspace path",
+        "copyPath": "Copy directory path",
         "copyBranchName": "Copy branch name",
         "showSetup": "Show setup"
       },
       "toasts": {
-        "workspacePathUnavailable": "Workspace path is not available yet",
+        "workspacePathUnavailable": "Directory path is not available yet",
         "branchNameUnavailable": "Branch name not available",
-        "terminalQueued": "Preparing workspace, opening terminal when ready...",
-        "workspacePathCopiedLabel": "Workspace path",
+        "terminalQueued": "Preparing the directory, opening terminal when ready...",
+        "workspacePathCopiedLabel": "Directory path",
         "branchNameCopiedLabel": "Branch name"
       }
     },
@@ -1142,16 +1172,56 @@
     "git": {
       "commit": {
         "title": "Commit",
-        "files": "{{selected}} of {{total}} files selected",
         "message": "Commit message",
         "messagePlaceholder": "Describe these changes",
         "submit": "Commit",
+        "submitCount_one": "Commit {{count}} file",
+        "submitCount_other": "Commit {{count}} files",
         "committing": "Committing…",
         "success": "Committed",
-        "loading": "Loading uncommitted files…",
-        "empty": "No uncommitted files",
+        "loading": "Loading changes…",
+        "empty": "No changes to commit",
         "disconnected": "Connect to the host to inspect and commit files.",
-        "unsupported": "Update the host to use selected-file commits."
+        "unsupported": "Update the host to use selected-file commits.",
+        "changes": "Changes",
+        "unversioned": "Unversioned Files",
+        "fileCount_one": "{{count}} file",
+        "fileCount_other": "{{count}} files",
+        "selected_one": "{{count}} file selected",
+        "selected_other": "{{count}} files selected",
+        "refresh": "Refresh",
+        "expandAll": "Expand all",
+        "collapseAll": "Collapse all",
+        "groupByDirectory": "Group by directory",
+        "renamedFrom": "Renamed from {{path}}",
+        "commitFailed": "Commit failed",
+        "commitUncertain": "The commit may have completed. Refresh to check before trying again.",
+        "hints": { "selectFiles": "Select files to commit", "message": "Enter a commit message" },
+        "status": {
+          "modified": "Modified",
+          "added": "Added",
+          "deleted": "Deleted",
+          "renamed": "Renamed",
+          "untracked": "Unversioned"
+        },
+        "states": {
+          "disconnected": { "title": "Host disconnected" },
+          "unsupported": { "title": "Host update required" },
+          "notRepository": {
+            "title": "Not a Git repository",
+            "body": "Open a session in a folder tracked by Git, or run git init in this folder, then check again.",
+            "action": "Check again"
+          },
+          "tooLarge": {
+            "title": "Too many changes to show",
+            "body": "Commit these changes with Git directly."
+          },
+          "failed": { "title": "Couldn't load changes", "retry": "Retry" },
+          "empty": {
+            "body": "The working tree matches the last commit.",
+            "committed": "No changes left to commit."
+          }
+        }
       },
       "toasts": { "notAccepted": "The host did not accept this operation." },
       "review": {
@@ -1333,6 +1403,7 @@
         "refresh": "Refresh",
         "refreshState": "Refresh git and {{brand}} state",
         "failedRefresh": "Failed to refresh git state.",
+        "openFileAtLine": "Open file at line",
         "seeUncommittedChanges": "See uncommitted changes",
         "seeCommittedChanges": "See committed changes",
         "checkingRepository": "Checking repository...",
@@ -1360,9 +1431,9 @@
       "openInEditor": {
         "open": "Open",
         "chooseEditor": "Choose editor",
-        "openIn": "Open workspace in {{target}}",
+        "openIn": "Open directory in {{target}}",
         "openFileIn": "Open {{fileName}} in {{target}}",
-        "failedOpen": "Failed to open workspace"
+        "failedOpen": "Failed to open directory"
       },
       "pr": {
         "actions": {
@@ -1556,7 +1627,9 @@
           "retry": "Retry",
           "showAllBranches": "Show all branches",
           "refreshFailed": "Couldn't refresh the log: {{error}}",
-          "refsFailed": "Couldn't load branches: {{error}}"
+          "refsFailed": "Couldn't load branches: {{error}}",
+          "loadFailed": "Couldn't load commits: {{error}}",
+          "detailFailed": "Couldn't load this commit: {{error}}"
         },
         "time": {
           "justNow": "just now",
@@ -1601,8 +1674,8 @@
       "save": "Save",
       "delete": "Delete",
       "deleteTitle": "Delete {{name}}?",
-      "deleteMessage_one": "This removes the label from {{count}} workspace on this host.",
-      "deleteMessage_other": "This removes the label from {{count}} workspaces on this host.",
+      "deleteMessage_one": "This removes the label from {{count}} directory on this host.",
+      "deleteMessage_other": "This removes the label from {{count}} directories on this host.",
       "offline": "This host is offline.",
       "updateHost": "Update this host to manage labels."
     }
@@ -1781,7 +1854,7 @@
         "invalidBranchName": "Invalid branch name"
       },
       "toasts": {
-        "workspacePathUnavailable": "Workspace path not available",
+        "workspacePathUnavailable": "Directory path not available",
         "pathCopied": "Path copied",
         "branchNameCopied": "Branch name copied",
         "hostDisconnected": "Host is not connected",
@@ -1805,7 +1878,8 @@
       "hostDisconnected": "Host is not connected",
       "createWorktreeFailed": "Failed to create worktree",
       "composerStateRequired": "Composer state is required",
-      "selectModel": "Select a model"
+      "selectModel": "Select a model",
+      "worktreeUnsupported": "Worktree creation is no longer supported. Choose a local directory."
     },
     "tooltips": {
       "project": "Choose the project",
@@ -1830,6 +1904,42 @@
       "submit": "Launch",
       "promptPlaceholder": "Prompt {{name}}",
       "openTerminal": "Open terminal"
+    },
+    "addProject": {
+      "source": "Directory source",
+      "sources": {
+        "directory": "Existing checkout or directory",
+        "clone": "Clone GitHub repository",
+        "newDirectory": "Create remote directory"
+      },
+      "directory": {
+        "existing": "Remote directory",
+        "parent": "Parent directory",
+        "cloneTarget": "Clone target directory",
+        "placeholder": "Path on the host, e.g. ~/code/app",
+        "browse": "Browse remote directories"
+      },
+      "repository": "Repository or search query",
+      "searchRepositories": "Search GitHub repositories",
+      "protocol": "Clone protocol",
+      "directoryName": "New directory name",
+      "cloneRepository": "Clone repository",
+      "createDirectory": "Create directory",
+      "unknownOutcome": "The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.",
+      "inspectPrepared": "Inspect and select prepared directory",
+      "errors": {
+        "chooseParent": "Choose a remote parent directory.",
+        "enterName": "Enter a directory name.",
+        "chooseRepository": "Choose a repository or enter owner/repository.",
+        "noProject": "The host did not return a registered project.",
+        "noPreparedDirectory": "The host did not return the prepared directory. Browse to inspect its state."
+      },
+      "added": {
+        "title": "Project added",
+        "description": "{{name}} is now in the sidebar.",
+        "newSession": "New session in this project",
+        "addAnother": "Add another project"
+      }
     }
   },
   "desktop": {
@@ -2052,7 +2162,7 @@
     "stashRestored": "Stashed changes restored"
   },
   "agentAutocomplete": {
-    "searchingWorkspace": "Searching workspace...",
+    "searchingWorkspace": "Searching directory...",
     "loadingCommands": "Loading commands...",
     "noFiles": "No files or directories found",
     "noCommands": "No commands found",
@@ -2092,7 +2202,6 @@
     "actions": { "settings": "Settings" }
   },
   "modelSelector": {
-    "title": "Select provider",
     "selectModel": "Select model",
     "selectedModel": "Select model ({{model}})",
     "loading": "Loading...",
@@ -2101,7 +2210,6 @@
     "error": "Error",
     "defaultModel": "Default",
     "profiles": "Profiles",
-    "providers": "Providers",
     "model": "Model",
     "editProfiles": "Edit",
     "editProfilesLabel": "Edit agent profiles",
@@ -2113,11 +2221,19 @@
     "modelCountPlural": "{{count}} models",
     "retry": "Retry",
     "retrying": "Retrying...",
-    "noMatches": "No models match your search",
     "noMatchesForQuery": "No models match \"{{query}}\"",
     "searchAllPlaceholder": "Search all models...",
     "searchPlaceholder": "Search models...",
-    "openProviderSettings": "Open {{provider}} settings"
+    "openProviderSettings": "Open {{provider}} settings",
+    "favorites": "Favorites",
+    "recent": "Recent",
+    "allModels": "All models",
+    "addFavorite": "Add to favorites",
+    "removeFavorite": "Remove from favorites",
+    "unavailable": "Unavailable",
+    "disabled": "Disabled",
+    "providerFailed": "Couldn't load models",
+    "noProviders": "No providers available"
   },
   "providerCatalog": {
     "title": "Add provider",
@@ -2528,6 +2644,8 @@
     "projects": "Projects",
     "projectList": {
       "hostLoadFailed": "Couldn't load projects from host {{hostName}}: {{message}}",
+      "hostOfflineTitle": "{{hostName}} is offline",
+      "hostOfflineMessage": "Projects will appear when the host reconnects.",
       "editProject": "Edit {{projectName}}"
     },
     "groupInfo": "About {{title}}",
@@ -2997,6 +3115,7 @@
         "removeAction": "Remove",
         "removeErrorTitle": "Error",
         "removeErrorMessage": "Unable to remove connection",
+        "connectedHostsLoadFailed": "Couldn't load connected hosts",
         "timeout": "Timeout"
       },
       "pairDevices": {
@@ -3048,7 +3167,7 @@
         "unavailable": "Connect to this host to manage orchestration",
         "enableTools": {
           "title": "Enable Paseo tools",
-          "hint": "Agents will be able to manage worktrees, agents and schedules",
+          "hint": "Agents will be able to manage sessions and schedules",
           "accessibilityLabel": "Inject Paseo tools"
         },
         "systemPrompt": {
@@ -3241,7 +3360,11 @@
           "rolledBackMessage": "The previous daemon was restored (operation {{id}}). {{error}}",
           "operationFailedMessage": "Update operation {{id}} failed; recovery data was kept on the host. {{error}}",
           "stillRunningTitle": "Update still in progress",
-          "stillRunningMessage": "Update operation {{id}} is not yet confirmed complete. It may still be running on the host. Use Resume to keep watching the same operation."
+          "stillRunningHint": "The update is not yet confirmed complete and may still be running on the host. Use Resume to keep watching the same operation.",
+          "timedOutMessage": "The host didn't respond in time. Check again in a moment.",
+          "notPublished": "No update has been published for this platform yet.",
+          "serviceUnmanaged": "This host's daemon isn't running under a service manager the updater can control, so it can't update itself here.",
+          "copyOperationId": "Copy operation ID {{id}}"
         },
         "dangerZone": "Danger zone",
         "remove": {

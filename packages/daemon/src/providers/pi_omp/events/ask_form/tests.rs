@@ -601,7 +601,12 @@ fn installed_omp_accepts_paseo_answers() {
         let prompt = format!(
             "Call the `ask` tool exactly once. Pass the HTML below as the `html` argument, verbatim, without changing a single character. After the tool returns, reply with only OK.\n\n{html}"
         );
-        writeln!(stdin, "{}", json!({"id":"live","type":"prompt","message":prompt})).unwrap();
+        writeln!(
+            stdin,
+            "{}",
+            json!({"id":"live","type":"prompt","message":prompt})
+        )
+        .unwrap();
         let mut mapper = Mapper::new("omp", "omp");
         let mut steps = steps.into_iter();
         let mut answers = None;
@@ -610,7 +615,10 @@ fn installed_omp_accepts_paseo_answers() {
                 continue;
             };
             if frame["type"] == "tool_execution_start" && frame["toolName"] == "ask" {
-                assert_eq!(frame["args"]["html"], html, "{name}: the model changed the form");
+                assert_eq!(
+                    frame["args"]["html"], html,
+                    "{name}: the model changed the form"
+                );
             }
             if frame["type"] == "tool_execution_end" && frame["toolName"] == "ask" {
                 answers = Some(frame["result"]["details"]["answers"].clone());
@@ -636,6 +644,7 @@ fn installed_omp_accepts_paseo_answers() {
             }
         }
         let _ = child.kill();
+        let _ = child.wait();
         assert_eq!(
             answers.expect("omp finished the ask"),
             recording["answers"],

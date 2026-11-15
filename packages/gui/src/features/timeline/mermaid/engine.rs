@@ -10,6 +10,24 @@ use mermaid_rs_renderer::{self as mermaid, DiagramKind, LayoutConfig, Theme};
 use paseo_gui_platform::appearance::{self as fonts, FontFace, FontRequest, Role};
 use resvg::{tiny_skia, usvg};
 
+use super::{Failure, FailureKind};
+
+fn invalid(detail: impl Into<String>) -> Failure {
+    Failure::new(FailureKind::Invalid, detail)
+}
+fn unsupported(detail: impl Into<String>) -> Failure {
+    Failure::new(FailureKind::Unsupported, detail)
+}
+fn too_large(detail: impl Into<String>) -> Failure {
+    Failure::new(FailureKind::TooLarge, detail)
+}
+fn font(detail: impl Into<String>) -> Failure {
+    Failure::new(FailureKind::Font, detail)
+}
+fn worker(detail: impl Into<String>) -> Failure {
+    Failure::new(FailureKind::Worker, detail)
+}
+
 const MAX_SOURCE_BYTES: usize = 32 * 1024;
 const MAX_LINES: usize = 512;
 const MAX_LINE_BYTES: usize = 4096;
@@ -31,21 +49,23 @@ pub struct Rendered {
 
 /// Blocking parse, native font resolution, shaping and rasterization. Call only
 /// from a worker. No network, browser, JavaScript or source-directed file reads.
-pub fn render(source: &str, dark: bool) -> Result<Rendered, String> {
+pub fn render(source: &str, dark: bool) -> Result<Rendered, Failure> {
     validate_source(source)?;
     // A malformed streaming fence must not kill the shared render worker.
     std::panic::catch_unwind(|| render_inner(source, dark))
-        .map_err(|_| "The Mermaid renderer could not process this diagram".to_owned())?
+        .map_err(|_| invalid("The Mermaid renderer could not process this diagram"))?
 }
 
-fn render_inner(source: &str, dark: bool) -> Result<Rendered, String> {
+fn render_inner(source: &str, dark: bool) -> Result<Rendered, Failure> {
     canonicalize(&diagram_svg(source, dark)?)
 }
 
-fn diagram_svg(source: &str, dark: bool) -> Result<String, String> {
-    let mut parsed = mermaid::parse_mermaid_strict(source).map_err(|e| e.to_string())?;
+fn diagram_svg(source: &str, dark: bool) -> Result<String, Failure> {
+    let mut parsed = mermaid::parse_mermaid_strict(source).map_err(|e| invalid(e.to_string()))?;
     if parsed.graph.nodes.len() > MAX_NODES || parsed.graph.edges.len() > MAX_EDGES {
-        return Err("Mermaid diagram has too many participants, nodes or messages".into());
+        return Err(too_large(
+            "Mermaid diagram has too many participants, nodes or messages",
+        ));
     }
     if parsed.graph.kind == DiagramKind::Sequence {
         validate_sequence(source, &parsed.graph)?;
@@ -60,7 +80,7 @@ fn diagram_svg(source: &str, dark: bool) -> Result<String, String> {
     let config = LayoutConfig::default();
     let layout = mermaid::compute_layout(&parsed.graph, &theme, &config);
     if let mermaid::layout::DiagramData::Error(error) = &layout.diagram {
-        return Err(error.message.clone());
+        return Err(invalid(error.message.clone()));
     }
     let dimensions = mermaid::measure_svg_dimensions(&layout, &config, None);
     image_size(dimensions.width, dimensions.height)?;
@@ -72,23 +92,25 @@ fn diagram_svg(source: &str, dark: bool) -> Result<String, String> {
     ))
 }
 
-fn validate_source(source: &str) -> Result<(), String> {
+fn validate_source(source: &str) -> Result<(), Failure> {
     if source.trim().is_empty() {
-        return Err("Mermaid source is empty".into());
+        return Err(invalid("Mermaid source is empty"));
     }
     if source.len() > MAX_SOURCE_BYTES {
-        return Err("Mermaid source exceeds the 32 KiB limit".into());
+        return Err(too_large("Mermaid source exceeds the 32 KiB limit"));
     }
     let mut depth = 0usize;
     for (index, line) in source.lines().enumerate() {
         if index >= MAX_LINES || line.len() > MAX_LINE_BYTES {
-            return Err("Mermaid source has too many lines or an overlong line".into());
+            return Err(too_large(
+                "Mermaid source has too many lines or an overlong line",
+            ));
         }
         let line = line.trim();
         if line.starts_with("%%{") || line == "---" {
-            return Err(
-                "Mermaid configuration directives and frontmatter are not supported".into(),
-            );
+            return Err(unsupported(
+                "Mermaid configuration directives and frontmatter are not supported",
+            ));
         }
         if line.starts_with("%%") {
             continue;
@@ -102,7 +124,7 @@ fn validate_source(source: &str) -> Result<(), String> {
         {
             depth += 1;
             if depth > MAX_DEPTH {
-                return Err("Mermaid nesting exceeds the 32-level limit".into());
+                return Err(too_large("Mermaid nesting exceeds the 32-level limit"));
             }
         } else if keyword.eq_ignore_ascii_case("end") {
             depth = depth.saturating_sub(1);
@@ -115,9 +137,9 @@ fn validate_source(source: &str) -> Result<(), String> {
 /// whether each non-boundary statement has semantics rather than silently
 /// showing a complete-looking preview of a truncated/unsupported message.
 /// This is an admission check, not a second Mermaid grammar or layout engine.
-fn validate_sequence(source: &str, graph: &mermaid::Graph) -> Result<(), String> {
+fn validate_sequence(source: &str, graph: &mermaid::Graph) -> Result<(), Failure> {
     if graph.sequence_participants.is_empty() {
-        return Err("Sequence diagram has no participants or messages".into());
+        return Err(invalid("Sequence diagram has no participants or messages"));
     }
     // The upstream parser can backtrack an unfinished `A->>` into `A->`
     // followed by a participant literally named `>`. Do not accept that as a
@@ -127,10 +149,9 @@ fn validate_sequence(source: &str, graph: &mermaid::Graph) -> Result<(), String>
         .iter()
         .any(|id| id.is_empty() || id.chars().any(|c| matches!(c, '<' | '>' | ':')))
     {
-        return Err(
-            "Sequence diagram contains an incomplete arrow or invalid participant identifier"
-                .into(),
-        );
+        return Err(invalid(
+            "Sequence diagram contains an incomplete arrow or invalid participant identifier",
+        ));
     }
     for (index, line) in source.lines().enumerate() {
         let line = line.trim();
@@ -146,41 +167,43 @@ fn validate_sequence(source: &str, graph: &mermaid::Graph) -> Result<(), String>
             continue;
         }
         let single = mermaid::parse_mermaid(&format!("sequenceDiagram\n{line}"))
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| invalid(error.to_string()))?;
         if single.graph.nodes.is_empty()
             && single.graph.sequence_frames.is_empty()
             && single.graph.sequence_boxes.is_empty()
         {
-            return Err(format!(
+            return Err(invalid(format!(
                 "Unsupported or incomplete Mermaid statement on line {}",
                 index + 1
-            ));
+            )));
         }
     }
     Ok(())
 }
 
-fn image_size(width: f32, height: f32) -> Result<(u32, u32), String> {
+fn image_size(width: f32, height: f32) -> Result<(u32, u32), Failure> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
-        return Err("Mermaid diagram has invalid dimensions".into());
+        return Err(invalid("Mermaid diagram has invalid dimensions"));
     }
     if width.ceil() > MAX_SIDE as f32 || height.ceil() > MAX_SIDE as f32 {
-        return Err("Mermaid diagram exceeds the 4096-pixel side limit".into());
+        return Err(too_large(
+            "Mermaid diagram exceeds the 4096-pixel side limit",
+        ));
     }
     let (width, height) = (width.ceil() as u32, height.ceil() as u32);
     if u64::from(width) * u64::from(height) > MAX_PIXELS {
-        return Err("Mermaid diagram exceeds the 8-megapixel limit".into());
+        return Err(too_large("Mermaid diagram exceeds the 8-megapixel limit"));
     }
     Ok((width, height))
 }
 
-fn svg_document(svg: &str, outlined: bool) -> Result<usvg::roxmltree::Document<'_>, String> {
+fn svg_document(svg: &str, outlined: bool) -> Result<usvg::roxmltree::Document<'_>, Failure> {
     if svg.len() > MAX_SVG_BYTES {
-        return Err("Mermaid SVG exceeds the 8 MiB limit".into());
+        return Err(too_large("Mermaid SVG exceeds the 8 MiB limit"));
     }
     // roxmltree's default explicitly forbids DTD/entity expansion.
-    let doc =
-        usvg::roxmltree::Document::parse(svg).map_err(|e| format!("Invalid Mermaid SVG: {e}"))?;
+    let doc = usvg::roxmltree::Document::parse(svg)
+        .map_err(|e| unsupported(format!("Invalid Mermaid SVG: {e}")))?;
     for node in doc.descendants().filter(|n| n.is_element()) {
         let tag = node.tag_name();
         if tag.namespace() != Some("http://www.w3.org/2000/svg")
@@ -209,13 +232,13 @@ fn svg_document(svg: &str, outlined: bool) -> Result<usvg::roxmltree::Document<'
             )
             || (outlined && matches!(tag.name(), "text" | "tspan"))
         {
-            return Err(format!(
+            return Err(unsupported(format!(
                 "Unsafe or unsupported Mermaid SVG element: {}",
                 tag.name()
-            ));
+            )));
         }
         if node.ancestors().take(129).count() > 128 {
-            return Err("Mermaid SVG nesting is too deep".into());
+            return Err(too_large("Mermaid SVG nesting is too deep"));
         }
         for attribute in node.attributes() {
             let name = attribute.name();
@@ -223,12 +246,14 @@ fn svg_document(svg: &str, outlined: bool) -> Result<usvg::roxmltree::Document<'
                 || (name == "href" && !attribute.value().starts_with('#'))
                 || name == "base"
             {
-                return Err("Mermaid SVG contains an unsafe resource or event attribute".into());
+                return Err(unsupported(
+                    "Mermaid SVG contains an unsafe resource or event attribute",
+                ));
             }
             // Canonical usvg output never needs CSS. Reject it on the exported
             // boundary, so CSS escapes/imports cannot hide an external URL.
             if outlined && name == "style" {
-                return Err("Mermaid SVG unexpectedly contains CSS".into());
+                return Err(unsupported("Mermaid SVG unexpectedly contains CSS"));
             }
             let value = attribute.value();
             static RESOURCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -238,7 +263,9 @@ fn svg_document(svg: &str, outlined: bool) -> Result<usvg::roxmltree::Document<'
                 .captures_iter(value)
                 .any(|capture| !capture[1].trim().starts_with('#'))
             {
-                return Err("Mermaid SVG contains an external paint reference".into());
+                return Err(unsupported(
+                    "Mermaid SVG contains an external paint reference",
+                ));
             }
         }
     }
@@ -258,7 +285,7 @@ fn install_face(db: &mut usvg::fontdb::Database, face: &FontFace) -> Option<usvg
         .find(|id| db.face(*id).is_some_and(|info| info.index == face.index))
 }
 
-fn font_options(missing: Arc<Mutex<Option<char>>>) -> Result<usvg::Options<'static>, String> {
+fn font_options(missing: Arc<Mutex<Option<char>>>) -> Result<usvg::Options<'static>, Failure> {
     let request = FontRequest {
         locale: sys_locale::get_locale().unwrap_or_default(),
         ..Default::default()
@@ -269,13 +296,14 @@ fn font_options(missing: Arc<Mutex<Option<char>>>) -> Result<usvg::Options<'stat
         .ui
         .regular
         .as_ref()
-        .ok_or("No usable system font is installed")?;
-    let primary_id = install_face(&mut db, primary).ok_or("Could not load the system font")?;
+        .ok_or_else(|| font("No usable system font is installed"))?;
+    let primary_id =
+        install_face(&mut db, primary).ok_or_else(|| font("Could not load the system font"))?;
     let family = db
         .face(primary_id)
         .and_then(|face| face.families.first())
         .map(|(family, _)| family.clone())
-        .ok_or("System font has no family name")?;
+        .ok_or_else(|| font("System font has no family name"))?;
     for face in [
         system.ui.semibold,
         system.ui.italic,
@@ -339,19 +367,19 @@ fn font_options(missing: Arc<Mutex<Option<char>>>) -> Result<usvg::Options<'stat
     Ok(options)
 }
 
-fn canonicalize(raw: &str) -> Result<Rendered, String> {
+fn canonicalize(raw: &str) -> Result<Rendered, Failure> {
     svg_document(raw, false)?;
     let missing = Arc::new(Mutex::new(None));
     let options = font_options(missing.clone())?;
-    let tree = usvg::Tree::from_str(raw, &options).map_err(|e| e.to_string())?;
-    if let Some(character) = *missing.lock().map_err(|_| "Font resolver failed")? {
-        return Err(format!(
+    let tree = usvg::Tree::from_str(raw, &options).map_err(|e| unsupported(e.to_string()))?;
+    if let Some(character) = *missing.lock().map_err(|_| worker("Font resolver failed"))? {
+        return Err(font(format!(
             "No installed outline font supports U+{:04X}",
             character as u32
-        ));
+        )));
     }
     if tree.root().children().is_empty() {
-        return Err("Mermaid diagram contains no visible content".into());
+        return Err(invalid("Mermaid diagram contains no visible content"));
     }
     let svg = tree.to_string(&usvg::WriteOptions::default());
     svg_document(&svg, true)?;
@@ -365,9 +393,9 @@ fn canonicalize(raw: &str) -> Result<Rendered, String> {
     })
 }
 
-fn rasterize(tree: &usvg::Tree, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let mut pixmap =
-        tiny_skia::Pixmap::new(width, height).ok_or("Could not allocate Mermaid image")?;
+fn rasterize(tree: &usvg::Tree, width: u32, height: u32) -> Result<Vec<u8>, Failure> {
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| too_large("Could not allocate Mermaid image"))?;
     resvg::render(tree, tiny_skia::Transform::identity(), &mut pixmap.as_mut());
     let mut rgba = pixmap.take();
     // tiny-skia is premultiplied; the GUI image buffer and PNG encoder are not.
@@ -383,11 +411,11 @@ fn rasterize(tree: &usvg::Tree, width: u32, height: u32) -> Result<Vec<u8>, Stri
 }
 
 /// Encode only on export, using exactly the displayed revision's RGBA pixels.
-pub fn encode_png(rendered: &Rendered) -> Result<Vec<u8>, String> {
+pub fn encode_png(rendered: &Rendered) -> Result<Vec<u8>, Failure> {
     image_size(rendered.width as f32, rendered.height as f32)?;
     let expected = u64::from(rendered.width) * u64::from(rendered.height) * 4;
     if rendered.rgba.len() as u64 != expected {
-        return Err("Mermaid image has invalid RGBA dimensions".into());
+        return Err(worker("Mermaid image has invalid RGBA dimensions"));
     }
     let mut bytes = Vec::new();
     image::codecs::png::PngEncoder::new(&mut bytes)
@@ -397,7 +425,7 @@ pub fn encode_png(rendered: &Rendered) -> Result<Vec<u8>, String> {
             rendered.height,
             image::ExtendedColorType::Rgba8,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| worker(e.to_string()))?;
     Ok(bytes)
 }
 
@@ -669,7 +697,9 @@ A->>A: Outside";
         for i in 0..=MAX_NODES {
             source.push_str(&format!("participant P{i}\n"));
         }
-        assert!(render(&source, false).unwrap_err().contains("too many"));
+        let failure = render(&source, false).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::TooLarge);
+        assert!(failure.detail.contains("too many"));
         let invalid = Rendered {
             svg: String::new(),
             width: 2,
@@ -810,9 +840,11 @@ A->>A: Outside";
             Err(error) => {
                 // Headless systems may lack a script's font. Require an honest
                 // missing-glyph diagnostic, never a successful tofu/blank export.
+                assert_eq!(error.kind, FailureKind::Font);
                 let code = error
+                    .detail
                     .strip_prefix("No installed outline font supports U+")
-                    .unwrap_or_else(|| panic!("Unexpected font failure: {error}"));
+                    .unwrap_or_else(|| panic!("Unexpected font failure: {}", error.detail));
                 let character = char::from_u32(u32::from_str_radix(code, 16).unwrap()).unwrap();
                 let request = FontRequest {
                     locale: sys_locale::get_locale().unwrap_or_default(),

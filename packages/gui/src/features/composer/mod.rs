@@ -15,6 +15,7 @@ pub mod drafts;
 pub mod forge;
 pub mod i18n;
 pub mod json;
+pub mod model_picks;
 pub mod ops;
 pub mod service;
 pub mod state_keys;

@@ -1594,12 +1594,16 @@ pub fn draw_connected_hosts(ui: &mut Ui, s: &Settings, host: &HostView) {
         (!loading).then(|| handler(move |s, env| load_connected_hosts(s, env, &refresh_id)));
     let add_id = id.clone();
     let add = handler(move |s, _| edit_connected_host(s, &add_id, None));
-    // Flutter labels the add button with the untranslated "Register host".
     let trailing = Ctl::Row(
         vec![
-            icon_button(format!("chosts.{id}.refresh"), Icon::RotateCw, refresh)
-                .tipped(t("usage.refresh")),
-            icon_button(format!("chosts.{id}.add"), Icon::Plus, Some(add)).tipped("Register host"),
+            icon_button(
+                format!("chosts.{id}.refresh"),
+                Icon::RotateCw,
+                refresh.clone(),
+            )
+            .tipped(t("usage.refresh")),
+            icon_button(format!("chosts.{id}.add"), Icon::Plus, Some(add))
+                .tipped(t("settingsNative.registerConnectedHost")),
         ],
         0.0,
     );
@@ -1611,7 +1615,20 @@ pub fn draw_connected_hosts(ui: &mut Ui, s: &Settings, host: &HostView) {
     match state {
         Some(ConnectedHostsState {
             error: Some(error), ..
-        }) => ui.alert(false, error, None, None),
+        }) => ui.alert(
+            false,
+            &t("settings.host.connections.connectedHostsLoadFailed"),
+            Some(error.as_str()),
+            Some(
+                button(
+                    format!("chosts.{id}.retry"),
+                    t("common.actions.retry"),
+                    refresh,
+                )
+                .icon(Icon::RotateCw)
+                .ctl(),
+            ),
+        ),
         Some(state) if !state.hosts.is_empty() => {
             ui.card_begin();
             for (i, entry) in state.hosts.iter().enumerate() {

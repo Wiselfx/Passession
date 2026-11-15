@@ -122,7 +122,7 @@ const HOST_SECTIONS: &[(&str, &str, Icon)] = &[
         Icon::SquareTerminal,
     ),
     ("plugins", "settings.hostSections.plugins", Icon::Plug),
-    ("version", "settings.hostSections.version", Icon::Info),
+    ("version", "settings.hostSections.version", Icon::Package),
 ];
 
 fn app_sections() -> impl Iterator<Item = &'static (&'static str, &'static str, Icon, bool)> {

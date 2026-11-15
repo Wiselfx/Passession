@@ -307,7 +307,12 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, area: Rect) {
             14.0,
             p.accent_bright,
         );
-        ui.hit(rect(x, y, total, line), "welcome:website");
+        // Phone layout: a 44px-tall touch target centred on the text line.
+        let hit_h = if ui.compact { line.max(44.0) } else { line };
+        ui.hit(
+            rect(x, y + (line - hit_h) * 0.5, total, hit_h),
+            "welcome:website",
+        );
         y += line;
     }
     y += 48.0;

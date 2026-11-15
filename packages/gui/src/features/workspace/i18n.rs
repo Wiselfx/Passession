@@ -43,12 +43,6 @@ pub fn lf(english: &'static str, args: &[(&str, &str)]) -> String {
 
 /// English → Korean for literals without catalog keys.
 static KO: &[(&str, &str)] = &[
-    ("Directory source", "디렉터리 가져오기"),
-    ("Directory options", "디렉터리 옵션"),
-    (
-        "Worktree creation is no longer supported. Choose a local directory.",
-        "워크트리 생성은 더 이상 지원하지 않습니다. 로컬 디렉터리를 선택하세요.",
-    ),
     (
         "Worktree schedules are no longer supported. Create a new schedule for a local directory.",
         "워크트리 일정은 더 이상 지원하지 않습니다. 로컬 디렉터리에서 실행할 새 일정을 만드세요.",
@@ -158,8 +152,8 @@ static KO: &[(&str, &str)] = &[
     ("Edit heartbeat", "하트비트 편집"),
     ("Edit schedule", "스케줄 편집"),
     (
-        "This connection does not have automation.manage permission.",
-        "이 연결에는 automation.manage 권한이 없습니다.",
+        "This connection can't manage schedules.",
+        "이 연결로는 스케줄을 관리할 수 없습니다.",
     ),
     ("Name", "이름"),
     ("Optional", "선택 사항"),
@@ -308,23 +302,6 @@ static KO: &[(&str, &str)] = &[
     // New tab
     ("Choose a remote directory", "원격 디렉터리 선택"),
     ("Choose a remote directory.", "원격 디렉터리를 선택하세요."),
-    (
-        "Choose a remote parent directory.",
-        "원격 상위 디렉터리를 선택하세요.",
-    ),
-    ("Enter a directory name.", "디렉터리 이름을 입력하세요."),
-    (
-        "Choose a repository or enter owner/repository.",
-        "저장소를 선택하거나 owner/repository를 입력하세요.",
-    ),
-    (
-        "The host did not return a registered project.",
-        "호스트가 등록된 프로젝트를 반환하지 않았습니다.",
-    ),
-    (
-        "The host did not return the prepared directory. Browse to inspect its state.",
-        "호스트가 준비된 디렉터리를 반환하지 않았습니다. 찾아보기로 상태를 확인하세요.",
-    ),
     ("No repositories found.", "저장소가 없습니다."),
     ("GitHub repositories", "GitHub 저장소"),
     ("Search projects", "프로젝트 검색"),
@@ -348,10 +325,6 @@ static KO: &[(&str, &str)] = &[
     ),
     ("New attempt", "새 시도"),
     (
-        "Project added. It is available in the sidebar.",
-        "프로젝트가 추가되었습니다. 사이드바에서 사용할 수 있습니다.",
-    ),
-    (
         "Session created. It is open in the tab bar.",
         "세션이 생성되었습니다. 탭 바에 열려 있습니다.",
     ),
@@ -369,16 +342,6 @@ static KO: &[(&str, &str)] = &[
     ("Recover / refresh creation", "생성 복구 / 새로 고침"),
     ("Open created session", "생성된 세션 열기"),
     ("Start new attempt", "새 시도 시작"),
-    (
-        "Existing checkout or directory",
-        "기존 체크아웃 또는 디렉터리",
-    ),
-    ("Clone GitHub repository", "GitHub 저장소 복제"),
-    ("Create remote directory", "원격 디렉터리 만들기"),
-    ("Parent directory", "상위 디렉터리"),
-    ("Clone target directory", "복제 대상 디렉터리"),
-    ("Remote directory", "원격 디렉터리"),
-    ("Browse remote directories", "원격 디렉터리 찾아보기"),
     ("Branch to check out", "체크아웃할 브랜치"),
     ("New branch name", "새 브랜치 이름"),
     ("Automatic if empty", "비어 있으면 자동"),
@@ -389,28 +352,9 @@ static KO: &[(&str, &str)] = &[
         "선택 사항이며 호스트가 저장소를 감지합니다",
     ),
     ("Forge project path", "포지 프로젝트 경로"),
-    ("Repository or search query", "저장소 또는 검색어"),
-    ("Search GitHub repositories", "GitHub 저장소 검색"),
-    ("Clone protocol", "복제 프로토콜"),
-    ("New directory name", "새 디렉터리 이름"),
-    (
-        "The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.",
-        "디렉터리 작업 결과를 알 수 없습니다. 대상을 찾아보고 완료되었다면 기존 디렉터리를 선택하세요. 작업을 무작정 반복하지 마세요.",
-    ),
-    ("Clone repository", "저장소 복제"),
-    ("Create directory", "디렉터리 만들기"),
-    (
-        "Inspect and select prepared directory",
-        "준비된 디렉터리 확인 및 선택",
-    ),
     ("Agent profile", "에이전트 프로필"),
     ("Custom configuration", "사용자 지정 구성"),
-    (
-        "Add project without a workspace",
-        "워크스페이스 없이 프로젝트 추가",
-    ),
     ("Choose project", "프로젝트 선택"),
-    ("Workspace project", "워크스페이스 프로젝트"),
     ("Session", "세션"),
     ("upstream", "업스트림"),
     ("local", "로컬"),

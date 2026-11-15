@@ -132,8 +132,8 @@ live_design! {
     }
     pub WaSectionTitle = <WaText> { margin: { top: 0., bottom: 8. } }
 
-    // `WorkspaceAlert`: transparent, danger/warning border at half alpha, 16px radius, a
-    // 14px (16px large) circle-x / triangle-alert icon, title in the tone, muted description
+    // `WorkspaceAlert`: transparent, danger/warning/success border at half alpha, 16px radius,
+    // a 14px (16px large) circle-x / triangle-alert / circle-check icon, title in the tone, muted description
     // and actions indented under the title.
     pub WaFrameBase = {{WaFrame}} {
         painter: <PaseoPainter> {}
@@ -156,6 +156,7 @@ live_design! {
         }
     }
     pub WaWarningAlert = <WaAlert> { tone: Warning }
+    pub WaSuccessAlert = <WaAlert> { tone: Success }
 
     // `errorCard`: red-100 fill, red-800 text in every theme (the original is constant).
     pub WaErrorCard = <View> {
@@ -1570,6 +1571,7 @@ pub enum WaTone {
     #[pick]
     Danger,
     Warning,
+    Success,
 }
 
 /// A view outlined in its tone at half alpha with a 16px radius; icon and title take the tone.
@@ -1598,6 +1600,7 @@ impl Widget for WaFrame {
         let (accent, icon) = match self.tone {
             WaTone::Danger => (p.danger, "circle-x"),
             WaTone::Warning => (p.warning, "triangle-alert"),
+            WaTone::Success => (p.success, "circle-check"),
         };
         let key = (self.tone, theme::epoch());
         if self.painted != Some(key) {

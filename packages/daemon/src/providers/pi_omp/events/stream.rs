@@ -223,11 +223,16 @@ impl Streams {
         }
     }
 
-    pub(super) fn start(&mut self, frame: &Value) -> Vec<Value> {
+    /// OMP clones its shared partial only when its loop reaches `start`, after
+    /// the provider may already have queued content events. Each of those still
+    /// follows as an update (a delta, or a cumulative full-mode snapshot), so
+    /// publishing this clone would emit its prefix twice and contradict the
+    /// final body. The start only opens the message; updates and the end supply it.
+    pub(super) fn start(&mut self, frame: &Value) {
         if frame["messageId"].as_str().is_none() {
             self.anonymous = None;
         }
-        self.message(frame).snapshot(&frame["message"], false)
+        self.message(frame);
     }
 
     pub(super) fn update(&mut self, frame: &Value) -> Vec<Value> {
@@ -361,12 +366,14 @@ mod tests {
     fn omp_delta_unicode_prefix_shells_and_terminal_suffix_are_emitted_once() {
         let mut mapper = Mapper::new("omp", "custom-omp");
         mapper.begin_turn("turn");
+        // The start clone opens the message only; a block shell may carry its prefix.
         let mut events = mapper.map(&start("msg-2", json!([{"type":"text","text":"원본 "}])));
-        let id = events[0]["item"]["messageId"].clone();
+        assert!(events.is_empty());
         let shell = json!({"type":"message_update","messageId":"msg-2","message":{"role":"assistant"},
             "assistantMessageEvent":{"type":"text_start","contentIndex":0,
                 "block":{"type":"text","text":"원본 ","textSignature":"native-signature"}}});
-        assert!(mapper.map(&shell).is_empty());
+        events.extend(mapper.map(&shell));
+        let id = events[0]["item"]["messageId"].clone();
         for delta in ["대화", "🙂", "e", "\u{301}", "하", "하"] {
             events.extend(mapper.map(&update("msg-2", 0, "text_delta", delta)));
         }
@@ -387,6 +394,58 @@ mod tests {
                 .last()
                 .unwrap()["type"],
             "turn_completed"
+        );
+    }
+
+    #[test]
+    fn omp_delta_start_clone_ahead_of_queued_deltas_publishes_each_byte_once() {
+        // Daemon 0.13.26 logged 240 `published_prefix_changed` conflicts, all on
+        // thinking block 0, each with first_difference = the clone length and an
+        // emitted body that long plus the unconfirmed "\n\n" tail beyond the final
+        // one: the message_start clone already held the first queued deltas, which
+        // then arrived again. The conflict withheld the answer until message_end.
+        let thinking = "I'm sorting the fixes by file ownership so every agent owns its files.\n\n";
+        let clone = &thinking[..42];
+        let mut mapper = Mapper::new("omp", "omp");
+        mapper.begin_turn("turn");
+        let mut events = mapper.map(&start(
+            "msg-2",
+            json!([{"type":"thinking","thinking":clone}]),
+        ));
+        events.extend(
+            mapper.map(&json!({"type":"message_update","messageId":"msg-2",
+            "message":{"role":"assistant"},
+            "assistantMessageEvent":{"type":"thinking_start","contentIndex":0,
+                "block":{"type":"thinking","thinking":""}}})),
+        );
+        for delta in [&thinking[..2], &thinking[2..42], &thinking[42..]] {
+            events.extend(mapper.map(&update("msg-2", 0, "thinking_delta", delta)));
+        }
+        events.extend(mapper.map(&update("msg-2", 0, "thinking_end", thinking)));
+        for delta in ["파일별로 ", "정리했습니다."] {
+            events.extend(mapper.map(&update("msg-2", 1, "text_delta", delta)));
+        }
+        // The answer streams while the message is still open.
+        assert_eq!(
+            rendered(&events, "assistant_message"),
+            "파일별로 정리했습니다."
+        );
+        events.extend(mapper.map(&end(
+            "msg-2",
+            json!([
+                {"type":"thinking","thinking":thinking},
+                {"type":"text","text":"파일별로 정리했습니다."}
+            ]),
+        )));
+        assert!(
+            events
+                .iter()
+                .all(|event| event["type"] == "timeline" && event["item"].is_object())
+        );
+        assert_eq!(rendered(&events, "reasoning"), thinking);
+        assert_eq!(
+            rendered(&events, "assistant_message"),
+            "파일별로 정리했습니다."
         );
     }
 

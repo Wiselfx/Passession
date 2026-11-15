@@ -997,7 +997,7 @@ impl WaScheduleEditor {
             cx,
             &view.widget(id!(permission)),
             if permission {
-                l("This connection does not have automation.manage permission.")
+                l("This connection can't manage schedules.")
             } else {
                 ""
             },

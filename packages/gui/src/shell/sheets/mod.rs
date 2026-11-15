@@ -65,6 +65,7 @@ pub struct Field {
     password: bool,
     focus: bool,
     read_only: bool,
+    plain: bool,
 }
 
 impl Field {
@@ -76,6 +77,7 @@ impl Field {
             password: false,
             focus: false,
             read_only: false,
+            plain: false,
         }
     }
 
@@ -88,6 +90,12 @@ impl Field {
     /// Takes key focus when first shown (`autofocus`).
     pub fn autofocus(mut self) -> Self {
         self.focus = true;
+        self
+    }
+
+    /// No fill or border: the caller paints the one field surface (search boxes with a glyph).
+    pub fn plain(mut self) -> Self {
+        self.plain = true;
         self
     }
 
@@ -141,6 +149,9 @@ impl Field {
             field.set_placeholder(cx, &self.placeholder);
             field.set_password(cx, self.password);
             field.set_read_only(cx, self.read_only);
+            if self.plain {
+                field.set_plain(cx);
+            }
             self.widget = Some(widget);
         }
         let widget = self.widget.clone().unwrap();

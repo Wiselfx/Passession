@@ -196,6 +196,9 @@ pub struct Overlays {
     pub tooltip_pending: Option<Tip>,
     pub tooltip_timer: Timer,
     pub tooltips: std::collections::HashMap<String, String>,
+    /// The chrome hit id the current/pending tooltip describes; it hides once that hit is no
+    /// longer registered where it was (route change, resize, closed panel).
+    pub tooltip_owner: Option<String>,
     pub locked: bool,
     /// The area the layer's sweep lock was last taken on.
     pub locked_area: Area,
@@ -576,6 +579,7 @@ pub fn handle_timers(overlays: &mut Overlays, cx: &mut Cx, event: &Event) {
 /// Chrome hover → tooltip anchored to the hovered control after the theme's 500ms
 /// (`TooltipThemeData.waitDuration`).
 pub fn hover_tooltip(shell: &mut PaseoShell, cx: &mut Cx, hover: Option<String>, abs: DVec2) {
+    let hover_id = hover.clone();
     let tip = hover.and_then(|id| {
         let text = shell.data.tooltips.get(&id).cloned()?;
         let anchor = shell.data.hits.rect_of(&id).unwrap_or(Rect {
@@ -588,7 +592,9 @@ pub fn hover_tooltip(shell: &mut PaseoShell, cx: &mut Cx, hover: Option<String>,
             wait: 0.5,
         })
     });
+    let owner = tip.as_ref().and(hover_id);
     show_tooltip(&mut shell.data.overlays, cx, tip);
+    shell.data.overlays.tooltip_owner = owner;
 }
 
 /// Shows `tip` after its wait, or hides the tooltip (`None`). Feature roots reach this through
@@ -600,6 +606,7 @@ pub fn show_tooltip(overlays: &mut Overlays, cx: &mut Cx, tip: Option<Tip>) {
     {
         return;
     }
+    overlays.tooltip_owner = None;
     cx.stop_timer(overlays.tooltip_timer);
     let had = overlays.tooltip.take().is_some();
     overlays.tooltip_pending = None;
@@ -2346,6 +2353,24 @@ fn draw_tooltip(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
     let Some(tip) = shell.data.overlays.tooltip.clone() else {
         return;
     };
+    // A chrome tooltip outlives nothing: its control must still be registered at the anchor.
+    if let Some(owner) = shell.data.overlays.tooltip_owner.clone() {
+        let same =
+            |a: Rect, b: Rect| (a.pos - b.pos).length() < 0.5 && (a.size - b.size).length() < 0.5;
+        if !shell
+            .data
+            .hits
+            .rect_of(&owner)
+            .is_some_and(|r| same(r, tip.anchor))
+        {
+            let overlays = &mut shell.data.overlays;
+            cx.stop_timer(overlays.tooltip_timer);
+            overlays.tooltip = None;
+            overlays.tooltip_pending = None;
+            overlays.tooltip_owner = None;
+            return;
+        }
+    }
     let mut ui = overlay_ui(shell);
     let p = ui.p;
     let spec = ui.spec(Font::Regular, 12.0, p.surface0);

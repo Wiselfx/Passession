@@ -78,10 +78,15 @@ fn diff_args(refs: &[String], whitespace: bool, option: &str) -> Vec<String> {
     result.extend_from_slice(refs);
     result
 }
+/// `untracked` is present only on untracked worktree files: an added file and an
+/// untracked one both report `isNew`, and Commit groups them separately.
 fn file(change: &Change, stat: Stat, status: &str) -> Value {
     let mut result = json!({"path":change.path,"isNew":change.status == 'A',"isDeleted":change.status == 'D',"additions":stat.additions,"deletions":stat.deletions,"hunks":[],"status":status});
     if let Some(old) = &change.old_path {
         result["oldPath"] = json!(old);
+    }
+    if change.untracked {
+        result["untracked"] = json!(true);
     }
     result
 }

@@ -31,6 +31,9 @@ pub struct ChromeState {
     pub sidebar_rect: Rect,
     pub explorer_rect: Rect,
     pub content_rect: Rect,
+    /// Last measured width of the header's Open In + git actions widgets (0 before first draw),
+    /// so the session-menu island sits right next to them instead of a fixed 300px slot.
+    pub header_git_w: f64,
     /// Active drag: (kind, id, origin abs, origin value).
     pub drag: Option<Drag>,
     /// Compact explorer slide position 0..1 and the animation it is heading to.
@@ -373,27 +376,35 @@ fn draw_startup_error(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect, p: &Palett
     );
 }
 
-/// Flutter `MaterialBanner` with the error and a Settings action.
+/// Flutter `MaterialBanner` with the error and a Settings action, in the shared danger alert
+/// styling: tinted danger fill, a `circle-x` glyph and a danger rule.
 fn draw_banner(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect, message: &str) -> f64 {
     let p = theme::current_palette();
     let t = theme::current_typography();
     let spec = TextSpec::new(Font::Regular, t.ui_size(14.0), p.foreground);
-    let text_w = (r.size.x - 32.0 - 120.0).max(80.0);
-    let h = shell
+    let text_x = r.pos.x + 16.0 + 14.0 + 12.0;
+    let text_w = (r.pos.x + r.size.x - text_x - 16.0 - 120.0).max(80.0);
+    let text_h = shell
         .painter
         .paragraph_height(cx, text_w, spec, message)
-        .max(20.0)
-        + 24.0;
+        .max(20.0);
+    let h = text_h + 24.0;
+    shell.painter.fill(
+        cx,
+        rect(r.pos.x, r.pos.y, r.size.x, h),
+        with_alpha(p.danger, 0.12),
+        0.0,
+    );
+    shell.painter.icon(
+        cx,
+        rect(r.pos.x + 16.0, r.pos.y + 12.0 + 3.0, 14.0, 14.0),
+        "circle-x",
+        14.0,
+        p.danger,
+    );
     shell
         .painter
-        .fill(cx, rect(r.pos.x, r.pos.y, r.size.x, h), p.surface2, 0.0);
-    shell.painter.paragraph(
-        cx,
-        dvec2(r.pos.x + 16.0, r.pos.y + 12.0),
-        text_w,
-        spec,
-        message,
-    );
+        .paragraph(cx, dvec2(text_x, r.pos.y + 12.0), text_w, spec, message);
     let mut ui = make_ui(shell);
     let label = tr("settings.title");
     let bw = ui.button_width(cx, &label, None, ControlSize::Sm);
@@ -412,9 +423,13 @@ fn draw_banner(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect, message: &str) ->
         ControlSize::Sm,
         true,
     );
-    shell
-        .painter
-        .hline(cx, r.pos.x, r.pos.y + h - 1.0, r.size.x, p.border);
+    shell.painter.hline(
+        cx,
+        r.pos.x,
+        r.pos.y + h - 1.0,
+        r.size.x,
+        with_alpha(p.danger, 0.5),
+    );
     h
 }
 
@@ -454,8 +469,9 @@ fn island(
         let h = ui.p.interaction_highlight;
         ui.fill(cx, r, h, extent * 0.5);
     }
+    // Phone: a 44x44 touch target centred on the 32px visual (callers space centres 44px apart).
     let hit = if compact {
-        rect(r.pos.x, r.pos.y - 8.0, extent, extent + 16.0)
+        rect(center.x - 22.0, center.y - 22.0, 44.0, 44.0)
     } else {
         r
     };
@@ -486,6 +502,7 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
         .is_some_and(|w| !j::array(w, "scripts").is_empty());
     let header_git = !compact && target.as_ref().is_some_and(|t| !t.cwd.is_empty());
     let mut right_widgets: Option<Rect> = None;
+    let git_natural = shell.data.chrome.header_git_w;
     // A compact detail view (file, diff, subagent…) leads with Back to the tab it came from.
     let detail_back = shell.data.layout.compact_back_tab(compact).is_some();
     let shell_sidebar_visible = shell.data.layout.sidebar_visible;
@@ -493,6 +510,8 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
         let mut ui = make_ui(shell);
         let p = ui.p;
         let extent = if compact { 32.0 } else { 26.0 };
+        // Centre-to-centre pitch: phone islands keep 44px hits that never overlap.
+        let slot = if compact { 44.0 } else { extent };
         // Sidebar toggle (MobileMenuIcon on compact, PanelLeft on wide).
         // Another session waiting on the user shows a dot on ☰ / the sidebar toggle while the
         // sidebar is out of sight.
@@ -519,7 +538,7 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
         let toggle = island(
             &mut ui,
             cx,
-            dvec2(row.pos.x + extent * 0.5, mid),
+            dvec2(row.pos.x + slot * 0.5, mid),
             toggle_id,
             &toggle_tip,
             compact,
@@ -560,6 +579,22 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
                     ControlSize::Sm,
                     true,
                 );
+                right -= w + 8.0;
+            }
+            // The page's own title ("New session" / "Add project"), like every other tab.
+            if let Some(t) = target.as_ref() {
+                let spec = ui.spec(
+                    Font::Medium,
+                    if compact { 14.0 } else { 16.0 },
+                    p.foreground,
+                );
+                let w = (right - x).max(0.0);
+                ui.text(
+                    cx,
+                    rect(x, row.pos.y, w, row.size.y),
+                    spec,
+                    &header_title(state, t),
+                );
             }
         } else {
             // Right island: explorer toggle, git widgets (wide), scripts (wide), menu.
@@ -570,18 +605,23 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
             let explorer = island(
                 &mut ui,
                 cx,
-                dvec2(right - extent * 0.5, mid),
+                dvec2(right - slot * 0.5, mid),
                 "hdr:explorer",
                 &explorer_tip,
                 compact,
             );
             ui.icon(cx, explorer, "panel-right", 16.0, p.muted);
-            right = explorer.pos.x;
+            right -= slot;
             if header_git {
                 // Git actions split button + open-in, laid out by their own widgets.
-                // Up to 300px: Open In plus a long primary label ("Update from <base>") and
-                // its menu caret; the title keeps at least 120px.
-                let w = 300.0_f64.min((right - x - 120.0).max(0.0));
+                // Sized to their last measured width (300px before the first measure: Open In
+                // plus a long primary label and its caret); the title keeps at least 120px.
+                let natural = if git_natural > 0.0 {
+                    git_natural
+                } else {
+                    300.0
+                };
+                let w = natural.min((right - x - 120.0).max(0.0));
                 if w > 0.0 {
                     let h = theme::control_height(ControlSize::Xs);
                     right_widgets = Some(rect(right - w, mid - h * 0.5, w, h));
@@ -592,24 +632,24 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
                 let scripts = island(
                     &mut ui,
                     cx,
-                    dvec2(right - extent * 0.5, mid),
+                    dvec2(right - slot * 0.5, mid),
                     "hdr:scripts",
                     &tr("workspace.scripts.title"),
                     false,
                 );
                 ui.icon(cx, scripts, "play", 16.0, p.muted);
-                right = scripts.pos.x;
+                right -= slot;
             }
             let menu = island(
                 &mut ui,
                 cx,
-                dvec2(right - extent * 0.5, mid),
+                dvec2(right - slot * 0.5, mid),
                 "hdr:menu",
                 &tr("shell.menu.sessionActions"),
                 compact,
             );
             ui.icon(cx, menu, "ellipsis", 16.0, p.muted);
-            right = menu.pos.x;
+            right -= slot;
             // Title group.
             right -= 8.0;
             let title_text = target
@@ -758,6 +798,20 @@ fn draw_header_git(
     open_in.draw_all(cx, scope);
     git.draw_all(cx, scope);
     cx.end_turtle();
+    // Measure what the widgets actually used; a change relayouts the header next frame.
+    let (a, b) = (open_in.area().rect(cx), git.area().rect(cx));
+    let used = [a, b]
+        .iter()
+        .filter(|r| r.size.x > 0.0)
+        .map(|r| (r.pos.x, r.pos.x + r.size.x))
+        .fold(None, |acc: Option<(f64, f64)>, (l, r)| {
+            Some(acc.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
+        })
+        .map_or(0.0, |(l, r)| (r - l).ceil());
+    if used > 0.0 && (used - shell.data.chrome.header_git_w).abs() > 0.5 {
+        shell.data.chrome.header_git_w = used;
+        shell.redraw(cx);
+    }
 }
 
 fn draw_wide(
@@ -936,8 +990,9 @@ fn draw_pane(
     shell.data.chrome.pane_rects.push((pane_id.to_string(), r));
     let mut content = r;
     if !compact || explorer {
+        // Phone Explorer strip: at least a 44px touch row.
         let bar_h = if compact {
-            18.0 + text_line_height(20.0, 14.0)
+            (18.0 + text_line_height(20.0, 14.0)).max(44.0)
         } else {
             22.0 + text_line_height(16.0, 12.0)
         };
@@ -960,6 +1015,10 @@ fn draw_pane(
             .outline(cx, r, Vec4::default(), p.primary, 1.0, 0.0);
     }
     let Some(key) = selected.map(str::to_string).filter(|_| !keys.is_empty()) else {
+        if explorer {
+            draw_explorer_empty(shell, cx, content);
+            return;
+        }
         let has_sessions = hosts::hosts(state)
             .iter()
             .any(|host| host.agents().next().is_some());
@@ -984,7 +1043,7 @@ pub fn draw_root(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, key: 
                     shell,
                     cx,
                     r,
-                    &format!("Unrecognized panel: {}", target.kind),
+                    &tr_args("shell.chrome.unrecognizedPanel", &[("kind", &target.kind)]),
                 );
                 return;
             }
@@ -1092,6 +1151,29 @@ fn draw_empty(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect, has_sessions: bool
     );
 }
 
+/// The Explorer pane with no directory context (no session focused): a muted, wrapped,
+/// pane-specific note with no call to action, so it never echoes the main empty state.
+fn draw_explorer_empty(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect) {
+    let mut ui = make_ui(shell);
+    let p = ui.p;
+    let spec = ui.spec(Font::Regular, 13.0, p.muted);
+    let message = tr("shell.chrome.explorerEmpty");
+    let w = (r.size.x - 48.0).clamp(0.0, 280.0);
+    let text_h = ui.painter.paragraph_height(cx, w, spec, &message);
+    let top = r.pos.y + (r.size.y - (20.0 + 12.0 + text_h)) * 0.5;
+    let center = r.pos.x + r.size.x * 0.5;
+    ui.icon(
+        cx,
+        rect(center - 10.0, top, 20.0, 20.0),
+        "folder-open",
+        20.0,
+        p.muted,
+    );
+    let tw = ui.painter.measure(cx, spec, &message).x.min(w);
+    ui.painter
+        .paragraph(cx, dvec2(center - tw * 0.5, top + 32.0), tw, spec, &message);
+}
+
 /// Tab strip (`ReorderableListView` of chips): wide chips with icon, title, modified dot,
 /// ellipsis menu and close; the compact Explorer rail uses filled pills.
 #[allow(clippy::too_many_arguments)]
@@ -1160,9 +1242,18 @@ fn draw_tab_strip(
             10.0 + 15.0 + 7.0 + 2.0 + 28.0 * 2.0
         };
         let gap = if pill { 2.0 } else { 0.0 };
-        for (_, _, _, label, spec, modified, width) in &mut tabs {
+        // Desktop Explorer: only the active tab reserves its menu/close slot; inactive tabs take
+        // their label's width and show close on hover, so labels fit before anything ellipsizes.
+        let slim = explorer && !pill;
+        let slim_chrome_w = 10.0 + 15.0 + 7.0 + 10.0;
+        for (_, _, active, label, spec, modified, width) in &mut tabs {
             let text_w = ui.measure(cx, *spec, label);
-            *width = (chrome_w + text_w + if *modified { 12.0 } else { 0.0 })
+            let chrome = if slim && !*active {
+                slim_chrome_w
+            } else {
+                chrome_w
+            };
+            *width = (chrome + text_w + if *modified { 12.0 } else { 0.0 })
                 .min(240.0)
                 .min(available);
         }
@@ -1173,7 +1264,9 @@ fn draw_tab_strip(
             active,
             available,
             gap,
-            (chrome_w + 48.0).min(available),
+            // Tight strips shrink tabs down to icon + ellipsized label (actions drop out first)
+            // before any tab collapses into the overflow chip.
+            (10.0 + if pill { 14.0 } else { 15.0 } + 10.0 + 24.0).min(available),
             36.0,
         );
         for (tab, width) in tabs.iter_mut().zip(&fit.widths) {
@@ -1237,8 +1330,21 @@ fn draw_tab_strip(
             cx_x += icon_size + if pill { 6.0 } else { 7.0 };
             // Tab menu and close need their 58px plus a little title; a narrower chip keeps
             // only icon and title (its menu stays on right-click) so no action lands outside it.
-            let actions = !pill && chip.size.x >= 10.0 + 15.0 + 7.0 + 58.0 + 24.0;
-            let buttons_w = if actions { 2.0 + 56.0 } else { 10.0 };
+            let actions =
+                !pill && (!slim || active) && chip.size.x >= 10.0 + 15.0 + 7.0 + 58.0 + 24.0;
+            // Slim inactive Explorer tabs show a close button only while hovered.
+            let close_id = format!("tabclose:{pane_id}:{key}");
+            let hover_close = slim
+                && !active
+                && chip.size.x >= 10.0 + 15.0 + 7.0 + 30.0
+                && (ui.is_hover(&tab_id) || ui.is_hover(&close_id));
+            let buttons_w = if actions {
+                2.0 + 56.0
+            } else if hover_close {
+                2.0 + 28.0
+            } else {
+                10.0
+            };
             let dot_w = if modified { 12.0 } else { 0.0 };
             let text_rect = rect(
                 cx_x,
@@ -1264,7 +1370,15 @@ fn draw_tab_strip(
                     p.muted,
                 );
             }
-            ui.hit(chip, tab_id);
+            // Phone pills keep their inset visual but take the full bar height as the hit.
+            let tab_hit = if pill {
+                rect(chip.pos.x, bar.pos.y, chip.size.x, bar.size.y)
+            } else {
+                chip
+            };
+            // A shrunk tab keeps its full title as a tooltip.
+            let truncated = ui.measure(cx, label_spec, &label) > text_rect.size.x + 0.5;
+            ui.hit_tip(tab_hit, &tab_id, if truncated { &label } else { "" });
             if actions {
                 let menu = rect(
                     chip.pos.x + chip.size.x - 58.0,
@@ -1305,6 +1419,23 @@ fn draw_tab_strip(
                     &close_tip,
                 );
             }
+            if hover_close {
+                let close = rect(
+                    chip.pos.x + chip.size.x - 30.0,
+                    chip.pos.y + (chip.size.y - 28.0) * 0.5,
+                    28.0,
+                    28.0,
+                );
+                ui.icon_button(
+                    cx,
+                    close,
+                    &close_id,
+                    "x",
+                    14.0,
+                    14.0,
+                    &tr("common.actions.close"),
+                );
+            }
             tab_rects.push((pane_id.to_string(), key.clone(), chip));
             x = chip.pos.x + chip.size.x + gap;
         }
@@ -1334,7 +1465,7 @@ fn draw_tab_strip(
         }
         // Trailing controls.
         if explorer {
-            let plus = rect(x + 4.0, bar.pos.y + 5.0, 28.0, 28.0);
+            let plus = rect(x + 4.0, bar.pos.y + (bar.size.y - 28.0) * 0.5, 28.0, 28.0);
             ui.icon_button(
                 cx,
                 plus,
@@ -1344,6 +1475,9 @@ fn draw_tab_strip(
                 6.0,
                 &tr("workspace.tabs.actions.newTab"),
             );
+            if compact {
+                ui.hit(rect(x, bar.pos.y, 36.0, bar.size.y), "explorer:new");
+            }
             if compact {
                 let close = rect(
                     bar.pos.x + bar.size.x - 36.0,
@@ -1359,6 +1493,10 @@ fn draw_tab_strip(
                     16.0,
                     16.0,
                     &tr("workspace.tabs.explorerSidebar.close"),
+                );
+                ui.hit(
+                    rect(bar.pos.x + bar.size.x - 40.0, bar.pos.y, 40.0, bar.size.y),
+                    "explorer:close",
                 );
             } else {
                 let close = rect(
@@ -1630,6 +1768,8 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         }
         Hit::FingerDown(fe) => {
             shell.data.sidebar.stop_motion();
+            // A press dismisses the hover tooltip; it returns only when hover moves on.
+            crate::shell::overlays::hover_tooltip(shell, cx, None, DVec2::default());
             let id = shell.data.hits.at(fe.abs);
             if fe.mouse_button().is_some_and(|b| b.is_secondary()) {
                 if let Some(id) = id

@@ -51,6 +51,11 @@ The Windows Tailnet DLL cross-build and Wine library load passed, but Wine rejec
 
 The private Linux GUI/component-helper run exercised helper-only replacement with unchanged GUI/runtime PIDs, actual GUI replacement and a deliberately withheld GUI-authored health record followed by coherent rollback. Both replacement and rollback restored the real connected GUI, not just process health. This caught and fixed update-drain admission incorrectly blocking read subscriptions with alternative Hub permissions; the focused regression and strict daemon Clippy passed. Candidates changed packaging, not compiled identities. Initial preparation/handoff were explicitly orchestrated inside the disposable installation; native processes authored health, stop acknowledgments and terminal results. This does not prove public-feed download or remote owner acceptance. The first published component feed is still required for that boundary and the daemon-only retained-GUI owner scenario.
 
+### UI polish and streaming verification (2026-11-16)
+
+Debug GUI and daemon builds of this change set (before the 0.13.27 version bump) ran in a private Xvfb display with a private `HOME`/`PASEO_HOME` and only the mock provider enabled, at a 1280×820 desktop window and a 400px compact window, in light and dark themes. Exercised: adding a Git repository and a plain folder as projects, the Add project success callout and its New Session transition, the Commit tab tree (tri-state directory toggles, rename/delete/untracked groups, status letters clear of the scrollbar, primary button state) and an actual commit of exactly the selected files, the Commit not-a-repository state, model favorites/recents persisting across a restart and one-tap switching, command center sizing and footer, History, Tailscale and Version settings states, explorer tab widths and tooltips. This run has no window manager, so it does not cover EWMH behavior, Android/iOS input or Windows rendering.
+
+The streaming fix is covered by a mapper regression built from the frame shape behind 240 logged `OMP stream conflict` (`published_prefix_changed`) warnings: OMP's `message_start` can already contain text that its queued deltas repeat. A live OMP model run was not part of this verification.
 
 ## Linux desktop lifecycle regression
 

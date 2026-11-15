@@ -86,6 +86,8 @@ pub fn response_error(payload: &Value, request_type: &str) -> Option<CoreError> 
         .unwrap_or_else(|| format!("Daemon rejected {request_type}"));
     let code = text(&payload["errorCode"])
         .or_else(|| text(&payload["code"]))
+        // Typed domain errors nest their code with the message.
+        .or_else(|| error.is_object().then(|| text(&error["code"])).flatten())
         .or_else(|| {
             if result.is_object() {
                 text(&result["status"])
@@ -274,6 +276,25 @@ mod tests {
             (conflict.code.as_str(), conflict.message.as_str()),
             ("conflict", "stale")
         );
+    }
+
+    #[test]
+    fn nested_error_objects_keep_their_typed_code() {
+        let nested = response_error(
+            &json!({"requestId":"r","error":{"code":"NOT_GIT_REPO","message":"Not a git repository: /w"}}),
+            "subscribe_checkout_diff_request",
+        )
+        .unwrap();
+        assert_eq!(
+            (nested.code.as_str(), nested.message.as_str()),
+            ("NOT_GIT_REPO", "Not a git repository: /w")
+        );
+        let top_level = response_error(
+            &json!({"requestId":"r","code":"OUTER","error":{"code":"INNER","message":"m"}}),
+            "x",
+        )
+        .unwrap();
+        assert_eq!(top_level.code, "OUTER");
     }
 
     #[test]

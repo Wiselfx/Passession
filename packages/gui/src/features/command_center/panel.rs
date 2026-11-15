@@ -36,11 +36,15 @@ pub enum CommandCenterAction {
     },
 }
 
-/// A workspace file row: (path, name, directory).
+/// A directory file row: (path, name, directory).
 type FileEntry = (String, String, String);
 
 /// A debounced file search: (generation, host, cwd, query, workspace).
 type PendingSearch = (u64, String, String, String, String);
+
+/// The chrome around the list before it was first measured: the 52px query header, its
+/// rule, the 6px list end and the desktop footer.
+const ESTIMATED_CHROME: f64 = 96.0;
 
 #[derive(Clone, Debug)]
 enum Req {
@@ -84,6 +88,9 @@ pub struct CommandCenterPanel {
     active_id: Option<String>,
     #[rust]
     reveal_pending: bool,
+    /// The rows were replaced (opened, query or scope changed): the list starts at its top.
+    #[rust]
+    scroll_reset: bool,
     #[rust]
     projection: Option<Projection>,
     #[rust]
@@ -99,6 +106,18 @@ pub struct CommandCenterPanel {
     /// Last applied (sheet, pass size, safe insets top/right/bottom-occlusion/left).
     #[rust]
     panel_bounds: Option<(bool, DVec2, [f64; 4])>,
+    /// The panel's height cap for those bounds.
+    #[rust]
+    max_height: f64,
+    /// The list height last applied.
+    #[rust]
+    list_height: f64,
+    /// Measured height of everything around the list (query header, notices, footer).
+    #[rust]
+    chrome: Option<f64>,
+    /// Another layout pass after the chrome changed during drawing.
+    #[rust]
+    relayout: NextFrame,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -375,7 +394,7 @@ impl CommandCenterPanel {
         ctx.layout.selected_target().cloned()
     }
 
-    /// Files are searched in the active workspace when the Files scope is on or anything has
+    /// Files are searched in the selected directory when the Files scope is on or anything has
     /// been typed; the previous entries stay up while the next query loads.
     fn sync_file_search(&mut self, cx: &mut Cx, ctx: &UiContext) {
         let target = Self::target(ctx);
@@ -564,7 +583,18 @@ impl CommandCenterPanel {
             1,
             t("sessionNavigation.newSession"),
             "plus",
-            &["new", "session", "chat", "새", "세션"],
+            // "agent"/"workspace" keep the retired "New agent"/"New workspace" findable.
+            &[
+                "new",
+                "session",
+                "chat",
+                "agent",
+                "workspace",
+                "새",
+                "세션",
+                "에이전트",
+                "워크스페이스",
+            ],
             command("agent.new", Value::Null),
             false,
             "new-agent",
@@ -761,6 +791,7 @@ impl CommandCenterPanel {
                 "panel",
                 "sessions",
                 "directories",
+                "workspaces",
                 "사이드바",
                 "토글",
             ],
@@ -938,7 +969,7 @@ impl CommandCenterPanel {
                 && target.id.as_deref().is_some_and(|id| !id.is_empty())
             {
                 let key = if target.kind == "agent" {
-                    "workspace.tabs.menu.copyAgentId"
+                    "shell.commandCenter.copySessionId"
                 } else {
                     "workspace.tabs.menu.copyTerminalId"
                 };
@@ -951,7 +982,7 @@ impl CommandCenterPanel {
                     34,
                     t(key),
                     "copy",
-                    kw(&["tab", "copy", "id"]),
+                    kw(&["tab", "copy", "id", "session", "agent", "세션", "에이전트"]),
                     Run::Effect(effect),
                     true,
                     "",
@@ -961,9 +992,18 @@ impl CommandCenterPanel {
                 out.push(item(
                     "tab:reload-current",
                     35,
-                    t("workspace.tabs.menu.reloadAgent"),
+                    t("shell.commandCenter.restartSession"),
                     "rotate-cw",
-                    kw(&["tab", "agent", "reload", "restart", "rerun"]),
+                    kw(&[
+                        "tab",
+                        "session",
+                        "agent",
+                        "reload",
+                        "restart",
+                        "rerun",
+                        "세션",
+                        "재실행",
+                    ]),
                     command("workspace.tab.reload-current", Value::Null),
                     true,
                     "",
@@ -1093,7 +1133,7 @@ impl CommandCenterPanel {
             ));
         }
         let copy_path = if path.is_empty() {
-            Run::Error(t("sidebar.workspace.toasts.workspacePathUnavailable"))
+            Run::Error(t("shell.commandCenter.directoryPathUnavailable"))
         } else {
             Run::Effect(UiEffect::CopyText {
                 text: path.clone(),
@@ -1103,9 +1143,20 @@ impl CommandCenterPanel {
         out.push(item(
             "copy-path",
             22,
-            t("workspace.header.actions.copyPath"),
+            t("shell.commandCenter.copyDirectoryPath"),
             "copy",
-            kw(&["copy", "path", "directory", "folder", "cwd"]),
+            kw(&[
+                "copy",
+                "path",
+                "directory",
+                "folder",
+                "cwd",
+                "workspace",
+                "복사",
+                "경로",
+                "디렉터리",
+                "워크스페이스",
+            ]),
             copy_path,
             true,
             "",
@@ -1199,10 +1250,10 @@ impl CommandCenterPanel {
             }
         }
         vec![Section {
-            id: "agents".into(),
+            id: "sessions".into(),
             band: 1,
             rank: 3,
-            title: Some(t("shell.commandCenter.agents")),
+            title: Some(t("shell.commandCenter.sessions")),
             results: results::rank_built_in(agents, &self.query),
             score: None,
         }]
@@ -1341,6 +1392,7 @@ impl CommandCenterPanel {
         self.files_scope = files;
         self.active_id = None;
         self.reveal_pending = true;
+        self.scroll_reset = true;
         if let Some(ctx) = ctx {
             self.sync_file_search(cx, ctx);
         }
@@ -1401,26 +1453,62 @@ impl CommandCenterPanel {
         view.widget(id!(footer_rule))
             .set_visible(cx, !footer.is_empty());
         set_optional(cx, &view.widget(id!(footer)), &footer);
-        // Reveal the active row once per user command.
-        if self.reveal_pending {
-            if let (Some(projection), Some(active)) = (&self.projection, &self.active_id)
-                && let Some(index) = projection
-                    .rows
-                    .iter()
-                    .position(|r| row_id(r).as_deref() == Some(active.as_str()))
+    }
+
+    /// Sizes the list to its rows within the room the chrome leaves under the panel's cap,
+    /// then positions it: at its top once the rows were replaced, and with the selected row
+    /// (and the header of a section it opens) whole once per user command.
+    fn layout_list(&mut self, cx: &mut Cx, compact: bool) {
+        let Some(projection) = &self.projection else {
+            return;
+        };
+        let heights: Vec<f64> = projection
+            .rows
+            .iter()
+            .map(|row| results::row_height(row, compact))
+            .collect();
+        let room = self.max_height - self.chrome.unwrap_or(ESTIMATED_CHROME);
+        let height = results::list_height(&heights, room);
+        if (height - self.list_height).abs() > 0.5 {
+            self.list_height = height;
+            self.view
+                .widget(id!(list))
+                .apply_over(cx, live! { height: (height) });
+        }
+        let list = self.view.portal_list(id!(list));
+        if std::mem::take(&mut self.scroll_reset) {
+            list.set_first_id_and_scroll(0, 0.0);
+        }
+        if !self.reveal_pending {
+            return;
+        }
+        if let Some(active) = &self.active_id
+            && let Some(index) = projection
+                .rows
+                .iter()
+                .position(|r| row_id(r).as_deref() == Some(active.as_str()))
+        {
+            let (top, bottom) = results::reveal_span(&projection.rows, index);
+            let current = (list.first_id(), list.scroll_position());
+            if let Some((first, scroll)) =
+                results::reveal_anchor(&heights, current, height, top, bottom)
             {
-                let list = view.portal_list(id!(list));
-                let first = list.first_id();
-                let visible = list.visible_items().max(1);
-                if index < first {
-                    list.set_first_id(index.saturating_sub(1));
-                } else if index >= first + visible.saturating_sub(1) {
-                    list.set_first_id((index + 2).saturating_sub(visible));
-                }
+                list.set_first_id_and_scroll(first, scroll);
             }
-            if !self.file_loading {
-                self.reveal_pending = false;
-            }
+        }
+        if !self.file_loading {
+            self.reveal_pending = false;
+        }
+    }
+
+    /// Records the drawn chrome around the list; a change lays the list out again next frame
+    /// (a redraw requested while drawing is dropped).
+    fn measure_chrome(&mut self, cx: &mut Cx) {
+        let chrome = self.view.widget(id!(chrome_top)).area().rect(cx).size.y
+            + self.view.widget(id!(chrome_bottom)).area().rect(cx).size.y;
+        if self.chrome.is_none_or(|old| (old - chrome).abs() > 0.5) {
+            self.chrome = Some(chrome);
+            self.relayout = cx.new_next_frame();
         }
     }
 
@@ -1436,7 +1524,7 @@ impl CommandCenterPanel {
         };
         list.set_item_range(cx, 0, projection.rows.len());
         let now = chrono::Utc::now();
-        let inset = if ctx_compact { 12.0 } else { 6.0 };
+        let inset = results::row_inset(ctx_compact);
         while let Some(index) = list.next_visible_item(cx) {
             let Some(row) = projection.rows.get(index) else {
                 continue;
@@ -1444,6 +1532,8 @@ impl CommandCenterPanel {
             match row {
                 ListRow::Section { title, divider } => {
                     let item = list.item(cx, index, live_id!(SectionRow));
+                    let height = results::row_height(row, ctx_compact);
+                    item.apply_over(cx, live! { height: (height) });
                     item.widget(id!(divider)).set_visible(cx, *divider);
                     set_optional(cx, &item.widget(id!(title)), title.as_deref().unwrap_or(""));
                     item.draw_all(cx, scope);
@@ -1464,7 +1554,11 @@ impl CommandCenterPanel {
                             SurfaceRole::Transparent
                         },
                     );
-                    item.apply_over(cx, live! { padding: { top: (inset), bottom: (inset) } });
+                    let height = results::row_height(row, ctx_compact);
+                    item.apply_over(
+                        cx,
+                        live! { height: (height), padding: { top: (inset), bottom: (inset) } },
+                    );
                     let query = self.query.as_str();
                     let title = item.wa_match_text(id!(title));
                     match result.kind {
@@ -1867,7 +1961,7 @@ impl Widget for CommandCenterPanel {
                 self.file_timer = Timer::default();
                 self.run_file_search(ctx);
             }
-            if self.clock.is_event(event).is_some() {
+            if self.clock.is_event(event).is_some() || self.relayout.is_event(event).is_some() {
                 self.view.redraw(cx);
             }
             let revision = crate::features::files::revision();
@@ -1914,6 +2008,7 @@ impl Widget for CommandCenterPanel {
             self.query = text;
             self.active_id = None;
             self.reveal_pending = true;
+            self.scroll_reset = true;
             if let Some(ctx) = scope.data.get_mut::<UiContext>() {
                 self.sync_file_search(cx, ctx);
             }
@@ -1995,7 +2090,6 @@ impl Widget for CommandCenterPanel {
             let (align_y, top, width, height) = if sheet {
                 (1.0, top_inset, available.x, (size.y * 0.6).min(available.y))
             } else {
-                // Flutter's desktop container has a fixed height, not a content-sized maximum.
                 (
                     0.0,
                     top_inset + 48.0,
@@ -2005,20 +2099,31 @@ impl Widget for CommandCenterPanel {
                         .min((available.y - 48.0).max(0.0)),
                 )
             };
+            self.max_height = height;
             self.view
                 .widget(id!(modal))
                 .apply_over(cx, live! { align: { y: (align_y) } });
-            self.view.widget(id!(panel)).apply_over(cx, live! {
-                width: (width), height: (height),
-                margin: { top: (top), right: (right_inset), bottom: (bottom_inset), left: (left_inset) }
+            self.view.widget(id!(frame)).apply_over(cx, live! {
+                padding: { top: (top), right: (right_inset), bottom: (bottom_inset), left: (left_inset) }
             });
+            let panel = self.view.widget(id!(panel));
+            panel.apply_over(cx, live! { width: (width) });
+            // The dialog fits its rows up to the cap. The sheet keeps the cap so its query
+            // field, at the sheet's top above the keyboard, holds still while results change.
+            if sheet {
+                panel.apply_over(cx, live! { height: (height) });
+            } else {
+                panel.apply_over(cx, live! { height: Fit });
+            }
         }
+        self.layout_list(cx, compact.unwrap_or(false));
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             let list_ref = item.as_portal_list();
             if let Some(mut list) = list_ref.borrow_mut() {
                 self.draw_rows(cx, scope, &mut list, compact.unwrap_or(false));
             }
         }
+        self.measure_chrome(cx);
         if self.focus_query {
             self.focus_query = false;
             self.view.wa_input(id!(query)).set_key_focus(cx);
@@ -2038,6 +2143,7 @@ impl CommandCenterPanelRef {
         inner.query.clear();
         inner.active_id = None;
         inner.reveal_pending = true;
+        inner.scroll_reset = true;
         inner.file_request = None;
         inner.focus_query = true;
         inner.view.wa_input(id!(query)).set_text(cx, "");

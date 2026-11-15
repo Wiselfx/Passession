@@ -13,7 +13,7 @@ use crate::features::settings::host::{
     self, HostView, Status, active_connection_label, config_with, connection_badge,
     connection_label,
 };
-use crate::features::settings::i18n::{t, ta};
+use crate::features::settings::i18n::{t, ta, with_detail};
 use crate::features::settings::json::{get, str_of};
 use crate::features::settings::model::daemon_update::{self as du, Outcome};
 use crate::features::settings::model::forms::{FormSave, FormSheet, SettingField};
@@ -66,60 +66,65 @@ fn draw_pair_device(ui: &mut Ui, host: &HostView) {
 // ------------------------------------------------------------ projects
 
 /// Original `ProjectsScreen`; a row opens the project settings in place.
+/// Loading, offline, failed and truly empty hosts each draw a distinct state.
 pub fn draw_projects(ui: &mut Ui, _s: &Settings, host: &HostView) {
     let pal = ui.pal;
-    if host.projects.is_empty() {
+    let loading = host.loading_projects || host.status == Status::Connecting;
+    if host.projects.is_empty() && loading {
         let (x, y, w) = (ui.x, ui.y, ui.w);
-        if host.loading_projects {
-            ui.draw_ctl(
-                Ctl::Spinner(36.0),
-                makepad_widgets::dvec2(x + (w - 36.0) / 2.0, y + 24.0),
-            );
-            ui.y += 84.0;
-        } else {
-            let text = host
-                .project_error
-                .clone()
-                .or_else(|| host.error.clone())
-                .unwrap_or_else(|| t("sidebar.project.empty.title"));
-            let size = ui.measure(Font::Regular, 14.0, &text, Some(w - 48.0));
-            ui.text(
-                Font::Regular,
-                14.0,
-                pal.muted,
-                makepad_widgets::dvec2(x + (w - size.x) / 2.0, y + 24.0),
-                Some(w - 48.0),
-                &text,
-            );
-            ui.y += size.y + 48.0;
-        }
+        ui.draw_ctl(
+            Ctl::Spinner(36.0),
+            makepad_widgets::dvec2(x + (w - 36.0) / 2.0, y + 24.0),
+        );
+        ui.y += 84.0;
         return;
     }
-    if let Some(error) = host.project_error.clone().or_else(|| host.error.clone()) {
-        let text = ta(
-            "settings.projectList.hostLoadFailed",
-            &[("hostName", &host.label), ("message", &error)],
+    let id = host.server_id.clone();
+    let retry = (!loading).then(|| handler(move |_, env| env.ctx.core.refresh_host(&id)));
+    let retry = button(
+        format!("projects.{}.retry", host.server_id),
+        t("common.actions.retry"),
+        retry,
+    )
+    .icon(Icon::RotateCw)
+    .ctl();
+    let error = host
+        .project_error
+        .as_deref()
+        .or(host.error.as_deref())
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+    if !host.connected() {
+        ui.warning(
+            &ta(
+                "settings.projectList.hostOfflineTitle",
+                &[("hostName", &host.label)],
+            ),
+            Some(&match error {
+                Some(error) => with_detail(&t("settings.projectList.hostOfflineMessage"), error),
+                None => t("settings.projectList.hostOfflineMessage"),
+            }),
         );
-        let size = ui.measure(Font::Regular, 12.0, &text, Some(ui.w - 24.0));
-        let (x, y, w) = (ui.x, ui.y, ui.w);
-        ui.rect(
-            makepad_widgets::Rect {
-                pos: makepad_widgets::dvec2(x, y),
-                size: makepad_widgets::dvec2(w, size.y + 24.0),
-            },
-            pal.transparent,
-            Some(pal.border),
-            8.0,
+        ui.gap(12.0);
+        ui.place(retry);
+        ui.gap(24.0);
+    } else if let Some(error) = error {
+        ui.alert(
+            false,
+            &ta(
+                "settings.projectList.hostLoadFailed",
+                &[("hostName", &host.label), ("message", error)],
+            ),
+            None,
+            Some(retry),
         );
-        ui.text(
-            Font::Regular,
-            12.0,
-            pal.field_error,
-            makepad_widgets::dvec2(x + 12.0, y + 12.0),
-            Some(w - 24.0),
-            &text,
-        );
-        ui.y += size.y + 24.0 + 12.0;
+        ui.gap(24.0);
+    } else if host.projects.is_empty() {
+        ui.empty_card(&t("sidebar.project.empty.title"), None, true);
+        ui.gap(24.0);
+    }
+    if host.projects.is_empty() {
+        return;
     }
     ui.card_begin();
     for (i, project) in host.projects.iter().enumerate() {
@@ -215,7 +220,12 @@ pub fn draw_connection_error(ui: &mut Ui, host: &HostView) {
         .map(str::trim)
         .filter(|m| !m.is_empty())
     {
-        ui.alert(false, message, None, None);
+        ui.alert(
+            false,
+            &t("pairing.direct.errors.failedTitle"),
+            Some(message),
+            None,
+        );
         ui.gap(24.0);
     }
 }
@@ -780,6 +790,65 @@ fn uta(key: &str, args: &[(&str, &str)]) -> String {
     ta(&format!("settings.host.daemon.update.{key}"), args)
 }
 
+/// Localized description for a failed update check/support probe. Known
+/// transport codes and daemon phrases map to update copy; the raw daemon text
+/// stays as the trailing detail, and unknown failures keep it alone under the
+/// alert's localized title.
+fn update_error_text(code: &str, raw: &str) -> String {
+    let raw = raw.trim();
+    let lower = raw.to_ascii_lowercase();
+    let key = match code {
+        "DAEMON_NOT_CONNECTED" | "DAEMON_CONNECTION_LOST" | "DAEMON_UNREACHABLE" => {
+            "unavailableMessage"
+        }
+        "DAEMON_REQUEST_TIMEOUT" => "timedOutMessage",
+        _ if lower.contains("timed out") || lower.contains("timeout") => "timedOutMessage",
+        _ if lower.contains("not connected") || lower.contains("offline") => "unavailableMessage",
+        _ if lower.contains("unsupported")
+            || lower.contains("not supported")
+            || lower.contains("unknown request") =>
+        {
+            "unsupportedLegacy"
+        }
+        _ => return raw.to_string(),
+    };
+    with_detail(&ut(key), raw)
+}
+
+/// The daemon (`updater.rs`) and desktop updater report a release channel with
+/// no component inventory for this platform with this phrase; the check itself
+/// succeeded, there is simply nothing published yet.
+fn not_published(raw: &str) -> bool {
+    raw.contains("component inventory is published")
+}
+
+/// Localized support-probe failure. A service-manager query that cannot run on
+/// this installation explains why self-update is unavailable and keeps only the
+/// tool's final message, never the full command line, as detail.
+fn support_error_text(raw: &str) -> String {
+    let raw = raw.trim();
+    let lower = raw.to_ascii_lowercase();
+    if [
+        "systemctl",
+        "launchctl",
+        "user scope bus",
+        "service manager",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return with_detail(&ut("serviceUnmanaged"), short_detail(raw));
+    }
+    update_error_text("", raw)
+}
+
+/// The innermost cause of a `command … failed (exit status: N): cause` chain.
+fn short_detail(raw: &str) -> &str {
+    raw.rsplit_once("): ")
+        .map_or(raw, |(_, cause)| cause)
+        .trim()
+}
+
 fn card<'a>(s: &'a mut Settings, server_id: &str) -> &'a mut UpdateCard {
     s.update_cards.entry(server_id.to_string()).or_default()
 }
@@ -872,7 +941,7 @@ fn check_version(s: &mut Settings, env: &mut Env, server_id: String) {
             c.checking = false;
             match result {
                 Ok(worker) => c.check = Some(json!({"current": worker})),
-                Err(error) => c.check_error = error.text(),
+                Err(error) => c.check_error = update_error_text(&error.code, &error.message),
             }
         });
         return;
@@ -898,7 +967,7 @@ fn check_version(s: &mut Settings, env: &mut Env, server_id: String) {
                     c.check = Some(value);
                 }
                 Ok(_) => c.check_error = t("settingsNative.identityChanged"),
-                Err(error) => c.check_error = error.text(),
+                Err(error) => c.check_error = update_error_text(&error.code, &error.message),
             }
         },
     );
@@ -1047,26 +1116,20 @@ fn submit(
             Err(error) if error.is_reconnect() && Instant::now() < deadline => {
                 s.after(env, 1.0, move |s, env| submit(s, env, sid, oid, deadline));
             }
-            Err(error) => settle_error(s, env, &sid, &oid, error),
+            Err(error) => settle_error(s, env, &sid, error),
         },
     );
 }
 
 /// Keep the retry identity even on an observation error: transport errors do
 /// not prove that admission or the detached executor failed.
-fn settle_error(
-    s: &mut Settings,
-    _env: &mut Env,
-    server_id: &str,
-    operation_id: &str,
-    error: ReqError,
-) {
+fn settle_error(s: &mut Settings, _env: &mut Env, server_id: &str, error: ReqError) {
     if error.is_reconnect() {
         fail(
             s,
             server_id,
             ut("stillRunningTitle"),
-            uta("stillRunningMessage", &[("id", operation_id)]),
+            ut("stillRunningHint"),
         );
     } else {
         fail(
@@ -1097,7 +1160,7 @@ fn observe(
                 s,
                 &server_id,
                 ut("stillRunningTitle"),
-                uta("stillRunningMessage", &[("id", &operation_id)]),
+                ut("stillRunningHint"),
             ),
         }
         return;
@@ -1139,7 +1202,7 @@ fn observe(
             Err(error) if error.is_reconnect() => s.after(env, 1.0, move |s, env| {
                 observe(s, env, sid, oid, deadline, last)
             }),
-            Err(error) => settle_error(s, env, &sid, &oid, error),
+            Err(error) => settle_error(s, env, &sid, error),
         },
     );
 }
@@ -1673,19 +1736,41 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
         }),
     );
     ui.card_row_separator();
+    let raw_check_error = if !c.check_error.is_empty() {
+        c.check_error.clone()
+    } else {
+        checked
+            .map(|v| str_of(v, "checkError"))
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    // No published inventory for this platform is an outcome, not a failure.
+    let unpublished = not_published(&raw_check_error);
+    let check_error = if unpublished {
+        String::new()
+    } else if !c.check_error.is_empty() {
+        c.check_error.clone()
+    } else {
+        update_error_text("", &raw_check_error)
+    };
     let latest = checked
         .and_then(|v| v["latest"]["version"].as_str())
         .map(String::from)
         .unwrap_or_else(|| {
-            ut(if c.checking {
-                "checking"
+            if c.checking {
+                ut("checking")
+            } else if unpublished {
+                with_detail(&ut("notPublished"), &raw_check_error)
+            } else if !check_error.is_empty() {
+                ut("checkFailed")
             } else if desktop_managed && !du::supports_app(&host.server_info) {
-                "appUpgradePrerequisite"
+                ut("appUpgradePrerequisite")
             } else if !check_supported {
-                "legacyCheckUnavailable"
+                ut("legacyCheckUnavailable")
             } else {
-                "notChecked"
-            })
+                ut("notChecked")
+            }
         });
     ui.row(
         row(ut(if app_update {
@@ -1706,40 +1791,27 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
     );
     if !host.connected() {
         ui.card_row_separator();
-        inset_alert(ui, false, &ut("offlineTitle"), &ut("offlineMessage"));
+        inset_warning(ui, &ut("offlineTitle"), &ut("offlineMessage"));
     }
-    let check_error = if !c.check_error.is_empty() {
-        c.check_error.as_str()
-    } else {
-        checked.map(|v| str_of(v, "checkError")).unwrap_or("")
-    };
-    if !check_error.is_empty() {
+    // Offline already has its own notice; a stale transport failure would repeat it.
+    if host.connected() && !check_error.is_empty() {
         ui.card_row_separator();
-        inset_alert(ui, false, &ut("checkFailed"), check_error);
+        inset_alert(ui, false, &ut("checkFailed"), &check_error);
     }
-    let support_error = checked.map(|v| str_of(v, "supportError")).unwrap_or("");
+    let support_error =
+        support_error_text(checked.map(|v| str_of(v, "supportError")).unwrap_or(""));
     if desktop_managed && !du::supports_app(&host.server_info) {
         ui.card_row_separator();
-        inset_alert(
-            ui,
-            false,
-            &ut("unsupportedTitle"),
-            &ut("appUpgradePrerequisite"),
-        );
+        inset_warning(ui, &ut("unsupportedTitle"), &ut("appUpgradePrerequisite"));
     } else if !support_error.is_empty() {
         ui.card_row_separator();
-        inset_alert(ui, false, &ut("unsupportedTitle"), support_error);
+        inset_warning(ui, &ut("unsupportedTitle"), &support_error);
     } else if desktop_managed && checked.is_some_and(|v| v["owner"]["kind"] != "desktopApp") {
         ui.card_row_separator();
-        inset_alert(
-            ui,
-            false,
-            &ut("unsupportedTitle"),
-            &ut("appOwnerUnavailable"),
-        );
+        inset_warning(ui, &ut("unsupportedTitle"), &ut("appOwnerUnavailable"));
     } else if !check_supported && !supported {
         ui.card_row_separator();
-        inset_alert(ui, false, &ut("unsupportedTitle"), &ut("unsupportedLegacy"));
+        inset_warning(ui, &ut("unsupportedTitle"), &ut("unsupportedLegacy"));
     } else if checked.is_some_and(|v| v["latest"].is_object() && v["updateAvailable"] == false) {
         ui.card_row_separator();
         ui.row(row(ut(if app_update {
@@ -1758,7 +1830,11 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
         ui.card_begin();
         ui.row(
             row(t("settingsNative.maintenance"))
-                .hint(uta("stillRunningMessage", &[("id", operation)])),
+                .hint(ut("stillRunningHint"))
+                .control(operation_id_ctl(
+                    format!("host.{}.maintenanceId", host.server_id),
+                    operation,
+                )),
         );
         ui.card_end();
         ui.gap(12.0);
@@ -1882,16 +1958,21 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
                 );
             })
         });
-    let button_label = if updating {
-        c.phase.clone()
-    } else if pending {
+    // The phase reads in the row hint; the button keeps its short label so a
+    // narrow row does not squeeze the control.
+    let button_label = if pending && !updating {
         ut("resumeObservation")
     } else {
         ut("confirm")
     };
+    let hint = if updating && !c.phase.is_empty() {
+        c.phase.clone()
+    } else {
+        ut(if app_update { "appHint" } else { "hint" })
+    };
     ui.row(
         row(ut(if app_update { "appTitle" } else { "title" }))
-            .hint(ut(if app_update { "appHint" } else { "hint" }))
+            .hint(hint)
             .control(
                 button(format!("host.{}.update", host.server_id), button_label, act)
                     .icon(Icon::ArrowUpToLine)
@@ -1902,7 +1983,10 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
     );
     if let Some(operation) = &c.operation_id {
         ui.card_row_separator();
-        ui.row(row(ut("operation")).hint(operation.clone()));
+        ui.row(row(ut("operation")).control(operation_id_ctl(
+            format!("host.{}.operationId", host.server_id),
+            operation,
+        )));
     }
     if c.action_required {
         ui.card_row_separator();
@@ -1944,6 +2028,17 @@ pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
     ui.gap(24.0);
 }
 
+/// [`inset_alert`] for an unavailable (not failed) state: the warning style.
+fn inset_warning(ui: &mut Ui, title: &str, description: &str) {
+    let (x, w) = (ui.x, ui.w);
+    ui.x = x + 16.0;
+    ui.w = w - 32.0;
+    ui.warning(title, Some(description));
+    ui.gap(16.0);
+    ui.x = x;
+    ui.w = w;
+}
+
 fn inset_alert(ui: &mut Ui, success: bool, title: &str, description: &str) {
     let (x, w) = (ui.x, ui.w);
     ui.x = x + 16.0;
@@ -1955,7 +2050,55 @@ fn inset_alert(ui: &mut Ui, success: bool, title: &str, description: &str) {
     ui.w = w;
 }
 
+/// Copy control for an internal durable operation ID: the ID is reachable only
+/// through its tooltip and the clipboard, never as visible row text.
+fn operation_id_ctl(key: String, operation: &str) -> Ctl {
+    let id = operation.to_string();
+    let copy = handler(move |_, env| {
+        env.copy(
+            &id,
+            Some(ta(
+                "common.states.copiedLabel",
+                &[("label", &ut("operation"))],
+            )),
+        )
+    });
+    icon_button(key, Icon::Copy, Some(copy)).tipped(uta("copyOperationId", &[("id", operation)]))
+}
+
 /// Active-connection label for the sidebar host picker.
 pub fn picker_hint(host: &HostView) -> String {
     active_connection_label(host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_failures_are_localized_with_raw_text_as_detail() {
+        let mapped = update_error_text("DAEMON_REQUEST_TIMEOUT", "request timed out after 30s");
+        assert!(mapped.starts_with(&ut("timedOutMessage")));
+        assert!(mapped.contains("request timed out after 30s"));
+        assert!(
+            update_error_text("DAEMON_NOT_CONNECTED", "").starts_with(&ut("unavailableMessage"))
+        );
+        assert_eq!(update_error_text("", " disk full "), "disk full");
+
+        assert!(not_published(
+            "No stable component inventory is published for linux/x64 in emotionbug/Passession"
+        ));
+        assert!(not_published(
+            "No authenticated stable component inventory is published"
+        ));
+        assert!(!not_published("GitHub API rate limited"));
+
+        let raw = "systemctl --user show paseo.service --property=MainPID failed \
+                   (exit status: 1): Failed to connect to user scope bus via local \
+                   transport: No such file or directory";
+        let support = support_error_text(raw);
+        assert!(support.starts_with(&ut("serviceUnmanaged")));
+        assert!(support.contains("Failed to connect to user scope bus"));
+        assert!(!support.contains("systemctl"));
+    }
 }

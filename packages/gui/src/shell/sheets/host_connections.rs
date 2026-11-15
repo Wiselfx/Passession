@@ -261,26 +261,38 @@ impl Sheet for ChooserSheet {
                     y += 56.0;
                 }
                 Mode::Picker => {
-                    // `ComboboxItem`: 36px, 12/8 insets, dot, label + inline description, gear.
-                    let r = rect(rx, y, rw, 36.0);
+                    // `ComboboxItem`: 36px (44px phone touch rows), 12/8 insets, dot,
+                    // label + inline description, gear.
+                    let row_h = if ui.compact { 44.0 } else { 36.0 };
+                    let r = rect(rx, y, rw, row_h);
                     if ui.is_hover(&row_id) || ui.is_pressed(&row_id) {
                         ui.fill(cx, r, p.surface1, 0.0);
                     }
                     let dot = host_status_color(ui, &host);
-                    ui.dot(cx, dvec2(r.pos.x + 12.0 + 8.0, r.pos.y + 18.0), 8.0, dot);
+                    ui.dot(
+                        cx,
+                        dvec2(r.pos.x + 12.0 + 8.0, r.pos.y + row_h * 0.5),
+                        8.0,
+                        dot,
+                    );
                     let tx = r.pos.x + 12.0 + 16.0 + 8.0;
-                    let gear = rect(r.pos.x + r.size.x - 12.0 - 24.0, r.pos.y + 6.0, 24.0, 24.0);
+                    let gear = rect(
+                        r.pos.x + r.size.x - 12.0 - 24.0,
+                        r.pos.y + (row_h - 24.0) * 0.5,
+                        24.0,
+                        24.0,
+                    );
                     let label_spec = ui.spec(Font::Regular, 14.0, p.foreground);
                     let label = host.display_label();
                     let available = gear.pos.x - 8.0 - tx;
                     let lw = ui.measure(cx, label_spec, &label).min(available);
-                    ui.text(cx, rect(tx, r.pos.y, lw, 36.0), label_spec, &label);
+                    ui.text(cx, rect(tx, r.pos.y, lw, row_h), label_spec, &label);
                     let description = active_connection_label(host.config());
                     if !description.is_empty() && available - lw > 24.0 {
                         let spec = ui.spec(Font::Regular, 12.0, p.muted);
                         ui.text(
                             cx,
-                            rect(tx + lw + 8.0, r.pos.y, available - lw - 8.0, 36.0),
+                            rect(tx + lw + 8.0, r.pos.y, available - lw - 8.0, row_h),
                             spec,
                             &description,
                         );
@@ -295,18 +307,26 @@ impl Sheet for ChooserSheet {
                         String::new()
                     };
                     ui.icon_button(cx, gear, &gear_id, "settings", 16.0, 6.0, &tip);
-                    y += 36.0;
+                    if interactive && ui.compact {
+                        // Phone: the gear takes a 44px square at the row's trailing edge.
+                        ui.hit(
+                            rect(r.pos.x + r.size.x - 4.0 - 44.0, r.pos.y, 44.0, row_h),
+                            gear_id,
+                        );
+                    }
+                    y += row_h;
                 }
             }
         }
         if self.mode == Mode::Picker {
-            let r = rect(rx, y, rw, 36.0);
+            let row_h = if ui.compact { 44.0 } else { 36.0 };
+            let r = rect(rx, y, rw, row_h);
             if ui.is_hover("add") || ui.is_pressed("add") {
                 ui.fill(cx, r, p.surface1, 0.0);
             }
             ui.icon(
                 cx,
-                rect(r.pos.x + 12.0, r.pos.y + 10.0, 16.0, 16.0),
+                rect(r.pos.x + 12.0, r.pos.y + (row_h - 16.0) * 0.5, 16.0, 16.0),
                 "plus",
                 16.0,
                 p.muted,
@@ -314,14 +334,14 @@ impl Sheet for ChooserSheet {
             let spec = ui.spec(Font::Regular, 14.0, p.foreground);
             ui.text(
                 cx,
-                rect(r.pos.x + 12.0 + 16.0 + 8.0, r.pos.y, r.size.x - 48.0, 36.0),
+                rect(r.pos.x + 12.0 + 16.0 + 8.0, r.pos.y, r.size.x - 48.0, row_h),
                 spec,
                 &tr("settings.addHost"),
             );
             if interactive {
                 ui.hit(r, "add");
             }
-            y += 36.0;
+            y += row_h;
         }
         y - start
     }

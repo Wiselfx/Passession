@@ -1,27 +1,397 @@
-//! Session-directory commit form. The file list observes summaries only;
-//! committing sends an explicit selection and never includes unrelated index entries.
-use super::chrome::{ButtonSize, ButtonVariant, button, button_height, palette, ui as ui_px};
+//! Session-directory Commit tool window (IntelliJ's Commit): a changelist tree
+//! — Changes and Unversioned Files, grouped by compacted directory chains —
+//! with tri-state inclusion, above a message form. The tree observes summaries
+//! only; committing sends the explicit selection and never includes unrelated
+//! index entries.
+use super::chrome::{
+    ButtonSize, ButtonVariant, TOOLBAR_HEIGHT, button, button_height, measure_button, palette,
+    toolbar_band, toolbar_button, toolbar_button_size, toolbar_hit, tree_row_height,
+    tree_row_metrics, ui as ui_px,
+};
 use super::host;
-use super::json::{array, flag, text};
-use super::paint::{Font, GitPaint, Hits, rect};
+use super::json::{array, flag, object, text};
+use super::model::utf16_cmp;
+use super::paint::{Font, GitPaint, Hits, rect, with_alpha};
 use super::store::GitStore;
 use super::text::{t, tr};
 use super::wire;
+use crate::common::overlay::tooltip_at;
+use crate::common::paint::TextSpec;
 use crate::common::{PanelTarget, UiContext};
 use makepad_widgets::scroll_bars::TouchScroll;
 use makepad_widgets::*;
-use paseo_gui_core::{CoreEvent, RequestId};
+use paseo_gui_core::{CoreError, CoreEvent, RequestId};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::ops::Range;
 
 pub const FEATURE: &str = "gitSelectedCommit";
 
-#[derive(Clone, Debug, PartialEq)]
-enum Action {
+/// The daemon's typed not-a-repository code (`checkout_error`).
+const NOT_GIT_REPO: &str = "NOT_GIT_REPO";
+/// Tooltip delay of the tree and toolbar.
+const TOOLTIP_WAIT: f64 = 0.5;
+/// Right inset of tree rows: the 3px scrollbar thumb sits 5px from the edge,
+/// and the status column keeps clear of it.
+const SCROLLBAR_GUTTER: f64 = 12.0;
+
+// ---------------------------------------------------------------------------
+// Changelist tree (pure).
+
+/// IntelliJ's changelist roots: tracked changes and unversioned files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Bucket {
+    Changes,
+    Unversioned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Status {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+}
+
+fn file_status(file: &Value) -> Status {
+    if flag(file, "untracked") {
+        Status::Untracked
+    } else if flag(file, "isDeleted") || text(file, "status") == "deleted" {
+        Status::Deleted
+    } else if !text(file, "oldPath").is_empty() {
+        Status::Renamed
+    } else if flag(file, "isNew") || text(file, "status") == "added" {
+        Status::Added
+    } else {
+        Status::Modified
+    }
+}
+
+fn bucket_of(file: &Value) -> Bucket {
+    if file_status(file) == Status::Untracked {
+        Bucket::Unversioned
+    } else {
+        Bucket::Changes
+    }
+}
+
+/// `old → new`, as paths when the directory changed and as names otherwise.
+fn rename_hint(file: &Value) -> Option<String> {
+    let old = text(file, "oldPath");
+    if old.is_empty() {
+        return None;
+    }
+    let new = text(file, "path");
+    let split = |path: &str| -> (String, String) {
+        match path.rfind('/') {
+            Some(slash) => (path[..slash].to_owned(), path[slash + 1..].to_owned()),
+            None => (String::new(), path.to_owned()),
+        }
+    };
+    let ((old_dir, old_name), (new_dir, new_name)) = (split(old), split(new));
+    Some(if old_dir == new_dir {
+        format!("{old_name} → {new_name}")
+    } else {
+        format!("{old} → {new}")
+    })
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn parent_dir(path: &str) -> &str {
+    path.rfind('/').map_or("", |slash| &path[..slash])
+}
+
+/// Stable identity of a tree node across refreshes (collapse and focus state).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum NodeId {
+    Bucket(Bucket),
+    /// The full path of the deepest directory of a compacted chain.
+    Dir(Bucket, String),
     File(String),
-    All,
-    Refresh,
-    Commit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum NodeKind {
+    Bucket(Bucket),
+    /// `label` is the compacted chain, e.g. `packages/gui/src`.
+    Dir {
+        label: String,
+    },
+    File {
+        index: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Node {
+    id: NodeId,
+    kind: NodeKind,
+    depth: usize,
+    /// The node's files as a range of [`Tree::order`].
+    files: Range<usize>,
+    /// One past the last node of this node's subtree (preorder).
+    end: usize,
+}
+
+impl Node {
+    fn is_file(&self) -> bool {
+        matches!(self.kind, NodeKind::File { .. })
+    }
+}
+
+/// The preorder tree; every subtree's files are contiguous in `order`, so a
+/// node's inclusion state is a range count.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Tree {
+    nodes: Vec<Node>,
+    /// File indices in tree order.
+    order: Vec<usize>,
+}
+
+#[derive(Default)]
+struct DirBuild {
+    dirs: BTreeMap<String, DirBuild>,
+    files: Vec<usize>,
+}
+
+impl DirBuild {
+    fn insert(&mut self, segments: &[&str], index: usize) {
+        match segments.split_first() {
+            None => self.files.push(index),
+            Some((first, rest)) => self
+                .dirs
+                .entry((*first).to_owned())
+                .or_default()
+                .insert(rest, index),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Check {
+    Unchecked,
+    Partial,
+    Checked,
+}
+
+impl Check {
+    fn of(selected: usize, total: usize) -> Self {
+        if total > 0 && selected == total {
+            Check::Checked
+        } else if selected == 0 {
+            Check::Unchecked
+        } else {
+            Check::Partial
+        }
+    }
+}
+
+impl Tree {
+    /// Changes then Unversioned Files (empty roots omitted); directories before
+    /// files in code-unit order, single-child directory chains compacted. A flat
+    /// tree lists each root's files by path.
+    fn build(files: &[Value], group: bool) -> Self {
+        let mut tree = Tree::default();
+        for bucket in [Bucket::Changes, Bucket::Unversioned] {
+            let mut members: Vec<usize> = (0..files.len())
+                .filter(|&index| bucket_of(&files[index]) == bucket)
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            let root = tree.open(NodeId::Bucket(bucket), NodeKind::Bucket(bucket), 0);
+            if group {
+                let mut dirs = DirBuild::default();
+                for index in members {
+                    let path = text(&files[index], "path");
+                    let segments: Vec<&str> = path.split('/').collect();
+                    dirs.insert(&segments[..segments.len() - 1], index);
+                }
+                tree.emit(&dirs, bucket, "", 1, files);
+            } else {
+                members
+                    .sort_by(|&a, &b| utf16_cmp(text(&files[a], "path"), text(&files[b], "path")));
+                for index in members {
+                    tree.leaf(index, 1, files);
+                }
+            }
+            tree.close(root);
+        }
+        tree
+    }
+
+    fn open(&mut self, id: NodeId, kind: NodeKind, depth: usize) -> usize {
+        let start = self.order.len();
+        self.nodes.push(Node {
+            id,
+            kind,
+            depth,
+            files: start..start,
+            end: 0,
+        });
+        self.nodes.len() - 1
+    }
+
+    fn close(&mut self, at: usize) {
+        self.nodes[at].files.end = self.order.len();
+        self.nodes[at].end = self.nodes.len();
+    }
+
+    fn leaf(&mut self, index: usize, depth: usize, files: &[Value]) {
+        let id = NodeId::File(text(&files[index], "path").to_owned());
+        let at = self.open(id, NodeKind::File { index }, depth);
+        self.order.push(index);
+        self.close(at);
+    }
+
+    fn emit(
+        &mut self,
+        dir: &DirBuild,
+        bucket: Bucket,
+        prefix: &str,
+        depth: usize,
+        files: &[Value],
+    ) {
+        let mut names: Vec<&String> = dir.dirs.keys().collect();
+        names.sort_by(|a, b| utf16_cmp(a, b));
+        for name in names {
+            let mut child = &dir.dirs[name];
+            let mut label = name.clone();
+            let mut path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            while child.files.is_empty() && child.dirs.len() == 1 {
+                let (next, grandchild) = child.dirs.iter().next().expect("one child");
+                label = format!("{label}/{next}");
+                path = format!("{path}/{next}");
+                child = grandchild;
+            }
+            let at = self.open(
+                NodeId::Dir(bucket, path.clone()),
+                NodeKind::Dir { label },
+                depth,
+            );
+            self.emit(child, bucket, &path, depth + 1, files);
+            self.close(at);
+        }
+        let mut leaves = dir.files.clone();
+        leaves.sort_by(|&a, &b| utf16_cmp(text(&files[a], "path"), text(&files[b], "path")));
+        for index in leaves {
+            self.leaf(index, depth, files);
+        }
+    }
+
+    /// Node indices shown with `collapsed` subtrees hidden.
+    fn visible(&self, collapsed: &HashSet<NodeId>) -> Vec<usize> {
+        let mut rows = Vec::with_capacity(self.nodes.len());
+        let mut index = 0;
+        while index < self.nodes.len() {
+            rows.push(index);
+            index = if collapsed.contains(&self.nodes[index].id) {
+                self.nodes[index].end
+            } else {
+                index + 1
+            };
+        }
+        rows
+    }
+
+    /// The nearest preceding node whose subtree contains `index`.
+    fn parent(&self, index: usize) -> Option<usize> {
+        (0..index).rev().find(|&at| self.nodes[at].end > index)
+    }
+
+    fn find(&self, id: &NodeId) -> Option<usize> {
+        self.nodes.iter().position(|node| &node.id == id)
+    }
+
+    fn paths<'a>(&'a self, index: usize, files: &'a [Value]) -> impl Iterator<Item = &'a str> + 'a {
+        self.order[self.nodes[index].files.clone()]
+            .iter()
+            .map(move |&file| text(&files[file], "path"))
+    }
+
+    fn check(&self, index: usize, files: &[Value], selected: &HashSet<String>) -> Check {
+        let count = self
+            .paths(index, files)
+            .filter(|path| selected.contains(*path))
+            .count();
+        Check::of(count, self.nodes[index].files.len())
+    }
+
+    /// Selected-file prefix counts over `order` for O(1) [`Check`]s while drawing.
+    fn selected_prefix(&self, files: &[Value], selected: &HashSet<String>) -> Vec<usize> {
+        let mut prefix = Vec::with_capacity(self.order.len() + 1);
+        prefix.push(0);
+        for &file in &self.order {
+            let last = *prefix.last().expect("seeded");
+            prefix.push(last + usize::from(selected.contains(text(&files[file], "path"))));
+        }
+        prefix
+    }
+
+    /// A fully included node excludes every descendant; otherwise all are included.
+    fn toggle(&self, index: usize, files: &[Value], selected: &mut HashSet<String>) {
+        if self.check(index, files, selected) == Check::Checked {
+            for path in self.paths(index, files) {
+                selected.remove(path);
+            }
+        } else {
+            selected.extend(self.paths(index, files).map(str::to_owned));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loading.
+
+#[derive(Clone, Debug, PartialEq)]
+enum LoadFailure {
+    NotRepository,
+    TooLarge,
+    Other(String),
+}
+
+/// The daemon's `NotGitRepo` text. Current daemons also send the typed code;
+/// daemons that predate it report only this message.
+fn not_repository_message(message: &str) -> bool {
+    message.starts_with("Not a git repository")
+}
+
+fn load_payload(payload: &Value) -> Result<Vec<Value>, LoadFailure> {
+    if let Some(message) = wire::payload_error(payload) {
+        return Err(
+            if text(object(payload, "error"), "code") == NOT_GIT_REPO
+                || not_repository_message(&message)
+            {
+                LoadFailure::NotRepository
+            } else if flag(payload, "diffTooLarge") {
+                LoadFailure::TooLarge
+            } else {
+                LoadFailure::Other(message)
+            },
+        );
+    }
+    if flag(payload, "diffTooLarge") {
+        return Err(LoadFailure::TooLarge);
+    }
+    Ok(array(payload, "files").to_vec())
+}
+
+fn load_result(result: &Result<Value, CoreError>) -> Result<Vec<Value>, LoadFailure> {
+    match result {
+        Ok(payload) => load_payload(payload),
+        Err(error) if error.code == NOT_GIT_REPO || not_repository_message(&error.message) => {
+            Err(LoadFailure::NotRepository)
+        }
+        Err(error) => Err(LoadFailure::Other(error.message.clone())),
+    }
 }
 
 #[derive(Default)]
@@ -55,6 +425,44 @@ impl Selection {
     }
 }
 
+// ---------------------------------------------------------------------------
+// View.
+
+#[derive(Clone, Debug, PartialEq)]
+enum Action {
+    /// Files toggle inclusion; roots and directories expand or collapse.
+    Row(NodeId),
+    Check(NodeId),
+    Refresh,
+    ExpandAll,
+    CollapseAll,
+    GroupByDirectory,
+    Commit,
+    Splitter,
+    /// The commit failure banner (tooltip with the full error).
+    Failure,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Display {
+    Disconnected,
+    Unsupported,
+    Loading,
+    Failed(LoadFailure),
+    Empty,
+    Files,
+}
+
+/// A centred state: icon (or spinner), title, body, muted detail and one action.
+struct StateCopy {
+    icon: Option<&'static str>,
+    error: bool,
+    title: String,
+    body: String,
+    detail: String,
+    action: Option<String>,
+}
+
 pub struct CommitView {
     target: PanelTarget,
     selection: Selection,
@@ -63,7 +471,9 @@ pub struct CommitView {
     commit: Option<RequestId>,
     active: bool,
     loaded: bool,
-    failed: Option<String>,
+    /// A successful snapshot is shown (stale content stays while reloading).
+    has_snapshot: bool,
+    failed: Option<LoadFailure>,
     commit_failure: Option<String>,
     feedback: Option<String>,
     uncertain: bool,
@@ -71,10 +481,29 @@ pub struct CommitView {
     input_initialized: bool,
     clear_input: bool,
     seen_invalidation: u64,
+    branch: Option<String>,
+    /// The store's checkout status reports `isGit: false`.
+    not_git: bool,
+    reload_status: bool,
+    tree: Tree,
+    group_by_dir: bool,
+    collapsed: HashSet<NodeId>,
+    /// Keyboard cursor (desktop).
+    focus: Option<NodeId>,
+    reveal_focus: bool,
+    /// Whether the message form was drawn (it owns the text input).
+    form_visible: bool,
+    /// Dragged desktop form height, and the height last drawn.
+    form_height: Option<f64>,
+    shown_form_height: f64,
+    /// `(pointer y, form height)` at the splitter press.
+    drag: Option<(f64, f64)>,
+    compact: bool,
     hits: Hits<Action>,
     pressed: Option<Action>,
     hovered: Option<Action>,
     list: Rect,
+    row_height: f64,
     offset: f64,
     max_scroll: f64,
     touch_scroll: TouchScroll,
@@ -94,6 +523,7 @@ impl CommitView {
             commit: None,
             active: false,
             loaded: false,
+            has_snapshot: false,
             commit_failure: None,
             failed: None,
             feedback: None,
@@ -101,10 +531,24 @@ impl CommitView {
             refresh_requested: true,
             input_initialized: false,
             clear_input: false,
+            branch: None,
+            not_git: false,
+            reload_status: false,
+            tree: Tree::default(),
+            group_by_dir: true,
+            collapsed: HashSet::new(),
+            focus: None,
+            reveal_focus: false,
+            form_visible: false,
+            form_height: None,
+            shown_form_height: 0.0,
+            drag: None,
+            compact: false,
             hits: Hits::default(),
             pressed: None,
             hovered: None,
             list: Rect::default(),
+            row_height: 28.0,
             offset: 0.0,
             max_scroll: 0.0,
             touch_scroll: TouchScroll::default(),
@@ -145,14 +589,20 @@ impl CommitView {
         ));
     }
 
-    fn snapshot(&mut self, result: Result<Value, wire::Failure>) {
+    fn snapshot(&mut self, result: Result<Vec<Value>, LoadFailure>) {
         self.loaded = true;
         match result {
-            Ok(payload) => {
+            Ok(files) => {
                 self.failed = None;
-                self.selection.replace(array(&payload, "files").to_vec());
+                self.has_snapshot = true;
+                self.selection.replace(files);
+                self.tree = Tree::build(&self.selection.files, self.group_by_dir);
             }
-            Err(error) => self.failed = Some(error.message),
+            Err(failure) => {
+                // Retrying shows loading, not the stale list beneath the failure.
+                self.failed = Some(failure);
+                self.has_snapshot = false;
+            }
         }
     }
 
@@ -172,6 +622,7 @@ impl CommitView {
                     ui.core.cancel_request(&id);
                 }
                 self.touch_scroll.reset();
+                self.drag = None;
             }
         }
         for event in &ui.events {
@@ -179,7 +630,7 @@ impl CommitView {
                 CoreEvent::Response {
                     request_id, result, ..
                 } if self.observation.as_ref() == Some(request_id) => {
-                    self.snapshot(wire::git_result(result));
+                    self.snapshot(load_result(result));
                     changed = true;
                 }
                 CoreEvent::Response {
@@ -219,9 +670,10 @@ impl CommitView {
                     });
                     if observed {
                         if text(event, "type") == "subscription.error" {
-                            self.snapshot(Err(wire::Failure::message(text(payload, "error"))));
+                            let error = text(payload, "error").to_owned();
+                            self.snapshot(Err(LoadFailure::Other(error)));
                         } else {
-                            self.snapshot(wire::git_result(&Ok(payload.clone())));
+                            self.snapshot(load_payload(payload));
                         }
                         changed = true;
                     }
@@ -238,6 +690,26 @@ impl CommitView {
                 _ => {}
             }
         }
+        let status = store
+            .checkout(&self.target.server_id, &self.target.cwd)
+            .and_then(|state| state.status.as_ref());
+        let branch = status
+            .map(|status| text(status, "currentBranch").to_owned())
+            .filter(|branch| !branch.is_empty());
+        // The checkout status names a plain folder before (or instead of) the diff.
+        let not_git = status.is_some_and(|status| status.get("isGit") == Some(&Value::Bool(false)));
+        if branch != self.branch || not_git != self.not_git {
+            self.branch = branch;
+            self.not_git = not_git;
+            changed = true;
+        }
+        if std::mem::take(&mut self.reload_status) {
+            // "Check again" after `git init` must not keep a stale non-repository status.
+            store.reload(
+                cx,
+                &super::store::key(&self.target.server_id, &self.target.cwd),
+            );
+        }
         let invalidation = store.invalidation(&self.target.server_id, &self.target.cwd);
         if invalidation != self.seen_invalidation {
             self.seen_invalidation = invalidation;
@@ -248,6 +720,27 @@ impl CommitView {
             changed = true;
         }
         changed
+    }
+
+    fn display(&self, ui: &UiContext) -> Display {
+        if !host::connected(ui, &self.target.server_id) {
+            Display::Disconnected
+        } else if !host::supports(ui, &self.target.server_id, FEATURE) {
+            Display::Unsupported
+        } else if self.failed == Some(LoadFailure::NotRepository)
+            || (self.not_git && !self.has_snapshot)
+        {
+            // A loaded diff wins over a stale status (e.g. right after `git init`).
+            Display::Failed(LoadFailure::NotRepository)
+        } else if let Some(failure) = &self.failed {
+            Display::Failed(failure.clone())
+        } else if !self.has_snapshot {
+            Display::Loading
+        } else if self.selection.files.is_empty() {
+            Display::Empty
+        } else {
+            Display::Files
+        }
     }
 
     fn can_commit(&self, ui: &UiContext) -> bool {
@@ -261,30 +754,56 @@ impl CommitView {
             && !self.message.trim().is_empty()
     }
 
+    fn toggle_node(&mut self, index: usize) {
+        self.tree
+            .toggle(index, &self.selection.files, &mut self.selection.selected);
+        self.feedback = None;
+    }
+
     fn activate(&mut self, ui: &UiContext, action: Action) {
         if self.commit.is_some() {
             return;
         }
         match action {
-            Action::File(path) => {
-                if !self.selection.selected.remove(&path) {
-                    self.selection.selected.insert(path);
+            Action::Row(id) => {
+                let Some(index) = self.tree.find(&id) else {
+                    return;
+                };
+                if self.tree.nodes[index].is_file() {
+                    self.toggle_node(index);
+                } else if !self.collapsed.remove(&id) {
+                    self.collapsed.insert(id.clone());
+                }
+                if !self.compact {
+                    self.focus = Some(id);
                 }
             }
-            Action::All => {
-                if self.selection.selected.len() == self.selection.files.len() {
-                    self.selection.selected.clear();
-                } else {
-                    self.selection.selected = self
-                        .selection
-                        .files
-                        .iter()
-                        .map(|file| text(file, "path").to_owned())
-                        .collect();
+            Action::Check(id) => {
+                if let Some(index) = self.tree.find(&id) {
+                    self.toggle_node(index);
+                    if !self.compact {
+                        self.focus = Some(id);
+                    }
                 }
+            }
+            Action::ExpandAll => self.collapsed.clear(),
+            Action::CollapseAll => {
+                self.collapsed = self
+                    .tree
+                    .nodes
+                    .iter()
+                    .filter(|node| !node.is_file())
+                    .map(|node| node.id.clone())
+                    .collect();
+            }
+            Action::GroupByDirectory => {
+                self.group_by_dir = !self.group_by_dir;
+                self.tree = Tree::build(&self.selection.files, self.group_by_dir);
+                self.reveal_focus = true;
             }
             Action::Refresh => {
                 self.uncertain = false;
+                self.reload_status = true;
                 self.commit_failure = None;
                 self.refresh_requested = true;
                 if self.available(ui) {
@@ -303,11 +822,76 @@ impl CommitView {
                     }),
                 ));
             }
-            Action::Commit => {}
+            Action::Commit | Action::Splitter | Action::Failure => {}
         }
     }
 
+    /// Desktop tree keys: arrows move, Left/Right collapse/expand or walk to
+    /// the parent/first child, Space toggles inclusion.
+    fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        if self.compact || !self.form_visible || key.modifiers.is_primary() {
+            return false;
+        }
+        let visible = self.tree.visible(&self.collapsed);
+        if visible.is_empty() {
+            return false;
+        }
+        let last = visible.len() - 1;
+        let current = self.focus.as_ref().and_then(|id| {
+            visible
+                .iter()
+                .position(|&index| &self.tree.nodes[index].id == id)
+        });
+        let next = match key.key_code {
+            KeyCode::ArrowUp => current.map_or(0, |at| at.saturating_sub(1)),
+            KeyCode::ArrowDown => current.map_or(0, |at| (at + 1).min(last)),
+            KeyCode::Home => 0,
+            KeyCode::End => last,
+            KeyCode::ArrowLeft => {
+                let Some(at) = current else { return false };
+                let node = &self.tree.nodes[visible[at]];
+                if !node.is_file() && !self.collapsed.contains(&node.id) {
+                    self.collapsed.insert(node.id.clone());
+                    at
+                } else {
+                    self.tree
+                        .parent(visible[at])
+                        .and_then(|parent| visible.iter().position(|&index| index == parent))
+                        .unwrap_or(at)
+                }
+            }
+            KeyCode::ArrowRight => {
+                let Some(at) = current else { return false };
+                let node = &self.tree.nodes[visible[at]];
+                // Files stay; a collapsed node expands; an expanded one steps in.
+                if node.is_file() || self.collapsed.remove(&node.id) {
+                    at
+                } else {
+                    (at + 1).min(last)
+                }
+            }
+            KeyCode::Space => {
+                let Some(at) = current else { return false };
+                if self.commit.is_none() {
+                    self.toggle_node(visible[at]);
+                }
+                at
+            }
+            _ => return false,
+        };
+        self.focus = Some(self.tree.nodes[visible[next]].id.clone());
+        self.reveal_focus = true;
+        true
+    }
+
     pub fn handle_input(&mut self, cx: &mut Cx, event: &Event, input: &mut TextInput) -> bool {
+        if !self.form_visible {
+            // The form is not drawn: its editor must not keep the keyboard.
+            if cx.has_key_focus(input.area()) {
+                cx.revert_key_focus();
+            }
+            return false;
+        }
         input.set_is_read_only(cx, self.commit.is_some());
         let uid = input.widget_uid();
         let actions = cx.capture_actions(|cx| input.handle_event(cx, event, &mut Scope::empty()));
@@ -325,6 +909,35 @@ impl CommitView {
         false
     }
 
+    fn tooltip(&self, action: &Action) -> Option<String> {
+        match action {
+            Action::Refresh => Some(t("workspace.git.commit.refresh")),
+            Action::ExpandAll => Some(t("workspace.git.commit.expandAll")),
+            Action::CollapseAll => Some(t("workspace.git.commit.collapseAll")),
+            Action::GroupByDirectory => Some(t("workspace.git.commit.groupByDirectory")),
+            Action::Failure => self.commit_failure.clone(),
+            Action::Row(NodeId::File(path)) => {
+                let file = self
+                    .selection
+                    .files
+                    .iter()
+                    .find(|file| text(file, "path") == path)?;
+                let status = t(status_key(file_status(file)));
+                Some(match text(file, "oldPath") {
+                    "" => format!("{status} · {path}"),
+                    old => format!(
+                        "{status} · {path}\n{}",
+                        tr(
+                            "workspace.git.commit.renamedFrom",
+                            &[("path", old.to_owned())]
+                        )
+                    ),
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn handle_pointer(
         &mut self,
         cx: &mut Cx,
@@ -333,6 +946,19 @@ impl CommitView {
         ui: &UiContext,
     ) -> bool {
         let hit = event.hits(cx, area);
+        if let Some((origin, start)) = self.drag {
+            match &hit {
+                Hit::FingerMove(e) => {
+                    self.form_height = Some(start + origin - e.abs.y);
+                    return true;
+                }
+                Hit::FingerUp(_) => {
+                    self.drag = None;
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if let Some(delta) = self.touch_scroll.handle_event(cx, event, &hit) {
             self.pressed = None;
             if self.list.contains(self.touch_scroll.origin()) {
@@ -350,15 +976,42 @@ impl CommitView {
                     self.max_scroll,
                 );
             }
-            Hit::FingerDown(e) => self.pressed = self.hits.find(e.abs).map(|(_, action)| action),
+            Hit::FingerDown(e) => {
+                tooltip_at(ui, None, Rect::default(), TOOLTIP_WAIT);
+                self.pressed = self.hits.find(e.abs).map(|(_, action)| action);
+                if self.pressed == Some(Action::Splitter) {
+                    self.pressed = None;
+                    self.drag = Some((e.abs.y, self.shown_form_height));
+                    return true;
+                }
+                // The tree takes the keyboard for arrow/space navigation.
+                if !self.compact && self.list.contains(e.abs) {
+                    cx.set_key_focus(area);
+                }
+                return self.pressed.is_some();
+            }
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
-                let next = self.hits.find(e.abs).map(|(_, action)| action);
+                let (anchor, next) = self
+                    .hits
+                    .find(e.abs)
+                    .map(|(anchor, action)| (anchor, Some(action)))
+                    .unwrap_or_default();
+                cx.set_cursor(if next == Some(Action::Splitter) || self.drag.is_some() {
+                    MouseCursor::RowResize
+                } else {
+                    MouseCursor::Default
+                });
                 if next != self.hovered {
+                    let tip = next.as_ref().and_then(|action| self.tooltip(action));
+                    tooltip_at(ui, tip.as_deref(), anchor, TOOLTIP_WAIT);
                     self.hovered = next;
                     return true;
                 }
             }
-            Hit::FingerHoverOut(_) => return self.hovered.take().is_some(),
+            Hit::FingerHoverOut(_) => {
+                tooltip_at(ui, None, Rect::default(), TOOLTIP_WAIT);
+                return self.hovered.take().is_some();
+            }
             Hit::FingerUp(e) => {
                 let pressed = self.pressed.take();
                 if e.is_over
@@ -370,7 +1023,9 @@ impl CommitView {
                     self.activate(ui, action);
                     return true;
                 }
+                return pressed.is_some();
             }
+            Hit::KeyDown(key) => return self.handle_key(&key),
             _ => {}
         }
         false
@@ -381,6 +1036,7 @@ impl CommitView {
             cx.revert_key_focus();
         }
         self.touch_scroll.reset();
+        self.drag = None;
     }
 
     pub fn draw(
@@ -394,186 +1050,786 @@ impl CommitView {
     ) {
         self.hits.clear();
         self.icons_pending = false;
-        self.spinning = self.commit.is_some() || (self.available(ui) && !self.loaded);
+        self.compact = compact;
+        self.spinning = self.commit.is_some();
+        let display = self.display(ui);
+        self.form_visible = display == Display::Files;
         let colors = palette();
-        let font = ui_px(13.0);
-        let line = paint.measure(cx, Font::Regular, font, "Ag").y.max(18.0);
-        let row = (line + 14.0).max(if compact { 44.0 } else { 30.0 });
-        let pad = 12.0;
-        let width = (area.size.x - pad * 2.0).max(1.0);
-        let left = area.pos.x + pad;
-        let mut y = area.pos.y + 6.0;
-        paint.text_fit(
-            cx,
-            Font::Regular,
-            font,
-            colors.muted,
-            dvec2(left, y),
-            &self.target.cwd,
-            width,
-        );
-        y += line + 8.0;
-        let refresh = rect(area.pos.x + area.size.x - pad - row, y, row, row);
-        paint.icon(cx, "refresh-cw", 16.0, colors.muted, refresh.center());
-        if self.commit.is_none() {
-            self.hits.push(refresh, Action::Refresh);
-        }
-        let all = rect(left, y, (width - row - 4.0).max(0.0), row);
-        let all_selected = !self.selection.files.is_empty()
-            && self.selection.selected.len() == self.selection.files.len();
-        paint.icon(
-            cx,
-            if all_selected {
-                "square-check"
-            } else {
-                "square"
-            },
-            16.0,
-            colors.foreground,
-            dvec2(left + 10.0, all.center().y),
-        );
-        let count = tr(
-            "workspace.git.commit.files",
-            &[
-                ("selected", self.selection.selected.len().to_string()),
-                ("total", self.selection.files.len().to_string()),
-            ],
-        );
-        paint.text_centered(
-            cx,
-            Font::Regular,
-            font,
-            colors.foreground,
-            left + 28.0,
-            y,
-            row,
-            &count,
-            (all.size.x - 28.0).max(0.0),
-        );
-        if self.loaded && self.commit.is_none() {
-            self.hits.push(all, Action::All);
-        }
-        y += row + 4.0;
-        let button_h = button_height(ButtonSize::Sm, compact).max(row);
-        let footer_h =
-            (area.size.y * 0.37).clamp(line * 3.0 + button_h + 30.0, line * 6.0 + button_h + 30.0);
-        let list_h = (area.pos.y + area.size.y - footer_h - y).max(0.0);
-        self.list = rect(left, y, width, list_h);
-        self.max_scroll = (row * self.selection.files.len() as f64 - list_h).max(0.0);
-        self.offset = self.offset.clamp(0.0, self.max_scroll);
-        paint.begin_clip(cx, self.list);
-        let show_files = self.available(ui)
-            && self.loaded
-            && self.failed.is_none()
-            && self.commit_failure.is_none();
-        if show_files {
-            for (index, file) in self.selection.files.iter().enumerate() {
-                let band = rect(left, y + index as f64 * row - self.offset, width, row);
-                if band.pos.y + row < y || band.pos.y > y + list_h {
-                    continue;
-                }
-                let path = text(file, "path");
-                let action = Action::File(path.to_owned());
-                if self.hovered.as_ref() == Some(&action) {
-                    paint.fill(cx, band, colors.interaction_highlight);
-                }
-                paint.icon(
-                    cx,
-                    if self.selection.selected.contains(path) {
-                        "square-check"
-                    } else {
-                        "square"
-                    },
-                    16.0,
-                    colors.foreground,
-                    dvec2(left + 10.0, band.center().y),
-                );
-                let status = if flag(file, "isDeleted") {
-                    "D"
-                } else if !text(file, "oldPath").is_empty() {
-                    "R"
-                } else if flag(file, "isNew") {
-                    "A"
-                } else {
-                    "M"
-                };
-                paint.text_centered(
-                    cx,
-                    Font::Regular,
-                    font,
-                    colors.muted,
-                    left + 29.0,
-                    band.pos.y,
-                    row,
-                    status,
-                    18.0,
-                );
-                paint.text_centered(
-                    cx,
-                    Font::Regular,
-                    font,
-                    colors.foreground,
-                    left + 51.0,
-                    band.pos.y,
-                    row,
-                    path,
-                    (width - 55.0).max(0.0),
-                );
-                if self.commit.is_none() {
-                    self.hits.push_clipped(band, self.list, action);
-                }
-            }
-        }
-        let state = if !host::connected(ui, &self.target.server_id) {
-            Some(t("workspace.git.commit.disconnected"))
-        } else if !host::supports(ui, &self.target.server_id, FEATURE) {
-            Some(t("workspace.git.commit.unsupported"))
-        } else if let Some(error) = &self.commit_failure {
-            Some(error.clone())
-        } else if let Some(error) = &self.failed {
-            Some(error.clone())
-        } else if !self.loaded {
-            Some(t("workspace.git.commit.loading"))
-        } else if self.selection.files.is_empty() {
-            Some(t("workspace.git.commit.empty"))
-        } else {
-            None
+        paint.fill(cx, area, colors.surface0);
+        let state = match &display {
+            Display::Files | Display::Empty => None,
+            Display::Disconnected => Some(StateCopy {
+                icon: Some("wifi-off"),
+                error: false,
+                title: t("workspace.git.commit.states.disconnected.title"),
+                body: t("workspace.git.commit.disconnected"),
+                detail: String::new(),
+                action: None,
+            }),
+            Display::Unsupported => Some(StateCopy {
+                icon: Some("circle-arrow-up"),
+                error: false,
+                title: t("workspace.git.commit.states.unsupported.title"),
+                body: t("workspace.git.commit.unsupported"),
+                detail: String::new(),
+                action: None,
+            }),
+            Display::Loading => Some(StateCopy {
+                icon: None,
+                error: false,
+                title: t("workspace.git.commit.loading"),
+                body: String::new(),
+                detail: String::new(),
+                action: None,
+            }),
+            Display::Failed(LoadFailure::NotRepository) => Some(StateCopy {
+                icon: Some("folder-x"),
+                error: false,
+                title: t("workspace.git.commit.states.notRepository.title"),
+                body: t("workspace.git.commit.states.notRepository.body"),
+                detail: self.target.cwd.clone(),
+                action: Some(t("workspace.git.commit.states.notRepository.action")),
+            }),
+            Display::Failed(LoadFailure::TooLarge) => Some(StateCopy {
+                icon: Some("triangle-alert"),
+                error: false,
+                title: t("workspace.git.commit.states.tooLarge.title"),
+                body: t("workspace.git.commit.states.tooLarge.body"),
+                detail: String::new(),
+                action: Some(t("workspace.git.commit.refresh")),
+            }),
+            Display::Failed(LoadFailure::Other(message)) => Some(StateCopy {
+                icon: Some("circle-alert"),
+                error: true,
+                title: t("workspace.git.commit.states.failed.title"),
+                body: String::new(),
+                detail: message.clone(),
+                action: Some(t("workspace.git.commit.states.failed.retry")),
+            }),
         };
         if let Some(state) = state {
+            self.list = Rect::default();
+            self.draw_state(cx, paint, area, &state);
+            return;
+        }
+        let toolbar_h = if compact { 44.0 } else { TOOLBAR_HEIGHT };
+        let metrics = tree_row_metrics(cx, paint);
+        self.row_height = metrics.height(tree_row_height(compact), 4.0, 16.0);
+        let form_h = if self.form_visible {
+            self.form_extent(cx, paint, area.size.y - toolbar_h, compact)
+        } else {
+            0.0
+        };
+        self.shown_form_height = form_h;
+        let body = rect(
+            area.pos.x,
+            area.pos.y + toolbar_h,
+            area.size.x,
+            (area.size.y - toolbar_h - form_h).max(0.0),
+        );
+        if self.form_visible {
+            self.draw_tree(cx, paint, body, metrics, compact);
+        } else {
+            self.list = Rect::default();
+            let (title, body_copy) = if self.feedback.is_some() {
+                (
+                    t("workspace.git.commit.success"),
+                    t("workspace.git.commit.states.empty.committed"),
+                )
+            } else {
+                (
+                    t("workspace.git.commit.empty"),
+                    t("workspace.git.commit.states.empty.body"),
+                )
+            };
+            self.draw_state(
+                cx,
+                paint,
+                body,
+                &StateCopy {
+                    icon: Some("circle-check"),
+                    error: false,
+                    title,
+                    body: body_copy,
+                    detail: String::new(),
+                    action: None,
+                },
+            );
+        }
+        let bar = rect(area.pos.x, area.pos.y, area.size.x, toolbar_h);
+        self.draw_toolbar(cx, ui, paint, bar, compact);
+        if self.form_visible {
+            let form = rect(area.pos.x, body.pos.y + body.size.y, area.size.x, form_h);
+            self.draw_form(cx, ui, paint, input, form, compact);
+        }
+    }
+
+    fn line(cx: &mut Cx2d, paint: &mut GitPaint, size: f64) -> f64 {
+        paint.measure(cx, Font::Regular, size, "Ag").y.max(size)
+    }
+
+    fn commit_button_height(compact: bool) -> f64 {
+        if compact {
+            button_height(ButtonSize::Md, true).max(44.0)
+        } else {
+            button_height(ButtonSize::Md, false)
+        }
+    }
+
+    fn banner_height(&self, compact: bool) -> f64 {
+        if self.commit_failure.is_none() && !self.uncertain {
+            0.0
+        } else if compact {
+            44.0 + 8.0
+        } else {
+            32.0 + 8.0
+        }
+    }
+
+    /// The message form's height: at least label + three input lines + button;
+    /// desktop follows the splitter, phones keep four lines pinned at the bottom.
+    fn form_extent(
+        &self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        available: f64,
+        compact: bool,
+    ) -> f64 {
+        let line = Self::line(cx, paint, ui_px(13.0));
+        let label = Self::line(cx, paint, ui_px(12.0));
+        let minimum = 10.0
+            + self.banner_height(compact)
+            + label
+            + 6.0
+            + line * 3.0
+            + 12.0
+            + 10.0
+            + Self::commit_button_height(compact)
+            + 12.0;
+        let available = available.max(0.0);
+        if compact {
+            return (minimum + line).min((available - self.row_height).max(minimum));
+        }
+        let wanted = self.form_height.unwrap_or(available * 0.4);
+        wanted.clamp(minimum, (available - self.row_height * 3.0).max(minimum))
+    }
+
+    fn draw_state(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, area: Rect, state: &StateCopy) {
+        let colors = palette();
+        let center_x = area.pos.x + area.size.x / 2.0;
+        let inner = (area.size.x - 48.0).clamp(0.0, 440.0);
+        if inner <= 0.0 || area.size.y <= 0.0 {
+            return;
+        }
+        let (title_px, body_px, detail_px) = (ui_px(15.0), ui_px(13.0), ui_px(12.0));
+        let title_w = paint
+            .measure(cx, Font::Medium, title_px, &state.title)
+            .x
+            .min(inner);
+        let body_w = paint
+            .measure(cx, Font::Regular, body_px, &state.body)
+            .x
+            .min(inner);
+        let detail_w = paint
+            .measure(cx, Font::Regular, detail_px, &state.detail)
+            .x
+            .min(inner);
+        let title_h =
+            paint.measure_wrapped(cx, Font::Medium, title_px, &state.title, title_w + 1.0);
+        let body_h = paint.measure_wrapped(cx, Font::Regular, body_px, &state.body, body_w + 1.0);
+        let detail_h =
+            paint.measure_wrapped(cx, Font::Regular, detail_px, &state.detail, detail_w + 1.0);
+        let button_h = if self.compact {
+            button_height(ButtonSize::Sm, true).max(44.0)
+        } else {
+            button_height(ButtonSize::Sm, false)
+        };
+        let total = 28.0
+            + 14.0
+            + title_h
+            + if body_h > 0.0 { 6.0 + body_h } else { 0.0 }
+            + if detail_h > 0.0 { 6.0 + detail_h } else { 0.0 }
+            + if state.action.is_some() {
+                16.0 + button_h
+            } else {
+                0.0
+            };
+        let mut y = area.pos.y + ((area.size.y - total) * 0.4).max(16.0);
+        match state.icon {
+            Some(icon) => paint.icon(
+                cx,
+                icon,
+                28.0,
+                if state.error {
+                    colors.danger
+                } else {
+                    colors.muted
+                },
+                dvec2(center_x, y + 14.0),
+            ),
+            None => {
+                paint.spinner(
+                    cx,
+                    dvec2(center_x, y + 14.0),
+                    24.0,
+                    colors.muted,
+                    cx.seconds_since_app_start(),
+                );
+                self.spinning = true;
+            }
+        }
+        y += 28.0 + 14.0;
+        paint.text_wrapped(
+            cx,
+            Font::Medium,
+            title_px,
+            colors.foreground,
+            dvec2(center_x - title_w / 2.0, y),
+            &state.title,
+            title_w + 1.0,
+        );
+        y += title_h;
+        if body_h > 0.0 {
+            y += 6.0;
             paint.text_wrapped(
                 cx,
                 Font::Regular,
-                font,
+                body_px,
                 colors.muted,
-                dvec2(left, y + 8.0),
-                &state,
-                width,
+                dvec2(center_x - body_w / 2.0, y),
+                &state.body,
+                body_w + 1.0,
+            );
+            y += body_h;
+        }
+        if detail_h > 0.0 {
+            y += 6.0;
+            paint.text_wrapped(
+                cx,
+                Font::Regular,
+                detail_px,
+                if state.error {
+                    colors.danger
+                } else {
+                    colors.extra_muted
+                },
+                dvec2(center_x - detail_w / 2.0, y),
+                &state.detail,
+                detail_w + 1.0,
+            );
+            y += detail_h;
+        }
+        if let Some(label) = &state.action {
+            y += 16.0;
+            let button_w = measure_button(cx, paint, label, true, ButtonSize::Sm, self.compact)
+                .min(inner)
+                .max(if self.compact { 120.0 } else { 0.0 });
+            let frame = rect(center_x - button_w / 2.0, y, button_w, button_h);
+            if frame.pos.y + frame.size.y <= area.pos.y + area.size.y {
+                let enabled = self.commit.is_none();
+                button(
+                    cx,
+                    paint,
+                    frame,
+                    label,
+                    Some("refresh-cw"),
+                    ButtonVariant::Secondary,
+                    ButtonSize::Sm,
+                    self.compact,
+                    enabled,
+                    self.hovered == Some(Action::Refresh),
+                );
+                if enabled {
+                    self.hits.push(frame, Action::Refresh);
+                }
+            }
+        }
+    }
+
+    fn reloading(&self) -> bool {
+        self.observation.is_some() && !self.loaded
+    }
+
+    fn draw_toolbar(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &UiContext,
+        paint: &mut GitPaint,
+        bar: Rect,
+        compact: bool,
+    ) {
+        let colors = palette();
+        toolbar_band(cx, paint, bar, false);
+        let center_y = bar.pos.y + bar.size.y / 2.0;
+        let enabled = self.commit.is_none() && self.available(ui);
+        let mut actions = vec![(Action::Refresh, "refresh-cw", false)];
+        if self.form_visible {
+            actions.push((Action::CollapseAll, "chevrons-down-up", false));
+            actions.push((Action::ExpandAll, "chevrons-up-down", false));
+            actions.push((Action::GroupByDirectory, "folder-tree", self.group_by_dir));
+        }
+        // Touch hits are 44px squares whose centres sit 44px apart.
+        let pitch = if compact { 44.0 } else { 26.0 };
+        let mut right = bar.pos.x + bar.size.x - if compact { 6.0 } else { 8.0 };
+        for (action, icon, selected) in actions {
+            let spinner = action == Action::Refresh && self.reloading();
+            let center_x = right - pitch / 2.0;
+            let button_right = center_x + toolbar_button_size(compact) / 2.0;
+            let frame = toolbar_button(
+                cx,
+                paint,
+                compact,
+                button_right,
+                center_y,
+                (!spinner).then_some(icon),
+                selected,
+                enabled,
+                self.hovered.as_ref() == Some(&action),
+            );
+            if spinner {
+                paint.spinner(
+                    cx,
+                    frame.center(),
+                    14.0,
+                    colors.muted,
+                    cx.seconds_since_app_start(),
+                );
+                self.spinning = true;
+            }
+            if enabled {
+                self.hits.push(toolbar_hit(frame, compact), action);
+            }
+            right -= pitch;
+        }
+        let mut x = bar.pos.x + 12.0;
+        let limit = right - 8.0;
+        let size = ui_px(13.0);
+        if let Some(branch) = self.branch.clone()
+            && limit - x > 40.0
+        {
+            paint.icon(
+                cx,
+                "git-branch",
+                14.0,
+                colors.muted,
+                dvec2(x + 7.0, center_y),
+            );
+            x += 20.0;
+            let max = if self.form_visible {
+                ((limit - x) * 0.55).max(40.0)
+            } else {
+                limit - x
+            };
+            let drawn = paint.text_centered(
+                cx,
+                Font::Medium,
+                size,
+                colors.foreground,
+                x,
+                bar.pos.y,
+                bar.size.y,
+                &branch,
+                max,
+            );
+            x += drawn + 12.0;
+        }
+        if self.form_visible && limit - x > 24.0 {
+            let summary = tr(
+                "workspace.git.commit.selected",
+                &[("count", self.selection.selected.len().to_string())],
+            );
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                size,
+                colors.muted,
+                x,
+                bar.pos.y,
+                bar.size.y,
+                &summary,
+                limit - x,
+            );
+        }
+    }
+
+    fn draw_tree(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        list: Rect,
+        metrics: crate::common::widgets::RowMetrics,
+        compact: bool,
+    ) {
+        let colors = palette();
+        self.list = list;
+        let row_h = self.row_height;
+        let top_pad = 4.0;
+        let visible = self.tree.visible(&self.collapsed);
+        // A collapsed ancestor takes over the cursor of a hidden node.
+        if let Some(id) = self.focus.clone() {
+            match self.tree.find(&id) {
+                None => self.focus = None,
+                Some(mut index) => {
+                    while !visible.contains(&index) {
+                        match self.tree.parent(index) {
+                            Some(parent) => index = parent,
+                            None => break,
+                        }
+                    }
+                    self.focus = Some(self.tree.nodes[index].id.clone());
+                }
+            }
+        }
+        let focus_pos = self.focus.as_ref().and_then(|id| {
+            visible
+                .iter()
+                .position(|&index| &self.tree.nodes[index].id == id)
+        });
+        self.max_scroll = (visible.len() as f64 * row_h + top_pad * 2.0 - list.size.y).max(0.0);
+        if std::mem::take(&mut self.reveal_focus)
+            && let Some(pos) = focus_pos
+        {
+            let top = top_pad + pos as f64 * row_h;
+            if top < self.offset {
+                self.offset = top;
+            } else if top + row_h > self.offset + list.size.y {
+                self.offset = top + row_h - list.size.y;
+            }
+        }
+        self.offset = self.offset.clamp(0.0, self.max_scroll);
+        let prefix = self
+            .tree
+            .selected_prefix(&self.selection.files, &self.selection.selected);
+        let interactive = self.commit.is_none();
+        let indent = if compact { 16.0 } else { 14.0 };
+        let font = ui_px(14.0);
+        let first = ((self.offset - top_pad) / row_h).floor().max(0.0) as usize;
+        paint.begin_clip(cx, list);
+        for (pos, &index) in visible.iter().enumerate().skip(first) {
+            let band = rect(
+                list.pos.x,
+                list.pos.y + top_pad + pos as f64 * row_h - self.offset,
+                list.size.x,
+                row_h,
+            );
+            if band.pos.y > list.pos.y + list.size.y {
+                break;
+            }
+            let node = &self.tree.nodes[index];
+            let row_action = Action::Row(node.id.clone());
+            let check_action = Action::Check(node.id.clone());
+            if !compact && focus_pos == Some(pos) {
+                paint.fill(cx, band, colors.selected);
+            }
+            if self.hovered.as_ref() == Some(&row_action)
+                || self.hovered.as_ref() == Some(&check_action)
+                || self.pressed.as_ref() == Some(&row_action)
+            {
+                paint.fill(cx, band, colors.interaction_highlight);
+            }
+            let center_y = band.pos.y + band.size.y / 2.0;
+            let x0 = band.pos.x + 6.0 + node.depth as f64 * indent;
+            if !node.is_file() {
+                let chevron = if self.collapsed.contains(&node.id) {
+                    "chevron-right"
+                } else {
+                    "chevron-down"
+                };
+                paint.icon(cx, chevron, 14.0, colors.muted, dvec2(x0 + 8.0, center_y));
+            }
+            let check_x = x0 + 16.0 + 4.0 + 8.0;
+            let range = &node.files;
+            let check = Check::of(prefix[range.end] - prefix[range.start], range.len());
+            let (glyph, glyph_color) = match check {
+                Check::Checked => ("square-check", colors.foreground),
+                Check::Partial => ("square-minus", colors.foreground),
+                Check::Unchecked => ("square", colors.muted),
+            };
+            paint.icon(cx, glyph, 16.0, glyph_color, dvec2(check_x, center_y));
+            let mut leading = 16.0 + 4.0 + 16.0;
+            let spec = TextSpec::new(Font::Regular, font, colors.foreground);
+            let muted = TextSpec::new(Font::Regular, font, colors.muted);
+            let (title, title_spec, detail, trailing) = match &node.kind {
+                NodeKind::Bucket(bucket) => (
+                    t(match bucket {
+                        Bucket::Changes => "workspace.git.commit.changes",
+                        Bucket::Unversioned => "workspace.git.commit.unversioned",
+                    }),
+                    TextSpec::new(Font::Medium, font, colors.foreground),
+                    file_count(range.len()),
+                    None,
+                ),
+                NodeKind::Dir { label } => {
+                    let open = !self.collapsed.contains(&node.id);
+                    paint.icon(
+                        cx,
+                        if open { "folder-open" } else { "folder" },
+                        15.0,
+                        colors.muted,
+                        dvec2(x0 + leading + 6.0 + 8.0, center_y),
+                    );
+                    leading += 6.0 + 16.0;
+                    (label.clone(), spec, file_count(range.len()), None)
+                }
+                NodeKind::File { index: file } => {
+                    let file = &self.selection.files[*file];
+                    let path = text(file, "path");
+                    let status = file_status(file);
+                    if !paint.file_icon(
+                        cx,
+                        rect(x0 + leading + 6.0, center_y - 8.0, 16.0, 16.0),
+                        file_name(path),
+                    ) {
+                        self.icons_pending = true;
+                    }
+                    leading += 6.0 + 16.0;
+                    let detail = rename_hint(file).unwrap_or_else(|| {
+                        if self.group_by_dir {
+                            String::new()
+                        } else {
+                            parent_dir(path).to_owned()
+                        }
+                    });
+                    (
+                        file_name(path).to_owned(),
+                        TextSpec::new(Font::Regular, font, status_color(status)),
+                        detail,
+                        Some(status),
+                    )
+                }
+            };
+            // The trailing column keeps clear of the scrollbar gutter whether or
+            // not it shows; names and hints ellipsize before the status letter.
+            let content = rect(
+                x0,
+                band.pos.y,
+                (band.pos.x + band.size.x - SCROLLBAR_GUTTER - x0).max(0.0),
+                band.size.y,
+            );
+            let trailing_w = if trailing.is_some() { 18.0 } else { 0.0 };
+            let slots = metrics.layout(content, 0.0, leading, trailing_w, 8.0);
+            let drawn = paint
+                .painter
+                .text_in(cx, slots.title, title_spec, &title, 0.0);
+            let detail_x = drawn.pos.x + drawn.size.x + 8.0;
+            let detail_w = slots.title.pos.x + slots.title.size.x - detail_x;
+            if !detail.is_empty() && detail_w > 24.0 {
+                paint.painter.text_in(
+                    cx,
+                    rect(detail_x, slots.title.pos.y, detail_w, slots.title.size.y),
+                    muted,
+                    &detail,
+                    0.0,
+                );
+            }
+            if let Some(status) = trailing {
+                paint.painter.text_in(
+                    cx,
+                    slots.trailing,
+                    TextSpec::new(Font::Medium, ui_px(12.0), status_color(status)),
+                    status_letter(status),
+                    0.5,
+                );
+            }
+            if interactive {
+                self.hits.push_clipped(band, list, row_action);
+                let half = if compact { 22.0 } else { 12.0 };
+                self.hits.push_clipped(
+                    rect(check_x - half, band.pos.y, half * 2.0, band.size.y),
+                    list,
+                    check_action,
+                );
+            }
+        }
+        if self.max_scroll > 0.0 {
+            let content = self.max_scroll + list.size.y;
+            let thumb_h = (list.size.y * list.size.y / content).max(24.0);
+            let thumb_y = list.pos.y + (list.size.y - thumb_h) * (self.offset / self.max_scroll);
+            paint.rounded(
+                cx,
+                rect(list.pos.x + list.size.x - 5.0, thumb_y, 3.0, thumb_h),
+                with_alpha(colors.muted, 0.35),
+                1.5,
+                None,
             );
         }
         paint.end_clip(cx);
-        let bottom = area.pos.y + area.size.y - 10.0;
-        let message_label_y = (y + list_h + 8.0)
-            .min(bottom - button_h - line * 2.0 - 16.0)
-            .max(y);
-        paint.text_fit(
+    }
+
+    fn draw_form(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &UiContext,
+        paint: &mut GitPaint,
+        input: &mut TextInput,
+        form: Rect,
+        compact: bool,
+    ) {
+        let colors = palette();
+        // Divider; desktop drags it to resize the tree/message split.
+        let dragging = self.drag.is_some();
+        if !compact && (dragging || self.hovered == Some(Action::Splitter)) {
+            let line = rect(form.pos.x, form.pos.y - 1.0, form.size.x, 2.0);
+            paint.fill(cx, line, colors.border_accent);
+        } else {
+            paint.fill(
+                cx,
+                rect(form.pos.x, form.pos.y, form.size.x, 1.0),
+                colors.border,
+            );
+        }
+        if !compact {
+            self.hits.push(
+                rect(form.pos.x, form.pos.y - 3.0, form.size.x, 7.0),
+                Action::Splitter,
+            );
+        }
+        let pad = 12.0;
+        let left = form.pos.x + pad;
+        let width = (form.size.x - pad * 2.0).max(1.0);
+        let mut y = form.pos.y + 10.0;
+        let banner_h = self.banner_height(compact);
+        if banner_h > 0.0 {
+            let banner = rect(left, y, width, banner_h - 8.0);
+            paint.rounded(cx, banner, with_alpha(colors.danger, 0.12), 6.0, None);
+            self.hits.push(banner, Action::Failure);
+            let center_y = banner.pos.y + banner.size.y / 2.0;
+            let icon_at = dvec2(banner.pos.x + 16.0, center_y);
+            paint.icon(cx, "circle-alert", 14.0, colors.danger, icon_at);
+            let label = t("workspace.git.commit.refresh");
+            let button_h = button_height(ButtonSize::Xs, compact);
+            let button_w = measure_button(cx, paint, &label, false, ButtonSize::Xs, compact);
+            let frame = rect(
+                banner.pos.x + banner.size.x - button_w - 6.0,
+                center_y - button_h / 2.0,
+                button_w,
+                button_h,
+            );
+            button(
+                cx,
+                paint,
+                frame,
+                &label,
+                None,
+                ButtonVariant::Secondary,
+                ButtonSize::Xs,
+                compact,
+                true,
+                self.hovered == Some(Action::Refresh),
+            );
+            let hit = if compact {
+                rect(frame.pos.x, banner.pos.y, frame.size.x, banner.size.y)
+            } else {
+                frame
+            };
+            self.hits.push(hit, Action::Refresh);
+            let copy = if self.uncertain {
+                t("workspace.git.commit.commitUncertain")
+            } else {
+                t("workspace.git.commit.commitFailed")
+            };
+            let text_x = banner.pos.x + 30.0;
+            let text_w = (frame.pos.x - 8.0 - text_x).max(0.0);
+            let drawn = paint.text_centered(
+                cx,
+                Font::Medium,
+                ui_px(13.0),
+                colors.danger,
+                text_x,
+                banner.pos.y,
+                banner.size.y,
+                &copy,
+                text_w,
+            );
+            if let Some(error) = self.commit_failure.as_deref()
+                && !self.uncertain
+                && text_w - drawn > 32.0
+            {
+                paint.text_centered(
+                    cx,
+                    Font::Regular,
+                    ui_px(13.0),
+                    colors.muted,
+                    text_x + drawn + 8.0,
+                    banner.pos.y,
+                    banner.size.y,
+                    error,
+                    text_w - drawn - 8.0,
+                );
+            }
+            y += banner_h;
+        }
+        let label_px = ui_px(12.0);
+        let label = t("workspace.git.commit.message");
+        let enabled = self.can_commit(ui);
+        let (hint, hint_color) = if let Some(feedback) = &self.feedback {
+            (feedback.clone(), colors.success)
+        } else if self.commit.is_some()
+            || enabled
+            || self.commit_failure.is_some()
+            || self.uncertain
+        {
+            (String::new(), colors.muted)
+        } else if self.selection.selected.is_empty() {
+            (t("workspace.git.commit.hints.selectFiles"), colors.muted)
+        } else if self.message.trim().is_empty() {
+            (t("workspace.git.commit.hints.message"), colors.muted)
+        } else {
+            (String::new(), colors.muted)
+        };
+        // The row fits both labels' measured heights (Hangul fallback fonts run
+        // taller than "Ag"), so the editor below never covers them.
+        let label_h = Self::line(cx, paint, label_px)
+            .max(paint.measure(cx, Font::Medium, label_px, &label).y)
+            .max(paint.measure(cx, Font::Regular, label_px, &hint).y);
+        let label_w = paint.text_centered(
             cx,
-            Font::Regular,
-            font,
+            Font::Medium,
+            label_px,
             colors.muted,
-            dvec2(left, message_label_y),
-            &t("workspace.git.commit.message"),
-            width,
+            left,
+            y,
+            label_h,
+            &label,
+            width * 0.5,
         );
-        let input_y = message_label_y + line + 4.0;
-        let action_y = bottom - button_h;
-        let input_frame = rect(left, input_y, width, (action_y - input_y - 10.0).max(line));
-        paint.rounded(cx, input_frame, colors.surface2, 6.0, None);
+        let hint_x = left + label_w + 12.0;
+        if !hint.is_empty() && left + width - hint_x > 24.0 {
+            // Right-aligned and ellipsized within the space beside the label.
+            paint.painter.text_in(
+                cx,
+                rect(hint_x, y, left + width - hint_x, label_h),
+                TextSpec::new(Font::Regular, label_px, hint_color),
+                &hint,
+                1.0,
+            );
+        }
+        y += label_h + 6.0;
+        let button_h = Self::commit_button_height(compact);
+        let action_y = form.pos.y + form.size.y - 12.0 - button_h;
+        let line = Self::line(cx, paint, ui_px(13.0));
+        let input_frame = rect(left, y, width, (action_y - 10.0 - y).max(line + 12.0));
+        let focused = cx.has_key_focus(input.area());
+        paint.rounded(
+            cx,
+            input_frame,
+            colors.surface1,
+            6.0,
+            Some((
+                if focused {
+                    colors.border_accent
+                } else {
+                    colors.border
+                },
+                1.0,
+            )),
+        );
         if !self.input_initialized || std::mem::take(&mut self.clear_input) {
             input.set_text(cx, &self.message);
             input.set_is_multiline(cx, true);
             self.input_initialized = true;
         }
-        let font_size = crate::theme::Typography::pt(font);
+        let font_size = crate::theme::Typography::pt(ui_px(13.0));
         let foreground = colors.foreground;
         let muted = colors.muted;
         input.apply_over(cx, live! { draw_text: { color: (foreground), color_empty: (muted), text_style: { font_size: (font_size) } } });
@@ -589,42 +1845,147 @@ impl CommitView {
                 (input_frame.size.y - 12.0).max(1.0),
             )),
         );
-        let commit_button = rect(left, action_y, width.min(160.0), button_h);
-        let label = t(if self.commit.is_some() {
-            "workspace.git.commit.committing"
+        let count = self.selection.selected.len();
+        let label = if self.commit.is_some() {
+            t("workspace.git.commit.committing")
+        } else if count > 0 {
+            tr(
+                "workspace.git.commit.submitCount",
+                &[("count", count.to_string())],
+            )
         } else {
-            "workspace.git.commit.submit"
-        });
-        let enabled = self.can_commit(ui);
-        button(
+            t("workspace.git.commit.submit")
+        };
+        let button_w = if compact {
+            width
+        } else {
+            measure_primary(cx, paint, &label).max(120.0).min(width)
+        };
+        let commit_button = rect(left, action_y, button_w, button_h);
+        primary_button(
             cx,
             paint,
             commit_button,
             &label,
-            Some("git-commit-horizontal"),
-            ButtonVariant::Primary,
-            ButtonSize::Sm,
-            compact,
+            "git-commit-horizontal",
             enabled,
             self.hovered == Some(Action::Commit),
+            self.pressed == Some(Action::Commit),
         );
         if enabled {
             self.hits.push(commit_button, Action::Commit);
         }
-        if let Some(feedback) = self.feedback.as_ref() {
-            paint.text_fit(
-                cx,
-                Font::Regular,
-                font,
-                colors.success,
-                dvec2(
-                    commit_button.pos.x + commit_button.size.x + 8.0,
-                    action_y + 6.0,
-                ),
-                feedback,
-                (width - commit_button.size.x - 8.0).max(0.0),
-            );
+    }
+}
+
+/// The app's primary action look (`common::widgets::PButton` Primary, as on New
+/// session and the composer): accent pill with `on_tertiary` content, 0.85 while
+/// pressed and 0.5 disabled. Git chrome's `Primary` keeps the original pane's
+/// foreground fill for the other git surfaces; Commit is the screen's main action.
+const PRIMARY_PAD: f64 = 16.0;
+const PRIMARY_ICON: f64 = 16.0;
+
+fn measure_primary(cx: &mut Cx2d, paint: &mut GitPaint, label: &str) -> f64 {
+    let text = paint.measure(cx, Font::Regular, ui_px(14.0), label).x;
+    PRIMARY_PAD * 2.0 + PRIMARY_ICON + 8.0 + text
+}
+
+#[allow(clippy::too_many_arguments)]
+fn primary_button(
+    cx: &mut Cx2d,
+    paint: &mut GitPaint,
+    area: Rect,
+    label: &str,
+    icon: &str,
+    enabled: bool,
+    hovered: bool,
+    pressed: bool,
+) {
+    let colors = palette();
+    let opacity = if !enabled {
+        0.5
+    } else if pressed {
+        0.85
+    } else {
+        1.0
+    };
+    let radius = (area.size.y * 0.5).min(16.0);
+    paint.rounded(cx, area, with_alpha(colors.accent, opacity), radius, None);
+    if enabled && hovered {
+        paint.rounded(cx, area, colors.interaction_highlight, radius, None);
+    }
+    let foreground = with_alpha(colors.on_tertiary, opacity);
+    let size = ui_px(14.0);
+    let text_w = paint.measure(cx, Font::Regular, size, label).x;
+    let content = PRIMARY_ICON + 8.0 + text_w;
+    let inset = ((area.size.x - content) * 0.5).max(PRIMARY_PAD.min(area.size.x * 0.5));
+    let mut x = area.pos.x + inset;
+    let center_y = area.pos.y + area.size.y * 0.5;
+    let icon_center = dvec2(x + PRIMARY_ICON * 0.5, center_y);
+    paint.icon(cx, icon, PRIMARY_ICON, foreground, icon_center);
+    x += PRIMARY_ICON + 8.0;
+    paint.text_centered(
+        cx,
+        Font::Regular,
+        size,
+        foreground,
+        x,
+        area.pos.y,
+        area.size.y,
+        label,
+        (area.pos.x + area.size.x - PRIMARY_PAD - x).max(0.0),
+    );
+}
+
+fn file_count(count: usize) -> String {
+    tr(
+        "workspace.git.commit.fileCount",
+        &[("count", count.to_string())],
+    )
+}
+
+fn status_key(status: Status) -> &'static str {
+    match status {
+        Status::Modified => "workspace.git.commit.status.modified",
+        Status::Added => "workspace.git.commit.status.added",
+        Status::Deleted => "workspace.git.commit.status.deleted",
+        Status::Renamed => "workspace.git.commit.status.renamed",
+        Status::Untracked => "workspace.git.commit.status.untracked",
+    }
+}
+
+fn status_letter(status: Status) -> &'static str {
+    match status {
+        Status::Modified => "M",
+        Status::Added => "A",
+        Status::Deleted => "D",
+        Status::Renamed => "R",
+        Status::Untracked => "U",
+    }
+}
+
+/// IntelliJ file-status colours from the palette: modified/renamed blue, added
+/// green, deleted grey, unversioned brown-red. Light themes deepen the blue
+/// toward the foreground to keep text contrast.
+fn status_color(status: Status) -> Vec4 {
+    let colors = palette();
+    match status {
+        Status::Modified | Status::Renamed => {
+            if colors.is_dark {
+                colors.running
+            } else {
+                let (a, b, t) = (colors.running, colors.foreground, 0.3);
+                vec4(
+                    a.x + (b.x - a.x) * t,
+                    a.y + (b.y - a.y) * t,
+                    a.z + (b.z - a.z) * t,
+                    1.0,
+                )
+            }
         }
+        Status::Added => colors.added,
+        Status::Deleted => colors.muted,
+        Status::Untracked => colors.danger,
     }
 }
 
@@ -648,5 +2009,228 @@ mod tests {
         assert_eq!(selection.paths(), vec!["keep.rs"]);
         selection.replace(vec![json!({"path":"exclude.rs"}), json!({"path":"new.rs"})]);
         assert!(selection.paths().is_empty());
+    }
+
+    fn labels(tree: &Tree, files: &[Value]) -> Vec<(usize, String)> {
+        tree.nodes
+            .iter()
+            .map(|node| {
+                let label = match &node.kind {
+                    NodeKind::Bucket(Bucket::Changes) => "[changes]".to_owned(),
+                    NodeKind::Bucket(Bucket::Unversioned) => "[unversioned]".to_owned(),
+                    NodeKind::Dir { label } => format!("{label}/"),
+                    NodeKind::File { index } => text(&files[*index], "path").to_owned(),
+                };
+                (node.depth, label)
+            })
+            .collect()
+    }
+
+    fn sample() -> Vec<Value> {
+        vec![
+            json!({"path":"README.md"}),
+            json!({"path":"packages/gui/src/b.rs"}),
+            json!({"path":"packages/daemon/x.rs", "isDeleted": true}),
+            json!({"path":"packages/gui/src/a.rs", "isNew": true}),
+            json!({"path":"notes/todo.txt", "isNew": true, "untracked": true}),
+        ]
+    }
+
+    #[test]
+    fn groups_by_directory_compacts_chains_and_buckets_untracked_files() {
+        let files = sample();
+        let tree = Tree::build(&files, true);
+        assert_eq!(
+            labels(&tree, &files),
+            vec![
+                (0, "[changes]".into()),
+                (1, "packages/".into()),
+                (2, "daemon/".into()),
+                (3, "packages/daemon/x.rs".into()),
+                (2, "gui/src/".into()),
+                (3, "packages/gui/src/a.rs".into()),
+                (3, "packages/gui/src/b.rs".into()),
+                (1, "README.md".into()),
+                (0, "[unversioned]".into()),
+                (1, "notes/".into()),
+                (2, "notes/todo.txt".into()),
+            ]
+        );
+        // Each node's files are its subtree; the compacted node keeps the deepest path.
+        let gui = tree
+            .find(&NodeId::Dir(Bucket::Changes, "packages/gui/src".into()))
+            .unwrap();
+        assert_eq!(tree.nodes[gui].files.len(), 2);
+        assert_eq!(tree.nodes[0].files.len(), 4);
+        let unversioned = tree.find(&NodeId::Bucket(Bucket::Unversioned)).unwrap();
+        assert_eq!(tree.nodes[unversioned].files.len(), 1);
+        assert_eq!(file_status(&files[2]), Status::Deleted);
+        assert_eq!(file_status(&files[3]), Status::Added);
+        assert_eq!(file_status(&files[4]), Status::Untracked);
+        assert_eq!(file_status(&files[0]), Status::Modified);
+    }
+
+    #[test]
+    fn flat_mode_lists_files_by_path_under_each_root() {
+        let files = sample();
+        let tree = Tree::build(&files, false);
+        assert_eq!(
+            labels(&tree, &files),
+            vec![
+                (0, "[changes]".into()),
+                (1, "README.md".into()),
+                (1, "packages/daemon/x.rs".into()),
+                (1, "packages/gui/src/a.rs".into()),
+                (1, "packages/gui/src/b.rs".into()),
+                (0, "[unversioned]".into()),
+                (1, "notes/todo.txt".into()),
+            ]
+        );
+        assert!(Tree::build(&[], true).nodes.is_empty());
+    }
+
+    #[test]
+    fn tri_state_toggles_whole_subtrees_and_reports_partial() {
+        let files = sample();
+        let tree = Tree::build(&files, true);
+        let mut selected = HashSet::new();
+        let packages = tree
+            .find(&NodeId::Dir(Bucket::Changes, "packages".into()))
+            .unwrap();
+        let gui = tree
+            .find(&NodeId::Dir(Bucket::Changes, "packages/gui/src".into()))
+            .unwrap();
+        tree.toggle(gui, &files, &mut selected);
+        assert_eq!(tree.check(gui, &files, &selected), Check::Checked);
+        assert_eq!(tree.check(packages, &files, &selected), Check::Partial);
+        assert_eq!(tree.check(0, &files, &selected), Check::Partial);
+        // A partial node includes every descendant first, then excludes them all.
+        tree.toggle(0, &files, &mut selected);
+        assert_eq!(tree.check(0, &files, &selected), Check::Checked);
+        assert_eq!(selected.len(), 4);
+        assert!(!selected.contains("notes/todo.txt"));
+        tree.toggle(packages, &files, &mut selected);
+        assert_eq!(tree.check(packages, &files, &selected), Check::Unchecked);
+        assert_eq!(
+            selected.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["README.md"]
+        );
+        let prefix = tree.selected_prefix(&files, &selected);
+        let root = &tree.nodes[0].files;
+        assert_eq!(prefix[root.end] - prefix[root.start], 1);
+    }
+
+    #[test]
+    fn collapsed_nodes_hide_their_subtree_and_parents_resolve() {
+        let files = sample();
+        let tree = Tree::build(&files, true);
+        let packages = NodeId::Dir(Bucket::Changes, "packages".into());
+        let collapsed = HashSet::from([packages.clone()]);
+        let visible: Vec<_> = tree
+            .visible(&collapsed)
+            .into_iter()
+            .map(|index| labels(&tree, &files)[index].1.clone())
+            .collect();
+        assert_eq!(
+            visible,
+            vec![
+                "[changes]",
+                "packages/",
+                "README.md",
+                "[unversioned]",
+                "notes/",
+                "notes/todo.txt"
+            ]
+        );
+        let a = tree
+            .find(&NodeId::File("packages/gui/src/a.rs".into()))
+            .unwrap();
+        let gui = tree.parent(a).unwrap();
+        assert_eq!(
+            tree.nodes[gui].id,
+            NodeId::Dir(Bucket::Changes, "packages/gui/src".into())
+        );
+        assert_eq!(tree.nodes[tree.parent(gui).unwrap()].id, packages);
+        assert_eq!(tree.parent(0), None);
+    }
+
+    #[test]
+    fn renames_group_by_new_path_and_show_old_to_new() {
+        let files = vec![
+            json!({"path":"src/new.rs", "oldPath":"src/old.rs"}),
+            json!({"path":"lib/moved.rs", "oldPath":"src/moved.rs"}),
+        ];
+        assert_eq!(file_status(&files[0]), Status::Renamed);
+        assert_eq!(rename_hint(&files[0]).as_deref(), Some("old.rs → new.rs"));
+        assert_eq!(
+            rename_hint(&files[1]).as_deref(),
+            Some("src/moved.rs → lib/moved.rs")
+        );
+        let tree = Tree::build(&files, true);
+        assert_eq!(
+            labels(&tree, &files),
+            vec![
+                (0, "[changes]".into()),
+                (1, "lib/".into()),
+                (2, "lib/moved.rs".into()),
+                (1, "src/".into()),
+                (2, "src/new.rs".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_payload_failures_name_known_conditions() {
+        assert_eq!(
+            load_payload(&json!({
+                "files": [],
+                "error": {"code": "NOT_GIT_REPO", "message": "Not a git repository: /home/me"},
+            })),
+            Err(LoadFailure::NotRepository)
+        );
+        assert_eq!(
+            load_payload(&json!({
+                "files": [],
+                "diffTooLarge": true,
+                "error": {"code": "UNKNOWN", "message": "Diff too large to display"},
+            })),
+            Err(LoadFailure::TooLarge)
+        );
+        assert_eq!(
+            load_payload(&json!({"files":[], "error":{"code":"UNKNOWN","message":"boom"}})),
+            Err(LoadFailure::Other("boom".into()))
+        );
+        assert_eq!(
+            load_payload(&json!({"files":[{"path":"a"}], "error": null})),
+            Ok(vec![json!({"path":"a"})])
+        );
+        // Daemons that predate the typed code send only the message, which still
+        // names the condition.
+        let rejected = |code: &str, message: &str| -> Result<Value, CoreError> {
+            Err(CoreError {
+                code: code.into(),
+                message: message.into(),
+                outcome_unknown: false,
+            })
+        };
+        assert_eq!(
+            load_result(&rejected(
+                "DAEMON_RPC_ERROR",
+                "Not a git repository: /tmp/x"
+            )),
+            Err(LoadFailure::NotRepository)
+        );
+        assert_eq!(
+            load_result(&rejected("NOT_GIT_REPO", "anything")),
+            Err(LoadFailure::NotRepository)
+        );
+        assert_eq!(
+            load_payload(&json!({"files":[], "error": "Not a git repository: /tmp/x"})),
+            Err(LoadFailure::NotRepository)
+        );
+        assert_eq!(
+            load_result(&rejected("DAEMON_RPC_ERROR", "fatal: bad object")),
+            Err(LoadFailure::Other("fatal: bad object".into()))
+        );
     }
 }

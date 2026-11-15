@@ -296,6 +296,107 @@ pub fn project_rows(mut sections: Vec<Section>) -> Projection {
     Projection { rows, selectable }
 }
 
+/// A section's rule band: 8px either side of the 1px rule.
+pub const SECTION_DIVIDER_HEIGHT: f64 = 17.0;
+/// A section's small muted label line.
+pub const SECTION_TITLE_HEIGHT: f64 = 32.0;
+
+/// Vertical result-row padding: 6px, or 12px so compact rows are 44px touch targets.
+pub fn row_inset(compact: bool) -> f64 {
+    if compact { 12.0 } else { 6.0 }
+}
+
+/// The fixed height each row is drawn at, so the panel can size to its rows and reveal one
+/// exactly without measuring.
+pub fn row_height(row: &ListRow, compact: bool) -> f64 {
+    match row {
+        ListRow::Section { title, divider } => {
+            let rule = if *divider {
+                SECTION_DIVIDER_HEIGHT
+            } else {
+                0.0
+            };
+            let label = if title.as_deref().is_some_and(|t| !t.is_empty()) {
+                SECTION_TITLE_HEIGHT
+            } else {
+                0.0
+            };
+            rule + label
+        }
+        // One 20px line, or an 18px title over a 16px subtitle.
+        ListRow::Result(result) => {
+            let lines = if result.two_line() { 34.0 } else { 20.0 };
+            lines + 2.0 * row_inset(compact)
+        }
+    }
+}
+
+/// The list viewport for rows of `heights` under `max`: all of them when they fit, else the
+/// leading rows that fit whole, so the unscrolled list never ends mid-row.
+pub fn list_height(heights: &[f64], max: f64) -> f64 {
+    let max = max.max(0.0);
+    let mut total = 0.0;
+    for height in heights {
+        if total + height > max + 0.5 {
+            // A first row taller than the room still gets the room.
+            return if total > 0.0 { total } else { max };
+        }
+        total += height;
+    }
+    total
+}
+
+/// The list anchor `(first_id, first_scroll)` that places content offset `y` at the top.
+fn anchor_at(heights: &[f64], y: f64) -> (usize, f64) {
+    let mut top = 0.0;
+    for (index, height) in heights.iter().enumerate() {
+        if y < top + height - 0.01 {
+            return (index, top - y);
+        }
+        top += height;
+    }
+    let last = heights.len().saturating_sub(1);
+    (last, top - heights.get(last).copied().unwrap_or(0.0) - y)
+}
+
+/// The anchor that shows rows `top..=bottom` whole in a `viewport`-tall list currently at
+/// `(first_id, first_scroll)`, moving as little as possible; `None` when they already are.
+/// A span taller than the viewport shows its top.
+pub fn reveal_anchor(
+    heights: &[f64],
+    (first_id, first_scroll): (usize, f64),
+    viewport: f64,
+    top: usize,
+    bottom: usize,
+) -> Option<(usize, f64)> {
+    let offset = |index: usize| heights[..index.min(heights.len())].iter().sum::<f64>();
+    let total = offset(heights.len());
+    let current = offset(first_id) - first_scroll;
+    let start = offset(top);
+    let end = offset(bottom + 1);
+    let target = if start < current - 0.5 {
+        start
+    } else if end > current + viewport + 0.5 {
+        (end - viewport).min(start)
+    } else {
+        return None;
+    };
+    Some(anchor_at(
+        heights,
+        target.clamp(0.0, (total - viewport).max(0.0)),
+    ))
+}
+
+/// The rows to keep in view for the selected row: the row and, when it opens its section, the
+/// section header above it.
+pub fn reveal_span(rows: &[ListRow], index: usize) -> (usize, usize) {
+    let top = match index.checked_sub(1).and_then(|i| rows.get(i)) {
+        Some(ListRow::Section { .. }) => index - 1,
+        _ => index,
+    };
+    (top, index)
+}
+
 /// `_joinSubtitle`.
 pub fn join_subtitle(parts: &[Option<&str>]) -> String {
     parts
@@ -392,5 +493,143 @@ mod tests {
         ];
         let chosen = pick_attention_agent(agents.iter()).unwrap();
         assert!(std::ptr::eq(chosen, &agents[1]));
+    }
+
+    fn section(title: Option<&str>, divider: bool) -> ListRow {
+        ListRow::Section {
+            title: title.map(str::to_owned),
+            divider,
+        }
+    }
+
+    fn action(id: &str) -> ListRow {
+        ListRow::Result(Box::new(ResultRow::new(
+            id,
+            Kind::Action,
+            id,
+            Run::Error(String::new()),
+        )))
+    }
+
+    #[test]
+    fn row_heights_are_fixed_and_compact_rows_are_touch_targets() {
+        let session = ListRow::Result(Box::new(row("s", "x", 0)));
+        let file = ListRow::Result(Box::new(ResultRow::new(
+            "f",
+            Kind::File,
+            "a.rs",
+            Run::Error(String::new()),
+        )));
+        assert_eq!(row_height(&section(Some("A"), false), false), 32.0);
+        assert_eq!(row_height(&section(Some("A"), true), false), 49.0);
+        assert_eq!(row_height(&section(None, true), false), 17.0);
+        assert_eq!(row_height(&action("a"), false), 32.0);
+        assert_eq!(row_height(&session, false), 46.0);
+        for row in [action("a"), session, file] {
+            assert!(row_height(&row, true) >= 44.0);
+        }
+    }
+
+    /// The reported palette: 9 actions under a titled section, then a divided "Sessions"
+    /// section of two-line session rows. Every cap must end the list on a row boundary.
+    #[test]
+    fn whole_row_cap_with_mixed_rows_and_section_headers() {
+        let section_of = |id: &str, band: i64, results: Vec<ResultRow>| Section {
+            id: id.into(),
+            band,
+            rank: 0,
+            title: Some(id.into()),
+            results,
+            score: None,
+        };
+        let actions = (0..9)
+            .map(|i| {
+                ResultRow::new(
+                    format!("a{i}"),
+                    Kind::Action,
+                    "x",
+                    Run::Error(String::new()),
+                )
+            })
+            .collect();
+        let sessions = vec![row("hello", "hello", 2), row("stream", "stream test", 1)];
+        let projection = project_rows(vec![
+            section_of("Actions", 0, actions),
+            section_of("Sessions", 1, sessions),
+        ]);
+        for compact in [false, true] {
+            let heights: Vec<f64> = projection
+                .rows
+                .iter()
+                .map(|r| row_height(r, compact))
+                .collect();
+            let boundaries: Vec<f64> = heights
+                .iter()
+                .scan(0.0, |sum, h| {
+                    *sum += h;
+                    Some(*sum)
+                })
+                .collect();
+            let total = *boundaries.last().unwrap();
+            if !compact {
+                // 32 + 9 × 32 + (17 + 32) + 2 × 46.
+                assert_eq!(total, 461.0);
+                // The reported 449px of room ends after "hello", not inside "stream test".
+                assert_eq!(list_height(&heights, 449.0), 415.0);
+            }
+            let mut room = heights[0];
+            while room <= total + 10.0 {
+                let height = list_height(&heights, room);
+                assert!(height <= room + 0.5, "{height} over {room}");
+                assert!(
+                    boundaries.contains(&height),
+                    "{height} is not a row boundary (compact {compact})"
+                );
+                room += 1.0;
+            }
+        }
+    }
+
+    #[test]
+    fn list_height_fits_content_or_ends_on_a_row_boundary() {
+        let heights = [32.0, 32.0, 46.0, 46.0];
+        assert_eq!(list_height(&heights, 500.0), 156.0);
+        assert_eq!(list_height(&heights, 120.0), 110.0);
+        assert_eq!(list_height(&heights, 20.0), 20.0);
+        assert_eq!(list_height(&[], 300.0), 0.0);
+    }
+
+    #[test]
+    fn reveal_keeps_rows_whole_and_shows_a_leading_section_header() {
+        let heights = [32.0, 32.0, 32.0, 49.0, 46.0, 46.0];
+        // Already whole at the top.
+        assert_eq!(reveal_anchor(&heights, (0, 0.0), 100.0, 0, 1), None);
+        // A header half under the top edge is scrolled back to the top.
+        assert_eq!(
+            reveal_anchor(&heights, (0, -10.0), 100.0, 0, 1),
+            Some((0, 0.0))
+        );
+        // Moving down bottom-aligns the row: content offset 191 - 100 = 91, inside row 2.
+        assert_eq!(
+            reveal_anchor(&heights, (0, 0.0), 100.0, 3, 4),
+            Some((2, -27.0))
+        );
+        // Moving up to a section's first row shows its header from the top.
+        assert_eq!(
+            reveal_anchor(&heights, (5, 0.0), 100.0, 3, 4),
+            Some((3, 0.0))
+        );
+        // Never scrolls past the end of the content (237 - 100 = 137, inside row 3).
+        assert_eq!(
+            reveal_anchor(&heights, (0, 0.0), 100.0, 5, 5),
+            Some((3, -41.0))
+        );
+    }
+
+    #[test]
+    fn reveal_span_includes_the_section_header() {
+        let rows = [section(Some("A"), false), action("a"), action("b")];
+        assert_eq!(reveal_span(&rows, 1), (0, 1));
+        assert_eq!(reveal_span(&rows, 2), (2, 2));
     }
 }

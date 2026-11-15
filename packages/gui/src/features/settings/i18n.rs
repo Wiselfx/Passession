@@ -32,6 +32,20 @@ pub fn ta(key: &str, args: &[(&str, &str)]) -> String {
     crate::common::tr_args(key, args)
 }
 
+/// A localized `message` followed by the raw diagnostic `raw` as a secondary
+/// "Details: …" line (omitted when empty or identical).
+pub fn with_detail(message: &str, raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == message {
+        message.to_string()
+    } else {
+        format!(
+            "{message}\n{}",
+            crate::common::tr_args("pairing.direct.errors.details", &[("detail", raw)])
+        )
+    }
+}
+
 fn local(key: &str) -> Option<&'static str> {
     if !key.starts_with("settingsNative.") {
         return None;

@@ -452,7 +452,7 @@ impl Mapper {
             "agent_start"=>{self.started=true;self.no_turn_output.clear();if let Some(id)=frame["sessionId"].as_str(){out.push(json!({"type":"thread_started","provider":self.provider,"sessionId":id}));}},
             "turn_start"=>{if self.suppress_next_start{self.suppress_next_start=false;}else if self.family=="omp"||!self.turn_started{out.push(self.event("turn_started"));}self.started=true;self.turn_started=true;self.no_turn_output.clear();},
             "thinking_level_changed"=>{if let Some(level)=frame["level"].as_str().filter(|s|matches!(*s,"off"|"minimal"|"low"|"medium"|"high"|"xhigh")){out.push(json!({"type":"thinking_option_changed","provider":self.provider,"thinkingOptionId":level}));}},
-            "message_start"=>{if frame["message"]["role"]=="assistant"{if self.family=="omp"{let items=self.omp_streams.start(frame);out.extend(self.stream_events(items));}else{self.assistant=first(&[&frame["message"]["responseId"]]).map(str::to_owned);self.stream_text.clear();self.stream_thinking.clear();}}},
+            "message_start"=>{if frame["message"]["role"]=="assistant"{if self.family=="omp"{self.omp_streams.start(frame);}else{self.assistant=first(&[&frame["message"]["responseId"]]).map(str::to_owned);self.stream_text.clear();self.stream_thinking.clear();}}},
             "message_update"=>{
                 if frame.get("message").is_some_and(|m|!m.is_null()&&m["role"]!="assistant"){return out;}
                 if self.family == "omp" {

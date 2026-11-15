@@ -53,8 +53,13 @@ live_design! {
                 width: Fill, height: Fill, flow: Overlay
                 output = <WaLogView> {}
                 empty = <View> {
-                    width: Fill, height: Fill, align: { x: 0.5, y: 0.5 }, padding: 24., visible: false
+                    width: Fill, height: Fill, flow: Down, spacing: 8.
+                    align: { x: 0.5, y: 0.5 }, padding: 24., visible: false
+                    // Shown only while the host is offline, so that state never reads as
+                    // an empty run.
+                    icon = <WaIcon> { size: 24., icon: "unplug", visible: false }
                     text = <WaMuted> { width: Fit }
+                    hint = <WaSmall> { width: Fit, visible: false }
                 }
                 find_wrap = <WaPaneFind> {}
                 // Original attach overlay: a dimmed surface with a small muted spinner.
@@ -453,12 +458,24 @@ impl Widget for ExecutionLogPanel {
         let show_empty = has_session && facts.rows == 0;
         empty.set_visible(cx, show_empty);
         if show_empty {
-            let text = if facts.exited {
-                l("Execution finished without output")
+            let waiting = facts.outcome == Outcome::Waiting;
+            let text = if waiting {
+                t("workspace.terminal.hostDisconnected")
+            } else if facts.exited {
+                l("Execution finished without output").to_owned()
             } else {
-                l("No output yet")
+                l("No output yet").to_owned()
             };
-            empty.widget(id!(text)).set_text(cx, text);
+            empty.widget(id!(icon)).set_visible(cx, waiting);
+            empty.widget(id!(text)).set_text(cx, &text);
+            empty
+                .plabel(id!(text))
+                .set_color(cx, waiting.then_some(palette.foreground));
+            let hint = empty.widget(id!(hint));
+            hint.set_visible(cx, waiting);
+            if waiting {
+                hint.set_text(cx, &t("workspace.executionLog.waitingHint"));
+            }
         }
         let body_width = self.view.widget(id!(body)).area().rect(cx).size.x;
         self.find.present(

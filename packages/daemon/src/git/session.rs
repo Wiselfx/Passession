@@ -376,9 +376,7 @@ impl GitService {
             }
             "checkout_merge_request" => {
                 let git = snapshot_git.unwrap_or_default();
-                if git["isGit"] != true {
-                    bail!("Not a git repository: {}", cwd.display());
-                }
+                require_git(&git, cwd)?;
                 if message["requireCleanTarget"] == true && git["isDirty"] == true {
                     bail!("Working directory has uncommitted changes.");
                 }
@@ -620,4 +618,60 @@ impl GitService {
 }
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key].as_str().ok_or_else(|| anyhow!("{key} required"))
+}
+
+/// The merge handlers read the snapshot instead of running git; a non-repository
+/// still reports the typed `NOT_GIT_REPO` code (same message) clients recognize.
+fn require_git(git: &Value, cwd: &Path) -> Result<()> {
+    if git["isGit"] == true {
+        Ok(())
+    } else {
+        Err(command::NotGitRepo(cwd.display().to_string()).into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_snapshot_outside_a_repository_is_typed_not_git_repo() {
+        let cwd = Path::new("/home/user");
+        for git in [Value::Null, json!({"isGit": false})] {
+            let error = require_git(&git, cwd).unwrap_err();
+            assert_eq!(
+                checkout_error(&error),
+                json!({"code": "NOT_GIT_REPO", "message": "Not a git repository: /home/user"})
+            );
+        }
+        assert!(require_git(&json!({"isGit": true}), cwd).is_ok());
+    }
+
+    /// The Commit tab's summary subscription on a plain folder: observation
+    /// setup succeeds and the diff payload names the typed condition.
+    #[tokio::test]
+    async fn uncommitted_summary_outside_a_repository_reports_not_git_repo() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let folder = root.path().join("plain");
+        tokio::fs::create_dir(&folder).await?;
+        let app = crate::state::AppState::new(
+            root.path().join("home"),
+            root.path().into(),
+            std::env::current_exe()?,
+        );
+        app.config.initialize().await?;
+        let cancel = CancellationToken::new();
+        app.git.retain_observation(&folder).await?;
+        let compare = json!({"mode":"uncommitted","detail":"summary","ignoreWhitespace":false});
+        let payload = app.git.read_diff(&folder, &compare, cancel.clone()).await?;
+        assert_eq!(payload["files"], json!([]), "{payload}");
+        assert_eq!(payload["error"]["code"], "NOT_GIT_REPO", "{payload}");
+        app.git.release_observation(&folder).await?;
+        let status = app
+            .git
+            .operation("checkout_status_request", &json!({}), &folder, None, cancel)
+            .await?;
+        assert_eq!(status["isGit"], false, "{status}");
+        Ok(())
+    }
 }

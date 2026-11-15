@@ -11,7 +11,18 @@
     "exporting": "내보내기 준비 중…",
     "saved": "다이어그램을 저장했습니다",
     "exportError": "다이어그램을 내보내지 못했습니다",
-    "cancelled": "내보내기를 취소했습니다"
+    "cancelled": "내보내기를 취소했습니다",
+    "errors": {
+      "invalid": "다이어그램에 문법 오류가 있거나 아직 완성되지 않았습니다.",
+      "unsupported": "여기서 표시할 수 없는 기능을 사용하는 다이어그램입니다.",
+      "tooLarge": "다이어그램이 너무 커서 렌더링할 수 없습니다.",
+      "font": "설치된 글꼴로는 이 다이어그램의 글자를 표시할 수 없습니다.",
+      "worker": "지금은 다이어그램 렌더러를 사용할 수 없습니다.",
+      "platform": "이 기기에서는 파일을 저장할 수 없습니다.",
+      "exportBusy": "다른 다이어그램을 내보내는 중입니다.",
+      "exportLimit": "대기 중인 다이어그램 내보내기가 너무 많습니다. 열려 있는 저장 대화상자를 닫고 다시 시도하세요.",
+      "writeFailed": "다이어그램 파일을 저장하지 못했습니다."
+    }
   },
   "tailnet": {
     "title": "Tailscale",
@@ -23,9 +34,11 @@
     "disableConfirm": "모든 앱 창의 내장 Tailscale 호스트 연결을 끊고 이 앱의 노드를 중지할까요? 저장된 로그인은 유지됩니다. 일반 호스트 연결에는 영향을 주지 않습니다.",
     "status": "상태",
     "pending": "Tailscale 작업 진행 중…",
+    "checking": "상태 확인 중…",
     "account": "계정",
     "network": "테일넷",
     "device": "기기",
+    "deviceName": "기기 이름",
     "ips": "Tailscale 주소",
     "health": "연결 상태 진단",
     "hostname": "기기 호스트 이름",
@@ -57,6 +70,13 @@
     "hostHint": "이 호스트만 앱의 내장 테일넷을 사용합니다. Tailscale IP 또는 MagicDNS 이름과 ws:// 또는 wss:// 주소를 입력하세요. 시스템 DNS 조회나 일반 네트워크로의 자동 전환은 없습니다. 먼저 설정 → Tailscale에서 활성화하고 로그인하세요. 호스트 컴퓨터도 테일넷에 연결되어 있어야 하며 데몬의 수신 주소, ACL, 방화벽이 연결을 허용해야 합니다.",
     "hostUnsupported": "내장 Tailscale은 직접 연결하는 ws:// 및 wss:// 호스트만 지원합니다. SSH, 릴레이, 페어링 링크, 로컬 IPC는 지원하지 않습니다. 직접 연결 WebSocket 주소를 입력하세요.",
     "hostNotReady": "내장 Tailscale이 연결되지 않았습니다. 설정 → Tailscale에서 활성화하고 로그인하거나 다시 연결한 뒤 상태를 새로고침하고 이 호스트를 다시 시도하세요.",
+    "errors": {
+      "timedOut": "Tailscale이 제때 응답하지 않았습니다. 상태를 새로고침한 뒤 다시 시도하세요.",
+      "notConnected": "내장 Tailscale이 연결되지 않았습니다. 활성화하고 로그인한 뒤 상태를 새로고침하세요.",
+      "secretStore": "내장 Tailscale에는 이 기기의 보안 자격 증명 저장소가 필요하지만 사용할 수 없습니다.",
+      "superseded": "더 최근의 Tailscale 설정이 이 작업을 대체했습니다.",
+      "unavailable": "지금은 내장 Tailscale을 사용할 수 없습니다. 상태를 새로고침한 뒤 다시 시도하세요."
+    },
     "states": {
       "running": "연결됨",
       "needsLogin": "브라우저 로그인 필요",
@@ -65,7 +85,8 @@
       "stopped": "연결 끊김",
       "disabled": "비활성화됨",
       "error": "사용할 수 없음 — 아래 오류 확인",
-      "noState": "초기화되지 않음"
+      "noState": "초기화되지 않음",
+      "unknown": "알 수 없는 상태 ({{state}})"
     }
   },
   "addProject": {
@@ -186,11 +207,13 @@
       "connecting": "Paseo 데몬에 연결하는 중…",
       "hostConnecting": "{{host}} · 다시 연결하는 중…",
       "hostDisconnected": "{{host}} · 연결 끊김",
-      "othersNeedInput": "입력을 기다리는 다른 세션이 있습니다"
+      "othersNeedInput": "입력을 기다리는 다른 세션이 있습니다",
+      "unrecognizedPanel": "이 패널을 표시할 수 없습니다 ({{kind}}).",
+      "explorerEmpty": "세션을 열면 이곳에 파일·Git 로그·커밋이 표시됩니다."
     },
     "commands": {
       "chooseHost": "호스트 선택",
-      "openSessionFirst": "먼저 세션이나 워크스페이스를 여세요.",
+      "openSessionFirst": "먼저 세션을 여세요.",
       "waitForSend": "현재 전송이나 업로드가 끝난 뒤에 이 세션을 닫으세요.",
       "unavailable": "여기서는 사용할 수 없는 명령입니다: {{action}}",
       "openLinkFailed": "시스템 브라우저에서 링크를 열지 못했습니다.",
@@ -201,9 +224,9 @@
       "removeHostTitle": "{{host}}을(를) 제거할까요?",
       "removeHostMessage": "저장된 이 호스트와 모든 연결, 자격 증명을 이 기기에서 제거할까요? 데몬의 세션은 삭제되지 않습니다.",
       "removeProjectTitle": "{{host}}에서 프로젝트를 제거할까요?",
-      "removeProjectMessage": "{{path}}\n이 호스트의 활성 워크스페이스 {{count}}개에 영향을 줍니다. 다른 호스트는 바뀌지 않습니다.",
+      "removeProjectMessage": "{{path}}\n이 호스트에서 이 디렉터리의 활성 세션 {{count}}개에 영향을 줍니다. 다른 호스트는 바뀌지 않습니다.",
       "newWorktreeSession": "새 워크트리 세션",
-      "workspaceUnavailable": "워크스페이스를 사용할 수 없습니다. 이 호스트를 새로 고치세요.",
+      "workspaceUnavailable": "디렉터리를 사용할 수 없습니다. 이 호스트를 새로 고치세요.",
       "archiveSessionTitle": "세션을 보관할까요?",
       "noAttention": "입력을 기다리는 다른 세션이 없습니다.",
       "hostRejected": "호스트가 이 작업을 거부했습니다."
@@ -222,22 +245,22 @@
       "sessionFailed": "세션 실패"
     },
     "commandCenter": {
-      "placeholder": "명령, 파일, 워크스페이스 및 에이전트 검색...",
+      "placeholder": "명령, 파일, 세션 검색...",
       "filePlaceholder": "파일 검색...",
       "searchingFiles": "파일 검색 중...",
       "noMatches": "일치 항목 없음",
       "actions": "작업",
       "files": "파일",
-      "workspaces": "워크스페이스",
-      "agents": "에이전트",
-      "newAgent": "새 에이전트",
+      "sessions": "세션",
+      "copySessionId": "세션 ID 복사",
+      "restartSession": "세션 재실행",
+      "copyDirectoryPath": "디렉터리 경로 복사",
+      "directoryPathUnavailable": "디렉터리 경로를 사용할 수 없습니다",
       "open": "{{name}} 열기",
       "openInSidePane": "사이드 패널에서 {{name}} 열기",
       "openInFocusedPane": "포커스된 창에서 {{name}} 열기",
       "addProject": "프로젝트 추가",
       "home": "홈",
-      "groupByProject": "프로젝트별 그룹화",
-      "groupByStatus": "상태별 그룹화",
       "modelGroupLabel": "모델",
       "modelSearchKeywords": "모델 전환 모델 변경 모델 설정 모델 선택",
       "thinkingGroupLabel": "추론",
@@ -250,7 +273,6 @@
       "fastModeSearchKeywords": "빠르게 속도 낮은 지연 시간",
       "settingOn": "켜짐",
       "settingOff": "꺼짐",
-      "newWorktreeSession": "새 워크트리 세션",
       "nextAttention": "입력이 필요한 다음 세션",
       "settingsPage": "설정: {{name}}",
       "hostSettingsPage": "호스트 설정: {{name}}",
@@ -361,7 +383,7 @@
       "creationFailed": "생성하지 못했습니다",
       "creationSubscriptionFailed": "생성 상태 구독에 실패했습니다",
       "daemonClientClosed": "데몬 연결이 닫혔습니다",
-      "workspaceIdentityMissing": "워크스페이스를 만들었지만 식별자를 받지 못했습니다.",
+      "workspaceIdentityMissing": "세션을 만들었지만 디렉터리 식별자를 받지 못했습니다.",
       "agentNotReturned": "아직 에이전트가 생성되지 않았습니다. 다시 시도하면 같은 생성 요청을 복구합니다.",
       "deliveryUnsupported": "이 호스트는 메시지 전달 상태를 확인하거나 취소할 수 없습니다.",
       "dismissalUnconfirmed": "호스트가 닫기를 확인하지 않았습니다.",
@@ -742,7 +764,7 @@
     "chooseHostTitle": "호스트에서 가져오기",
     "title": "세션 가져오기",
     "searchPlaceholder": "세션 검색...",
-    "scope": { "host": "{{host}}의 세션", "workspace": "이 워크스페이스" },
+    "scope": { "host": "{{host}}의 세션", "workspace": "이 디렉터리" },
     "filters": { "all": "전체" },
     "status": {
       "connectHost": "세션을 가져오려면 호스트에 연결하세요",
@@ -785,7 +807,14 @@
       "errorTitle": "이 폴더를 열 수 없습니다",
       "retry": "다시 시도",
       "cancel": "취소",
-      "choose": "이 폴더 선택"
+      "choose": "이 폴더 선택",
+      "errors": {
+        "notFound": "호스트에 이 폴더가 없습니다.",
+        "permissionDenied": "호스트에서 이 폴더에 접근할 권한이 없습니다.",
+        "notADirectory": "이 경로는 폴더가 아니라 파일입니다.",
+        "disconnected": "호스트가 오프라인입니다. 다시 연결하면 폴더를 볼 수 있습니다.",
+        "unknown": "호스트에서 이 폴더 목록을 가져오지 못했습니다."
+      }
     },
     "route": {
       "loading": "워크스페이스 불러오는 중",
@@ -957,7 +986,8 @@
     },
     "executionLog": {
       "succeeded": "성공적으로 완료됨",
-      "failed": "실패 (종료 코드 {{code}})"
+      "failed": "실패 (종료 코드 {{code}})",
+      "waitingHint": "호스트가 다시 연결되면 출력이 표시됩니다."
     },
     "schedules": {
       "runStarted": "실행을 시작했습니다",
@@ -998,7 +1028,7 @@
       "fallback": {
         "newAgent": "새 에이전트",
         "setup": "설정",
-        "workspaceSetup": "워크스페이스 설정",
+        "workspaceSetup": "디렉터리 설정",
         "terminal": "터미널",
         "browser": "브라우저",
         "agent": "에이전트",
@@ -1097,15 +1127,15 @@
         "newTerminal": "새 터미널",
         "newBrowser": "새 브라우저 탭",
         "importSession": "세션 가져오기",
-        "copyPath": "워크스페이스 경로 복사",
+        "copyPath": "디렉터리 경로 복사",
         "copyBranchName": "브랜치 이름 복사",
         "showSetup": "설정 표시"
       },
       "toasts": {
-        "workspacePathUnavailable": "워크스페이스 경로를 아직 사용할 수 없습니다",
+        "workspacePathUnavailable": "디렉터리 경로를 아직 사용할 수 없습니다",
         "branchNameUnavailable": "브랜치 이름을 사용할 수 없습니다",
-        "terminalQueued": "워크스페이스 준비 중, 준비되면 터미널을 엽니다...",
-        "workspacePathCopiedLabel": "워크스페이스 경로",
+        "terminalQueued": "디렉터리 준비 중, 준비되면 터미널을 엽니다...",
+        "workspacePathCopiedLabel": "디렉터리 경로",
         "branchNameCopiedLabel": "브랜치 이름"
       }
     },
@@ -1144,16 +1174,53 @@
     "git": {
       "commit": {
         "title": "커밋",
-        "files": "{{total}}개 파일 중 {{selected}}개 선택",
         "message": "커밋 메시지",
         "messagePlaceholder": "변경 내용을 설명하세요",
         "submit": "커밋",
+        "submitCount_other": "{{count}}개 파일 커밋",
         "committing": "커밋 중…",
         "success": "커밋 완료",
-        "loading": "미커밋 파일 불러오는 중…",
-        "empty": "커밋하지 않은 파일이 없습니다",
+        "loading": "변경 사항을 불러오는 중…",
+        "empty": "커밋할 변경 사항이 없습니다",
         "disconnected": "파일을 확인하고 커밋하려면 호스트에 연결하세요.",
-        "unsupported": "선택한 파일을 커밋하려면 호스트를 업데이트하세요."
+        "unsupported": "선택한 파일을 커밋하려면 호스트를 업데이트하세요.",
+        "changes": "변경 사항",
+        "unversioned": "버전 관리되지 않는 파일",
+        "fileCount_other": "{{count}}개 파일",
+        "selected_other": "{{count}}개 파일 선택됨",
+        "refresh": "새로 고침",
+        "expandAll": "모두 펼치기",
+        "collapseAll": "모두 접기",
+        "groupByDirectory": "디렉터리별로 묶기",
+        "renamedFrom": "{{path}}에서 이름 변경됨",
+        "commitFailed": "커밋하지 못했습니다",
+        "commitUncertain": "커밋이 이미 완료되었을 수 있습니다. 다시 시도하기 전에 새로 고침해 확인하세요.",
+        "hints": { "selectFiles": "커밋할 파일을 선택하세요", "message": "커밋 메시지를 입력하세요" },
+        "status": {
+          "modified": "수정됨",
+          "added": "추가됨",
+          "deleted": "삭제됨",
+          "renamed": "이름 변경됨",
+          "untracked": "버전 관리 안 됨"
+        },
+        "states": {
+          "disconnected": { "title": "호스트에 연결되어 있지 않습니다" },
+          "unsupported": { "title": "호스트 업데이트가 필요합니다" },
+          "notRepository": {
+            "title": "Git 저장소가 아닙니다",
+            "body": "Git으로 관리되는 폴더에서 세션을 열거나 이 폴더에서 git init을 실행한 뒤 다시 확인하세요.",
+            "action": "다시 확인"
+          },
+          "tooLarge": {
+            "title": "표시할 변경 사항이 너무 많습니다",
+            "body": "이 변경 사항은 Git에서 직접 커밋하세요."
+          },
+          "failed": { "title": "변경 사항을 불러오지 못했습니다", "retry": "다시 시도" },
+          "empty": {
+            "body": "작업 트리가 마지막 커밋과 같습니다.",
+            "committed": "커밋할 변경 사항이 더 없습니다."
+          }
+        }
       },
       "toasts": { "notAccepted": "호스트가 이 작업을 받아들이지 않았습니다." },
       "review": {
@@ -1337,6 +1404,7 @@
         "refresh": "새로고침",
         "refreshState": "Git 및 {{brand}} 상태 새로고침",
         "failedRefresh": "Git 상태를 새로고침하지 못했습니다.",
+        "openFileAtLine": "이 줄에서 파일 열기",
         "seeUncommittedChanges": "커밋되지 않은 변경 사항 보기",
         "seeCommittedChanges": "커밋된 변경 사항 보기",
         "checkingRepository": "저장소 확인 중...",
@@ -1364,9 +1432,9 @@
       "openInEditor": {
         "open": "열기",
         "chooseEditor": "편집기 선택",
-        "openIn": "{{target}}에서 워크스페이스 열기",
+        "openIn": "{{target}}에서 디렉터리 열기",
         "openFileIn": "{{target}}에서 {{fileName}} 열기",
-        "failedOpen": "워크스페이스를 열지 못했습니다"
+        "failedOpen": "디렉터리를 열지 못했습니다"
       },
       "pr": {
         "actions": {
@@ -1556,7 +1624,9 @@
           "retry": "다시 시도",
           "showAllBranches": "모든 브랜치 보기",
           "refreshFailed": "로그를 새로 고치지 못했습니다: {{error}}",
-          "refsFailed": "브랜치를 불러오지 못했습니다: {{error}}"
+          "refsFailed": "브랜치를 불러오지 못했습니다: {{error}}",
+          "loadFailed": "커밋을 불러오지 못했습니다: {{error}}",
+          "detailFailed": "이 커밋을 불러오지 못했습니다: {{error}}"
         },
         "time": {
           "justNow": "방금 전",
@@ -1604,8 +1674,8 @@
       "save": "저장",
       "delete": "삭제",
       "deleteTitle": "{{name}}을(를) 삭제할까요?",
-      "deleteMessage_one": "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
-      "deleteMessage_other": "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
+      "deleteMessage_one": "이 호스트의 디렉터리 {{count}}개에서 레이블을 제거합니다.",
+      "deleteMessage_other": "이 호스트의 디렉터리 {{count}}개에서 레이블을 제거합니다.",
       "offline": "이 호스트는 오프라인입니다.",
       "updateHost": "레이블을 관리하려면 호스트를 업데이트하세요."
     }
@@ -1704,7 +1774,7 @@
       "whatsNew": "새로운 소식",
       "appName": "Passession"
     },
-    "sections": { "sessions": "기록", "search": "검색", "schedules": "일정" },
+    "sections": { "sessions": "기록", "search": "검색", "schedules": "스케줄" },
     "worktreeSetup": {
       "title": "워크트리 스크립트 설정",
       "description": "새 워크트리가 의존성을 설치하고 자동으로 준비될 수 있도록 설정 명령을 추가하세요.",
@@ -1787,7 +1857,7 @@
         "invalidBranchName": "잘못된 브랜치 이름"
       },
       "toasts": {
-        "workspacePathUnavailable": "워크스페이스 경로를 사용할 수 없습니다",
+        "workspacePathUnavailable": "디렉터리 경로를 사용할 수 없습니다",
         "pathCopied": "경로가 복사되었습니다",
         "branchNameCopied": "브랜치 이름이 복사되었습니다",
         "hostDisconnected": "호스트가 연결되어 있지 않습니다",
@@ -1811,7 +1881,8 @@
       "hostDisconnected": "호스트가 연결되어 있지 않습니다",
       "createWorktreeFailed": "워크트리를 생성하지 못했습니다",
       "composerStateRequired": "작성기 상태가 필요합니다",
-      "selectModel": "모델을 선택하세요"
+      "selectModel": "모델을 선택하세요",
+      "worktreeUnsupported": "워크트리 생성은 더 이상 지원하지 않습니다. 로컬 디렉터리를 선택하세요."
     },
     "tooltips": {
       "project": "프로젝트를 선택하세요",
@@ -1836,6 +1907,42 @@
       "submit": "실행",
       "promptPlaceholder": "{{name}}에 프롬프트 입력",
       "openTerminal": "터미널 열기"
+    },
+    "addProject": {
+      "source": "디렉터리 소스",
+      "sources": {
+        "directory": "기존 체크아웃 또는 디렉터리",
+        "clone": "GitHub 저장소 복제",
+        "newDirectory": "원격 디렉터리 만들기"
+      },
+      "directory": {
+        "existing": "원격 디렉터리",
+        "parent": "상위 디렉터리",
+        "cloneTarget": "복제 대상 디렉터리",
+        "placeholder": "호스트의 경로 (예: ~/code/app)",
+        "browse": "원격 디렉터리 찾아보기"
+      },
+      "repository": "저장소 또는 검색어",
+      "searchRepositories": "GitHub 저장소 검색",
+      "protocol": "복제 프로토콜",
+      "directoryName": "새 디렉터리 이름",
+      "cloneRepository": "저장소 복제",
+      "createDirectory": "디렉터리 만들기",
+      "unknownOutcome": "디렉터리 작업 결과를 알 수 없습니다. 대상을 찾아보고 완료되었다면 기존 디렉터리를 선택하세요. 작업을 무작정 반복하지 마세요.",
+      "inspectPrepared": "준비된 디렉터리 확인 및 선택",
+      "errors": {
+        "chooseParent": "원격 상위 디렉터리를 선택하세요.",
+        "enterName": "디렉터리 이름을 입력하세요.",
+        "chooseRepository": "저장소를 선택하거나 owner/repository를 입력하세요.",
+        "noProject": "호스트가 등록된 프로젝트를 반환하지 않았습니다.",
+        "noPreparedDirectory": "호스트가 준비된 디렉터리를 반환하지 않았습니다. 찾아보기로 상태를 확인하세요."
+      },
+      "added": {
+        "title": "프로젝트를 추가했습니다",
+        "description": "{{name}} 프로젝트가 사이드바에 추가되었습니다.",
+        "newSession": "이 프로젝트에서 새 세션",
+        "addAnother": "다른 프로젝트 추가"
+      }
     }
   },
   "desktop": {
@@ -2058,7 +2165,7 @@
     "stashRestored": "스태시된 변경 사항이 복원되었습니다"
   },
   "agentAutocomplete": {
-    "searchingWorkspace": "워크스페이스 검색 중...",
+    "searchingWorkspace": "디렉터리 검색 중...",
     "loadingCommands": "명령 불러오는 중...",
     "noFiles": "파일 또는 디렉터리를 찾을 수 없습니다",
     "noCommands": "명령을 찾을 수 없습니다",
@@ -2098,7 +2205,6 @@
     "actions": { "settings": "설정" }
   },
   "modelSelector": {
-    "title": "프로바이더 선택",
     "selectModel": "모델 선택",
     "selectedModel": "모델 선택 ({{model}})",
     "loading": "불러오는 중...",
@@ -2107,7 +2213,6 @@
     "error": "오류",
     "defaultModel": "기본값",
     "profiles": "프로필",
-    "providers": "제공자",
     "model": "모델",
     "editProfiles": "편집",
     "editProfilesLabel": "에이전트 프로필 편집",
@@ -2119,11 +2224,19 @@
     "modelCountPlural": "모델 {{count}}개",
     "retry": "다시 시도",
     "retrying": "다시 시도 중...",
-    "noMatches": "검색과 일치하는 모델이 없습니다",
     "noMatchesForQuery": "\"{{query}}\"과(와) 일치하는 모델이 없습니다",
     "searchAllPlaceholder": "모든 모델 검색...",
     "searchPlaceholder": "모델 검색...",
-    "openProviderSettings": "{{provider}} 설정 열기"
+    "openProviderSettings": "{{provider}} 설정 열기",
+    "favorites": "즐겨찾기",
+    "recent": "최근 사용",
+    "allModels": "전체 모델",
+    "addFavorite": "즐겨찾기에 추가",
+    "removeFavorite": "즐겨찾기에서 제거",
+    "unavailable": "사용할 수 없음",
+    "disabled": "사용 안 함",
+    "providerFailed": "모델을 불러오지 못했습니다",
+    "noProviders": "사용할 수 있는 프로바이더가 없습니다"
   },
   "providerCatalog": {
     "title": "프로바이더 추가",
@@ -2543,6 +2656,8 @@
     "projects": "프로젝트",
     "projectList": {
       "hostLoadFailed": "{{hostName}} 호스트에서 프로젝트를 불러올 수 없습니다: {{message}}",
+      "hostOfflineTitle": "{{hostName}} 호스트가 오프라인입니다",
+      "hostOfflineMessage": "호스트가 다시 연결되면 프로젝트가 표시됩니다.",
       "editProject": "{{projectName}} 편집"
     },
     "groupInfo": "{{title}} 정보",
@@ -3012,6 +3127,7 @@
         "removeAction": "제거",
         "removeErrorTitle": "오류",
         "removeErrorMessage": "연결을 제거할 수 없습니다",
+        "connectedHostsLoadFailed": "연결된 호스트를 불러올 수 없습니다",
         "timeout": "시간 초과"
       },
       "pairDevices": {
@@ -3063,7 +3179,7 @@
         "unavailable": "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
         "enableTools": {
           "title": "Paseo 도구 활성화",
-          "hint": "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
+          "hint": "에이전트가 세션과 스케줄을 관리할 수 있습니다",
           "accessibilityLabel": "Paseo 도구 주입"
         },
         "systemPrompt": {
@@ -3256,7 +3372,11 @@
           "rolledBackMessage": "이전 데몬을 복원했습니다(작업 {{id}}). {{error}}",
           "operationFailedMessage": "업데이트 작업 {{id}}이(가) 실패했습니다. 복구 자료는 호스트에 보존되었습니다. {{error}}",
           "stillRunningTitle": "업데이트 진행 중",
-          "stillRunningMessage": "업데이트 작업 {{id}}의 완료가 아직 확인되지 않았습니다. 호스트에서 계속 진행 중일 수 있습니다. 같은 작업 확인을 재개하세요."
+          "stillRunningHint": "업데이트 완료가 아직 확인되지 않았으며 호스트에서 계속 진행 중일 수 있습니다. 같은 작업 확인을 재개하세요.",
+          "timedOutMessage": "호스트가 제때 응답하지 않았습니다. 잠시 후 다시 확인하세요.",
+          "notPublished": "이 플랫폼용 업데이트가 아직 게시되지 않았습니다.",
+          "serviceUnmanaged": "이 호스트의 데몬은 업데이터가 제어할 수 있는 서비스 관리자에서 실행되고 있지 않아 여기서는 업데이트할 수 없습니다.",
+          "copyOperationId": "작업 ID 복사 {{id}}"
         },
         "dangerZone": "위험 구역",
         "remove": {

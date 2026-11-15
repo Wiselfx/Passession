@@ -4,6 +4,7 @@
 pub mod engine;
 
 use super::canvas::{Font, HitTarget, rect_xywh};
+use super::chrome;
 use super::i18n::t;
 use super::markdown::view::MdOpts;
 use super::paint::{Draw, RowState};
@@ -49,6 +50,78 @@ impl ExportFormat {
     }
 }
 
+/// Why a diagram render or export failed. `kind` selects the localized `mermaid.errors.*`
+/// summary; `detail` keeps the renderer's or OS's own English text as secondary detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub kind: FailureKind,
+    pub detail: String,
+}
+
+impl Failure {
+    pub fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Unparsable, empty or still-incomplete source (often a fence that is still streaming).
+    Invalid,
+    /// Directives, frontmatter or SVG content the offline renderer refuses.
+    Unsupported,
+    /// Source, layout, raster or texture-cache limits.
+    TooLarge,
+    /// No installed font can outline a label.
+    Font,
+    /// The render/export worker crashed or is unavailable.
+    Worker,
+    /// The platform save services are unavailable.
+    Platform,
+    /// The export queue is full.
+    ExportBusy,
+    /// Too many temporary export files await their save dialogs.
+    ExportLimit,
+    /// Writing the exported file failed.
+    WriteFailed,
+}
+
+impl FailureKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Invalid => "mermaid.errors.invalid",
+            Self::Unsupported => "mermaid.errors.unsupported",
+            Self::TooLarge => "mermaid.errors.tooLarge",
+            Self::Font => "mermaid.errors.font",
+            Self::Worker => "mermaid.errors.worker",
+            Self::Platform => "mermaid.errors.platform",
+            Self::ExportBusy => "mermaid.errors.exportBusy",
+            Self::ExportLimit => "mermaid.errors.exportLimit",
+            Self::WriteFailed => "mermaid.errors.writeFailed",
+        }
+    }
+
+    /// Kinds whose localized summary already says everything the raw detail would.
+    fn detail_redundant(self) -> bool {
+        matches!(self, Self::ExportBusy | Self::ExportLimit)
+    }
+}
+
+/// The last export outcome of one diagram revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExportStatus {
+    Saved,
+    Cancelled,
+    Failed(Failure),
+}
+
+fn write_failed(error: impl std::fmt::Display) -> Failure {
+    Failure::new(FailureKind::WriteFailed, error.to_string())
+}
+
 struct Artifact {
     rendered: Arc<engine::Rendered>,
     texture: Texture,
@@ -69,8 +142,8 @@ struct Slot {
     revision: Arc<AtomicU64>,
     submitted: Option<u64>,
     artifact: Weak<Artifact>,
-    error: Option<String>,
-    export_status: Option<(&'static str, String)>,
+    error: Option<Failure>,
+    export_status: Option<ExportStatus>,
     exporting: bool,
 }
 
@@ -108,8 +181,8 @@ enum Work {
     Export(ExportWork),
 }
 enum Finished {
-    Render(Result<Option<engine::Rendered>, String>),
-    Export(Result<Option<PathBuf>, String>),
+    Render(Result<Option<engine::Rendered>, Failure>),
+    Export(Result<Option<PathBuf>, Failure>),
 }
 enum Active {
     Render(Weak<RefCell<Slot>>, u64),
@@ -148,7 +221,12 @@ impl Worker {
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                     engine::render(&job.source, job.dark)
                                 }))
-                                .unwrap_or_else(|_| Err("The diagram renderer failed.".into()))
+                                .unwrap_or_else(|_| {
+                                    Err(Failure::new(
+                                        FailureKind::Worker,
+                                        "The diagram renderer failed.",
+                                    ))
+                                })
                                 .map(Some)
                             } else {
                                 Ok(None)
@@ -159,7 +237,12 @@ impl Worker {
                             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 export_file(&job, &session)
                             }))
-                            .unwrap_or_else(|_| Err("The diagram export worker failed.".into())),
+                            .unwrap_or_else(|_| {
+                                Err(Failure::new(
+                                    FailureKind::Worker,
+                                    "The diagram export worker failed.",
+                                ))
+                            }),
                         ),
                     };
                     if done.send(finished).is_err() {
@@ -211,7 +294,7 @@ impl Worker {
         }
         while let Some(job) = self.exports.pop_front() {
             if !export_is_current(&job.slot, job.work.revision) {
-                set_export(&job.slot, job.work.revision, "mermaid.cancelled", "");
+                set_export(&job.slot, job.work.revision, ExportStatus::Cancelled);
                 continue;
             }
             let active = Active::Export(
@@ -231,8 +314,10 @@ impl Worker {
             set_export(
                 &job.slot,
                 active_revision(&active),
-                "mermaid.exportError",
-                "The export worker is unavailable.",
+                ExportStatus::Failed(Failure::new(
+                    FailureKind::Worker,
+                    "The export worker is unavailable.",
+                )),
             );
         }
         while let Some(job) = self.pending.pop_front() {
@@ -253,7 +338,10 @@ impl Worker {
             }
             let mut slot = slot.borrow_mut();
             slot.submitted = None;
-            slot.error = Some("The diagram worker is unavailable.".into());
+            slot.error = Some(Failure::new(
+                FailureKind::Worker,
+                "The diagram worker is unavailable.",
+            ));
         }
     }
 
@@ -276,10 +364,10 @@ impl Worker {
                                         .saturating_add(rendered.svg.len())
                                         > MAX_CACHE_BYTES
                                     {
-                                        slot.error = Some(
-                                            "The rendered diagram exceeds the texture cache limit."
-                                                .into(),
-                                        );
+                                        slot.error = Some(Failure::new(
+                                            FailureKind::TooLarge,
+                                            "The rendered diagram exceeds the texture cache limit.",
+                                        ));
                                         continue;
                                     }
                                     // Texture upload is GUI-only; parsing, font discovery and rasterization are not.
@@ -302,9 +390,10 @@ impl Worker {
                                         slot.artifact = Rc::downgrade(&artifact);
                                         self.retain(artifact);
                                     } else {
-                                        slot.error = Some(
-                                            "The diagram texture could not be created.".into(),
-                                        );
+                                        slot.error = Some(Failure::new(
+                                            FailureKind::Worker,
+                                            "The diagram texture could not be created.",
+                                        ));
                                     }
                                 }
                                 Ok(None) => (),
@@ -318,7 +407,7 @@ impl Worker {
                     Finished::Export(result),
                 ) => {
                     match result {
-                        Ok(Some(_)) if desktop => set_export(&owner, revision, "mermaid.saved", ""),
+                        Ok(Some(_)) if desktop => set_export(&owner, revision, ExportStatus::Saved),
                         Ok(Some(path)) => {
                             if export_is_current(&owner, revision) {
                                 if let Some(platform) = paseo_gui_platform::platform() {
@@ -332,19 +421,21 @@ impl Worker {
                                     set_export(
                                         &owner,
                                         revision,
-                                        "mermaid.exportError",
-                                        "Platform services are unavailable.",
+                                        ExportStatus::Failed(Failure::new(
+                                            FailureKind::Platform,
+                                            "Platform services are unavailable.",
+                                        )),
                                     );
                                     remove_export_file(path);
                                 }
                             } else {
-                                set_export(&owner, revision, "mermaid.cancelled", "");
+                                set_export(&owner, revision, ExportStatus::Cancelled);
                                 remove_export_file(path);
                             }
                             // The document picker retains its source until actual completion.
                         }
-                        Ok(None) => set_export(&owner, revision, "mermaid.cancelled", ""),
-                        Err(error) => set_export(&owner, revision, "mermaid.exportError", &error),
+                        Ok(None) => set_export(&owner, revision, ExportStatus::Cancelled),
+                        Err(error) => set_export(&owner, revision, ExportStatus::Failed(error)),
                     }
                 }
                 _ => (),
@@ -372,52 +463,38 @@ impl Worker {
                         job.work.destination = Some(destination.clone());
                         self.exports.push_back(job);
                     } else {
-                        set_export(&job.slot, job.work.revision, "mermaid.cancelled", "");
+                        set_export(&job.slot, job.work.revision, ExportStatus::Cancelled);
                     }
                 }
-                Ok(_) => set_export(&job.slot, job.work.revision, "mermaid.cancelled", ""),
-                Err(error) => set_export(
-                    &job.slot,
-                    job.work.revision,
-                    if error.code == "cancelled" {
-                        "mermaid.cancelled"
-                    } else {
-                        "mermaid.exportError"
-                    },
-                    if error.code == "cancelled" {
-                        ""
-                    } else {
-                        &error.message
-                    },
-                ),
+                Ok(_) => set_export(&job.slot, job.work.revision, ExportStatus::Cancelled),
+                Err(error) => set_export(&job.slot, job.work.revision, platform_status(error)),
             },
             PlatformPending::Save(owner, revision, path) => {
                 remove_export_file(path);
                 match result {
                     Ok(PlatformValue::Bool(true)) => {
-                        set_export(&owner, revision, "mermaid.saved", "")
+                        set_export(&owner, revision, ExportStatus::Saved)
                     }
-                    Ok(_) => set_export(&owner, revision, "mermaid.cancelled", ""),
-                    Err(error) => set_export(
-                        &owner,
-                        revision,
-                        if error.code == "cancelled" {
-                            "mermaid.cancelled"
-                        } else {
-                            "mermaid.exportError"
-                        },
-                        if error.code == "cancelled" {
-                            ""
-                        } else {
-                            &error.message
-                        },
-                    ),
+                    Ok(_) => set_export(&owner, revision, ExportStatus::Cancelled),
+                    Err(error) => set_export(&owner, revision, platform_status(error)),
                 }
             }
         }
         self.dispatch();
         self.epoch = self.epoch.wrapping_add(1);
         true
+    }
+}
+
+/// A save-dialog or document-picker failure: cancellation is not an error.
+fn platform_status(error: &paseo_gui_platform::PlatformError) -> ExportStatus {
+    if error.code == "cancelled" {
+        ExportStatus::Cancelled
+    } else {
+        ExportStatus::Failed(Failure::new(
+            FailureKind::WriteFailed,
+            error.message.clone(),
+        ))
     }
 }
 
@@ -438,12 +515,17 @@ fn export_is_current(owner: &Weak<RefCell<Slot>>, revision: u64) -> bool {
     })
 }
 
-fn set_export(owner: &Weak<RefCell<Slot>>, revision: u64, key: &'static str, detail: &str) {
+fn set_export(owner: &Weak<RefCell<Slot>>, revision: u64, status: ExportStatus) {
     if let Some(slot) = owner.upgrade() {
         let mut slot = slot.borrow_mut();
         if current(&slot.revision, revision) {
             slot.exporting = false;
-            slot.export_status = Some((key, detail.chars().take(300).collect()));
+            slot.export_status = Some(match status {
+                ExportStatus::Failed(Failure { kind, detail }) => ExportStatus::Failed(
+                    Failure::new(kind, detail.chars().take(300).collect::<String>()),
+                ),
+                status => status,
+            });
         }
     }
 }
@@ -491,13 +573,16 @@ fn request(request: &Request, source: &str, dark: bool, epoch: u64) -> Option<Rc
         let worker = worker.get_or_insert_with(Worker::new);
         let mut slot = request.0.borrow_mut();
         if source.len() > 32 * 1024 {
-            slot.source_too_large = true;
-            if slot.error.as_deref() != Some("Diagram source exceeds the 32 KiB limit.") {
+            if !slot.source_too_large {
+                slot.source_too_large = true;
                 slot.revision.fetch_add(1, Ordering::Relaxed);
                 slot.source = Arc::from("");
                 slot.artifact = Weak::new();
                 slot.submitted = None;
-                slot.error = Some("Diagram source exceeds the 32 KiB limit.".into());
+                slot.error = Some(Failure::new(
+                    FailureKind::TooLarge,
+                    "Diagram source exceeds the 32 KiB limit.",
+                ));
                 slot.exporting = false;
                 slot.export_status = None;
             }
@@ -586,17 +671,17 @@ pub fn tap(state: &mut RowState, target: &HitTarget) -> bool {
             + worker.exports.len()
             + usize::from(matches!(worker.active, Some(Active::Export(..))));
         if count >= MAX_EXPORTS {
-            slot.export_status = Some((
-                "mermaid.exportError",
-                "Another diagram export is still pending.".into(),
-            ));
+            slot.export_status = Some(ExportStatus::Failed(Failure::new(
+                FailureKind::ExportBusy,
+                "Another diagram export is still pending.",
+            )));
             return;
         }
         let Some(platform) = paseo_gui_platform::platform() else {
-            slot.export_status = Some((
-                "mermaid.exportError",
-                "Platform services are unavailable.".into(),
-            ));
+            slot.export_status = Some(ExportStatus::Failed(Failure::new(
+                FailureKind::Platform,
+                "Platform services are unavailable.",
+            )));
             return;
         };
         slot.exporting = true;
@@ -659,9 +744,11 @@ pub fn draw(
     let p = d.look.palette;
     let width = w.max(1.0);
     let font_size = d.look.ui(12.0);
-    let button_h = (font_size * 1.4 + 20.0).max(44.0);
+    // PaseoButton secondary/sm; phones get 44px touch rows.
+    let button_h = if d.look.compact { 44.0 } else { 32.0 };
     let mut bx = x;
     let mut by = y;
+    let exportable = artifact.is_some() && !exporting;
     let buttons = [
         (
             t(if show_source {
@@ -677,11 +764,12 @@ pub fn draw(
             } else {
                 "mermaid.fit"
             }),
-            Some(HitTarget::Toggle(fit_key)),
+            // Fit only changes how an artifact is scaled.
+            artifact.is_some().then_some(HitTarget::Toggle(fit_key)),
         ),
         (
             t("mermaid.saveSvg"),
-            (artifact.is_some() && !exporting).then(|| HitTarget::MermaidExport {
+            exportable.then(|| HitTarget::MermaidExport {
                 key: key.clone(),
                 revision,
                 format: ExportFormat::Svg,
@@ -689,7 +777,7 @@ pub fn draw(
         ),
         (
             t("mermaid.savePng"),
-            (artifact.is_some() && !exporting).then(|| HitTarget::MermaidExport {
+            exportable.then(|| HitTarget::MermaidExport {
                 key: key.clone(),
                 revision,
                 format: ExportFormat::Png,
@@ -697,36 +785,12 @@ pub fn draw(
         ),
     ];
     for (label, target) in buttons {
-        let bw = (d
-            .kit
-            .measure(cx, Font::Medium, font_size, 1.4, &label, None)
-            .x
-            + 24.0)
-            .max(72.0)
-            .min(width);
+        let bw = chrome::small_button_width(cx, d, &label).min(width);
         if bx > x && bx + bw > x + width {
             bx = x;
             by += button_h + 4.0;
         }
-        let rect = rect_xywh(bx, by, bw, button_h);
-        d.kit.rect(cx, rect, p.surface2, 5.0);
-        d.kit.label_line(
-            cx,
-            Font::Medium,
-            font_size,
-            1.4,
-            if target.is_some() {
-                p.foreground
-            } else {
-                p.muted
-            },
-            dvec2(bx + 12.0, by + (button_h - font_size * 1.4) * 0.5),
-            &label,
-            (bw - 24.0).max(1.0),
-        );
-        if let Some(target) = target {
-            d.canvas.add_hit(rect, target);
-        }
+        chrome::small_button_in(cx, d, rect_xywh(bx, by, bw, button_h), &label, target);
         bx += bw + 4.0;
     }
     let mut cy = by + button_h + 8.0;
@@ -803,55 +867,104 @@ pub fn draw(
             }),
         );
         cy += pane.size.y + 8.0;
+    } else if let Some(error) = error {
+        let message = format!("{}\n{}", t("mermaid.error"), t(error.kind.key()));
+        cy += failure(cx, d, &message, &error, font_size, x, cy, width);
     } else {
-        let label = if let Some(error) = error {
-            format!(
-                "{}\n{}",
-                t("mermaid.error"),
-                error.chars().take(300).collect::<String>()
-            )
-        } else {
-            t("mermaid.loading")
-        };
+        // Loading: a spinner beside muted text, never the failure alert.
+        let line_h = font_size * 1.4;
+        let spin = 14.0;
+        chrome::spinner(
+            cx,
+            d,
+            dvec2(x + spin * 0.5, cy + line_h.max(spin) * 0.5),
+            spin,
+            p.muted,
+        );
         let size = d.kit.label(
             cx,
             Font::Regular,
             font_size,
             1.4,
             p.muted,
-            dvec2(x, cy),
-            &label,
-            Some(width),
+            dvec2(x + spin + 8.0, cy + (line_h.max(spin) - line_h) * 0.5),
+            &t("mermaid.loading"),
+            Some((width - spin - 8.0).max(1.0)),
         );
-        cy += size.y.max(32.0) + 8.0;
+        cy += size.y.max(spin).max(32.0) + 8.0;
     }
-    if exporting || status.is_some() {
-        let label = if exporting {
-            t("mermaid.exporting")
-        } else {
-            let (key, detail) = status.unwrap();
-            if detail.is_empty() {
-                t(key)
+    match (exporting, status) {
+        (true, _) => {
+            let size = d.kit.label(
+                cx,
+                Font::Regular,
+                font_size,
+                1.4,
+                p.muted,
+                dvec2(x, cy),
+                &t("mermaid.exporting"),
+                Some(width),
+            );
+            cy += size.y + 8.0;
+        }
+        (false, Some(ExportStatus::Failed(error))) => {
+            let message = format!("{}\n{}", t("mermaid.exportError"), t(error.kind.key()));
+            cy += failure(cx, d, &message, &error, font_size, x, cy, width);
+        }
+        (false, Some(status)) => {
+            let (key, color) = if status == ExportStatus::Saved {
+                ("mermaid.saved", p.success)
             } else {
-                format!("{}: {detail}", t(key))
-            }
-        };
-        let size = d.kit.label(
-            cx,
-            Font::Regular,
-            font_size,
-            1.4,
-            p.muted,
-            dvec2(x, cy),
-            &label,
-            Some(width),
-        );
-        cy += size.y + 8.0;
+                ("mermaid.cancelled", p.muted)
+            };
+            let size = d.kit.label(
+                cx,
+                Font::Regular,
+                font_size,
+                1.4,
+                color,
+                dvec2(x, cy),
+                &t(key),
+                Some(width),
+            );
+            cy += size.y + 8.0;
+        }
+        (false, None) => (),
     }
     DrawResult {
         height: cy - y,
         show_source,
     }
+}
+
+/// The shared timeline error alert with the localized `message`, then the raw detail as
+/// small muted text under it. Returns the consumed height (including the 8px gap).
+#[allow(clippy::too_many_arguments)]
+fn failure(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    message: &str,
+    error: &Failure,
+    font_size: f64,
+    x: f64,
+    y: f64,
+    width: f64,
+) -> f64 {
+    let mut h = chrome::error_alert(cx, d, message, x, y, width) + 8.0;
+    if !error.detail.is_empty() && !error.kind.detail_redundant() {
+        let size = d.kit.label(
+            cx,
+            Font::Regular,
+            font_size,
+            1.4,
+            d.look.palette.muted,
+            dvec2(x + 16.0, y + h - 4.0),
+            &error.detail,
+            Some((width - 16.0).max(1.0)),
+        );
+        h += size.y + 4.0;
+    }
+    h
 }
 
 fn remove_export_file(path: PathBuf) {
@@ -866,7 +979,7 @@ fn remove_export_file(path: PathBuf) {
         });
 }
 
-fn export_file(job: &ExportWork, session: &str) -> Result<Option<PathBuf>, String> {
+fn export_file(job: &ExportWork, session: &str) -> Result<Option<PathBuf>, Failure> {
     if !current(&job.current, job.revision) {
         return Ok(None);
     }
@@ -882,23 +995,26 @@ fn export_file(job: &ExportWork, session: &str) -> Result<Option<PathBuf>, Strin
         return Ok(None);
     }
     if let Some(destination) = &job.destination {
-        save_atomic(destination, bytes).map_err(|e| e.to_string())?;
+        save_atomic(destination, bytes).map_err(write_failed)?;
         return Ok(Some(destination.clone()));
     }
     let root = paseo_gui_platform::paths::app_paths()
         .temp_dir
         .join("paseo-mermaid");
-    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let (count, size) = retained_exports(&root, session).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&root).map_err(write_failed)?;
+    let (count, size) = retained_exports(&root, session).map_err(write_failed)?;
     if count >= MAX_EXPORT_FILES || size.saturating_add(bytes.len() as u64) > MAX_EXPORT_BYTES {
-        return Err("The temporary diagram export limit has been reached; close pending save dialogs and retry.".into());
+        return Err(Failure::new(
+            FailureKind::ExportLimit,
+            "The temporary diagram export limit has been reached; close pending save dialogs and retry.",
+        ));
     }
     let directory = root.join(format!("{session}-{}", uuid::Uuid::new_v4().simple()));
-    std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+    std::fs::create_dir(&directory).map_err(write_failed)?;
     let path = directory.join(job.format.name());
     if let Err(error) = std::fs::write(&path, bytes) {
         let _ = std::fs::remove_dir_all(&directory);
-        return Err(error.to_string());
+        return Err(write_failed(error));
     }
     Ok(Some(path))
 }
@@ -975,16 +1091,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_failure_kind_has_both_translations() {
+        let catalogs: [serde_json::Value; 2] = [
+            serde_json::from_str(include_str!("../../../../resources/locales/en.json")).unwrap(),
+            serde_json::from_str(include_str!("../../../../resources/locales/ko.json")).unwrap(),
+        ];
+        for kind in [
+            FailureKind::Invalid,
+            FailureKind::Unsupported,
+            FailureKind::TooLarge,
+            FailureKind::Font,
+            FailureKind::Worker,
+            FailureKind::Platform,
+            FailureKind::ExportBusy,
+            FailureKind::ExportLimit,
+            FailureKind::WriteFailed,
+        ] {
+            let leaf = kind.key().strip_prefix("mermaid.errors.").unwrap();
+            for catalog in &catalogs {
+                assert!(
+                    catalog["mermaid"]["errors"][leaf].is_string(),
+                    "{}",
+                    kind.key()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn export_failure_details_are_bounded() {
+        let slot = Rc::new(RefCell::new(Slot::default()));
+        set_export(
+            &Rc::downgrade(&slot),
+            0,
+            ExportStatus::Failed(Failure::new(FailureKind::WriteFailed, "x".repeat(400))),
+        );
+        let Some(ExportStatus::Failed(failure)) = slot.borrow().export_status.clone() else {
+            panic!("expected a failed export");
+        };
+        assert_eq!(failure.kind, FailureKind::WriteFailed);
+        assert_eq!(failure.detail.len(), 300);
+    }
+
+    #[test]
     fn changed_revision_cannot_finish_old_export() {
         let slot = Rc::new(RefCell::new(Slot::default()));
         slot.borrow().revision.store(2, Ordering::Relaxed);
-        set_export(&Rc::downgrade(&slot), 1, "mermaid.saved", "");
+        set_export(&Rc::downgrade(&slot), 1, ExportStatus::Saved);
         assert!(slot.borrow().export_status.is_none());
-        set_export(&Rc::downgrade(&slot), 2, "mermaid.saved", "");
-        assert_eq!(
-            slot.borrow().export_status.as_ref().unwrap().0,
-            "mermaid.saved"
-        );
+        set_export(&Rc::downgrade(&slot), 2, ExportStatus::Saved);
+        assert_eq!(slot.borrow().export_status, Some(ExportStatus::Saved));
         slot.borrow_mut().epoch = crate::theme::epoch();
         assert!(export_is_current(&Rc::downgrade(&slot), 2));
         slot.borrow_mut().epoch = crate::theme::epoch().wrapping_add(1);

@@ -14,6 +14,7 @@ use crate::theme::{Palette, Typography, fade, with_alpha};
 
 use super::editor::field::{FieldEvent, TextField};
 use super::explorer::ExplorerState;
+use super::host;
 use super::i18n::t;
 use super::kit::{self, Kit, rect, spec};
 use super::path::Style;
@@ -127,6 +128,81 @@ pub fn middle_ellipsis(text: &str, keep: usize) -> String {
     out
 }
 
+/// Why a picker listing failed, mapped to a localized summary. The daemon reports listing
+/// failures as plain `io::Error` text (no structured code), so known OS wording is matched
+/// conservatively; anything else stays [`FolderFailure::Other`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderFailure {
+    Disconnected,
+    NotFound,
+    PermissionDenied,
+    NotADirectory,
+    Other,
+}
+
+impl FolderFailure {
+    /// `connected` is the host's live status; a request to an offline host fails as
+    /// disconnected whatever text the transport produced.
+    pub fn classify(error: &str, connected: bool) -> Self {
+        let error = error.to_ascii_lowercase();
+        let any = |needles: &[&str]| needles.iter().any(|needle| error.contains(needle));
+        if !connected || any(&["daemon is not connected", "host is disconnected"]) {
+            FolderFailure::Disconnected
+        } else if any(&[
+            "not a directory",
+            "enotdir",
+            "(os error 20)",
+            "directory name is invalid",
+        ]) {
+            FolderFailure::NotADirectory
+        } else if any(&[
+            "no such file or directory",
+            "enoent",
+            "(os error 2)",
+            "(os error 3)",
+            "cannot find the path",
+            "cannot find the file",
+        ]) {
+            FolderFailure::NotFound
+        } else if any(&[
+            "permission denied",
+            "operation not permitted",
+            "access is denied",
+            "eacces",
+            "eperm",
+            "(os error 13)",
+            "(os error 5)",
+        ]) {
+            FolderFailure::PermissionDenied
+        } else {
+            FolderFailure::Other
+        }
+    }
+
+    fn message_key(self) -> &'static str {
+        match self {
+            FolderFailure::Disconnected => "workspace.folderPicker.errors.disconnected",
+            FolderFailure::NotFound => "workspace.folderPicker.errors.notFound",
+            FolderFailure::PermissionDenied => "workspace.folderPicker.errors.permissionDenied",
+            FolderFailure::NotADirectory => "workspace.folderPicker.errors.notADirectory",
+            FolderFailure::Other => "workspace.folderPicker.errors.unknown",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            FolderFailure::Disconnected => "unplug",
+            FolderFailure::PermissionDenied => "lock",
+            _ => "circle-alert",
+        }
+    }
+
+    /// The raw daemon text is secondary detail; a disconnected host's transport text is not.
+    fn shows_detail(self) -> bool {
+        self != FolderFailure::Disconnected
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Hot {
     Back,
@@ -214,12 +290,16 @@ impl Default for PickerView {
 }
 
 const LIST_PADDING: f64 = 4.0;
+/// Every compact (phone) picker control: nav buttons, crumb chips, error and footer actions.
+const COMPACT_CONTROL: f64 = 44.0;
 
 /// Theme and responsive-layout inputs shared by one picker frame.
 struct PickerLook<'a> {
     palette: &'a Palette,
     typography: &'a Typography,
     compact: bool,
+    /// The picker's host is connected (an offline host's failure reads as disconnected).
+    connected: bool,
 }
 
 impl PickerView {
@@ -296,7 +376,7 @@ impl PickerView {
         let directory = state.current_directory();
         self.sync_directory(&directory);
         let pad = if compact { 12.0 } else { 16.0 };
-        let button = if compact { 40.0 } else { 28.0 };
+        let button = if compact { COMPACT_CONTROL } else { 28.0 };
         let base = ty.ui_size(14.0);
         let small = ty.ui_size(12.0);
         let crumb_font = ty.ui_size(13.0);
@@ -426,7 +506,7 @@ impl PickerView {
         let name_h = (base * 1.4).ceil();
         let path_h = (small * 1.4).ceil();
         let action_h = if compact {
-            44.0
+            COMPACT_CONTROL
         } else {
             ui::ButtonSize::Sm.height()
         };
@@ -462,17 +542,32 @@ impl PickerView {
         };
         let mut list_top = list.pos.y;
         if let Some(error) = state.stale_root_error() {
+            let failure = FolderFailure::classify(error, look.connected);
             let width = (list.size.x - pad * 2.0).max(1.0);
-            let h =
-                kit.paragraph_height(cx, width, spec(Font::Regular, small, p.destructive), error);
+            let summary = t(failure.message_key());
+            let summary_spec = spec(Font::Regular, small, p.destructive);
+            let h = kit.paragraph_height(cx, width, summary_spec, &summary);
             kit.paragraph(
                 cx,
                 dvec2(list.pos.x + pad, list_top + 8.0),
                 width,
-                spec(Font::Regular, small, p.destructive),
-                error,
+                summary_spec,
+                &summary,
             );
-            list_top += h + 12.0;
+            list_top += h + 8.0;
+            if failure.shows_detail() {
+                let detail_spec = spec(Font::Regular, ty.ui_size(11.0), p.extra_muted);
+                let h = kit.paragraph_height(cx, width, detail_spec, error);
+                kit.paragraph(
+                    cx,
+                    dvec2(list.pos.x + pad, list_top + 2.0),
+                    width,
+                    detail_spec,
+                    error,
+                );
+                list_top += h + 2.0;
+            }
+            list_top += 4.0;
         }
         let list = rect(
             list.pos.x,
@@ -482,7 +577,8 @@ impl PickerView {
         );
         self.list_rect = list;
         if let Some(error) = state.root_error() {
-            self.draw_error(cx, kit, list, state, error, p, ty, compact);
+            let failure = FolderFailure::classify(error, look.connected);
+            self.draw_error(cx, kit, list, state, failure, error, p, ty, compact);
         } else if state.initial_loading() {
             let cy = list.pos.y + list.size.y / 2.0;
             ui::spinner(
@@ -580,7 +676,9 @@ impl PickerView {
         self.crumbs = breadcrumb(&state.current_directory());
         let count = self.crumbs.len();
         let separator = 16.0;
-        let more_w = if compact { 36.0 } else { 28.0 };
+        let more_w = if compact { COMPACT_CONTROL } else { 28.0 };
+        // Compact crumbs keep a 44px touch width even for a one-character root.
+        let min_crumb = if compact { COMPACT_CONTROL } else { 0.0 };
         let last_font = |index: usize| {
             if index + 1 == count {
                 Font::Medium
@@ -593,16 +691,20 @@ impl PickerView {
             .iter()
             .enumerate()
             .map(|(index, crumb)| {
-                kit.measure(cx, spec(last_font(index), font, p.foreground), &crumb.label)
+                (kit.measure(cx, spec(last_font(index), font, p.foreground), &crumb.label)
                     .x
                     .ceil()
-                    + 12.0
+                    + 12.0)
+                    .max(min_crumb)
             })
             .collect();
         self.hidden_crumbs = collapsed_count(&widths, region.size.x, more_w, separator);
         let end = region.pos.x + region.size.x;
         let mut x = region.pos.x;
-        let chip_h = region.size.y.min(if compact { 36.0 } else { 26.0 });
+        let chip_h = region
+            .size
+            .y
+            .min(if compact { COMPACT_CONTROL } else { 26.0 });
         let chip_y = region.pos.y + (region.size.y - chip_h) / 2.0;
         if self.hidden_crumbs > 0 {
             let r = rect(x, chip_y, more_w, chip_h);
@@ -807,6 +909,7 @@ impl PickerView {
         kit: &mut Kit,
         list: Rect,
         state: &ExplorerState,
+        failure: FolderFailure,
         error: &str,
         p: &Palette,
         ty: &Typography,
@@ -815,21 +918,34 @@ impl PickerView {
         let base = ty.ui_size(14.0);
         let small = ty.ui_size(12.0);
         let width = (list.size.x - 48.0).max(1.0);
+        let summary = t(failure.message_key());
         let message = spec(Font::Regular, small, p.muted);
-        let message_h = kit.paragraph_height(cx, width, message, error);
+        let message_h = kit.paragraph_height(cx, width, message, &summary);
+        let detail = spec(Font::Regular, ty.ui_size(11.0), p.extra_muted);
+        let detail_h = if failure.shows_detail() {
+            kit.paragraph_height(cx, width, detail, error) + 4.0
+        } else {
+            0.0
+        };
         let pill_h = if compact {
-            40.0
+            COMPACT_CONTROL
         } else {
             ui::ButtonSize::Sm.height()
         };
-        let total = 24.0 + 8.0 + base * 1.4 + 4.0 + message_h + 16.0 + pill_h;
+        let total = 24.0 + 8.0 + base * 1.4 + 4.0 + message_h + detail_h + 16.0 + pill_h;
         let mut y = list.pos.y + ((list.size.y - total) / 2.0).max(8.0);
+        // An offline host is unavailable, not a failed folder: muted, not destructive.
+        let icon_color = if failure == FolderFailure::Disconnected {
+            p.muted
+        } else {
+            p.destructive
+        };
         kit.icon(
             cx,
             rect(list.pos.x, y, list.size.x, 24.0),
-            "circle-alert",
+            failure.icon(),
             24.0,
-            p.destructive,
+            icon_color,
         );
         y += 32.0;
         kit.text_in(
@@ -840,15 +956,27 @@ impl PickerView {
             0.5,
         );
         y += base * 1.4 + 4.0;
-        let message_w = kit.measure(cx, message, error).x.min(width);
+        let message_w = kit.measure(cx, message, &summary).x.min(width);
         kit.paragraph(
             cx,
             dvec2(list.pos.x + (list.size.x - message_w) / 2.0, y),
             width,
             message,
-            error,
+            &summary,
         );
-        y += message_h + 16.0;
+        y += message_h;
+        if failure.shows_detail() {
+            let detail_w = kit.measure(cx, detail, error).x.min(width);
+            kit.paragraph(
+                cx,
+                dvec2(list.pos.x + (list.size.x - detail_w) / 2.0, y + 4.0),
+                width,
+                detail,
+                error,
+            );
+            y += detail_h;
+        }
+        y += 16.0;
         let mut actions: Vec<(Hot, String, &str)> = Vec::new();
         if state.can_go_up() {
             actions.push((Hot::ErrorUp, t("workspace.folderPicker.up"), "arrow-up"));
@@ -1496,7 +1624,12 @@ impl Widget for RemoteFolderPicker {
         cx.begin_turtle(walk, self.layout);
         let rect = cx.turtle().rect();
         cx.add_aligned_rect_area(&mut self.area, rect);
-        let compact = scope.data.get::<UiContext>().is_some_and(|ui| ui.compact);
+        let ui = scope.data.get::<UiContext>();
+        let compact = ui.is_some_and(|ui| ui.compact);
+        let connected = match (ui, &self.scope) {
+            (Some(ui), Some((host_id, _))) => host::connected(&ui.state, host_id),
+            _ => true,
+        };
         let owner = self.owner();
         let area = self.area;
         self.drawn_at = rect.pos;
@@ -1506,6 +1639,7 @@ impl Widget for RemoteFolderPicker {
             palette: &p,
             typography: &ty,
             compact,
+            connected,
         };
         let view = &mut self.view;
         let kit = &mut self.kit;
@@ -1557,6 +1691,60 @@ mod tests {
 
     fn labels(crumbs: &[Crumb]) -> Vec<&str> {
         crumbs.iter().map(|crumb| crumb.label.as_str()).collect()
+    }
+
+    #[test]
+    fn folder_failures_classify_known_os_errors() {
+        use FolderFailure::*;
+        let cases = [
+            ("No such file or directory (os error 2)", NotFound),
+            (
+                "The system cannot find the path specified. (os error 3)",
+                NotFound,
+            ),
+            ("ENOENT: no such file or directory, scandir '/x'", NotFound),
+            ("Permission denied (os error 13)", PermissionDenied),
+            ("Access is denied. (os error 5)", PermissionDenied),
+            ("EACCES: permission denied", PermissionDenied),
+            ("Requested path is not a directory", NotADirectory),
+            ("Not a directory (os error 20)", NotADirectory),
+            ("Daemon is not connected", Disconnected),
+            ("Directory listing unavailable", Other),
+            ("Too many open files (os error 24)", Other),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(FolderFailure::classify(error, true), expected, "{error}");
+        }
+        // An offline host wins over whatever the transport said.
+        assert_eq!(
+            FolderFailure::classify("Permission denied (os error 13)", false),
+            Disconnected
+        );
+        // The raw text stays as detail except for a disconnected host.
+        assert!(NotFound.shows_detail());
+        assert!(!Disconnected.shows_detail());
+        let catalogs: [serde_json::Value; 2] = [
+            serde_json::from_str(include_str!("../../../resources/locales/en.json")).unwrap(),
+            serde_json::from_str(include_str!("../../../resources/locales/ko.json")).unwrap(),
+        ];
+        for failure in [
+            Disconnected,
+            NotFound,
+            PermissionDenied,
+            NotADirectory,
+            Other,
+        ] {
+            let leaf = failure
+                .message_key()
+                .strip_prefix("workspace.folderPicker.errors.")
+                .unwrap();
+            for catalog in &catalogs {
+                assert!(
+                    catalog["workspace"]["folderPicker"]["errors"][leaf].is_string(),
+                    "{leaf}"
+                );
+            }
+        }
     }
 
     #[test]

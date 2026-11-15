@@ -264,7 +264,9 @@ impl ChangesView {
         let line = &target.line;
         let entries = vec![
             MenuEntry::Item(MenuItem::new("copy", t("common.actions.copyLine")).icon("copy")),
-            MenuEntry::Item(MenuItem::new("open", "Open file at line").icon("file-text")),
+            MenuEntry::Item(
+                MenuItem::new("open", t("workspace.git.diff.openFileAtLine")).icon("file-text"),
+            ),
         ];
         let title = format!(
             "{}:{}",
@@ -694,8 +696,8 @@ impl ChangesView {
         let button = toolbar_button(
             cx, paint, compact, right, center_y, icon, selected, true, hovered,
         );
-        self.push_hit(button, hit);
-        button.pos.x - 1.0
+        self.push_hit(super::chrome::toolbar_hit(button, compact), hit);
+        button.pos.x - super::chrome::toolbar_gap(compact, 1.0)
     }
 
     /// Original `ChangesDiffOnlyToolbar` with the bare toggles.

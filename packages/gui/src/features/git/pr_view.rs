@@ -680,7 +680,9 @@ impl PrView {
                 } else {
                     let mut entries = Vec::new();
                     if !body.trim().is_empty() {
-                        entries.push(MenuEntry::Item(MenuItem::new("copy", "Copy").icon("copy")));
+                        entries.push(MenuEntry::Item(
+                            MenuItem::new("copy", t("common.actions.copy")).icon("copy"),
+                        ));
                     }
                     entries.push(open);
                     (PrPurpose::Activity { body, url }, entries)
@@ -774,6 +776,17 @@ impl PrView {
                 .unwrap_or(paseo_highlight::SyntaxThemeId::One),
         });
         self.body_rects.clear();
+        // Original `_PaneError`; an offline host is not a checkout without a pull request.
+        let blocked = if !host::connected(ui, &self.target.server_id) {
+            Some((Some("unplug"), t("workspace.git.log.states.disconnected")))
+        } else if payload.get("error").is_some_and(|e| !e.is_null())
+            || payload_error(&payload).is_some()
+            || state.is_some_and(|s| s.pr_error.is_some())
+        {
+            Some((None, t("workspace.git.diff.failedRefresh")))
+        } else {
+            None
+        };
         if let Some(number) = pull_request_number(&status) {
             self.scroll = self
                 .scroll
@@ -799,14 +812,18 @@ impl PrView {
             );
             self.content = cursor.y + self.scroll - area.pos.y;
             paint.end_clip(cx);
-        } else if payload.get("error").is_some_and(|e| !e.is_null())
-            || payload_error(&payload).is_some()
-            || state.is_some_and(|s| s.pr_error.is_some())
-        {
-            // Original `_PaneError`.
-            let message = t("workspace.git.diff.failedRefresh");
+        } else if let Some((icon, message)) = blocked {
             let size = ui_px(12.0);
             let center = area.center();
+            if let Some(icon) = icon {
+                paint.icon(
+                    cx,
+                    icon,
+                    24.0,
+                    colors.muted,
+                    dvec2(center.x, center.y - 56.0),
+                );
+            }
             let width = paint
                 .measure(cx, Font::Regular, size, &message)
                 .x
@@ -1058,7 +1075,11 @@ impl PrView {
                     true,
                     hovered,
                 );
-                self.hits.push_clipped(button, c.view, PrHit::Refresh);
+                self.hits.push_clipped(
+                    super::chrome::toolbar_hit(button, compact),
+                    c.view,
+                    PrHit::Refresh,
+                );
             }
         }
         c.y += toolbar_h;
