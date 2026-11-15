@@ -39,6 +39,15 @@ pub(crate) struct TextActionsRequest {
     pub capabilities: TextActionCapabilities,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TextSelectionOutsideTap {
+    pub owner: Area,
+    pub window_id: crate::window::WindowId,
+    pub uid: u64,
+    pub abs_start: crate::makepad_math::DVec2,
+    pub time: f64,
+}
+
 
 #[derive(Default)]
 pub struct CxKeyboard {
@@ -52,6 +61,7 @@ pub struct CxKeyboard {
     pub (crate) text_actions: Option<TextActionsRequest>,
     pub(crate) text_handles: Option<super::text_handle::TextHandleRegistration>,
     pub(crate) text_handle_drag: Option<super::text_handle::TextHandleDrag>,
+    pub(crate) text_selection_outside_tap: Option<TextSelectionOutsideTap>,
     #[cfg(any(target_os = "android", test))]
     text_action_token: u64,
 }
@@ -67,6 +77,9 @@ impl CxKeyboard {
     }
 
     pub fn set_key_focus(&mut self, focus_area: Area) {
+        if self.next_key_focus != focus_area {
+            self.text_selection_outside_tap = None;
+        }
         self.text_ime_dismissed = false;
         self.next_key_focus = focus_area;
     }
@@ -89,6 +102,7 @@ impl CxKeyboard {
 
     pub(crate) fn claim_text_selection(&mut self, area: Area) {
         if self.text_selection != area {
+            self.text_selection_outside_tap = None;
             self.text_actions = None;
             self.text_handles = None;
             self.text_selection = area;
@@ -97,6 +111,7 @@ impl CxKeyboard {
 
     pub(crate) fn clear_text_selection(&mut self, area: Area) {
         if self.text_selection == area {
+            self.text_selection_outside_tap = None;
             self.text_selection = Area::Empty;
             self.text_handles = None;
             self.hide_text_actions(area);
@@ -138,6 +153,9 @@ impl CxKeyboard {
         }
         if self.text_selection == old_area {
             self.text_selection = new_area;
+        }
+        if let Some(tap) = &mut self.text_selection_outside_tap {
+            if tap.owner == old_area { tap.owner = new_area; }
         }
         if let Some(request) = &mut self.text_actions {
             if request.area == old_area {

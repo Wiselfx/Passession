@@ -29,7 +29,7 @@ The upstream `text::tests::test` rasterization demo is removed. It registered no
 `Sans` font, asserted no behavior, and saved PNGs to `/Users/ejpbruel/Desktop`.
 The portable layout and atlas regression tests retain their bundled fixtures.
 
-## Implicit font contour closure
+## Font outline bounds and contour closure
 
 `text/glyph_outline.rs` closes each outline contour at the next move or end,
 and treats repeated explicit closes as idempotent. CFF2 outlines from Android's
@@ -37,6 +37,13 @@ variable Noto Sans CJK can omit the final close callback; the missing edge left
 scanline winding nonzero and filled Korean glyphs with rectangles. The synthetic
 regression checks closed versus implicit contours, an interior counter and the
 exterior pixels without depending on a device font.
+
+The raster bounds also include the emitted floating-point outline points and
+curve control hulls. The parser's integer box truncates variable-font extrema
+toward zero; clipping a negative fractional edge can leave the same winding
+imbalance even in a closed contour. Fractional diagonal tests cover both
+windings, and slash tests cover regular/semibold faces, with an optional
+`MAKEPAD_TEST_VARIABLE_FONT` fixture at weights 400 and 600.
 
 ## Tabs and control characters
 

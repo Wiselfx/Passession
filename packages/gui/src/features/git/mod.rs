@@ -76,7 +76,7 @@ live_design! {
         width: Fill, height: Fill,
         paint: <GitPaint> {}
         overlay_bg: {}
-        input: <GitTextInput> {}
+        input: <GitTextInput> { is_multiline: true }
         // The Git Log's search and branch filter fields.
         search_input: <GitTextInput> {}
         branch_input: <GitTextInput> {}

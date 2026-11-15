@@ -5,7 +5,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use makepad_widgets::makepad_draw::text::selection::Cursor;
 use makepad_widgets::*;
 
 use super::draw::Font;
@@ -118,7 +117,6 @@ struct Entry {
     layer: Layer,
     /// Overlay stacking depth it was drawn at (0 page, 1.. overlay layers).
     depth: usize,
-    multiline: bool,
     enabled: bool,
     placeholder: String,
     /// Theme epoch, font and enabled state the widget was last styled for.
@@ -232,7 +230,6 @@ impl FieldHost {
             widget: WidgetRef::new_from_ptr(cx, template),
             layer,
             depth,
-            multiline: spec.multiline,
             enabled: true,
             placeholder: String::new(),
             epoch: None,
@@ -245,10 +242,10 @@ impl FieldHost {
         });
         entry.layer = layer;
         entry.depth = depth;
-        entry.multiline = spec.multiline;
         entry.on_submit = spec.on_submit;
         entry.on_blur = spec.on_blur;
         let input = entry.widget.as_text_input();
+        input.set_is_multiline(cx, spec.multiline);
         if let Some(plain) = spec.plain {
             // Selectable text follows its source every frame.
             if created || entry.widget.text() != initial {
@@ -360,23 +357,10 @@ impl FieldHost {
             if input.changed(&actions).is_some() {
                 outcome.changed = true;
             }
-            if input.returned(&actions).is_some() {
-                if entry.multiline {
-                    // Enter inserts a line break in multiline fields (Flutter
-                    // `keyboardType: multiline`); TextInput only does so on Shift+Enter.
-                    let selection = input.selection();
-                    let start = selection.start().index;
-                    let end = selection.end().index;
-                    let mut text = widget.text();
-                    if start <= end && end <= text.len() && text.is_char_boundary(start) && text.is_char_boundary(end) {
-                        text.replace_range(start..end, "\n");
-                        widget.set_text(cx, &text);
-                        input.set_cursor(cx, Cursor { index: start + 1, prefer_next_row: false }, false);
-                        outcome.changed = true;
-                    }
-                } else if let Some(handler) = &entry.on_submit {
-                    outcome.run.push(handler.clone());
-                }
+            if input.returned(&actions).is_some()
+                && let Some(handler) = &entry.on_submit
+            {
+                outcome.run.push(handler.clone());
             }
             for action in actions.filter_widget_actions_cast::<TextInputAction>(widget.widget_uid()) {
                 if let TextInputAction::KeyFocusLost = action

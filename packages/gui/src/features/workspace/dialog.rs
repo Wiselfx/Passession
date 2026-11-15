@@ -105,9 +105,6 @@ impl Widget for WaDialog {
         }
         let Event::Actions(actions) = event else { return };
         let input = self.view.wa_input(id!(input));
-        if self.kind == Kind::PromptMultiline && input.returned(actions).is_some() {
-            super::kit::insert_newline(cx, &input);
-        }
         let submit = |this: &mut Self, cx: &mut Cx, scope: &mut Scope| match this.kind {
             Kind::Confirm => this.finish(cx, scope, |token, _| WaDialogAction::Confirmed { token }),
             _ => this.finish(cx, scope, |token, value| WaDialogAction::Submitted { token, value }),
@@ -150,6 +147,7 @@ impl WaDialogRef {
         view.widget(id!(sheet.header.title)).set_text(cx, title);
         super::kit::set_optional(cx, &view.widget(id!(message)), message);
         view.widget(id!(input_wrap)).set_visible(cx, kind != Kind::Confirm);
+        view.wa_input(id!(input)).set_multiline(cx, kind == Kind::PromptMultiline);
         view.wa_input(id!(input)).set_text(cx, value);
         view.wa_button(id!(cancel)).set_text(cx, super::i18n::l("Cancel"));
         view.wa_button(id!(confirm)).set_visible(cx, !destructive);

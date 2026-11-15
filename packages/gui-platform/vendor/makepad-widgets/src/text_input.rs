@@ -13,12 +13,13 @@ use {
             },
             *
         },
+        scroll_bars::TouchScroll,
         widget::*,
     },
     std::rc::Rc,
     unicode_segmentation::{GraphemeCursor, UnicodeSegmentation},
 };
-use crate::makepad_draw::event::DigitId;
+use crate::makepad_draw::event::{DigitId, TouchState};
 
 
 live_design! {
@@ -820,6 +821,10 @@ pub struct TextInput {
     #[live] is_password: bool,
     #[live] is_read_only: bool,
     #[live] is_numeric_only: bool,
+    /// Explicit editor mode, independent of wrapping, height or current content.
+    #[live(false)] is_multiline: bool,
+    /// Desktop chat composers submit on Enter; mobile multiline editors always insert.
+    #[live(false)] return_key_submits: bool,
     #[live] empty_text: String,
     #[rust] text: String,
     #[live(0.5)] blink_speed: f64,
@@ -839,6 +844,8 @@ pub struct TextInput {
     #[rust] text_scroll: DVec2,
     #[rust] text_scroll_max: DVec2,
     #[rust(true)] reveal_cursor: bool,
+    #[rust] text_viewport: Option<DVec2>,
+    #[rust] touch_scroll: TouchScroll,
 }
 
  impl LiveHook for TextInput{
@@ -899,6 +906,37 @@ impl TextInput {
 
     pub fn toggle_is_numeric_only(&mut self, cx: &mut Cx) {
         self.set_is_numeric_only(cx, !self.is_numeric_only);
+    }
+
+    pub fn set_is_multiline(&mut self, cx: &mut Cx, is_multiline: bool) {
+        if self.is_multiline != is_multiline {
+            self.is_multiline = is_multiline;
+            self.draw_bg.redraw(cx);
+        }
+    }
+
+    fn handle_return(&mut self, cx: &mut Cx, modifiers: KeyModifiers, mobile: bool, scope: &Scope) {
+        let uid = self.widget_uid();
+        if self.is_multiline && (modifiers.shift || mobile || !self.return_key_submits) {
+            if self.is_read_only {
+                return;
+            }
+            self.reset_blink_timer(cx);
+            self.create_or_extend_edit_group(EditKind::Other);
+            self.apply_edit(cx, Edit {
+                start: self.selection.start().index,
+                end: self.selection.end().index,
+                replace_with: "\n".to_string(),
+            });
+            self.draw_bg.redraw(cx);
+            cx.widget_action(uid, &scope.path, TextInputAction::Changed(self.text.clone()));
+        } else {
+            // A multiline desktop submit is not a request to close its editor.
+            if !self.is_multiline {
+                cx.hide_text_ime();
+            }
+            cx.widget_action(uid, &scope.path, TextInputAction::Returned(self.text.clone(), modifiers));
+        }
     }
 
     pub fn empty_text(&self) -> &str {
@@ -999,6 +1037,7 @@ impl TextInput {
     }
 
     fn end_focus(&mut self, cx: &mut Cx, hide_ime: bool) {
+        self.touch_scroll.reset();
         self.touch_handles = false;
         if let Some(handles) = &mut self.selection_handles { handles.cancel(cx); }
         self.ime_composing = false;
@@ -1179,37 +1218,46 @@ impl TextInput {
             let placeholder = self.text_layout(cx, &self.empty_text, self.layout_metrics.as_ref().and_then(|metrics| metrics.max_width));
             self.draw_text.draw_walk_laidout(cx, inner_walk, &placeholder)
         } else {
-            let laidout_text = self.laidout_text.as_ref().unwrap();
-            let size = laidout_text.size_in_lpxs * self.draw_text.font_scale;
+            let size = self.laidout_text.as_ref().unwrap().size_in_lpxs * self.draw_text.font_scale;
             let viewport = cx.turtle().padded_rect();
             let width = if viewport.size.x.is_finite() { viewport.size.x.max(0.0) } else { size.width as f64 };
             let height = if viewport.size.y.is_finite() { viewport.size.y.max(0.0) } else { size.height as f64 };
-            self.text_scroll_max = dvec2((size.width as f64 - width).max(0.0), (size.height as f64 - height).max(0.0));
-            self.text_scroll.x = self.text_scroll.x.clamp(0.0, self.text_scroll_max.x);
-            self.text_scroll.y = self.text_scroll.y.clamp(0.0, self.text_scroll_max.y);
-            if self.reveal_cursor && cx.has_key_focus(self.draw_bg.area()) && !self.selection_handles.as_ref().is_some_and(|h| h.is_dragging()) {
-                let caret = self.caret_rect(self.selection.cursor, DVec2::default());
-                if caret.pos.x < self.text_scroll.x { self.text_scroll.x = caret.pos.x.max(0.0); }
-                if caret.pos.x + caret.size.x > self.text_scroll.x + width {
-                    self.text_scroll.x = (caret.pos.x + caret.size.x - width).clamp(0.0, self.text_scroll_max.x);
-                }
-                if caret.pos.y < self.text_scroll.y { self.text_scroll.y = caret.pos.y.max(0.0); }
-                if caret.pos.y + caret.size.y > self.text_scroll.y + height {
-                    self.text_scroll.y = (caret.pos.y + caret.size.y - height).clamp(0.0, self.text_scroll_max.y);
-                }
-            }
-            self.reveal_cursor = false;
+            let reveal = cx.has_key_focus(self.draw_bg.area())
+                && !self.selection_handles.as_ref().is_some_and(|h| h.is_dragging());
+            self.update_text_scroll(dvec2(width, height), dvec2(size.width as f64, size.height as f64), reveal);
             let walk_rect = cx.walk_turtle(Walk {
                 width: Size::Fixed(cx.turtle().max_width(inner_walk).unwrap_or(size.width as f64)),
                 height: Size::Fixed(cx.turtle().max_height(inner_walk).unwrap_or(size.height as f64)),
                 ..inner_walk
             });
             let pos = walk_rect.pos - self.text_scroll;
-            self.draw_text.draw_abs_laidout(cx, pos, laidout_text);
+            self.draw_text.draw_abs_laidout(cx, pos, self.laidout_text.as_ref().unwrap());
             Rect { pos, size: dvec2(size.width as f64, size.height as f64) }
         };
         cx.add_aligned_rect_area(&mut self.text_area, text_rect);
         text_rect
+    }
+
+    /// A keyboard resize/reflow reveals the existing cursor without an edit or a
+    /// selection reset. Ordinary redraws still respect manual text scrolling.
+    fn update_text_scroll(&mut self, viewport: DVec2, content: DVec2, reveal: bool) {
+        self.reveal_cursor |= self.text_viewport != Some(viewport);
+        self.text_viewport = Some(viewport);
+        self.text_scroll_max = dvec2((content.x - viewport.x).max(0.0), (content.y - viewport.y).max(0.0));
+        self.text_scroll.x = self.text_scroll.x.clamp(0.0, self.text_scroll_max.x);
+        self.text_scroll.y = self.text_scroll.y.clamp(0.0, self.text_scroll_max.y);
+        if self.reveal_cursor && reveal {
+            let caret = self.caret_rect(self.selection.cursor, DVec2::default());
+            if caret.pos.x < self.text_scroll.x { self.text_scroll.x = caret.pos.x.max(0.0); }
+            if caret.pos.x + caret.size.x > self.text_scroll.x + viewport.x {
+                self.text_scroll.x = (caret.pos.x + caret.size.x - viewport.x).clamp(0.0, self.text_scroll_max.x);
+            }
+            if caret.pos.y < self.text_scroll.y { self.text_scroll.y = caret.pos.y.max(0.0); }
+            if caret.pos.y + caret.size.y > self.text_scroll.y + viewport.y {
+                self.text_scroll.y = (caret.pos.y + caret.size.y - viewport.y).clamp(0.0, self.text_scroll_max.y);
+            }
+        }
+        self.reveal_cursor = false;
     }
 
     fn caret_rect(&self, cursor: Cursor, origin: DVec2) -> Rect {
@@ -1453,6 +1501,50 @@ impl TextInput {
         }
     }
 
+    fn scroll_text(&mut self, cx: &mut Cx, delta: f64) -> bool {
+        if !self.touch_scroll.apply_delta(&mut self.text_scroll.y, delta, self.text_scroll_max.y) {
+            return false;
+        }
+        self.reveal_cursor = false;
+        self.draw_bg.redraw(cx);
+        true
+    }
+
+    fn handle_text_scroll(&mut self, cx: &mut Cx, event: &Event, hit: &Hit) {
+        if !self.is_multiline || self.text_scroll_max.y <= 0.0 || event.is_keyboard_input() {
+            self.touch_scroll.reset();
+            return;
+        }
+        let owned_pan = self.touch_scroll.is_panning();
+        if let Some(delta) = self.touch_scroll.handle_event(cx, event, hit) {
+            let changed = self.scroll_text(cx, delta);
+            if let Event::TouchUpdate(update) = event {
+                if changed || owned_pan {
+                    self.touch_focus = None;
+                    for touch in &update.touches {
+                        if matches!(touch.state, TouchState::Move) {
+                            touch.handled.set(self.draw_bg.area());
+                        }
+                    }
+                } else {
+                    // A gesture starting outward at an edge belongs to the
+                    // enclosing form; an owned pan keeps its reversal behavior.
+                    self.touch_scroll.reset();
+                }
+            }
+        }
+        if let Event::Scroll(scroll) = event {
+            if !scroll.handled_y.get()
+                && self.draw_bg.area().clipped_rect(cx).contains(scroll.abs)
+            {
+                self.touch_scroll.reset();
+                if self.scroll_text(cx, scroll.scroll.y) {
+                    scroll.handled_y.set(true);
+                }
+            }
+        }
+    }
+
     fn touch_focus_hit(&mut self, hit: &Hit) -> bool {
         match hit {
             Hit::FingerDown(fe) if fe.device.is_primary_hit() => {
@@ -1554,7 +1646,7 @@ impl Widget for TextInput {
         if cx.has_key_focus(self.draw_bg.area()) && !self.is_read_only {
             cx.update_text_input(self.draw_bg.area(), self.widget_uid().0, &self.text,
                 self.selection.anchor.index, self.selection.cursor.index,
-                self.is_password, self.is_numeric_only, false);
+                self.is_password, self.is_numeric_only, !self.is_multiline);
             // Desktop input methods draw the composition at the caret, at its height.
             let bg = self.draw_bg.area().rect(cx);
             cx.show_text_ime_caret(
@@ -1607,6 +1699,7 @@ impl Widget for TextInput {
         let area = self.draw_bg.area();
         let handle_action = self.selection_handles.as_mut().and_then(|handles| handles.handle_event(cx, event, area));
         if let Some(action) = handle_action {
+            self.touch_scroll.reset();
             self.reveal_cursor = false;
             self.touch_focus = None;
             self.touch_selection = None;
@@ -1629,7 +1722,7 @@ impl Widget for TextInput {
                 self.reset_blink_timer(cx);
                 if !self.is_read_only {
                     cx.update_text_input(area, self.widget_uid().0, &self.text,
-                        self.selection.anchor.index, self.selection.cursor.index, self.is_password, self.is_numeric_only, false);
+                        self.selection.anchor.index, self.selection.cursor.index, self.is_password, self.is_numeric_only, !self.is_multiline);
                 }
                 if action.phase == TextHandlePhase::End { self.open_text_actions(cx); }
             }
@@ -1658,6 +1751,7 @@ impl Widget for TextInput {
 
         let uid = self.widget_uid();
         let hit = event.hits(cx, self.draw_bg.area());
+        self.handle_text_scroll(cx, event, &hit);
         let touch_focus = self.touch_focus_hit(&hit);
         match hit {
             Hit::FingerHoverIn(_) => {
@@ -1802,50 +1896,19 @@ impl Widget for TextInput {
                 self.place_pointer_cursor(cx, fe.abs, fe.tap_count, true);
             }
             Hit::KeyDown(KeyEvent {
-                key_code: KeyCode::ReturnKey,
-                modifiers: mods @ KeyModifiers {
-                    shift: false,
-                    ..
-                },
+                key_code: KeyCode::ReturnKey | KeyCode::NumpadEnter,
+                modifiers,
                 ..
             }) => {
-                cx.hide_text_ime();
-                cx.widget_action(
-                    uid,
-                    &scope.path,
-                    TextInputAction::Returned(
-                        self.text.clone(),
-                        mods,
-                    ),
-                );
-            },
+                let mobile = matches!(cx.os_type(), OsType::Android(_) | OsType::Ios);
+                self.handle_return(cx, modifiers, mobile, scope);
+            }
 
             Hit::KeyDown(KeyEvent {
                 key_code: KeyCode::Escape,
                 ..
             }) => {
                 cx.widget_action(uid, &scope.path, TextInputAction::Escaped);
-            }
-            Hit::KeyDown(KeyEvent {
-                key_code: KeyCode::ReturnKey,
-                modifiers: KeyModifiers {
-                    shift: true,
-                    ..
-                },
-                ..
-            }) if !self.is_read_only => {
-                self.reset_blink_timer(cx);
-                self.create_or_extend_edit_group(EditKind::Other);
-                self.apply_edit(
-                    cx,
-                    Edit {
-                        start: self.selection.start().index,
-                        end: self.selection.end().index,
-                        replace_with: "\n".to_string(),
-                    }
-                );
-                self.draw_bg.redraw(cx);
-                cx.widget_action(uid, &scope.path, TextInputAction::Changed(self.text.clone()));
             }
             Hit::KeyDown(KeyEvent {
                 key_code: KeyCode::Backspace,
@@ -2008,12 +2071,18 @@ impl Widget for TextInput {
         if cx.has_key_focus(self.draw_bg.area()) && !self.is_read_only {
             cx.update_text_input(self.draw_bg.area(), self.widget_uid().0, &self.text,
                 self.selection.anchor.index, self.selection.cursor.index,
-                self.is_password, self.is_numeric_only, false);
+                self.is_password, self.is_numeric_only, !self.is_multiline);
         }
     }
 }
 
 impl TextInputRef {
+    pub fn set_is_multiline(&self, cx: &mut Cx, is_multiline: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_is_multiline(cx, is_multiline);
+        }
+    }
+
     pub fn release_focus(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.release_focus(cx);
@@ -2498,6 +2567,7 @@ mod keyboard_edit_tests {
     use super::*;
     use std::cell::RefCell;
     use crate::makepad_draw::{
+        event::{TouchPoint, TouchUpdateEvent},
         text::{font::FontId, fonts::Fonts, loader::{FontDefinition, FontFamilyDefinition}},
     };
 
@@ -2521,6 +2591,179 @@ mod keyboard_edit_tests {
             font_scale: 1.0, max_width: None, wrap: false, align_x: 0.0, align_y: 0.0,
         });
         (cx, input)
+    }
+
+    fn enter(cx: &mut Cx, input: &mut TextInput, mobile: bool, shift: bool) -> Vec<TextInputAction> {
+        let uid = input.widget_uid();
+        cx.capture_actions(|cx| input.handle_return(
+            cx, KeyModifiers { shift, ..Default::default() }, mobile, &Scope::empty(),
+        )).filter_widget_actions_cast::<TextInputAction>(uid).collect()
+    }
+
+    #[test]
+    fn multiline_mobile_enter_replaces_selection_once_and_retains_editor_state() {
+        for shift in [false, true] {
+            let (mut cx, mut input) = editor();
+            input.set_is_multiline(&mut cx, true);
+            // Even a desktop submit composer must remain an editor on mobile.
+            input.return_key_submits = true;
+            input.set_text(&mut cx, "앞 selected 뒤");
+            input.set_selection(&mut cx, Selection {
+                anchor: Cursor { index: "앞 ".len(), prefer_next_row: false },
+                cursor: Cursor { index: "앞 selected".len(), prefer_next_row: false },
+            });
+            input.ime_composing = true;
+            let actions = enter(&mut cx, &mut input, true, shift);
+            assert!(matches!(actions.as_slice(), [TextInputAction::Changed(text)] if text == "앞 \n 뒤"));
+            assert_eq!(input.text, "앞 \n 뒤");
+            assert_eq!(input.selection.anchor.index, "앞 \n".len());
+            assert_eq!(input.selection.cursor.index, "앞 \n".len());
+            assert!(input.ime_composing);
+            assert!(input.undo(&mut cx));
+            assert_eq!(input.text, "앞 selected 뒤");
+            assert_eq!(input.selected_text(), "selected");
+            assert!(!input.undo(&mut cx));
+        }
+    }
+
+    #[test]
+    fn single_line_enter_and_shift_enter_return_without_editing() {
+        for mobile in [false, true] {
+            for shift in [false, true] {
+                let (mut cx, mut input) = editor();
+                input.set_text(&mut cx, "draft");
+                input.set_cursor(&mut cx, Cursor { index: 2, prefer_next_row: false }, false);
+                let actions = enter(&mut cx, &mut input, mobile, shift);
+                assert!(matches!(actions.as_slice(), [TextInputAction::Returned(text, modifiers)]
+                    if text == "draft" && modifiers.shift == shift));
+                assert_eq!(input.text, "draft");
+                assert_eq!(input.selection.cursor.index, 2);
+                assert!(!input.undo(&mut cx));
+            }
+        }
+    }
+
+    #[test]
+    fn desktop_multiline_submit_is_explicit_and_shift_enter_still_edits() {
+        for submit in [false, true] {
+            for shift in [false, true] {
+                let (mut cx, mut input) = editor();
+                input.set_is_multiline(&mut cx, true);
+                input.return_key_submits = submit;
+                input.set_text(&mut cx, "draft");
+                input.set_cursor(&mut cx, Cursor { index: 5, prefer_next_row: false }, false);
+                let actions = enter(&mut cx, &mut input, false, shift);
+                if submit && !shift {
+                    assert!(matches!(actions.as_slice(), [TextInputAction::Returned(text, _)] if text == "draft"));
+                    assert_eq!(input.text, "draft");
+                    assert_eq!(input.selection.cursor.index, 5);
+                } else {
+                    assert!(matches!(actions.as_slice(), [TextInputAction::Changed(text)] if text == "draft\n"));
+                    assert_eq!(input.text, "draft\n");
+                    assert_eq!(input.selection.cursor.index, 6);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multiline_read_only_return_does_not_mutate_or_submit() {
+        let (mut cx, mut input) = editor();
+        input.set_is_multiline(&mut cx, true);
+        input.set_is_read_only(&mut cx, true);
+        input.set_text(&mut cx, "draft");
+        for mobile in [false, true] {
+            for shift in [false, true] {
+                assert!(enter(&mut cx, &mut input, mobile, shift).is_empty());
+                assert_eq!(input.text, "draft");
+                assert!(!input.undo(&mut cx));
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_editor_pan_keeps_draft_and_composition_and_yields_at_an_edge() {
+        let (mut cx, mut input) = editor();
+        input.set_is_multiline(&mut cx, true);
+        input.set_text(&mut cx, "첫 줄\n둘째 줄\n마지막 줄");
+        input.set_cursor(&mut cx, Cursor { index: input.text.len(), prefer_next_row: false }, false);
+        input.text_scroll_max.y = 200.0;
+        input.ime_composing = true;
+        let selection = input.selection();
+        for (y, expected, panning) in [(200.0, 0.0, false), (0.0, 100.0, true)] {
+            input.touch_scroll.begin(dvec2(20.0, 100.0), 0.0, true);
+            let event = Event::TouchUpdate(TouchUpdateEvent {
+                time: 0.1, cancelled: false, window_id: WindowId(0, 0),
+                modifiers: KeyModifiers::default(),
+                touches: vec![TouchPoint {
+                    state: TouchState::Move, abs: dvec2(20.0, y), time: 0.1, uid: 1,
+                    rotation_angle: 0.0, force: 1.0, radius: DVec2::default(),
+                    handled: Default::default(), sweep_lock: Default::default(),
+                }],
+            });
+            let hit = Hit::FingerMove(FingerMoveEvent {
+                window_id: WindowId(0, 0), abs: dvec2(20.0, y), digit_id: DigitId::default(),
+                device: DigitDevice::Touch { uid: 1 }, tap_count: 1,
+                modifiers: KeyModifiers::default(), time: 0.1,
+                abs_start: dvec2(20.0, 100.0), rect: Rect::default(), is_over: true,
+            });
+            input.handle_text_scroll(&mut cx, &event, &hit);
+            assert_eq!(input.text_scroll.y, expected);
+            assert_eq!(input.touch_scroll.is_panning(), panning);
+            assert_eq!(input.text, "첫 줄\n둘째 줄\n마지막 줄");
+            assert_eq!(input.selection().anchor, selection.anchor);
+            assert_eq!(input.selection().cursor, selection.cursor);
+            assert!(input.ime_composing);
+        }
+        assert!(!input.reveal_cursor);
+    }
+
+    #[test]
+    fn keyboard_viewport_resize_reveals_caret_without_resetting_draft_or_ime() {
+        let (mut cx, mut input) = editor();
+        let draft = "첫 번째 줄입니다\n두 번째 줄입니다\n세 번째 줄입니다\n마지막 줄입니다";
+        input.set_text(&mut cx, draft);
+        input.set_cursor(&mut cx, Cursor { index: draft.len(), prefer_next_row: false }, false);
+        input.create_or_extend_edit_group(EditKind::Other);
+        input.apply_edit(&mut cx, Edit { start: draft.len(), end: draft.len(), replace_with: " 한".into() });
+        input.ime_composing = true;
+        let selection = input.selection();
+        for viewport in [dvec2(200.0, 240.0), dvec2(200.0, 30.0), dvec2(100.0, 48.0), dvec2(200.0, 240.0)] {
+            input.update_text_layout(&mut cx, Some(viewport.x as f32), true);
+            let size = input.laidout_text.as_ref().unwrap().size_in_lpxs * input.text_scale();
+            input.update_text_scroll(viewport, dvec2(size.width as f64, size.height as f64), true);
+            let caret = input.caret_rect(input.cursor(), DVec2::default());
+            assert!(caret.pos.y >= input.text_scroll.y - 0.01);
+            assert!(caret.pos.y + caret.size.y <= input.text_scroll.y + viewport.y + 0.01);
+            assert_eq!(input.text, format!("{draft} 한"));
+            assert_eq!(input.selection().anchor, selection.anchor);
+            assert_eq!(input.selection().cursor, selection.cursor);
+            assert!(input.ime_composing);
+        }
+        assert!(input.undo(&mut cx));
+        assert_eq!(input.text, draft);
+    }
+
+    #[test]
+    fn unchanged_editor_viewport_respects_manual_scroll_until_typing() {
+        let (mut cx, mut input) = editor();
+        input.set_text(&mut cx, "one\ntwo\nthree\nfour\nfive");
+        input.set_cursor(&mut cx, Cursor { index: input.text.len(), prefer_next_row: false }, false);
+        input.update_text_layout(&mut cx, Some(120.0), true);
+        let size = input.laidout_text.as_ref().unwrap().size_in_lpxs * input.text_scale();
+        let viewport = dvec2(120.0, 24.0);
+        let content = dvec2(size.width as f64, size.height as f64);
+        input.update_text_scroll(viewport, content, true);
+        assert!(input.text_scroll.y > 0.0);
+        input.text_scroll.y = 0.0;
+        input.update_text_scroll(viewport, content, true);
+        assert_eq!(input.text_scroll.y, 0.0);
+        let end = input.text.len();
+        input.create_or_extend_edit_group(EditKind::Other);
+        input.apply_edit(&mut cx, Edit { start: end, end, replace_with: "!".into() });
+        input.update_text_layout(&mut cx, Some(120.0), true);
+        input.update_text_scroll(viewport, content, true);
+        assert!(input.text_scroll.y > 0.0);
     }
 
     #[test]

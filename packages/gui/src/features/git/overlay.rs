@@ -455,21 +455,6 @@ impl<P> OverlayHost<P> {
                     }
                     // Escape already went through `take_dismissal` above.
                     Some(TextInputAction::Escaped) => {}
-                    // Flutter's multiline TextField: Enter inserts a line break
-                    // (makepad only does that for Shift+Enter).
-                    Some(TextInputAction::Returned(text, _)) => {
-                        let selection = input.selection();
-                        let start = selection.start().index.min(text.len());
-                        let end = selection.end().index.min(text.len());
-                        if text.is_char_boundary(start) && text.is_char_boundary(end) {
-                            let next = format!("{}\n{}", &text[..start], &text[end..]);
-                            input.set_text(cx, &next);
-                            let cursor = makepad_widgets::makepad_draw::text::selection::Cursor { index: start + 1, prefer_next_row: false };
-                            input.set_cursor(cx, cursor, false);
-                            self.text = next;
-                            cx.redraw_all();
-                        }
-                    }
                     _ => {}
                 }
             }

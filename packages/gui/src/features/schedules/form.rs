@@ -19,7 +19,7 @@ use crate::features::workspace::host::{self, Host};
 use crate::features::workspace::i18n::{l, t};
 use crate::common::provider_icon::ProviderIconWidgetRefExt;
 use crate::common::widgets::{PLabelWidgetRefExt, PSwitchWidgetRefExt};
-use crate::features::workspace::kit::{insert_newline, set_optional, sync_input, WaButtonRef, WaButtonWidgetRefExt, WaInputWidgetRefExt};
+use crate::features::workspace::kit::{set_optional, sync_input, WaButtonRef, WaButtonWidgetRefExt, WaInputWidgetRefExt};
 use crate::features::workspace::rpc::{array_of, object_of, str_of, str_or, Pending};
 use crate::features::workspace::select::{Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt};
 
@@ -683,10 +683,6 @@ impl WaScheduleEditor {
         let prompt = view.wa_input(id!(prompt));
         if let Some(text) = prompt.changed(actions) {
             self.prompt = text;
-            self.view.redraw(cx);
-        }
-        if prompt.returned(actions).is_some() {
-            self.prompt = insert_newline(cx, &prompt);
             self.view.redraw(cx);
         }
         if let Some(text) = view.wa_input(id!(cron)).changed(actions) {

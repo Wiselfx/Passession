@@ -17,6 +17,8 @@ use {
             KeyFocusEvent,
             NextFrameEvent,
             TouchState,
+            finger::{TAP_COUNT_DISTANCE, TAP_COUNT_TIME},
+            keyboard::TextSelectionOutsideTap,
         },
         studio::{AppToStudio,EventSample},
     }
@@ -307,6 +309,7 @@ impl Cx {
             return;
         }
         if self.route_text_handle_event(event) {
+            self.keyboard.text_selection_outside_tap = None;
             self.inner_key_focus_change();
             self.handle_triggers();
             self.handle_actions();
@@ -321,37 +324,70 @@ impl Cx {
 
     fn dismiss_text_selection_for_event(&mut self, event: &Event) {
         let owner = self.keyboard.text_selection;
-        if owner == Area::Empty { return; }
-        match event {
-            Event::MouseDown(_) => {}
-            Event::TouchUpdate(update) if update.touches.iter().any(|touch| matches!(touch.state, TouchState::Start)) => {}
-            Event::AppLostFocus | Event::Pause | Event::Background | Event::Shutdown if cfg!(target_os = "android") => {}
-            _ => return,
+        let leaving = matches!(event, Event::AppLostFocus | Event::Pause | Event::Background | Event::Shutdown);
+        if leaving || matches!(event, Event::MouseDown(_) | Event::Scroll(_)) {
+            self.keyboard.text_selection_outside_tap = None;
+        }
+        if let Event::LongPress(long) = event {
+            if self.keyboard.text_selection_outside_tap.is_some_and(|tap| {
+                tap.window_id == long.window_id && tap.uid == long.uid
+            }) {
+                self.keyboard.text_selection_outside_tap = None;
+            }
+            return;
+        }
+        if owner == Area::Empty {
+            self.keyboard.text_selection_outside_tap = None;
+            return;
+        }
+        if !matches!(event, Event::MouseDown(_) | Event::TouchUpdate(_))
+            && !(leaving && cfg!(target_os = "android"))
+        {
+            return;
         }
         let valid = owner.is_valid(self);
         let rect = if valid { owner.clipped_rect(self) } else { Default::default() };
-        let window = if valid {
-            owner.draw_list_id()
-                .and_then(|id| self.draw_lists[id].pass_id)
-                .and_then(|id| self.get_pass_window_id(id))
-        } else {
-            None
-        };
+        let window = if valid { self.area_window_id(owner) } else { None };
         let outside = match event {
             Event::MouseDown(event) => window != Some(event.window_id) || !rect.contains(event.abs),
-            Event::TouchUpdate(event) => event.touches.iter().any(|touch| {
-                matches!(touch.state, TouchState::Start)
-                    && (window != Some(event.window_id) || !rect.contains(touch.abs))
-            }),
+            Event::TouchUpdate(update) => {
+                // Match FingerUpEvent::was_tap: slop cancellation is sticky,
+                // including a drag that returns to its starting position.
+                let pending = self.keyboard.text_selection_outside_tap.take();
+                if update.cancelled || update.touches.len() != 1 { return; }
+                let touch = &update.touches[0];
+                if let Some(tap) = pending {
+                    if tap.owner != owner || tap.window_id != update.window_id
+                        || tap.uid != touch.uid || matches!(touch.state, TouchState::Start)
+                        || update.time - tap.time >= TAP_COUNT_TIME
+                        || (touch.abs - tap.abs_start).length() >= TAP_COUNT_DISTANCE
+                    {
+                        return;
+                    }
+                    if !matches!(touch.state, TouchState::Stop) {
+                        self.keyboard.text_selection_outside_tap = Some(tap);
+                        return;
+                    }
+                    window != Some(update.window_id) || !rect.contains(touch.abs)
+                } else {
+                    if matches!(touch.state, TouchState::Start)
+                        && (window != Some(update.window_id) || !rect.contains(touch.abs))
+                    {
+                        self.keyboard.text_selection_outside_tap = Some(TextSelectionOutsideTap {
+                            owner, window_id: update.window_id, uid: touch.uid,
+                            abs_start: touch.abs, time: update.time,
+                        });
+                    }
+                    return;
+                }
+            }
             _ => false,
         };
-        let leaving = cfg!(target_os = "android")
-            && matches!(event, Event::AppLostFocus | Event::Pause | Event::Background | Event::Shutdown);
-        if outside || leaving {
+        if outside || (leaving && cfg!(target_os = "android")) {
             self.clear_text_selection(owner);
             self.clear_key_focus_if(owner);
-            // Deliver loss before the pointer so the old owner cannot erase a
-            // new selection or swallow the outside target's normal action.
+            // Deliver loss before the completed tap/click so the old owner
+            // cannot erase a new selection or swallow the target's action.
             self.inner_key_focus_change();
         }
     }
@@ -550,5 +586,235 @@ mod window_keyboard_tests {
         cx.call_event_handler(&Event::WindowClosed(WindowClosedEvent { window_id: first.window_id() }));
         cx.call_single_window_event_handler(&escape());
         assert_eq!(key_count.get(), 2);
+    }
+}
+
+#[cfg(test)]
+mod outside_text_selection_tests {
+    use super::*;
+    use std::{cell::{Cell, RefCell}, rc::Rc};
+    use crate::{
+        area::RectArea,
+        draw_list::{CxRectArea, DrawList},
+        event::{LongPressEvent, MouseButton, MouseDownEvent, ScrollEvent, TouchPoint, TouchUpdateEvent,
+            TextHandleEndpoint, TextHandleTarget},
+        live_traits::LiveNew,
+        makepad_math::{dvec2, Rect},
+        pass::Pass,
+        window::WindowHandle,
+    };
+
+    fn editor(cx: &mut Cx, window: WindowId, x: f64) -> (Pass, DrawList, Area) {
+        let pass = Pass::new(cx);
+        cx.passes[pass.pass_id()].parent = CxPassParent::Window(window);
+        let list = DrawList::new(cx);
+        cx.draw_lists[list.id()].pass_id = Some(pass.pass_id());
+        cx.draw_lists[list.id()].redraw_id = 1;
+        cx.draw_lists[list.id()].rect_areas.push(CxRectArea {
+            rect: Rect { pos: dvec2(x, 0.0), size: dvec2(100.0, 100.0) },
+            draw_clip: (dvec2(-1000.0, -1000.0), dvec2(1000.0, 1000.0)),
+        });
+        let area = Area::Rect(RectArea { draw_list_id: list.id(), rect_id: 0, redraw_id: 1 });
+        (pass, list, area)
+    }
+
+    fn focus(cx: &mut Cx, area: Area) {
+        cx.set_key_focus(area);
+        cx.inner_key_focus_change();
+        cx.claim_text_selection(area);
+    }
+
+    fn touch(window_id: WindowId, state: TouchState, x: f64, time: f64) -> Event {
+        Event::TouchUpdate(TouchUpdateEvent {
+            window_id, time, cancelled: false, modifiers: Default::default(),
+            touches: vec![TouchPoint {
+                state, abs: dvec2(x, 50.0), time, uid: 1, rotation_angle: 0.0,
+                force: 0.0, radius: Default::default(),
+                handled: Cell::new(Area::Empty), sweep_lock: Cell::new(Area::Empty),
+            }],
+        })
+    }
+
+    #[test]
+    fn outside_pan_preserves_editor_even_after_returning_to_origin() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let window = WindowHandle::new(&mut cx);
+        let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+        focus(&mut cx, owner);
+        for (state, x, time) in [
+            (TouchState::Start, 150.0, 0.0),
+            (TouchState::Move, 150.0 + TAP_COUNT_DISTANCE, 0.1),
+            (TouchState::Move, 150.0, 0.2),
+            (TouchState::Stop, 150.0, 0.3),
+        ] {
+            cx.call_event_handler(&touch(window.window_id(), state, x, time));
+            assert!(cx.has_key_focus(owner));
+            assert_eq!(cx.keyboard.text_selection, owner);
+        }
+    }
+
+    #[test]
+    fn outside_tap_blurs_once_before_dispatching_release_once() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let observed = events.clone();
+        let mut cx = Cx::new(Box::new(move |cx, event| {
+            match event {
+                Event::KeyFocus(change) if change.focus == Area::Empty => observed.borrow_mut().push("blur"),
+                Event::TouchUpdate(update) if matches!(update.touches[0].state, TouchState::Stop) => {
+                    assert_eq!(cx.keyboard.key_focus, Area::Empty);
+                    observed.borrow_mut().push("release");
+                }
+                _ => {}
+            }
+        }));
+        let window = WindowHandle::new(&mut cx);
+        let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+        focus(&mut cx, owner);
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Start, 150.0, 0.0));
+        assert!(cx.has_key_focus(owner));
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Move, 151.0, 0.1));
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Stop, 151.0, 0.2));
+        assert_eq!(cx.keyboard.text_selection, Area::Empty);
+        assert_eq!(&*events.borrow(), &["blur", "release"]);
+    }
+
+    #[test]
+    fn outside_tap_cannot_clear_new_or_pending_editor_focus() {
+        for cycle_before_release in [false, true] {
+            let mut cx = Cx::new(Box::new(|_, _| {}));
+            let window = WindowHandle::new(&mut cx);
+            let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+            let (_other_pass, _other_list, other) = editor(&mut cx, window.window_id(), 120.0);
+            focus(&mut cx, owner);
+            cx.call_event_handler(&touch(window.window_id(), TouchState::Start, 150.0, 0.0));
+            cx.set_key_focus(other);
+            if cycle_before_release { cx.inner_key_focus_change(); }
+            cx.claim_text_selection(other);
+            cx.call_event_handler(&touch(window.window_id(), TouchState::Stop, 150.0, 0.1));
+            assert!(cx.has_key_focus(other));
+            assert_eq!(cx.keyboard.text_selection, other);
+        }
+    }
+
+    #[test]
+    fn cancelled_long_press_scroll_and_multitouch_do_not_blur() {
+        for cancellation in 0..6 {
+            let mut cx = Cx::new(Box::new(|_, _| {}));
+            let window = WindowHandle::new(&mut cx);
+            let id = window.window_id();
+            let (_pass, _list, owner) = editor(&mut cx, id, 0.0);
+            focus(&mut cx, owner);
+            cx.call_event_handler(&touch(id, TouchState::Start, 150.0, 0.0));
+            let mut cancelled = touch(id, TouchState::Move, 150.0, 0.1);
+            if let Event::TouchUpdate(update) = &mut cancelled {
+                match cancellation {
+                    0 => update.cancelled = true,
+                    1 => {
+                        let mut second = update.touches[0].clone();
+                        second.uid = 2;
+                        second.state = TouchState::Start;
+                        update.touches.push(second);
+                    }
+                    2 => update.time = TAP_COUNT_TIME,
+                    3 => update.touches.clear(),
+                    _ => {}
+                }
+            }
+            if cancellation == 4 {
+                cancelled = Event::LongPress(LongPressEvent { window_id: id, uid: 1, abs: dvec2(150.0, 50.0), time: 0.1 });
+            } else if cancellation == 5 {
+                cancelled = Event::Scroll(ScrollEvent {
+                    window_id: id, abs: dvec2(150.0, 50.0), scroll: dvec2(0.0, 10.0),
+                    modifiers: Default::default(), handled_x: Cell::new(false), handled_y: Cell::new(false),
+                    is_mouse: false, time: 0.1,
+                });
+            }
+            cx.call_event_handler(&cancelled);
+            cx.call_event_handler(&touch(id, TouchState::Stop, 150.0,
+                if cancellation == 2 { TAP_COUNT_TIME + 0.1 } else { 0.2 }));
+            assert!(cx.has_key_focus(owner), "cancellation {cancellation}");
+            assert_eq!(cx.keyboard.text_selection, owner);
+            assert!(cx.keyboard.text_selection_outside_tap.is_none());
+        }
+    }
+
+    #[test]
+    fn inside_tap_and_outside_release_inside_editor_do_not_blur() {
+        for (start, stop) in [(50.0, 50.0), (101.0, 99.0)] {
+            let mut cx = Cx::new(Box::new(|_, _| {}));
+            let window = WindowHandle::new(&mut cx);
+            let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+            focus(&mut cx, owner);
+            cx.call_event_handler(&touch(window.window_id(), TouchState::Start, start, 0.0));
+            cx.call_event_handler(&touch(window.window_id(), TouchState::Stop, stop, 0.1));
+            assert!(cx.has_key_focus(owner));
+            assert_eq!(cx.keyboard.text_selection, owner);
+        }
+    }
+
+    #[test]
+    fn pending_outside_tap_follows_redrawn_owner() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let window = WindowHandle::new(&mut cx);
+        let (_pass, list, owner) = editor(&mut cx, window.window_id(), 0.0);
+        focus(&mut cx, owner);
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Start, 150.0, 0.0));
+        let remapped = Area::Rect(RectArea { draw_list_id: list.id(), rect_id: 0, redraw_id: 2 });
+        cx.draw_lists[list.id()].redraw_id = 2;
+        cx.update_area_refs(owner, remapped);
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Stop, 150.0, 0.1));
+        assert_eq!(cx.keyboard.key_focus, Area::Empty);
+        assert_eq!(cx.keyboard.text_selection, Area::Empty);
+    }
+
+    #[test]
+    fn outside_mouse_down_still_blurs_immediately() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let window = WindowHandle::new(&mut cx);
+        let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+        focus(&mut cx, owner);
+        cx.call_event_handler(&Event::MouseDown(MouseDownEvent {
+            window_id: window.window_id(), abs: dvec2(150.0, 50.0), button: MouseButton::PRIMARY,
+            modifiers: Default::default(), handled: Cell::new(Area::Empty), time: 0.0,
+        }));
+        assert_eq!(cx.keyboard.key_focus, Area::Empty);
+        assert_eq!(cx.keyboard.text_selection, Area::Empty);
+    }
+
+    #[test]
+    fn selection_handle_outside_editor_keeps_its_route_and_focus() {
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let observed = phases.clone();
+        let mut cx = Cx::new(Box::new(move |_, event| {
+            if let Event::TextHandle(handle) = event { observed.borrow_mut().push(handle.action.phase); }
+        }));
+        let window = WindowHandle::new(&mut cx);
+        let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+        let (_handle_pass, _handle_list, handle) = editor(&mut cx, window.window_id(), 120.0);
+        focus(&mut cx, owner);
+        cx.register_text_handles(1, owner, Rect { pos: dvec2(0.0, 0.0), size: dvec2(100.0, 100.0) },
+            [Some(TextHandleTarget { area: handle, endpoint: TextHandleEndpoint::Cursor, caret_offset: Default::default() }), None]);
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Start, 150.0, 0.0));
+        assert!(cx.keyboard.text_selection_outside_tap.is_none());
+        cx.call_event_handler(&touch(window.window_id(), TouchState::Stop, 150.0, 0.1));
+        assert!(cx.has_key_focus(owner));
+        assert_eq!(cx.keyboard.text_selection, owner);
+        assert_eq!(&*phases.borrow(), &[crate::event::TextHandlePhase::Start, crate::event::TextHandlePhase::End]);
+    }
+
+    #[cfg(target_os = "android")]
+    #[test]
+    fn lifecycle_blur_is_not_deferred_with_the_outside_tap() {
+        for event in [Event::AppLostFocus, Event::Pause, Event::Background, Event::Shutdown] {
+            let mut cx = Cx::new(Box::new(|_, _| {}));
+            let window = WindowHandle::new(&mut cx);
+            let (_pass, _list, owner) = editor(&mut cx, window.window_id(), 0.0);
+            focus(&mut cx, owner);
+            cx.call_event_handler(&touch(window.window_id(), TouchState::Start, 150.0, 0.0));
+            cx.call_event_handler(&event);
+            assert_eq!(cx.keyboard.key_focus, Area::Empty);
+            assert_eq!(cx.keyboard.text_selection, Area::Empty);
+            assert!(cx.keyboard.text_selection_outside_tap.is_none());
+        }
     }
 }

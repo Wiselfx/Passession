@@ -98,7 +98,7 @@ live_design! {
         input = { draw_text: { text_style: <PASEO_FONT_MONO> { line_spacing: 1.43 } } }
     }
     // `SettingsTextAreaCard`: multi-line input on a bordered settings card.
-    pub WaTextArea = <WaInput> { look: Area }
+    pub WaTextArea = <WaInput> { look: Area, multiline: true }
     // Transparent inline field (search rows, composer prompt); padding from the instance.
     pub WaBareInput = <WaInput> { look: Bare }
 
@@ -1001,7 +1001,7 @@ pub struct WaInput {
     /// Typed content (the composer prompt) uses the content font size, not the 14px UI size.
     #[live(false)]
     content: bool,
-    /// Multi-line fields keep 12px vertical padding (`paseoInputDecoration(multiline)`).
+    /// Enter inserts a newline and retains the mobile keyboard; fields keep 12px padding.
     #[live(false)]
     multiline: bool,
     /// The (theme epoch, md) the styling was applied for.
@@ -1017,6 +1017,7 @@ pub struct WaInput {
 
 impl Widget for WaInput {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
         self.view.handle_event(cx, event, scope);
         if let Event::Actions(actions) = event {
             let input = self.view.text_input(id!(input));
@@ -1039,6 +1040,7 @@ impl Widget for WaInput {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
         self.apply_theme(cx);
         self.apply_empty(cx);
         let step = self.view.draw_walk(cx, scope, walk);
@@ -1171,6 +1173,18 @@ impl WaInputRef {
     /// The wrapped Makepad input.
     pub fn input(&self) -> TextInputRef {
         self.borrow().map(|f| f.view.text_input(id!(input))).unwrap_or_else(|| WidgetRef::empty().as_text_input())
+    }
+
+    pub fn set_multiline(&self, cx: &mut Cx, multiline: bool) {
+        if let Some(mut inner) = self.borrow_mut()
+            && inner.multiline != multiline
+        {
+            inner.multiline = multiline;
+            inner.view.text_input(id!(input)).set_is_multiline(cx, multiline);
+            inner.applied = None;
+            inner.line_height = None;
+            inner.redraw(cx);
+        }
     }
 
     pub fn changed(&self, actions: &Actions) -> Option<String> {
@@ -1578,24 +1592,6 @@ pub fn sync_input(cx: &mut Cx, input: &WaInputRef, text: &str) {
     if input.text() != text {
         input.set_text(cx, text);
     }
-}
-
-/// Multi-line inputs: Makepad's TextInput returns on Enter; a text area inserts the newline
-/// (Flutter `TextInputType.multiline`) and reports the new text.
-pub fn insert_newline(cx: &mut Cx, input: &WaInputRef) -> String {
-    let input = input.input();
-    let mut text = input.text();
-    let selection = input.selection();
-    let start = selection.start().index.min(text.len());
-    let end = selection.end().index.min(text.len()).max(start);
-    text.replace_range(start..end, "\n");
-    input.set_text(cx, &text);
-    input.set_cursor(
-        cx,
-        makepad_widgets::makepad_draw::text::selection::Cursor { index: start + 1, prefer_next_row: false },
-        false,
-    );
-    text
 }
 
 /// Trims `text` to at most `max` characters with an ellipsis.

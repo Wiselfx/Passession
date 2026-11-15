@@ -63,7 +63,7 @@ live_design! {
             fn get_color(self) -> vec4 { return self.color; }
         }
         draw_image: <DrawComposerImage> {}
-        input: <ComposerInput> {}
+        input: <ComposerInput> { is_multiline: true }
         profile_editor: <SettingsSheetHost> {}
         search: <ComposerInput> { draw_text: { text_style: { line_spacing: 1.2 } } }
     }
@@ -740,12 +740,10 @@ impl ComposerPanel {
             return false;
         }
         let look_native = matches!(cx.os_type(), OsType::Ios | OsType::Android(_));
-        let ios = matches!(cx.os_type(), OsType::Ios);
-        let submit_on_enter = (!look_native && !ui.compact) || ios;
+        let submit_on_enter = !look_native && !ui.compact;
         let busy = self.ctl().sending() || self.ctl().uploading() || !self.ctl().initialized;
         if !submit_on_enter || busy {
-            self.newline(cx, ke);
-            return true;
+            return false;
         }
         if fullscreen {
             // Send exits the fullscreen editor, then sends.
@@ -755,22 +753,13 @@ impl ComposerPanel {
             self.close_overlay(cx, ui);
         }
         let running = self.ctl().running();
-        let out = if ctrl_key(ke) && running && !ios {
+        let out = if ctrl_key(ke) && running {
             self.ctl().alternate_send(ui)
         } else {
             self.ctl().submit(ui, None, None)
         };
         self.apply(cx, ui, path, uid, out);
         true
-    }
-
-    /// A plain newline through the editor's own edit history (Shift+Enter semantics).
-    fn newline(&mut self, cx: &mut Cx, ke: &KeyEvent) {
-        let mut modifiers = ke.modifiers;
-        modifiers.shift = true;
-        let synthetic = Event::KeyDown(KeyEvent { key_code: KeyCode::ReturnKey, is_repeat: false, modifiers, time: ke.time });
-        let actions = cx.capture_actions(|cx| self.input.handle_event(cx, &synthetic, &mut Scope::empty()));
-        cx.extend_actions(actions);
     }
 
     /// Shell commands and overlay answers addressed to this tab.

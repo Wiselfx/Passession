@@ -183,9 +183,16 @@ The focus regression covers initial state, pending ownership, activation and blu
 `event/keyboard.rs`, `event/event.rs`, `event/finger.rs`, `cx_api.rs` and
 `os/cx_shared.rs` share selection ownership, action capabilities and request
 tokens. Copy/Cut/Paste/Select All are delivered only to the current owner.
-Outside pointer-down clears the previous selection before normal dispatch,
-without consuming the new target's click. Focus loss reaches retained editors
-even when their old area is no longer drawable.
+Outside mouse-down clears the previous selection before normal dispatch, without
+consuming the new target's click. Outside touch defers that dismissal until a
+completed single-finger tap, using the shared tap slop and timeout. Pans (even
+returning to their origin), scroll events, cancellation, long press and multi-touch
+retain the editor and IME. The pending tap follows redraw remapping but is retired
+on focus/selection transfer or selection-handle capture, so it cannot blur a newer
+editor. Android lifecycle blur remains immediate. Focus loss reaches retained
+editors even when their old area is no longer drawable. The
+`outside_text_selection_tests` regression filter covers these dispatch/ownership
+rules; the Android lifecycle case is Android-only.
 
 The Android JNI bridge presents the packaged Java floating ActionMode and
 uses UTF-16 for clipboard strings. Anchor areas follow redraw remapping and

@@ -140,9 +140,10 @@ live_design! {
                             prompt_box = <View> {
                                 width: Fill, height: Fit, flow: Down, padding: { left: 16., right: 16., top: 16. }
                                 prompt = <WaBareInput> {
-                                    faint_hint: true, content: true
+                                    faint_hint: true, content: true, multiline: true
                                     input = {
                                         padding: 0.
+                                        return_key_submits: true
                                         draw_text: { text_style: { line_spacing: 1.4 } }
                                     }
                                 }
@@ -623,6 +624,13 @@ pub struct WaNewTabView {
     /// The vertical alignment last applied to the form's scroll view.
     #[rust]
     scroll_align: Option<f64>,
+    /// Only geometry changes; the native editor keeps its text, selection and IME state.
+    #[rust]
+    prompt_height: Option<f64>,
+    #[rust]
+    prompt_reveal: bool,
+    #[rust]
+    prompt_layout: Option<(DVec2, f64, f64, usize, bool)>,
     #[rust]
     focus_prompt: bool,
     #[rust]
@@ -1864,15 +1872,12 @@ impl WaNewTabView {
         let prompt = view.wa_input(id!(prompt));
         if let Some(text) = prompt.changed(actions) {
             self.prompt = text;
+            self.prompt_reveal = true;
             self.sync_forge(cx, ctx);
             self.view.redraw(cx);
         }
-        if let Some((_, modifiers)) = prompt.returned(actions) {
-            // Desktop: Enter submits, Shift+Enter inserts (handled by TextInput); phones only
-            // use the send button, so Enter inserts a newline there.
-            if self.compact || host::is_mobile() || modifiers.shift {
-                self.prompt = super::kit::insert_newline(cx, &prompt);
-            } else if self.can_create() {
+        if prompt.returned(actions).is_some() {
+            if self.can_create() {
                 self.start_create(ctx);
             }
             self.view.redraw(cx);
@@ -2361,6 +2366,7 @@ impl WaNewTabView {
                 view.widget(id!(toolbar)).apply_over(cx, live! { padding: { left: (bar_side), right: (bar_side) } });
                 view.widget(id!(agent_controls)).apply_over(cx, live! { spacing: (gap) });
                 view.widget(id!(scroll)).apply_over(cx, live! { padding: { bottom: (scroll_bottom) } });
+                view.widget(id!(prompt.input)).apply_over(cx, live! { return_key_submits: (!self.compact) });
             }
         }
         if !self.synced {
@@ -2646,6 +2652,93 @@ impl WaNewTabView {
         }
     }
 
+    /// Bound the compact editor, not the entire form: setup and optional fields remain
+    /// scrollable, while the current line and the send/configuration row fit together.
+    fn layout_prompt(&mut self, cx: &mut Cx2d, alignment_changed: bool) {
+        let view = self.root();
+        let prompt = view.wa_input(id!(prompt));
+        if !self.with_agent || self.terminal() || !prompt.visible() {
+            self.prompt_layout = None;
+            return;
+        }
+        let input = prompt.input();
+        if !self.compact {
+            if self.prompt_height.take().is_some() {
+                input.apply_over(cx, live! { height: Fit });
+                cx.redraw_area_in_draw(self.view.area());
+            }
+            self.prompt_layout = None;
+            return;
+        }
+        let viewport = view.widget(id!(scroll)).area().rect(cx);
+        let editor = input.area().rect(cx);
+        let composer = view.widget(id!(composer)).area().rect(cx);
+        let mut bottom = composer.pos.y + composer.size.y;
+        for path in [id!(error), id!(bottom)] {
+            let row = view.widget(path);
+            if row.visible() {
+                let r = row.area().rect(cx);
+                bottom = bottom.max(r.pos.y + r.size.y);
+            }
+        }
+        if viewport.size.y <= 0.0 || editor.size.x <= 0.0 {
+            return;
+        }
+        let Some(inner) = input.borrow() else { return };
+        let vertical = if host::is_mobile() { 12.0 } else { 0.0 };
+        let text = if self.prompt.is_empty() { inner.empty_text() } else { &self.prompt };
+        let laid = inner.text_layout(cx, text, Some(editor.size.x as f32));
+        let scale = inner.text_scale() as f64;
+        let natural = laid.size_in_lpxs.height as f64 * scale + vertical;
+        let line = inner.text_layout(cx, "한Ag", None).size_in_lpxs.height as f64 * scale + vertical;
+        let cursor = inner.cursor();
+        drop(inner);
+        // Include the measured toolbar (which can wrap), card spacing, and any
+        // visible error/options row. Attachments above stay in the outer scroll.
+        let controls = (bottom - editor.pos.y - editor.size.y).max(0.0);
+        let height = compact_prompt_height(self.compact, viewport.size.y, natural, line, controls);
+        let height_changed = prompt_height_changed(self.prompt_height, height);
+        if height_changed {
+            self.prompt_height = height;
+            if let Some(height) = height {
+                input.apply_over(cx, live! { height: (height) });
+            } else {
+                input.apply_over(cx, live! { height: Fit });
+            }
+            cx.redraw_area_in_draw(self.view.area());
+        }
+        if !prompt.key_focus(cx) {
+            self.prompt_layout = None;
+            return;
+        }
+        let key = (viewport.size, natural, controls, cursor.index, cursor.prefer_next_row);
+        if self.prompt_layout.is_none_or(|previous| {
+            previous.0 != key.0 || (previous.1 - natural).abs() > 0.5
+                || (previous.2 - controls).abs() > 0.5
+                || previous.3 != cursor.index || previous.4 != cursor.prefer_next_row
+        }) {
+            self.prompt_layout = Some(key);
+            self.prompt_reveal = true;
+        }
+        // Wait for current-frame measurements after resizing/re-aligning. Never
+        // force the form back on ordinary redraws: users can scroll to setup fields.
+        if height_changed || alignment_changed || !self.prompt_reveal {
+            return;
+        }
+        self.prompt_reveal = false;
+        let column = view.widget(id!(column)).area().rect(cx);
+        let scroll = (viewport.pos.y - column.pos.y).max(0.0);
+        let next = reveal_prompt_scroll(
+            scroll, viewport.size.y, column.size.y,
+            editor.pos.y - viewport.pos.y + scroll,
+            bottom - viewport.pos.y + scroll,
+        );
+        if (next - scroll).abs() > 0.5 {
+            view.view(id!(scroll)).set_scroll_pos(cx, dvec2(0.0, next));
+            cx.redraw_area_in_draw(self.view.area());
+        }
+    }
+
     fn present_options(&mut self, cx: &mut Cx) {
         let view = self.root();
         let existing_row = view.widget(id!(existing_row));
@@ -2830,6 +2923,92 @@ mod shared_cap_tests {
     }
 }
 
+/// A short viewport yields down to one measured line, never an arbitrary desktop cap.
+fn compact_prompt_height(compact: bool, viewport: f64, natural: f64, line: f64, controls: f64) -> Option<f64> {
+    compact.then(|| natural.max(line).min((viewport - controls).max(line)))
+}
+
+fn prompt_height_changed(previous: Option<f64>, next: Option<f64>) -> bool {
+    match (previous, next) {
+        // Draw geometry mixes f32 rectangles with f64 layout. Subpixel noise
+        // must not postpone reveal forever or keep scheduling redraws.
+        (Some(previous), Some(next)) => (previous - next).abs() > 0.5,
+        _ => previous != next,
+    }
+}
+
+fn reveal_prompt_scroll(scroll: f64, viewport: f64, content: f64, top: f64, bottom: f64) -> f64 {
+    let next = if top < scroll {
+        top
+    } else if bottom > scroll + viewport {
+        // In an exceptionally short viewport the current line wins; controls
+        // remain reachable by scrolling rather than placing the editor above it.
+        (bottom - viewport).min(top)
+    } else {
+        scroll
+    };
+    next.clamp(0.0, (content - viewport).max(0.0))
+}
+
+#[cfg(test)]
+mod prompt_viewport_tests {
+    use super::*;
+
+    #[test]
+    fn fractional_geometry_settles_before_revealing_the_prompt() {
+        let mut height = None;
+        for viewport in [645.2380952380952, 382.23809523809524, 645.2380952380952] {
+            let next = compact_prompt_height(true, viewport, 1035.3469848632813, 35.168, 64.0);
+            assert!(prompt_height_changed(height, next));
+            height = next;
+            for controls in [64.00000672657188, 63.99998230165761] {
+                let measured = compact_prompt_height(true, viewport, 1035.3469848632813, 35.168, controls);
+                assert!(!prompt_height_changed(height, measured));
+                let top = 256.0;
+                let bottom = top + height.unwrap() + controls;
+                let scroll = reveal_prompt_scroll(0.0, viewport, bottom, top, bottom);
+                assert!(top >= scroll);
+                assert!(bottom <= scroll + viewport + 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn compact_prompt_keeps_a_line_and_controls_in_keyboard_viewport() {
+        for viewport in [240.0, 320.0, 640.0] {
+            for line in [30.0, 48.0] {
+                let controls = 112.0;
+                let height = compact_prompt_height(true, viewport, 1200.0, line, controls).unwrap();
+                assert!(height >= line);
+                assert!(height + controls <= viewport);
+                let top = 256.0;
+                let bottom = top + height + controls;
+                let scroll = reveal_prompt_scroll(0.0, viewport, bottom, top, bottom);
+                assert!(top >= scroll);
+                assert!(bottom <= scroll + viewport);
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_resize_and_close_reveal_without_changing_desktop_height() {
+        let top = 256.0;
+        let controls = 112.0;
+        let mut scroll = 0.0;
+        for viewport in [720.0, 280.0, 360.0, 720.0] {
+            let height = compact_prompt_height(true, viewport, 420.0, 30.0, controls).unwrap();
+            let bottom = top + height + controls;
+            scroll = reveal_prompt_scroll(scroll, viewport, bottom, top, bottom);
+            assert!(top >= scroll);
+            assert!(bottom <= scroll + viewport);
+        }
+        assert_eq!(compact_prompt_height(false, 280.0, 1200.0, 30.0, controls), None);
+        assert_eq!(compact_prompt_height(true, 720.0, 30.0, 30.0, controls), Some(30.0));
+        // Nothing moves when the input and actions are already visible.
+        assert_eq!(reveal_prompt_scroll(100.0, 320.0, 800.0, 120.0, 300.0), 100.0);
+    }
+}
+
 impl Widget for WaNewTabView {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if let Some(ctx) = scope.data.get_mut::<UiContext>() {
@@ -2881,9 +3060,10 @@ impl Widget for WaNewTabView {
         // top, while a fitting compact form is bottom-docked.
         let view = self.root();
         let viewport = view.widget(id!(scroll)).area().rect(cx).size.y;
-        let content = view.widget(id!(column)).area().rect(cx).size.y + 60.0;
+        let content = view.widget(id!(column)).area().rect(cx).size.y + if self.compact { 0.0 } else { 60.0 };
         let align_y = if viewport > 0.0 && content > viewport { 0.0 } else if self.compact { 1.0 } else { 0.5 };
-        if self.scroll_align != Some(align_y) {
+        let alignment_changed = self.scroll_align != Some(align_y);
+        if alignment_changed {
             self.scroll_align = Some(align_y);
             view.widget(id!(scroll)).apply_over(cx, live! { align: { y: (align_y) } });
             cx.redraw_area_in_draw(self.view.area());
@@ -2894,6 +3074,7 @@ impl Widget for WaNewTabView {
                 self.view.wa_input(id!(prompt)).set_key_focus(cx);
             }
         }
+        self.layout_prompt(cx, alignment_changed);
         // The drop backdrop covers the whole screen.
         let zone = self.view.area().rect(cx);
         self.file_drop.draw(cx, zone);

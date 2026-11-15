@@ -114,8 +114,36 @@ impl Builder {
 
     pub fn finish(mut self, bounds: Rect<f32>, units_per_em: f32) -> GlyphOutline {
         self.close_contour();
+        // ttf-parser returns an i16 box, truncating variable-font coordinates
+        // toward zero. Negative fractional extrema can therefore lie outside
+        // it. A clipped edge leaves the coverage rasterizer's winding nonzero
+        // and fills the rest of the glyph with a rectangle. Include the emitted
+        // points (and curve control hulls) before choosing the raster origin.
+        let mut min = bounds.origin;
+        let mut max = bounds.origin + bounds.size;
+        let mut include = |p: Point<f32>| {
+            min.x = min.x.min(p.x);
+            min.y = min.y.min(p.y);
+            max.x = max.x.max(p.x);
+            max.y = max.y.max(p.y);
+        };
+        for command in &self.commands {
+            match *command {
+                Command::MoveTo(p) | Command::LineTo(p) => include(p),
+                Command::QuadTo(p1, p) => {
+                    include(p1);
+                    include(p);
+                }
+                Command::CurveTo(p1, p2, p) => {
+                    include(p1);
+                    include(p2);
+                    include(p);
+                }
+                Command::Close => {}
+            }
+        }
         GlyphOutline {
-            bounds,
+            bounds: Rect::new(min, max - min),
             units_per_em,
             commands: self.commands,
         }
@@ -209,6 +237,76 @@ mod tests {
             assert_eq!(actual[Point::new(95, 50)].r(), 0, "right exterior");
             assert_eq!(actual[Point::new(50, 5)].r(), 0, "top exterior");
             assert_eq!(actual[Point::new(50, 95)].r(), 0, "bottom exterior");
+        }
+    }
+
+    #[test]
+    fn fractional_slash_keeps_coverage_outside_the_stroke_clear() {
+        fn slash(offset: f32, reverse: bool) -> GlyphOutline {
+            let mut builder = Builder::new();
+            let mut points = [(0.0, 0.0), (10.0, 0.0), (40.0, 100.0), (30.0, 100.0)];
+            if reverse {
+                points.reverse();
+            }
+            builder.move_to(points[0].0 + offset, points[0].1 + offset);
+            for &(x, y) in &points[1..] {
+                builder.line_to(x + offset, y + offset);
+            }
+            builder.close();
+            // Match ttf-parser's truncation of the varied outline to i16.
+            let min = Point::new(offset as i16 as f32, offset as i16 as f32);
+            let max = Point::new((40.0 + offset) as i16 as f32, (100.0 + offset) as i16 as f32);
+            builder.finish(Rect::new(min, max - min), 100.0)
+        }
+
+        for dpxs_per_em in [64.0, 128.0] {
+            let size = Size::new((40.0_f32 * dpxs_per_em / 100.0).ceil() as usize, dpxs_per_em as usize);
+            let mut expected = Image::new(size);
+            slash(0.0, false).rasterize(dpxs_per_em, &mut expected.subimage_mut(size.into()));
+            for reverse in [false, true] {
+                let outline = slash(-0.5, reverse);
+                let mut actual = Image::new(size);
+                outline.rasterize(dpxs_per_em, &mut actual.subimage_mut(size.into()));
+                for (actual, expected) in actual.as_pixels().iter().zip(expected.as_pixels()) {
+                    assert!(actual.r().abs_diff(expected.r()) <= 1, "fractional slash at {dpxs_per_em} dpx/em");
+                }
+                assert_eq!(actual[Point::new(1, size.height / 2)].r(), 0, "left exterior");
+                assert_eq!(actual[Point::new(size.width - 2, size.height / 2)].r(), 0, "right exterior");
+                assert_eq!(actual[Point::new(size.width / 2, size.height / 2)].r(), 255, "diagonal stroke");
+            }
+        }
+    }
+
+    #[test]
+    fn url_slash_raster_preserves_exterior_in_regular_and_semibold_faces() {
+        let regular = include_bytes!("../../../makepad-widgets/resources/IBMPlexSans-Text.ttf");
+        let semibold = include_bytes!("../../../makepad-widgets/resources/IBMPlexSans-SemiBold.ttf");
+        let system = std::env::var_os("MAKEPAD_TEST_VARIABLE_FONT")
+            .map(|path| std::fs::read(path).expect("explicit variable font fixture is readable"));
+        let mut faces: Vec<(&[u8], f32)> = vec![(regular, 400.0), (semibold, 600.0)];
+        if let Some(data) = &system {
+            faces.extend([(data.as_slice(), 400.0), (data.as_slice(), 600.0)]);
+        }
+        for (data, weight) in faces {
+            let mut face = ttf_parser::Face::parse(data, 0).expect("font fixture parses");
+            if face.is_variable() {
+                face.set_variation(ttf_parser::Tag::from_bytes(b"wght"), weight).expect("wght axis");
+            }
+            let glyph = face.glyph_index('/').expect("URL slash");
+            let mut builder = Builder::new();
+            let bounds = face.outline_glyph(glyph, &mut builder).expect("slash outline");
+            let min = Point::new(bounds.x_min as f32, bounds.y_min as f32);
+            let max = Point::new(bounds.x_max as f32, bounds.y_max as f32);
+            let outline = builder.finish(Rect::new(min, max - min), face.units_per_em() as f32);
+            for dpxs_per_em in [64.0, 128.0] {
+                let extent = outline.size_in_ems() * dpxs_per_em;
+                let size = Size::new(extent.width.ceil() as usize, extent.height.ceil() as usize);
+                let mut image = Image::new(size);
+                outline.rasterize(dpxs_per_em, &mut image.subimage_mut(size.into()));
+                assert_eq!(image[Point::new(size.width / 8, size.height / 8)].r(), 0, "slash top-left exterior, weight {weight}");
+                assert_eq!(image[Point::new(size.width * 7 / 8, size.height * 7 / 8)].r(), 0, "slash bottom-right exterior, weight {weight}");
+                assert!(image[Point::new(size.width / 2, size.height / 2)].r() > 240, "slash stroke, weight {weight}");
+            }
         }
     }
 }

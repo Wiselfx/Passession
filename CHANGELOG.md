@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep fractional glyph-outline bounds when rasterizing system fonts, preventing solid slash artifacts in bold session titles and URLs.
+- Bound the compact new-session editor to the available viewport, keeping the current line and composer actions reachable above the keyboard without resetting the draft or IME composition.
+- Distinguish multiline newline entry from single-line completion: mobile multiline Enter retains the keyboard, while single-line Enter completes and dismisses it.
+- Preserve editor focus and the keyboard during touch scrolling; outside-touch dismissal waits for a completed tap, and bounded multiline editors scroll their text without moving the caret or changing composition.
+
 ## 0.13.25 - 2026-11-14
 
 ### Changed

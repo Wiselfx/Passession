@@ -24,6 +24,8 @@ Host, directory and session rows have distinct actions. A directory's create act
 
 Design the compact case explicitly. The sidebar, session and supporting file view must remain reachable with Back and visible controls. Keyboard insets, safe areas, text scaling and rotation must not hide primary actions or change session identity. Wider layouts may show more context without creating a second state model.
 
+Mobile multiline editors insert a newline on Enter and keep the keyboard open; single-line fields complete their action and dismiss it. Touch scrolling preserves the current editor, draft and keyboard. Only a completed outside tap changes focus. Bound long compact composers to their available viewport so the current line and action row remain reachable without forcing ordinary scrolling back to the caret.
+
 Hover is a convenience, never the only access to an action. Provide pointer, keyboard and touch paths with clear focus and semantic labels. Align visible content while keeping sufficiently large hit targets. Long paths and provider/model labels must remain distinguishable without expanding every row uncontrollably.
 
 Hit maps resolve the last registered target first. A row or card registers its own hit before its controls, so it never swallows its switch, menu or remove button, and a nested button never leaves a dead strip beside it. Painting and hits come from one fitted layout: when a width cannot hold a control group, reflow, shrink or move the rest behind an overflow control (the tab strip shows `+N`) rather than dropping controls or letting one overlap its neighbor's hit. Pane focus follows any press inside the pane, including content that captures the press itself; touch focus waits for a tap released in the same pane.

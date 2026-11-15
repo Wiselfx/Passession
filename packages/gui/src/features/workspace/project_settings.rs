@@ -13,7 +13,7 @@ use super::host::{self, Connection};
 use super::i18n::{l, lf, t, ta};
 use super::identity::project_view_key;
 use super::kit::{
-    clicked_in, insert_newline, set_alert, set_optional, set_project_icon, sync_input, WaButtonWidgetRefExt, WaInputWidgetRefExt,
+    clicked_in, set_alert, set_optional, set_project_icon, sync_input, WaButtonWidgetRefExt, WaInputWidgetRefExt,
     WaRepeatWidgetRefExt,
 };
 use crate::common::widgets::PSwitchWidgetRefExt;
@@ -189,7 +189,7 @@ live_design! {
                                 error = <View> { width: Fill, height: Fit, visible: false, text = <WaError> {} }
                             }
                             command_field = <WaField> {
-                                script_command = <WaInput> { field_size: Sm, input = { empty_text: "npm run dev" } }
+                                script_command = <WaInput> { field_size: Sm, multiline: true, input = { empty_text: "npm run dev" } }
                                 error = <View> { width: Fill, height: Fit, visible: false, text = <WaError> {} }
                             }
                             port_field = <WaField> { script_port = <WaInput> { field_size: Sm, input = { empty_text: "3000 or $PORT" } } }
@@ -814,11 +814,7 @@ impl WaProjectSettingsView {
         ];
         for (path, field) in areas {
             let input = view.wa_input(path);
-            let mut text = input.changed(actions);
-            if input.returned(actions).is_some() {
-                text = Some(insert_newline(cx, &input));
-            }
-            let Some(text) = text else { continue };
+            let Some(text) = input.changed(actions) else { continue };
             if let Some(key) = field.strip_prefix("meta:") {
                 self.change(|config, _, _| model::set_metadata_text(config, key, &text));
             } else {
@@ -859,9 +855,6 @@ impl WaProjectSettingsView {
                 self.view.redraw(cx);
             }
             let command = view.wa_input(id!(script_command));
-            if command.returned(actions).is_some() {
-                insert_newline(cx, &command);
-            }
             if view.wa_input(id!(script_name)).changed(actions).is_some() || command.changed(actions).is_some() {
                 self.view.redraw(cx);
             }

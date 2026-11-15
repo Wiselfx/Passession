@@ -87,6 +87,18 @@ editor even when its last draw area is invalid. Retained panels and discarded
 settings fields use this lifecycle instead of waiting for an impossible hit on
 an undrawn area. A newer pending editor keeps its focus and IME.
 
+`TextInput.is_multiline` declares editor semantics independently of layout or
+content and supplies Android's native `single_line` flag at every publication.
+Multiline Enter replaces the selection with one newline through the existing
+undo history and emits `Changed`, without hiding the keyboard. Single-line
+Enter/Done (including Shift+Enter) emits `Returned` with its original modifiers
+and dismisses the IME; it never inserts a newline. Multiline desktop composers
+can opt into `return_key_submits`: plain Enter emits `Returned`, while Shift+Enter
+and mobile Enter still insert a newline. GUI wrappers propagate their multiline
+declarations instead of synthesizing Shift+Enter or replacing drafts on return.
+`keyboard_edit_tests` cover mobile/desktop return actions, selection replacement,
+cursor retention, undo and read-only behavior alongside the viewport regressions.
+
 ## Native text actions and typography
 
 `TextInput` publishes capability-limited native actions for its current
@@ -108,6 +120,17 @@ Cursor navigation and pointer placement rebuild an invalidated layout using the
 last viewport before resolving rows. Input events may arrive between an edit
 (including paste/undo/redo) and its paint; Arrow Down previously unwrapped the
 missing layout, while Arrow Up discarded the movement.
+
+A focused editor also reveals its existing caret when its viewport changes,
+including keyboard-height changes without a width change. This updates scroll
+only, not text, selection, composition or undo groups. An unchanged viewport
+keeps manual scroll until an edit or explicit cursor move requests reveal.
+
+Bounded multiline editors use the shared `TouchScroll` controller and wheel
+events to reach earlier text without moving the caret, selection or composition.
+They claim nested touch moves only after scrolling starts; a gesture starting
+outward at an edge remains available to the surrounding form. Editing and
+selection-handle capture cancel editor inertia.
 
 Touch focus is acquired on a valid release inside the input, not on pointer
 down. Leaving the field, panning, cancellation, focus/model replacement or

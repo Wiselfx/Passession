@@ -1640,8 +1640,7 @@ pub struct PTextField {
     /// The select search row look (`showPaseoSelect`): no fill, no border, 12px vertical padding.
     #[live(false)]
     plain: bool,
-    /// `TextField(minLines/maxLines)` multi-line entry: Enter inserts a newline (Makepad
-    /// inserts one on Shift+Enter, so plain Enter is passed on as Shift+Enter).
+    /// `TextField(minLines/maxLines)` multi-line entry: Enter inserts a newline.
     #[live(false)]
     multiline: bool,
     /// Focus scope reported while focused (`editable`, `message-input`, `terminal`).
@@ -1658,6 +1657,7 @@ pub struct PTextField {
 impl Widget for PTextField {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         let input = self.view.text_input(id!(input));
+        input.set_is_multiline(cx, self.multiline);
         if self.focused && !input.area().is_valid(cx) {
             input.release_focus(cx);
             self.focused = false;
@@ -1665,17 +1665,7 @@ impl Widget for PTextField {
                 ui.push(UiEffect::SetFocusScope { owner: self.widget_uid(), scope: None });
             }
         }
-        if self.multiline
-            && let Event::KeyDown(key) = event
-            && key.key_code == KeyCode::ReturnKey
-            && !key.modifiers.shift
-        {
-            let mut newline = *key;
-            newline.modifiers.shift = true;
-            self.view.handle_event(cx, &Event::KeyDown(newline), scope);
-        } else {
-            self.view.handle_event(cx, event, scope);
-        }
+        self.view.handle_event(cx, event, scope);
         if let Event::Actions(actions) = event {
             let input = self.view.text_input(id!(input));
             let uid = self.widget_uid();
@@ -1708,6 +1698,7 @@ impl Widget for PTextField {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
         self.apply_theme(cx, false);
         self.view.draw_walk(cx, scope, walk)
     }
@@ -1887,6 +1878,7 @@ impl PTextFieldRef {
     pub fn set_multiline(&self, cx: &mut Cx, multiline: bool) {
         if let Some(mut f) = self.borrow_mut() {
             f.multiline = multiline;
+            f.view.text_input(id!(input)).set_is_multiline(cx, multiline);
             if multiline {
                 f.view.apply_over(cx, live! { height: Fill, input = { height: Fill } });
             }
