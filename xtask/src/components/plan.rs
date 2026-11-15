@@ -288,10 +288,13 @@ fn metadata(root: &Path, target: &str) -> Result<Value> {
 }
 /// Cargo metadata is workspace-wide; Cargo tree selects the actual standalone
 /// invocation, so app-only feature unification cannot invalidate the daemon.
+/// The tree spans every platform: with one `--target`, build dependencies follow
+/// the host's cfg (a Windows host adds `winreg` under `embed-resource`), so the
+/// Linux planner and the native builder would disagree. The target-filtered
+/// metadata graph still selects which packages count for this target.
 fn compilation_features(
     root: &Path,
     metadata: &Value,
-    target: &str,
     id: ComponentId,
 ) -> Result<Option<BTreeMap<String, Value>>> {
     let package = match id {
@@ -304,7 +307,7 @@ fn compilation_features(
             "tree",
             "--locked",
             "--target",
-            triple(target)?,
+            "all",
             "-p",
             package,
             "--edges",
@@ -347,11 +350,12 @@ fn compilation_features(
             .iter()
             .filter(|p| p["name"] == name && p["version"] == version)
             .collect();
-        ensure!(
-            matches.len() == 1,
-            "Ambiguous standalone Cargo package {name}@{version}"
-        );
-        let id = matches[0]["id"].as_str().context("Missing package ID")?;
+        // Packages for other targets are absent from the filtered metadata.
+        let id = match matches.as_slice() {
+            [] => continue,
+            [package] => package["id"].as_str().context("Missing package ID")?,
+            _ => bail!("Ambiguous standalone Cargo package {name}@{version}"),
+        };
         resolved.entry(id.into()).or_default().extend(
             features
                 .split(',')
@@ -678,7 +682,7 @@ pub(crate) fn create(
         let graph = metadata(&root, target)?;
         let mut inputs = BTreeMap::new();
         for id in supported(target) {
-            let resolved = compilation_features(&root, &graph, target, id)?;
+            let resolved = compilation_features(&root, &graph, id)?;
             let (paths, context) =
                 component_inputs(&root, &all, &graph, target, id, resolved.as_ref())?;
             inputs.insert(id, fingerprint(&root, &paths, &context)?);
@@ -727,7 +731,7 @@ pub(crate) fn validate_inputs(plan: &Plan, target: &TargetPlan) -> Result<()> {
     let graph = metadata(&root, &target.target)?;
     let all = files(&root)?;
     for id in supported(&target.target) {
-        let resolved = compilation_features(&root, &graph, &target.target, id)?;
+        let resolved = compilation_features(&root, &graph, id)?;
         let (paths, context) =
             component_inputs(&root, &all, &graph, &target.target, id, resolved.as_ref())?;
         ensure!(
