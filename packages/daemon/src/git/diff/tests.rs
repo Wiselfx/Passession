@@ -298,3 +298,220 @@ async fn snapshot_diff_stat_requires_comparison_and_counts_untracked_text() -> R
     assert_eq!(snapshot_diff_stat(&repo).await?, Value::Null);
     Ok(())
 }
+
+#[tokio::test]
+async fn untracked_embedded_repositories_do_not_hide_checkout_files() -> Result<()> {
+    let repo = Repo::new().await?;
+    repo.write("tracked", b"base\n").await?;
+    repo.commit("base").await?;
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"])
+        .await?;
+    repo.write("tracked", b"staged\n").await?;
+    repo.git(&["add", "tracked"]).await?;
+    repo.write("tracked", b"working\n").await?;
+    tokio::fs::create_dir_all(repo.path().join("tmp/ordinary/deep")).await?;
+    repo.write("tmp/ordinary/deep/new.txt", b"new\n").await?;
+    repo.git(&["init", "-b", "main", "tmp/embedded"]).await?;
+    repo.write("tmp/embedded/inner.txt", b"nested\n").await?;
+    repo.git(&["-C", "tmp/embedded", "add", "inner.txt"])
+        .await?;
+    repo.git(&[
+        "-C",
+        "tmp/embedded",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "nested",
+    ])
+    .await?;
+    repo.write("tmp/embedded/inner.txt", b"nested dirty\n")
+        .await?;
+    repo.git(&["init", "-b", "main", "tmp/unborn"]).await?;
+    repo.write("tmp/unborn/private.txt", b"not a parent file\n")
+        .await?;
+    let inventory = repo
+        .git(&["ls-files", "-z", "--others", "--exclude-standard"])
+        .await?;
+    let paths: Vec<_> = inventory.split(|byte| *byte == 0).collect();
+    assert!(paths.contains(&b"tmp/embedded/".as_slice()));
+    assert!(paths.contains(&b"tmp/unborn/".as_slice()));
+    assert!(paths.contains(&b"tmp/ordinary/deep/new.txt".as_slice()));
+    let index = tokio::fs::read(repo.path().join(".git/index")).await?;
+    let nested_index = tokio::fs::read(repo.path().join("tmp/embedded/.git/index")).await?;
+    let nested_head = repo
+        .git(&["-C", "tmp/embedded", "rev-parse", "HEAD"])
+        .await?;
+    for mode in ["uncommitted", "all"] {
+        for detail in ["summary", "full"] {
+            let result = repo
+                .diff(json!({
+                    "mode":mode, "detail":detail, "baseRef":"main",
+                }))
+                .await?;
+            assert_eq!(result["error"], Value::Null, "{result}");
+            let files = result["files"].as_array().unwrap();
+            assert_eq!(files.len(), 2, "{result}");
+            assert_eq!(files[0]["path"], "tmp/ordinary/deep/new.txt");
+            assert_eq!(files[0]["additions"], 1);
+            assert_eq!(files[1]["path"], "tracked");
+            assert_eq!(files[1]["additions"], 1);
+            assert_eq!(files[1]["deletions"], 1);
+            if detail == "full" {
+                assert_eq!(files[0]["hunks"][0]["lines"][1]["content"], "new");
+            } else {
+                assert_eq!(files[0]["hunks"], json!([]));
+            }
+        }
+    }
+    assert_eq!(
+        snapshot_diff_stat(&repo).await?,
+        json!({"additions":2,"deletions":1})
+    );
+    assert_eq!(
+        tokio::fs::read(repo.path().join(".git/index")).await?,
+        index
+    );
+    assert_eq!(
+        tokio::fs::read(repo.path().join("tmp/embedded/.git/index")).await?,
+        nested_index,
+    );
+    assert_eq!(
+        repo.git(&["-C", "tmp/embedded", "rev-parse", "HEAD"])
+            .await?,
+        nested_head
+    );
+    assert_eq!(
+        tokio::fs::read(repo.path().join("tracked")).await?,
+        b"working\n"
+    );
+    assert_eq!(
+        tokio::fs::read(repo.path().join("tmp/embedded/inner.txt")).await?,
+        b"nested dirty\n",
+    );
+    assert_eq!(
+        tokio::fs::read(repo.path().join("tmp/unborn/private.txt")).await?,
+        b"not a parent file\n",
+    );
+    assert!(!repo.path().join("tmp/unborn/.git/index").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn untracked_disappearing_entries_and_non_files_are_not_diff_errors() -> Result<()> {
+    let repo = Repo::new().await?;
+    tokio::fs::create_dir(repo.path().join("directory")).await?;
+    repo.write("vanished", b"removed after inventory\n").await?;
+    tokio::fs::remove_file(repo.path().join("vanished")).await?;
+    for path in ["directory", "directory/", "vanished"] {
+        let change = Change {
+            path: path.into(),
+            old_path: None,
+            status: 'A',
+            untracked: true,
+        };
+        for summary in [true, false] {
+            assert!(
+                untracked_file(
+                    repo.path(),
+                    &change,
+                    summary,
+                    &mut 0,
+                    &parse::PatchFormat::default(),
+                    &CancellationToken::new(),
+                )
+                .await?
+                .is_none()
+            );
+        }
+    }
+    #[cfg(unix)]
+    {
+        // ENOTDIR is not a disappeared leaf. Keep unrelated filesystem errors.
+        repo.write("ordinary", b"file, not directory\n").await?;
+        let change = Change {
+            path: "ordinary/child".into(),
+            old_path: None,
+            status: 'A',
+            untracked: true,
+        };
+        assert!(
+            untracked_file(
+                repo.path(),
+                &change,
+                true,
+                &mut 0,
+                &parse::PatchFormat::default(),
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn untracked_special_files_are_skipped_and_symlinks_are_not_followed() -> Result<()> {
+    use std::os::unix::{ffi::OsStrExt, fs::symlink, net::UnixListener};
+
+    let repo = Repo::new().await?;
+    repo.write("tracked", b"base\n").await?;
+    repo.commit("base").await?;
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"])
+        .await?;
+    let fifo = std::ffi::CString::new(repo.path().join("fifo").as_os_str().as_bytes())?;
+    // A FIFO without any writer would block if opened as a regular file.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let _socket = UnixListener::bind(repo.path().join("socket"))?;
+    let outside = tempfile::NamedTempFile::new()?;
+    tokio::fs::write(outside.path(), b"must not read target contents\n").await?;
+    symlink(outside.path(), repo.path().join("link"))?;
+    symlink("absent", repo.path().join("dangling"))?;
+    symlink("fifo", repo.path().join("fifo-link"))?;
+    for path in ["fifo", "socket"] {
+        let change = Change {
+            path: path.into(),
+            old_path: None,
+            status: 'A',
+            untracked: true,
+        };
+        assert!(
+            untracked_file(
+                repo.path(),
+                &change,
+                false,
+                &mut 0,
+                &parse::PatchFormat::default(),
+                &CancellationToken::new(),
+            )
+            .await?
+            .is_none()
+        );
+    }
+    for detail in ["summary", "full"] {
+        let result = repo
+            .diff(json!({"mode":"uncommitted","detail":detail}))
+            .await?;
+        assert_eq!(result["error"], Value::Null, "{result}");
+        let files = result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 3, "{result}");
+        for (file, (path, target)) in files.iter().zip([
+            ("dangling", "absent"),
+            ("fifo-link", "fifo"),
+            ("link", outside.path().to_str().unwrap()),
+        ]) {
+            assert_eq!(file["path"], path);
+            assert_eq!(file["additions"], 1);
+            if detail == "full" {
+                assert_eq!(file["hunks"][0]["lines"][1]["content"], target);
+            }
+        }
+    }
+    assert_eq!(
+        snapshot_diff_stat(&repo).await?,
+        json!({"additions":3,"deletions":0})
+    );
+    Ok(())
+}

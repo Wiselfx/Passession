@@ -199,15 +199,17 @@ impl GitService {
             }
             let generation = entry.snapshot.generation.load(Ordering::Acquire);
             if let Some((g, value)) = entry.snapshot.value.lock().await.as_ref()
-                && *g == generation {
-                    return Ok(value.clone());
-                }
+                && *g == generation
+            {
+                return Ok(value.clone());
+            }
             let _flight = tokio::select! {_=cancel.cancelled()=>bail!("Git snapshot cancelled"),guard=entry.snapshot.build.lock()=>guard};
             let generation = entry.snapshot.generation.load(Ordering::Acquire);
             if let Some((g, value)) = entry.snapshot.value.lock().await.as_ref()
-                && *g == generation {
-                    return Ok(value.clone());
-                }
+                && *g == generation
+            {
+                return Ok(value.clone());
+            }
             let env = self.environment()?;
             let (home, config) = {
                 let app = self
@@ -276,16 +278,18 @@ impl GitService {
         let generation = entry.generation.load(Ordering::Acquire);
         if entry.fresh()
             && let Some((g, value)) = entry.value.lock().await.as_ref()
-                && *g == generation {
-                    return Ok(value.clone());
-                }
+            && *g == generation
+        {
+            return Ok(value.clone());
+        }
         let _flight = tokio::select! {_=cancel.cancelled()=>bail!("Git diff cancelled"),guard=entry.build.lock()=>guard};
         let generation = entry.generation.load(Ordering::Acquire);
         if entry.fresh()
             && let Some((g, value)) = entry.value.lock().await.as_ref()
-                && *g == generation {
-                    return Ok(value.clone());
-                }
+            && *g == generation
+        {
+            return Ok(value.clone());
+        }
         let env = self.environment()?;
         let value = diff::read(&key, compare, &env, cancel.clone()).await?;
         self.ensure_observation(&key, &env, cancel).await?;
@@ -359,9 +363,10 @@ pub(super) fn status_projection(snapshot: &Value) -> Value {
         fields.remove("worktreeRoot");
     }
     if status["isGit"] != true
-        && let Some(fields) = status.as_object_mut() {
-            fields.remove("mainRepoRoot");
-        }
+        && let Some(fields) = status.as_object_mut()
+    {
+        fields.remove("mainRepoRoot");
+    }
     status
 }
 /// The source's `toCheckoutError`: only typed not-a-repository and merge-conflict

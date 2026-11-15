@@ -1,14 +1,9 @@
-use crate::{
-    cli::{Context, flag, option, output::Output, positional, required, string, switch},
-};
-use paseo_client::{ClientError, DaemonClient, DaemonTarget};
+use crate::cli::{Context, flag, option, output::Output, positional, required, string, switch};
 use anyhow::{Result, anyhow, bail, ensure};
 use clap::{ArgMatches, Command};
+use paseo_client::{ClientError, DaemonClient, DaemonTarget};
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 const RPC: Duration = Duration::from_secs(30);
 const PROJECT: &[(&str, &str)] = &[
     ("PROJECT ID", "projectId"),
@@ -40,10 +35,7 @@ pub async fn execute(
     matches: &ArgMatches,
     context: &Context,
 ) -> Result<Option<Output>> {
-    if !matches!(
-        path.first(),
-        Some(&"project" | &"clone")
-    ) {
+    if !matches!(path.first(), Some(&"project" | &"clone")) {
         return Ok(None);
     }
     if path.len() == 1 && path[0] != "clone" {
@@ -75,13 +67,14 @@ async fn rpc(
         client.request(message, response, RPC).await?
     };
     if let Some(error) = result.get("error").filter(|e| !e.is_null())
-        && let Some(message) = error["message"].as_str() {
-            return Err(ClientError::new(
-                error["code"].as_str().unwrap_or("DAEMON_RPC_ERROR"),
-                message,
-            )
-            .into());
-        }
+        && let Some(message) = error["message"].as_str()
+    {
+        return Err(ClientError::new(
+            error["code"].as_str().unwrap_or("DAEMON_RPC_ERROR"),
+            message,
+        )
+        .into());
+    }
     Ok(result)
 }
 fn project_row(value: &Value) -> Value {
@@ -254,8 +247,16 @@ mod tests {
     #[test]
     fn project_catalog_has_no_workspace_or_worktree_commands() {
         let commands = commands();
-        assert!(!commands.iter().any(|command| matches!(command.get_name(), "workspace" | "worktree")));
-        assert!(commands.iter().any(|command| command.get_name() == "project"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command.get_name(), "workspace" | "worktree"))
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| command.get_name() == "project")
+        );
         assert!(commands.iter().any(|command| command.get_name() == "clone"));
     }
 }

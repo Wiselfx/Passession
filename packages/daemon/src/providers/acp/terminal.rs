@@ -1,6 +1,6 @@
 use super::mapping::{array, text};
-use paseo_client::process::{CommandSpec, ManagedProcess};
 use anyhow::{Result, anyhow, bail};
+use paseo_client::process::{CommandSpec, ManagedProcess};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -177,9 +177,10 @@ impl Terminal {
                     bail!("ACP terminal failed: {error}");
                 }
                 if state.readers == 0
-                    && let Some(exit) = &state.exit {
-                        return Ok(exit.clone());
-                    }
+                    && let Some(exit) = &state.exit
+                {
+                    return Ok(exit.clone());
+                }
             }
             notified.await;
         }

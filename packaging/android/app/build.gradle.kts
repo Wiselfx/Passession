@@ -17,6 +17,18 @@ fun required(name: String): String =
 val platformDir = rootProject.file("../../packages/gui-platform/android")
 apply(from = platformDir.resolve("platform.gradle.kts"))
 
+// Direct Gradle invocations must not silently produce a client without its
+// app-only tailnet. xtask stages both native libraries for every selected ABI.
+val nativeDirectory = file(required("paseoJniLibs"))
+for (abi in required("paseoAbis").split(",")) {
+    for (library in listOf("libmakepad.so", "libpaseo_tailscale.so")) {
+        val artifact = nativeDirectory.resolve("$abi/$library")
+        require(artifact.isFile && artifact.length() > 0) {
+            "Missing required native library $artifact; build with cargo xtask build-gui android"
+        }
+    }
+}
+
 val signingProperties = Properties().apply {
     val propertiesFile = rootProject.file("key.properties")
     if (propertiesFile.isFile) propertiesFile.inputStream().use { load(it) }

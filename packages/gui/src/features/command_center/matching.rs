@@ -20,7 +20,11 @@ pub struct MatchScore {
 
 impl MatchScore {
     const fn new(tier: i64, offset: i64, spread: Option<i64>) -> Self {
-        Self { tier, offset, spread }
+        Self {
+            tier,
+            offset,
+            spread,
+        }
     }
 }
 
@@ -61,7 +65,9 @@ fn substring_match(query: &[char], text: &[char]) -> Option<MatchScore> {
     let mut best: Option<MatchScore> = None;
     let mut position = 0;
     while position + query.len() <= text.len() {
-        let Some(found) = find_from(text, query, position) else { break };
+        let Some(found) = find_from(text, query, position) else {
+            break;
+        };
         let before = (found > 0).then(|| text[found - 1]);
         let end = found + query.len();
         let after = text.get(end).copied();
@@ -109,7 +115,11 @@ fn subsequence_match(query: &[char], text: &[char]) -> Option<MatchScore> {
         qi += 1;
     }
     let first = first.filter(|_| qi == query.len())?;
-    Some(MatchScore::new(TIER_SUBSEQUENCE, first as i64, Some((last - first + 1) as i64)))
+    Some(MatchScore::new(
+        TIER_SUBSEQUENCE,
+        first as i64,
+        Some((last - first + 1) as i64),
+    ))
 }
 
 /// Damerau-Levenshtein distance, abandoned once a whole row is over budget.
@@ -124,7 +134,9 @@ fn edit_distance(query: &[char], word: &[char], budget: usize) -> Option<usize> 
         let mut row_best = q;
         for w in 1..=word.len() {
             let substitution = usize::from(query[q - 1] != word[w - 1]);
-            let mut cost = (current[w - 1] + 1).min(previous[w] + 1).min(previous[w - 1] + substitution);
+            let mut cost = (current[w - 1] + 1)
+                .min(previous[w] + 1)
+                .min(previous[w - 1] + substitution);
             if q > 1 && w > 1 && query[q - 1] == word[w - 2] && query[q - 2] == word[w - 1] {
                 cost = cost.min(two_back[w - 2] + 1);
             }
@@ -152,16 +164,27 @@ fn adjacent_transposition(query: &[char], word: &[char]) -> bool {
     if index + 1 >= query.len() {
         return false;
     }
-    query[index] == word[index + 1] && query[index + 1] == word[index] && query[index + 2..] == word[index + 2..]
+    query[index] == word[index + 1]
+        && query[index + 1] == word[index]
+        && query[index + 2..] == word[index + 2..]
 }
 
 /// Short tokens only forgive a swap; longer ones an edit or two.
 fn fuzzy_policy(token: &[char]) -> Option<FuzzyPolicy> {
     match token.len() {
         0..=3 => None,
-        4 => Some(FuzzyPolicy { max_edits: 1, transpositions_only: true }),
-        5..=7 => Some(FuzzyPolicy { max_edits: 1, transpositions_only: false }),
-        _ => Some(FuzzyPolicy { max_edits: 2, transpositions_only: false }),
+        4 => Some(FuzzyPolicy {
+            max_edits: 1,
+            transpositions_only: true,
+        }),
+        5..=7 => Some(FuzzyPolicy {
+            max_edits: 1,
+            transpositions_only: false,
+        }),
+        _ => Some(FuzzyPolicy {
+            max_edits: 2,
+            transpositions_only: false,
+        }),
     }
 }
 
@@ -220,7 +243,12 @@ fn score_match(query: &str, text: &str, fuzzy: Option<FuzzyPolicy>) -> Option<Ma
 }
 
 fn tokenize(query: &str) -> Vec<String> {
-    query.trim().to_lowercase().split_whitespace().map(str::to_owned).collect()
+    query
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `scoreTextFields`: every token must land in some field; the result sums each token's
@@ -232,10 +260,16 @@ pub fn score_text_fields(query: &str, fields: &[&str], typo_tolerant: bool) -> O
     }
     let (mut tier, mut offset, mut spread) = (0, 0, 0);
     for token in tokens {
-        let fuzzy = if typo_tolerant { fuzzy_policy(&chars(&token)) } else { None };
+        let fuzzy = if typo_tolerant {
+            fuzzy_policy(&chars(&token))
+        } else {
+            None
+        };
         let mut best: Option<MatchScore> = None;
         for field in fields {
-            if let Some(score) = score_match(&token, field, fuzzy) && best.is_none_or(|b| compare_scores(&score, &b).is_lt()) {
+            if let Some(score) = score_match(&token, field, fuzzy)
+                && best.is_none_or(|b| compare_scores(&score, &b).is_lt())
+            {
                 best = Some(score);
             }
         }
@@ -290,7 +324,11 @@ fn match_ranges(query: &str, text: &str, score: &MatchScore) -> Vec<(usize, usiz
 pub fn highlight_ranges(query: &str, text: &str, typo_tolerant: bool) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     for token in tokenize(query) {
-        let fuzzy = if typo_tolerant { fuzzy_policy(&chars(&token)) } else { None };
+        let fuzzy = if typo_tolerant {
+            fuzzy_policy(&chars(&token))
+        } else {
+            None
+        };
         if let Some(score) = score_match(&token, text, fuzzy) {
             ranges.extend(match_ranges(&token, text, &score));
         }
@@ -299,7 +337,9 @@ pub fn highlight_ranges(query: &str, text: &str, typo_tolerant: bool) -> Vec<(us
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for range in ranges {
         match merged.last_mut() {
-            Some(last) if range.0 <= last.0 + last.1 => last.1 = last.1.max(range.0 + range.1 - last.0),
+            Some(last) if range.0 <= last.0 + last.1 => {
+                last.1 = last.1.max(range.0 + range.1 - last.0)
+            }
             _ => merged.push(range),
         }
     }
@@ -313,34 +353,67 @@ mod tests {
     #[test]
     fn tiers_rank_like_the_protocol() {
         assert_eq!(score_match("main", "main", None).unwrap().tier, TIER_EXACT);
-        assert_eq!(score_match("main", "the main branch", None).unwrap().tier, TIER_WHOLE_WORD);
+        assert_eq!(
+            score_match("main", "the main branch", None).unwrap().tier,
+            TIER_WHOLE_WORD
+        );
         assert_eq!(score_match("ma", "main", None).unwrap().tier, TIER_PREFIX);
-        assert_eq!(score_match("br", "main branch", None).unwrap().tier, TIER_WORD_START);
-        assert_eq!(score_match("ai", "main", None).unwrap().tier, TIER_SUBSTRING);
-        assert_eq!(score_match("mn", "main", None).unwrap().tier, TIER_SUBSEQUENCE);
+        assert_eq!(
+            score_match("br", "main branch", None).unwrap().tier,
+            TIER_WORD_START
+        );
+        assert_eq!(
+            score_match("ai", "main", None).unwrap().tier,
+            TIER_SUBSTRING
+        );
+        assert_eq!(
+            score_match("mn", "main", None).unwrap().tier,
+            TIER_SUBSEQUENCE
+        );
         assert!(score_match("mn", "m n", None).is_none());
     }
 
     #[test]
     fn typo_tolerance_policies() {
         assert!(score_text_fields("setings", &["Settings"], true).is_some());
-        assert_eq!(score_text_fields("setings", &["Settings"], false).map(|s| s.tier), Some(TIER_SUBSEQUENCE));
-        assert_eq!(score_text_fields("tset", &["test"], true).map(|s| s.tier), Some(TIER_FUZZY));
+        assert_eq!(
+            score_text_fields("setings", &["Settings"], false).map(|s| s.tier),
+            Some(TIER_SUBSEQUENCE)
+        );
+        assert_eq!(
+            score_text_fields("tset", &["test"], true).map(|s| s.tier),
+            Some(TIER_FUZZY)
+        );
         assert!(score_text_fields("abc def", &["abc"], false).is_none());
     }
 
     #[test]
     fn highlights_merge() {
-        assert_eq!(highlight_ranges("new work", "New workspace", false), vec![(0, 3), (4, 4)]);
+        assert_eq!(
+            highlight_ranges("new work", "New workspace", false),
+            vec![(0, 3), (4, 4)]
+        );
         assert_eq!(highlight_ranges("mn", "main", false), vec![(0, 1), (3, 1)]);
     }
 
     #[test]
     fn hangul_word_boundaries() {
-        assert_eq!(score_match("스페", "워크스페이스", None).unwrap().tier, TIER_SUBSTRING);
-        assert_eq!(score_match("워크", "워크스페이스", None).unwrap().tier, TIER_PREFIX);
-        assert_eq!(score_match("설정", "앱 설정", None).unwrap().tier, TIER_WHOLE_WORD);
-        assert_eq!(score_match("열기", "설정 열기창", None).unwrap().tier, TIER_WORD_START);
+        assert_eq!(
+            score_match("스페", "워크스페이스", None).unwrap().tier,
+            TIER_SUBSTRING
+        );
+        assert_eq!(
+            score_match("워크", "워크스페이스", None).unwrap().tier,
+            TIER_PREFIX
+        );
+        assert_eq!(
+            score_match("설정", "앱 설정", None).unwrap().tier,
+            TIER_WHOLE_WORD
+        );
+        assert_eq!(
+            score_match("열기", "설정 열기창", None).unwrap().tier,
+            TIER_WORD_START
+        );
         let whole = score_text_fields("설정", &["설정 열기"], false).unwrap();
         let inner = score_text_fields("설정", &["환경설정"], false).unwrap();
         assert!(compare_scores(&whole, &inner).is_lt());

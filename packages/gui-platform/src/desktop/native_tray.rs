@@ -3,9 +3,9 @@
 //! double click opens the preferred window. Created on the GUI (main) thread,
 //! whose run loop / message loop services it.
 
-use super::{deliver, NativeSignal};
+use super::{NativeSignal, deliver};
 use crate::platform::Shared;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 
 pub(crate) struct Tray {
     _icon: tray_icon::TrayIcon,
@@ -30,21 +30,24 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
 
 fn build_tray() -> Result<Tray, String> {
     use tray_icon::{
-        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
         MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
+        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     };
     // macOS draws the menu-bar icon as a template (alpha only, recoloured).
     #[cfg(target_os = "macos")]
     let bytes = &include_bytes!("../../assets/trayTemplate.png")[..];
     #[cfg(not(target_os = "macos"))]
     let bytes = &include_bytes!("../../assets/tray.png")[..];
-    let (width, height, rgba) = crate::image::decode_png_rgba(bytes).map_err(|e| format!("Unable to load tray icon: {e}"))?;
-    let icon = tray_icon::Icon::from_rgba(rgba, width, height).map_err(|e| format!("Unable to load tray icon: {e}"))?;
+    let (width, height, rgba) = crate::image::decode_png_rgba(bytes)
+        .map_err(|e| format!("Unable to load tray icon: {e}"))?;
+    let icon = tray_icon::Icon::from_rgba(rgba, width, height)
+        .map_err(|e| format!("Unable to load tray icon: {e}"))?;
     let menu = Menu::new();
     let open = MenuItem::new("Open Passession", true, None);
     let quit = MenuItem::new("Quit Passession", true, None);
     menu.append(&open).map_err(|e| e.to_string())?;
-    menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| e.to_string())?;
     menu.append(&quit).map_err(|e| e.to_string())?;
     let (open_id, quit_id) = (open.id().clone(), quit.id().clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -55,11 +58,17 @@ fn build_tray() -> Result<Tray, String> {
         }
     }));
     TrayIconEvent::set_event_handler(Some(|event: TrayIconEvent| match event {
-        TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
         | TrayIconEvent::DoubleClick { .. } => deliver(NativeSignal::TrayOpen),
         _ => {}
     }));
-    let builder = TrayIconBuilder::new().with_id(crate::paths::DESKTOP_APP_ID).with_tooltip("Passession");
+    let builder = TrayIconBuilder::new()
+        .with_id(crate::paths::DESKTOP_APP_ID)
+        .with_tooltip("Passession");
     #[cfg(target_os = "macos")]
     let builder = builder.with_icon_templated(icon);
     #[cfg(not(target_os = "macos"))]

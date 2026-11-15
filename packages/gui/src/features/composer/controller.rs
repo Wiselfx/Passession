@@ -13,7 +13,7 @@ use super::json::*;
 use super::service::{self, PanelNotice, SendJob, SendOrigin};
 use crate::common::{UiContext, UiEffect};
 use paseo_gui_core::{CoreError, CoreEvent};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -39,7 +39,11 @@ pub struct ComposerTarget {
 
 impl ComposerTarget {
     pub fn draft_key(&self) -> String {
-        let id = if self.id.is_empty() { "draft" } else { &self.id };
+        let id = if self.id.is_empty() {
+            "draft"
+        } else {
+            &self.id
+        };
         draft_key(&self.host_id, &self.workspace_id, id)
     }
 }
@@ -65,18 +69,40 @@ pub enum ComposerCommand {
 pub enum Tag {
     DaemonConfig,
     Providers,
-    Commands { generation: u64 },
-    Directory { generation: u64, query: String },
-    DraftFeatures { generation: u64, config: Value },
+    Commands {
+        generation: u64,
+    },
+    Directory {
+        generation: u64,
+        query: String,
+    },
+    DraftFeatures {
+        generation: u64,
+        config: Value,
+    },
     CheckoutStatus,
     CheckoutForge,
-    ForgeAuto { lookup: u64, index: usize, cwd: String },
-    ForgePicker { generation: u64 },
-    AgentConfig { kind: String },
+    ForgeAuto {
+        lookup: u64,
+        index: usize,
+        cwd: String,
+    },
+    ForgePicker {
+        generation: u64,
+    },
+    AgentConfig {
+        kind: String,
+    },
     Cancel,
-    Archive { fresh: bool, config: Value },
+    Archive {
+        fresh: bool,
+        config: Value,
+    },
     Upload,
-    Usage { request: String, refresh: Option<Value> },
+    Usage {
+        request: String,
+        refresh: Option<Value>,
+    },
 }
 
 /// Platform requests (clipboard, pickers, open URL).
@@ -160,8 +186,15 @@ pub struct Controller {
 }
 
 fn behavior_pref(ui: &UiContext) -> String {
-    let saved = ui.preference("sendBehavior").and_then(Value::as_str).unwrap_or("steer");
-    if matches!(saved, "interrupt" | "steer" | "queue") { saved.to_owned() } else { "steer".to_owned() }
+    let saved = ui
+        .preference("sendBehavior")
+        .and_then(Value::as_str)
+        .unwrap_or("steer");
+    if matches!(saved, "interrupt" | "steer" | "queue") {
+        saved.to_owned()
+    } else {
+        "steer".to_owned()
+    }
 }
 
 fn scope(cwd: &str) -> String {
@@ -290,7 +323,10 @@ impl Controller {
     }
 
     fn remember_preferences(&self, ui: &mut UiContext, next: Value) {
-        ui.push(UiEffect::SetPreference { key: FORM_PREFERENCES_KEY.into(), value: next });
+        ui.push(UiEffect::SetPreference {
+            key: FORM_PREFERENCES_KEY.into(),
+            value: next,
+        });
     }
 
     fn request(&mut self, ui: &mut UiContext, message: Value, response: &str, tag: Tag) -> String {
@@ -321,10 +357,13 @@ impl Controller {
             && target.workspace_id == self.target.workspace_id
             && target.id == self.target.id
             && target.kind == self.target.kind;
-        let intent_changed = get(&target.data, "attachmentIntentId") != get(&self.target.data, "attachmentIntentId");
-        let provider_scope_changed = target.host_id != self.target.host_id || scope(&target.cwd) != scope(&self.target.cwd);
+        let intent_changed =
+            get(&target.data, "attachmentIntentId") != get(&self.target.data, "attachmentIntentId");
+        let provider_scope_changed =
+            target.host_id != self.target.host_id || scope(&target.cwd) != scope(&self.target.cwd);
         if provider_scope_changed {
-            self.requests.retain(|_, tag| !matches!(tag, Tag::Providers));
+            self.requests
+                .retain(|_, tag| !matches!(tag, Tag::Providers));
             self.providers_request_pending = false;
             self.providers.clear();
             self.providers_loaded = false;
@@ -386,13 +425,21 @@ impl Controller {
         self.take_attachments();
         self.initialized = true;
         self.sync_editor(out);
-        if let Some(error) = get(&self.target.data, "submissionError").as_str().map(str::to_owned) {
+        if let Some(error) = get(&self.target.data, "submissionError")
+            .as_str()
+            .map(str::to_owned)
+        {
             self.fail(error);
         }
         if self.target.host_id.is_empty() {
             return;
         }
-        self.request(ui, json!({"type": "get_daemon_config_request"}), "get_daemon_config_response", Tag::DaemonConfig);
+        self.request(
+            ui,
+            json!({"type": "get_daemon_config_request"}),
+            "get_daemon_config_response",
+            Tag::DaemonConfig,
+        );
         self.reload_providers(ui);
         self.load_commands(ui);
         self.load_remote_url(ui);
@@ -415,9 +462,16 @@ impl Controller {
         let intent = get(&self.target.data, "attachmentIntentId")
             .as_str()
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("{}:{}", self.target.tab_key, serde_json::to_string(&attachments).unwrap_or_default()));
+            .unwrap_or_else(|| {
+                format!(
+                    "{}:{}",
+                    self.target.tab_key,
+                    serde_json::to_string(&attachments).unwrap_or_default()
+                )
+            });
         service::with(|svc| {
-            svc.drafts.add_draft_attachments(&self.key, attachments, Some(&intent));
+            svc.drafts
+                .add_draft_attachments(&self.key, attachments, Some(&intent));
             svc.after_mutation();
         });
     }
@@ -427,7 +481,8 @@ impl Controller {
             return;
         }
         service::with(|svc| {
-            svc.drafts.take_attachments(&self.target.host_id, &self.target.workspace_id, &self.key);
+            svc.drafts
+                .take_attachments(&self.target.host_id, &self.target.workspace_id, &self.key);
             svc.after_mutation();
         });
     }
@@ -490,7 +545,10 @@ impl Controller {
             out.insert("modeId".into(), get(agent, "currentModeId").clone());
         }
         if !get(agent, "thinkingOptionId").is_null() {
-            out.insert("thinkingOptionId".into(), get(agent, "thinkingOptionId").clone());
+            out.insert(
+                "thinkingOptionId".into(),
+                get(agent, "thinkingOptionId").clone(),
+            );
         }
         let mut features = serde_json::Map::new();
         for feature in maps(get(agent, "features")) {
@@ -521,10 +579,20 @@ impl Controller {
     /// The host's agent profiles (daemon config); refetched when the model sheet opens so
     /// profiles saved in settings show up.
     pub fn reload_daemon_config(&mut self, ui: &mut UiContext) {
-        if self.target.host_id.is_empty() || self.requests.values().any(|t| matches!(t, Tag::DaemonConfig)) {
+        if self.target.host_id.is_empty()
+            || self
+                .requests
+                .values()
+                .any(|t| matches!(t, Tag::DaemonConfig))
+        {
             return;
         }
-        self.request(ui, json!({"type": "get_daemon_config_request"}), "get_daemon_config_response", Tag::DaemonConfig);
+        self.request(
+            ui,
+            json!({"type": "get_daemon_config_request"}),
+            "get_daemon_config_response",
+            Tag::DaemonConfig,
+        );
     }
 
     pub fn reload_providers(&mut self, ui: &mut UiContext) {
@@ -532,7 +600,9 @@ impl Controller {
             return;
         }
         self.providers_request_pending = true;
-        let id = service::with(|svc| svc.request_providers(&ui.core, &self.target.host_id, &self.target.cwd));
+        let id = service::with(|svc| {
+            svc.request_providers(&ui.core, &self.target.host_id, &self.target.cwd)
+        });
         self.requests.insert(id, Tag::Providers);
     }
 
@@ -557,7 +627,11 @@ impl Controller {
             return;
         }
         let draft = self.draft();
-        let resolved = resolve_initial_agent_config(get(&draft, "config"), &self.form_preferences(ui), &self.providers);
+        let resolved = resolve_initial_agent_config(
+            get(&draft, "config"),
+            &self.form_preferences(ui),
+            &self.providers,
+        );
         self.update_draft(json!({"config": merged(&resolved, &json!({"cwd": self.target.cwd})), "configResolved": true}));
         self.refresh_draft_features(ui, None);
         self.load_commands(ui);
@@ -571,9 +645,18 @@ impl Controller {
         if self.is_draft() {
             let mut next = value.clone();
             let provider = s(get(&value, "provider"));
-            if !provider.is_empty() && (get(&value, "provider") != get(&previous, "provider") || get(&value, "model") != get(&previous, "model")) {
+            if !provider.is_empty()
+                && (get(&value, "provider") != get(&previous, "provider")
+                    || get(&value, "model") != get(&previous, "model"))
+            {
                 next = merged(
-                    &apply_user_model_choice(&previous, provider, s(get(&value, "model")), &preferences, &self.providers),
+                    &apply_user_model_choice(
+                        &previous,
+                        provider,
+                        s(get(&value, "model")),
+                        &preferences,
+                        &self.providers,
+                    ),
                     &json!({"cwd": self.target.cwd}),
                 );
             }
@@ -595,7 +678,14 @@ impl Controller {
         let model = owned(get(&value, "model"));
         if get(&value, "model") != get(&previous, "model") {
             if !model.is_empty() {
-                remembered = merge_provider_preferences(&remembered, &provider, ProviderPrefsUpdate { model: Some(&model), ..Default::default() });
+                remembered = merge_provider_preferences(
+                    &remembered,
+                    &provider,
+                    ProviderPrefsUpdate {
+                        model: Some(&model),
+                        ..Default::default()
+                    },
+                );
             }
             requests.push(("set_agent_model", json!({"modelId": get(&value, "model")})));
         }
@@ -604,7 +694,10 @@ impl Controller {
             remembered = merge_provider_preferences(
                 &remembered,
                 &provider,
-                ProviderPrefsUpdate { mode: (!mode.is_empty()).then_some(mode.as_str()), ..Default::default() },
+                ProviderPrefsUpdate {
+                    mode: (!mode.is_empty()).then_some(mode.as_str()),
+                    ..Default::default()
+                },
             );
             requests.push(("set_agent_mode", json!({"modeId": mode})));
         }
@@ -618,10 +711,17 @@ impl Controller {
                 remembered = merge_provider_preferences(
                     &remembered,
                     &provider,
-                    ProviderPrefsUpdate { model: Some(&active_model), thinking_by_model: Some(map), ..Default::default() },
+                    ProviderPrefsUpdate {
+                        model: Some(&active_model),
+                        thinking_by_model: Some(map),
+                        ..Default::default()
+                    },
                 );
             }
-            requests.push(("set_agent_thinking", json!({"thinkingOptionId": get(&value, "thinkingOptionId")})));
+            requests.push((
+                "set_agent_thinking",
+                json!({"thinkingOptionId": get(&value, "thinkingOptionId")}),
+            ));
         }
         let before = obj(get(&previous, "featureValues"));
         if let Some(after) = get(&value, "featureValues").as_object() {
@@ -631,8 +731,18 @@ impl Controller {
                 }
                 let mut map = serde_json::Map::new();
                 map.insert(id.clone(), feature_value.clone());
-                remembered = merge_provider_preferences(&remembered, &provider, ProviderPrefsUpdate { feature_values: Some(map), ..Default::default() });
-                requests.push(("set_agent_feature", json!({"featureId": id, "value": feature_value})));
+                remembered = merge_provider_preferences(
+                    &remembered,
+                    &provider,
+                    ProviderPrefsUpdate {
+                        feature_values: Some(map),
+                        ..Default::default()
+                    },
+                );
+                requests.push((
+                    "set_agent_feature",
+                    json!({"featureId": id, "value": feature_value}),
+                ));
             }
         }
         if requests.is_empty() {
@@ -640,8 +750,16 @@ impl Controller {
         }
         self.remember_preferences(ui, remembered);
         for (kind, fields) in requests {
-            let message = merged(&fields, &json!({"type": format!("{kind}_request"), "agentId": self.target.id}));
-            self.request(ui, message, &format!("{kind}_response"), Tag::AgentConfig { kind: kind.into() });
+            let message = merged(
+                &fields,
+                &json!({"type": format!("{kind}_request"), "agentId": self.target.id}),
+            );
+            self.request(
+                ui,
+                message,
+                &format!("{kind}_response"),
+                Tag::AgentConfig { kind: kind.into() },
+            );
         }
         out.redraw = true;
         out
@@ -655,15 +773,27 @@ impl Controller {
         for key in ["provider", "model", "modeId", "thinkingOptionId"] {
             materialized.insert(key.into(), json!(s(get(profile, key)).trim()));
         }
-        materialized.insert("featureValues".into(), Value::Object(obj(get(profile, "featureValues"))));
+        materialized.insert(
+            "featureValues".into(),
+            Value::Object(obj(get(profile, "featureValues"))),
+        );
         let materialized = Value::Object(materialized);
         if self.is_draft() {
             let previous = self.config();
-            let next = merged(&apply_profile_choice(&materialized, &preferences, &self.providers), &json!({"cwd": self.target.cwd}));
+            let next = merged(
+                &apply_profile_choice(&materialized, &preferences, &self.providers),
+                &json!({"cwd": self.target.cwd}),
+            );
             self.update_draft(json!({"config": next, "configResolved": true}));
             self.remember_preferences(
                 ui,
-                remember_profile_selection(&preferences, s(get(&previous, "provider")), &self.providers, &next, get(&materialized, "featureValues")),
+                remember_profile_selection(
+                    &preferences,
+                    s(get(&previous, "provider")),
+                    &self.providers,
+                    &next,
+                    get(&materialized, "featureValues"),
+                ),
             );
             self.refresh_draft_features(ui, None);
             self.load_commands(ui);
@@ -671,11 +801,16 @@ impl Controller {
             return out;
         }
         let provider = owned(get(&self.agent.agent, "provider"));
-        let Some(entry) = provider_entry(&self.providers, &provider).cloned() else { return out };
+        let Some(entry) = provider_entry(&self.providers, &provider).cloned() else {
+            return out;
+        };
         if s(get(&materialized, "provider")) != provider {
             return out;
         }
-        let mode_ids: Vec<String> = maps(get(&entry, "modes")).iter().map(|m| owned(get(m, "id"))).collect();
+        let mode_ids: Vec<String> = maps(get(&entry, "modes"))
+            .iter()
+            .map(|m| owned(get(m, "id")))
+            .collect();
         let model = owned(get(&materialized, "model"));
         let mut mode = owned(get(&materialized, "modeId"));
         if !mode.is_empty() && !mode_ids.contains(&mode) {
@@ -729,10 +864,15 @@ impl Controller {
         let modes = self.modes();
         if modes.is_empty() {
             self.fail(t("composer.errors.noModes"));
-            return Outputs { redraw: true, ..Default::default() };
+            return Outputs {
+                redraw: true,
+                ..Default::default()
+            };
         }
         let config = self.config();
-        let index = modes.iter().position(|m| get(m, "id") == get(&config, "modeId"));
+        let index = modes
+            .iter()
+            .position(|m| get(m, "id") == get(&config, "modeId"));
         let next = &modes[index.map(|i| (i + 1) % modes.len()).unwrap_or(0)];
         self.save_config(ui, merged(&config, &json!({"modeId": get(next, "id")})))
     }
@@ -766,8 +906,8 @@ impl Controller {
         let config = self.config();
         let empty_provider = s(get(&config, "provider")).is_empty();
         self.autocomplete.is_draft = self.is_draft();
-        self.autocomplete.draft_empty_key =
-            (self.is_draft() && empty_provider).then_some("agentAutocomplete.chooseModelForCommands");
+        self.autocomplete.draft_empty_key = (self.is_draft() && empty_provider)
+            .then_some("agentAutocomplete.chooseModelForCommands");
         if self.is_draft() && empty_provider {
             self.autocomplete.set_commands(Vec::new(), false, None);
             return;
@@ -780,12 +920,19 @@ impl Controller {
         if self.is_draft() {
             set(&mut message, "draftConfig", config);
         }
-        self.request(ui, message, "list_commands_response", Tag::Commands { generation });
+        self.request(
+            ui,
+            message,
+            "list_commands_response",
+            Tag::Commands { generation },
+        );
     }
 
     /// The 180ms debounce for the @mention lookup elapsed.
     pub fn fetch_files(&mut self, ui: &mut UiContext) {
-        let Some(query) = self.autocomplete.pending_file_query.clone() else { return };
+        let Some(query) = self.autocomplete.pending_file_query.clone() else {
+            return;
+        };
         if !self.autocomplete.can_load_files {
             return;
         }
@@ -799,9 +946,14 @@ impl Controller {
     }
 
     /// An autocomplete row was chosen.
-    pub fn apply_autocomplete(&mut self, ui: &mut UiContext, option: &AutocompleteOption) -> Outputs {
+    pub fn apply_autocomplete(
+        &mut self,
+        ui: &mut UiContext,
+        option: &AutocompleteOption,
+    ) -> Outputs {
         let draft = self.draft();
-        let has_attachments = non_empty_list(get(&draft, "attachments")) || non_empty_list(get(&draft, "images"));
+        let has_attachments =
+            non_empty_list(get(&draft, "attachments")) || non_empty_list(get(&draft, "images"));
         if option.client_command && !has_attachments && !self.is_draft() {
             return self.client_command(ui, &format!("/{}", option.id));
         }
@@ -825,7 +977,12 @@ impl Controller {
         if self.is_subagent() || cwd.is_empty() || !self.connected() {
             return;
         }
-        self.request(ui, json!({"type": "checkout_status_request", "cwd": cwd}), "checkout_status_response", Tag::CheckoutStatus);
+        self.request(
+            ui,
+            json!({"type": "checkout_status_request", "cwd": cwd}),
+            "checkout_status_response",
+            Tag::CheckoutStatus,
+        );
     }
 
     pub fn ensure_forge(&mut self, ui: &mut UiContext) {
@@ -874,7 +1031,10 @@ impl Controller {
     fn auto_attach_forge(&mut self, item: &Value) {
         let current = maps(get(&self.draft(), "attachments"));
         let key = forge_item_key(item);
-        if current.iter().any(|a| forge_attachment_key(a).as_deref() == Some(key.as_str())) {
+        if current
+            .iter()
+            .any(|a| forge_attachment_key(a).as_deref() == Some(key.as_str()))
+        {
             return;
         }
         let legacy = uses_legacy_forge(&self.server_info());
@@ -895,7 +1055,16 @@ impl Controller {
         let legacy = uses_legacy_forge(&self.server_info());
         for search in std::mem::take(&mut self.pending_forge_searches) {
             let (message, response) = forge_search_request(legacy, &search.cwd, &search.query);
-            self.request(ui, message, response, Tag::ForgeAuto { lookup: search.lookup, index: search.index, cwd: search.cwd });
+            self.request(
+                ui,
+                message,
+                response,
+                Tag::ForgeAuto {
+                    lookup: search.lookup,
+                    index: search.index,
+                    cwd: search.cwd,
+                },
+            );
         }
     }
 
@@ -920,16 +1089,25 @@ impl Controller {
     pub fn toggle_forge_item(&mut self, item: &Value) -> Outputs {
         let key = forge_item_key(item);
         let mut current = maps(get(&self.draft(), "attachments"));
-        let index = current.iter().position(|a| forge_labels(a).is_some() && forge_item_key(a) == key);
+        let index = current
+            .iter()
+            .position(|a| forge_labels(a).is_some() && forge_item_key(a) == key);
         match index {
             Some(index) => {
                 let removed = current.remove(index);
                 self.forge_auto.mark_removed(&removed);
             }
-            None => current.push(forge_attachment(item, uses_legacy_forge(&self.server_info()))),
+            None => current.push(forge_attachment(
+                item,
+                uses_legacy_forge(&self.server_info()),
+            )),
         }
         self.update_draft(json!({"attachments": current}));
-        Outputs { focus: true, redraw: true, ..Default::default() }
+        Outputs {
+            focus: true,
+            redraw: true,
+            ..Default::default()
+        }
     }
 
     pub fn attached_forge_keys(&self) -> Vec<String> {
@@ -974,7 +1152,13 @@ impl Controller {
     pub fn paste(&mut self, images_only: bool, silent: bool) {
         if let Some(platform) = paseo_gui_platform::platform() {
             let id = platform.read_clipboard(images_only && !silent);
-            self.platform_requests.insert(id, PlatformTag::Paste { images_only, silent });
+            self.platform_requests.insert(
+                id,
+                PlatformTag::Paste {
+                    images_only,
+                    silent,
+                },
+            );
         }
     }
 
@@ -985,7 +1169,8 @@ impl Controller {
                 images_only: images,
                 title: None,
             });
-            self.platform_requests.insert(id, PlatformTag::Pick { images });
+            self.platform_requests
+                .insert(id, PlatformTag::Pick { images });
         }
     }
 
@@ -1023,25 +1208,37 @@ impl Controller {
     }
 
     /// Picked files: all images (image picker) or all uploads (file picker).
-    pub fn picked_files(&mut self, ui: &mut UiContext, files: Vec<paseo_gui_platform::PickedFile>, images: bool) {
+    pub fn picked_files(
+        &mut self,
+        ui: &mut UiContext,
+        files: Vec<paseo_gui_platform::PickedFile>,
+        images: bool,
+    ) {
         if files.is_empty() {
             return;
         }
         if images {
-            let list: Vec<(std::path::PathBuf, String)> = files.into_iter().map(|f| (f.path, f.name)).collect();
+            let list: Vec<(std::path::PathBuf, String)> =
+                files.into_iter().map(|f| (f.path, f.name)).collect();
             let token = service::with(|svc| svc.import_images(self.panel, list));
             self.blob_tokens.insert(token, false);
             return;
         }
         let stat: Vec<super::blobs::StatFile> = files
             .into_iter()
-            .map(|f| super::blobs::StatFile { image_mime: None, size: f.size, name: f.name, path: f.path })
+            .map(|f| super::blobs::StatFile {
+                image_mime: None,
+                size: f.size,
+                name: f.name,
+                path: f.path,
+            })
             .collect();
         self.upload(ui, stat);
     }
 
     pub fn files_stat(&mut self, ui: &mut UiContext, files: Vec<super::blobs::StatFile>) {
-        let (images, uploads): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| f.image_mime.is_some());
+        let (images, uploads): (Vec<_>, Vec<_>) =
+            files.into_iter().partition(|f| f.image_mime.is_some());
         if !images.is_empty() {
             let list = images.into_iter().map(|f| (f.path, f.name)).collect();
             let token = service::with(|svc| svc.import_images(self.panel, list));
@@ -1054,8 +1251,15 @@ impl Controller {
 
     /// actions.ts uploadFileAttachments.
     fn upload(&mut self, ui: &mut UiContext, files: Vec<super::blobs::StatFile>) {
-        if let Err(too_large) = check_upload_sizes(files.iter().map(|f| (f.name.as_str(), f.size))) {
-            ui.toast(t_args("composer.errors.fileTooLarge", &[("size", "50MB"), ("fileName", &too_large.file_name)]), true);
+        if let Err(too_large) = check_upload_sizes(files.iter().map(|f| (f.name.as_str(), f.size)))
+        {
+            ui.toast(
+                t_args(
+                    "composer.errors.fileTooLarge",
+                    &[("size", "50MB"), ("fileName", &too_large.file_name)],
+                ),
+                true,
+            );
             return;
         }
         if !self.connected() {
@@ -1082,7 +1286,9 @@ impl Controller {
         }
         let job = self.upload_queue.remove(0);
         self.uploading = vec![job.1.clone()];
-        let id = ui.core.operation(&self.target.host_id, move |client| super::ops::upload_files(client, vec![job]));
+        let id = ui.core.operation(&self.target.host_id, move |client| {
+            super::ops::upload_files(client, vec![job])
+        });
         self.upload_request = Some(id.clone());
         self.requests.insert(id, Tag::Upload);
     }
@@ -1094,8 +1300,16 @@ impl Controller {
     // ----- submission -----
 
     /// Flutter `_submit`. `retry`: resend this exact failed/unknown message.
-    pub fn submit(&mut self, ui: &mut UiContext, retry: Option<Value>, override_behavior: Option<&str>) -> Outputs {
-        let mut out = Outputs { redraw: true, ..Default::default() };
+    pub fn submit(
+        &mut self,
+        ui: &mut UiContext,
+        retry: Option<Value>,
+        override_behavior: Option<&str>,
+    ) -> Outputs {
+        let mut out = Outputs {
+            redraw: true,
+            ..Default::default()
+        };
         if self.sending() || self.uploading() || self.is_subagent() {
             return out;
         }
@@ -1111,13 +1325,19 @@ impl Controller {
         if retry.is_none() && empty {
             return out;
         }
-        if retry.is_none() && (non_empty_obj(get(&draft, "pending")) || non_empty_obj(get(&draft, "failedMessage"))) {
+        if retry.is_none()
+            && (non_empty_obj(get(&draft, "pending"))
+                || non_empty_obj(get(&draft, "failedMessage")))
+        {
             self.fail(t("composer.delivery.blocked"));
             return out;
         }
         if let Some(retry) = &retry {
             let receipt = get(get(&draft, "receipts"), s(get(retry, "messageId"))).clone();
-            if !self.is_draft() && self.supports("agentMessageReceipts") && !receipt_can_retry(&receipt) {
+            if !self.is_draft()
+                && self.supports("agentMessageReceipts")
+                && !receipt_can_retry(&receipt)
+            {
                 return out;
             }
         }
@@ -1135,24 +1355,37 @@ impl Controller {
             }
         }
         if retry.is_none() && !self.is_draft() {
-            let has_attachments = non_empty_list(get(&draft, "attachments")) || non_empty_list(get(&draft, "images"));
-            if let Some(command) = resolve_client_slash_command(&self.editor_text, has_attachments) {
+            let has_attachments =
+                non_empty_list(get(&draft, "attachments")) || non_empty_list(get(&draft, "images"));
+            if let Some(command) = resolve_client_slash_command(&self.editor_text, has_attachments)
+            {
                 return self.client_command(ui, &format!("/{command}"));
             }
         }
-        let choice = override_behavior.map(str::to_owned).unwrap_or_else(|| self.behavior(ui));
+        let choice = override_behavior
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.behavior(ui));
         let message = match retry.clone() {
             Some(message) => message,
             None => {
                 // The snapshot is of the persisted draft; make sure it holds the latest text.
-                service::with(|svc| svc.drafts.update(&self.key, json!({"text": self.editor_text})));
+                service::with(|svc| {
+                    svc.drafts
+                        .update(&self.key, json!({"text": self.editor_text}))
+                });
                 let snapshot = service::with(|svc| svc.drafts.snapshot(&self.key));
-                merged(&snapshot, &json!({"activeTurnBehavior": if choice == "steer" { "steer" } else { "interrupt" }}))
+                merged(
+                    &snapshot,
+                    &json!({"activeTurnBehavior": if choice == "steer" { "steer" } else { "interrupt" }}),
+                )
             }
         };
         if !self.is_draft() && self.agent.running && choice == "queue" && retry.is_none() {
             let mut queue = maps(get(&draft, "queue"));
-            queue.push(merged(&message, &json!({"state": "queued", "createdAt": super::ops::now_rfc3339()})));
+            queue.push(merged(
+                &message,
+                &json!({"state": "queued", "createdAt": super::ops::now_rfc3339()}),
+            ));
             service::with(|svc| {
                 svc.drafts.update(&self.key, json!({"queue": queue}));
                 svc.drafts.acknowledge(&self.key, &message);
@@ -1201,25 +1434,50 @@ impl Controller {
         let preferences = self.form_preferences(ui);
         let local = get(&config, "featureValues").clone();
         remove(&mut config, "featureValues");
-        let feature_values = resolve_feature_values(&self.draft_features, &remembered_feature_values(&preferences, &provider), &local);
+        let feature_values = resolve_feature_values(
+            &self.draft_features,
+            &remembered_feature_values(&preferences, &provider),
+            &local,
+        );
         if non_empty_obj(&feature_values) {
             set(&mut config, "featureValues", feature_values);
         }
         if provider.is_empty() {
             service::with(|svc| {
-                svc.drafts.fail_send(&self.key, &message, &t("composer.errors.selectProvider"), true);
+                svc.drafts.fail_send(
+                    &self.key,
+                    &message,
+                    &t("composer.errors.selectProvider"),
+                    true,
+                );
                 svc.after_mutation();
             });
             return;
         }
-        self.remember_preferences(ui, remember_submitted_selection(&preferences, &config, &self.providers));
+        self.remember_preferences(
+            ui,
+            remember_submitted_selection(&preferences, &config, &self.providers),
+        );
         let title = t("sessionNavigation.newSession");
         let host = self.target.host_id.clone();
         let key = self.key.clone();
         let cwd = self.target.cwd.clone();
         let workspace = self.target.workspace_id.clone();
         let panel = self.panel;
-        service::with(|svc| svc.start_creation(&host, &key, Some(panel), message, config, crate::features::composer::creation::CreationTarget { cwd: &cwd, workspace_id: &workspace, title: &title }));
+        service::with(|svc| {
+            svc.start_creation(
+                &host,
+                &key,
+                Some(panel),
+                message,
+                config,
+                crate::features::composer::creation::CreationTarget {
+                    cwd: &cwd,
+                    workspace_id: &workspace,
+                    title: &title,
+                },
+            )
+        });
     }
 
     /// input/state.ts runAlternateSendAction.
@@ -1233,7 +1491,10 @@ impl Controller {
 
     /// Flutter `_queueNow` (send-now on a queued row).
     pub fn queue_now(&mut self, ui: &mut UiContext, message: &Value) -> Outputs {
-        let out = Outputs { redraw: true, ..Default::default() };
+        let out = Outputs {
+            redraw: true,
+            ..Default::default()
+        };
         if self.sending() {
             return out;
         }
@@ -1246,7 +1507,10 @@ impl Controller {
             return out;
         }
         let attempted = get(message, "deliveryAttempted") == &Value::Bool(true)
-            || matches!(s(get(message, "state")), "sending" | "unacknowledged" | "rejected");
+            || matches!(
+                s(get(message, "state")),
+                "sending" | "unacknowledged" | "rejected"
+            );
         if attempted && self.supports("agentMessageReceipts") {
             let receipt = get(get(&self.draft(), "receipts"), &id).clone();
             if !receipt_can_retry(&receipt) {
@@ -1258,12 +1522,18 @@ impl Controller {
             }
         }
         let mut queue = maps(get(&self.draft(), "queue"));
-        let Some(index) = queue.iter().position(|q| s(get(q, "messageId")) == id) else { return out };
+        let Some(index) = queue.iter().position(|q| s(get(q, "messageId")) == id) else {
+            return out;
+        };
         if s(get(&queue[index], "state")) == "sending" {
             return out;
         }
         // index.tsx handleSendQueuedNow: steer with the steer preference, else interrupt.
-        let behavior = if self.behavior(ui) == "steer" { "steer" } else { "interrupt" };
+        let behavior = if self.behavior(ui) == "steer" {
+            "steer"
+        } else {
+            "interrupt"
+        };
         let sending = queued_message_for_delivery(&queue[index], behavior);
         queue[index] = merged(&sending, &json!({"state": "sending"}));
         service::with(|svc| svc.drafts.update(&self.key, json!({"queue": queue})));
@@ -1281,10 +1551,22 @@ impl Controller {
 
     /// actions.ts editQueuedComposerMessage.
     pub fn edit_queued(&mut self, message: &Value) -> Outputs {
-        let mut out = Outputs { redraw: true, focus: true, ..Default::default() };
+        let mut out = Outputs {
+            redraw: true,
+            focus: true,
+            ..Default::default()
+        };
         let mut queue = maps(get(&self.draft(), "queue"));
-        let Some(index) = queue.iter().position(|q| get(q, "messageId") == get(message, "messageId")) else { return out };
-        if !matches!(s(get(&queue[index], "state")), "queued" | "blocked" | "rejected") {
+        let Some(index) = queue
+            .iter()
+            .position(|q| get(q, "messageId") == get(message, "messageId"))
+        else {
+            return out;
+        };
+        if !matches!(
+            s(get(&queue[index], "state")),
+            "queued" | "blocked" | "rejected"
+        ) {
             return out;
         }
         let item = queue.remove(index);
@@ -1301,7 +1583,10 @@ impl Controller {
     /// Remove a queue row: attempted rows go through the host's dismissal.
     pub fn remove_queued(&mut self, message: &Value) -> bool {
         let attempted = get(message, "deliveryAttempted") == &Value::Bool(true)
-            || matches!(s(get(message, "state")), "sending" | "unacknowledged" | "rejected");
+            || matches!(
+                s(get(message, "state")),
+                "sending" | "unacknowledged" | "rejected"
+            );
         if attempted {
             // Needs the stop-waiting confirmation first.
             return true;
@@ -1336,7 +1621,10 @@ impl Controller {
     }
 
     pub fn restore_failed(&mut self) -> Outputs {
-        let mut out = Outputs { redraw: true, ..Default::default() };
+        let mut out = Outputs {
+            redraw: true,
+            ..Default::default()
+        };
         let draft = self.draft();
         let failed = get(&draft, "failedMessage").clone();
         self.update_draft(json!({
@@ -1352,12 +1640,17 @@ impl Controller {
     }
 
     pub fn discard_failed(&mut self) {
-        self.update_draft(json!({"failedMessage": null, "sendError": null, "sendErrorMessageId": null}));
+        self.update_draft(
+            json!({"failedMessage": null, "sendError": null, "sendErrorMessageId": null}),
+        );
     }
 
     /// Flutter `_clientCommand` (/exit, /clear).
     pub fn client_command(&mut self, ui: &mut UiContext, command: &str) -> Outputs {
-        let mut out = Outputs { redraw: true, ..Default::default() };
+        let mut out = Outputs {
+            redraw: true,
+            ..Default::default()
+        };
         let fresh = command == "/clear" || command == "/new";
         let config = self.config();
         self.update_draft(json!({"text": "", "attachments": [], "images": []}));
@@ -1374,12 +1667,21 @@ impl Controller {
 
     /// actions.ts cancelComposerAgent.
     pub fn cancel_agent(&mut self, ui: &mut UiContext) -> Outputs {
-        let out = Outputs { redraw: true, focus: true, ..Default::default() };
+        let out = Outputs {
+            redraw: true,
+            focus: true,
+            ..Default::default()
+        };
         if self.is_draft() || !self.agent.running || self.cancelling || !self.connected() {
             return out;
         }
         self.cancelling = true;
-        self.request(ui, json!({"type": "cancel_agent_request", "agentId": self.target.id}), "cancel_agent_response", Tag::Cancel);
+        self.request(
+            ui,
+            json!({"type": "cancel_agent_request", "agentId": self.target.id}),
+            "cancel_agent_response",
+            Tag::Cancel,
+        );
         out
     }
 
@@ -1392,8 +1694,16 @@ impl Controller {
         self.usage_settled = false;
         self.usage_error = None;
         let message = json!({"type": "usage.list_reports.request", "requestId": request, "agentId": self.target.id, "forceRefresh": false});
-        let id = ui.core.request(&self.target.host_id, message, "usage.list_reports.response");
-        self.requests.insert(id, Tag::Usage { request, refresh: None });
+        let id = ui
+            .core
+            .request(&self.target.host_id, message, "usage.list_reports.response");
+        self.requests.insert(
+            id,
+            Tag::Usage {
+                request,
+                refresh: None,
+            },
+        );
     }
 
     pub fn refresh_usage(&mut self, ui: &mut UiContext, report_id: &Value) {
@@ -1401,8 +1711,16 @@ impl Controller {
         self.usage_refresh_failed.retain(|r| r != report_id);
         let request = format!("rust-agent-usage-refresh-{}", uuid::Uuid::new_v4());
         let message = json!({"type": "usage.list_reports.request", "requestId": request, "agentId": self.target.id, "forceRefresh": true});
-        let id = ui.core.request(&self.target.host_id, message, "usage.list_reports.response");
-        self.requests.insert(id, Tag::Usage { request, refresh: Some(report_id.clone()) });
+        let id = ui
+            .core
+            .request(&self.target.host_id, message, "usage.list_reports.response");
+        self.requests.insert(
+            id,
+            Tag::Usage {
+                request,
+                refresh: Some(report_id.clone()),
+            },
+        );
     }
 
     fn upsert_report(&mut self, report: Value) {
@@ -1425,23 +1743,30 @@ impl Controller {
         let mut responses: Vec<(Tag, Result<Value, CoreError>)> = Vec::new();
         let mut host_events: Vec<Value> = Vec::new();
         let mut reconnected = false;
-        if ui.events.iter().any(|event| matches!(event,
+        if ui.events.iter().any(|event| {
+            matches!(event,
             CoreEvent::Connected { host_id, .. } | CoreEvent::Disconnected { host_id, .. }
-                if host_id == &self.target.host_id))
-        {
-            self.requests.retain(|_, tag| !matches!(tag, Tag::Providers));
+                if host_id == &self.target.host_id)
+        }) {
+            self.requests
+                .retain(|_, tag| !matches!(tag, Tag::Providers));
             self.providers_request_pending = false;
         }
         for event in ui.events.iter() {
             match event {
-                CoreEvent::Response { request_id, result, .. } => {
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
                     if let Some(tag) = self.requests.remove(request_id) {
                         responses.push((tag, result.clone()));
                     }
                 }
                 CoreEvent::HostEvent { host_id, event }
-                    if host_id == &self.target.host_id && matches!(s(get(event, "type")),
-                        "providers_snapshot_update" | "usage.list_reports.update") =>
+                    if host_id == &self.target.host_id
+                        && matches!(
+                            s(get(event, "type")),
+                            "providers_snapshot_update" | "usage.list_reports.update"
+                        ) =>
                 {
                     host_events.push(event.clone());
                 }
@@ -1449,7 +1774,9 @@ impl Controller {
                     reconnected = true;
                     out.redraw = true;
                 }
-                CoreEvent::Disconnected { host_id, .. } if host_id == &self.target.host_id => out.redraw = true,
+                CoreEvent::Disconnected { host_id, .. } if host_id == &self.target.host_id => {
+                    out.redraw = true
+                }
                 _ => {}
             }
         }
@@ -1486,7 +1813,10 @@ impl Controller {
             self.reload_providers(ui);
         } else if kind == "usage.list_reports.update" {
             let request = s(get(payload, "requestId"));
-            let ours = self.requests.values().any(|tag| matches!(tag, Tag::Usage { request: r, .. } if r == request));
+            let ours = self
+                .requests
+                .values()
+                .any(|tag| matches!(tag, Tag::Usage { request: r, .. } if r == request));
             if ours {
                 self.upsert_report(get(payload, "report").clone());
                 out.redraw = true;
@@ -1494,7 +1824,13 @@ impl Controller {
         }
     }
 
-    fn response(&mut self, ui: &mut UiContext, tag: Tag, result: Result<Value, CoreError>, out: &mut Outputs) {
+    fn response(
+        &mut self,
+        ui: &mut UiContext,
+        tag: Tag,
+        result: Result<Value, CoreError>,
+        out: &mut Outputs,
+    ) {
         out.redraw = true;
         let request_type = match &tag {
             Tag::DaemonConfig => "get_daemon_config_request",
@@ -1549,9 +1885,13 @@ impl Controller {
                 match checked {
                     Ok(payload) => {
                         self.commands = maps(get(&payload, "commands"));
-                        self.autocomplete.set_commands(self.commands.clone(), false, None);
+                        self.autocomplete
+                            .set_commands(self.commands.clone(), false, None);
                     }
-                    Err(error) => self.autocomplete.set_commands(self.commands.clone(), false, Some(error)),
+                    Err(error) => {
+                        self.autocomplete
+                            .set_commands(self.commands.clone(), false, Some(error))
+                    }
                 }
             }
             Tag::Directory { generation, query } => {
@@ -1598,7 +1938,11 @@ impl Controller {
                 // A payload carrying a domain error still names its forge.
                 Ok(payload) => {
                     let forge = s(get(&payload, "forge"));
-                    self.forge = if forge.is_empty() { "github".into() } else { forge.into() };
+                    self.forge = if forge.is_empty() {
+                        "github".into()
+                    } else {
+                        forge.into()
+                    };
                 }
                 Err(_) => self.forge_loading = false,
             },
@@ -1624,7 +1968,11 @@ impl Controller {
                 if let Err(error) = checked {
                     ui.toast(error, true);
                 }
-                if !self.requests.values().any(|t| matches!(t, Tag::AgentConfig { .. })) {
+                if !self
+                    .requests
+                    .values()
+                    .any(|t| matches!(t, Tag::AgentConfig { .. }))
+                {
                     out.reload_agent = Some(self.target.id.clone());
                     self.load_commands(ui);
                 }
@@ -1650,7 +1998,9 @@ impl Controller {
                             data: json!({"config": config}),
                         });
                     }
-                    ui.push(UiEffect::CloseTab { tab_key: self.target.tab_key.clone() });
+                    ui.push(UiEffect::CloseTab {
+                        tab_key: self.target.tab_key.clone(),
+                    });
                 }
                 Err(error) => {
                     self.update_draft(json!({"sendError": error, "sendErrorMessageId": null}));
@@ -1659,7 +2009,9 @@ impl Controller {
             Tag::Upload => {
                 self.upload_request = None;
                 let outcome = match checked {
-                    Ok(envelope) => super::ops::open_envelope(&envelope).map_err(|e| owned(get(&e, "message"))),
+                    Ok(envelope) => {
+                        super::ops::open_envelope(&envelope).map_err(|e| owned(get(&e, "message")))
+                    }
                     Err(error) => Err(error),
                 };
                 match outcome {
@@ -1685,7 +2037,11 @@ impl Controller {
                         self.uploading.clear();
                         self.upload_queue.clear();
                         self.uploaded.clear();
-                        let message = if error.trim().is_empty() { t("composer.errors.uploadFailed") } else { error };
+                        let message = if error.trim().is_empty() {
+                            t("composer.errors.uploadFailed")
+                        } else {
+                            error
+                        };
                         ui.toast(message, true);
                     }
                 }
@@ -1701,9 +2057,18 @@ impl Controller {
                         let mut by_id: Vec<Value> = finished.clone();
                         let mut settled = Vec::new();
                         for shown in &self.usage_reports {
-                            if let Some(index) = by_id.iter().position(|r| get(r, "id") == get(shown, "id")) {
+                            if let Some(index) =
+                                by_id.iter().position(|r| get(r, "id") == get(shown, "id"))
+                            {
                                 let arriving = by_id.remove(index);
-                                settled.push(if s(get(&arriving, "fetchedAt")) >= s(get(shown, "fetchedAt")) { arriving } else { shown.clone() });
+                                settled.push(
+                                    if s(get(&arriving, "fetchedAt")) >= s(get(shown, "fetchedAt"))
+                                    {
+                                        arriving
+                                    } else {
+                                        shown.clone()
+                                    },
+                                );
                             }
                         }
                         settled.extend(by_id);
@@ -1713,14 +2078,24 @@ impl Controller {
                 }
                 Err(error) => self.usage_error = Some(error),
             },
-            Tag::Usage { refresh: Some(report_id), .. } => {
+            Tag::Usage {
+                refresh: Some(report_id),
+                ..
+            } => {
                 self.usage_refreshing.retain(|r| r != &report_id);
                 match checked {
                     Ok(payload) if get(&payload, "complete") != &Value::Bool(false) => {
-                        let fresh = list_ref(get(&payload, "reports")).iter().find(|r| get(r, "id") == &report_id).cloned();
+                        let fresh = list_ref(get(&payload, "reports"))
+                            .iter()
+                            .find(|r| get(r, "id") == &report_id)
+                            .cloned();
                         match fresh {
                             Some(report) => {
-                                if let Some(index) = self.usage_reports.iter().position(|r| get(r, "id") == &report_id) {
+                                if let Some(index) = self
+                                    .usage_reports
+                                    .iter()
+                                    .position(|r| get(r, "id") == &report_id)
+                                {
                                     self.usage_reports[index] = report;
                                 }
                             }
@@ -1735,7 +2110,10 @@ impl Controller {
 
     /// Service notices for this panel.
     pub fn handle_notices(&mut self, ui: &mut UiContext, notices: Vec<PanelNotice>) -> Outputs {
-        let mut out = Outputs { redraw: !notices.is_empty(), ..Default::default() };
+        let mut out = Outputs {
+            redraw: !notices.is_empty(),
+            ..Default::default()
+        };
         for notice in notices {
             match notice {
                 PanelNotice::SendFinished { error, .. } => {
@@ -1753,7 +2131,11 @@ impl Controller {
                         match images {
                             Ok(images) => self.add_images(images),
                             Err(error) => {
-                                let message = if error.trim().is_empty() { t("composer.errors.uploadFailed") } else { error };
+                                let message = if error.trim().is_empty() {
+                                    t("composer.errors.uploadFailed")
+                                } else {
+                                    error
+                                };
                                 ui.toast(message, true);
                             }
                         }
@@ -1767,7 +2149,9 @@ impl Controller {
                         }
                     }
                 }
-                PanelNotice::CheckFinished { error, message_id, .. } => {
+                PanelNotice::CheckFinished {
+                    error, message_id, ..
+                } => {
                     self.checking = false;
                     let resume = self
                         .pending_queue_now
@@ -1777,7 +2161,8 @@ impl Controller {
                         Some(error) => self.fail(error),
                         None => {
                             if let Some(message) = resume {
-                                let receipt = get(get(&self.draft(), "receipts"), &message_id).clone();
+                                let receipt =
+                                    get(get(&self.draft(), "receipts"), &message_id).clone();
                                 if receipt_can_retry(&receipt) {
                                     let next = self.queue_now(ui, &message);
                                     out.redraw |= next.redraw;
@@ -1793,14 +2178,36 @@ impl Controller {
     }
 
     /// Platform results (clipboard, pickers, URL opening) addressed to this panel.
-    pub fn handle_platform(&mut self, ui: &mut UiContext, request: u64, result: Result<paseo_gui_platform::PlatformValue, paseo_gui_platform::PlatformError>) -> Outputs {
+    pub fn handle_platform(
+        &mut self,
+        ui: &mut UiContext,
+        request: u64,
+        result: Result<paseo_gui_platform::PlatformValue, paseo_gui_platform::PlatformError>,
+    ) -> Outputs {
         use paseo_gui_platform::PlatformValue;
-        let mut out = Outputs { redraw: true, ..Default::default() };
-        let Some(tag) = self.platform_requests.remove(&request) else { return Outputs::default() };
+        let mut out = Outputs {
+            redraw: true,
+            ..Default::default()
+        };
+        let Some(tag) = self.platform_requests.remove(&request) else {
+            return Outputs::default();
+        };
         match (tag, result) {
-            (PlatformTag::Paste { images_only, silent }, Ok(PlatformValue::Clipboard(content))) => {
+            (
+                PlatformTag::Paste {
+                    images_only,
+                    silent,
+                },
+                Ok(PlatformValue::Clipboard(content)),
+            ) => {
                 if let Some(image) = content.images.into_iter().next() {
-                    let token = service::with(|svc| svc.store_image_bytes(self.panel, image.bytes.clone(), Some(image.mime_type.clone())));
+                    let token = service::with(|svc| {
+                        svc.store_image_bytes(
+                            self.panel,
+                            image.bytes.clone(),
+                            Some(image.mime_type.clone()),
+                        )
+                    });
                     self.blob_tokens.insert(token, false);
                 } else if silent {
                     // Ctrl/Cmd+V: the platform already pasted any text into the editor.
@@ -1810,16 +2217,32 @@ impl Controller {
                     ui.toast(t("composer.errors.noClipboardImage"), true);
                 }
             }
-            (PlatformTag::Paste { images_only, silent }, Err(error)) => {
+            (
+                PlatformTag::Paste {
+                    images_only,
+                    silent,
+                },
+                Err(error),
+            ) => {
                 if error.code != "cancelled" && !silent {
-                    let message = if images_only { t("composer.errors.pasteImageFailed") } else { error.message };
+                    let message = if images_only {
+                        t("composer.errors.pasteImageFailed")
+                    } else {
+                        error.message
+                    };
                     ui.toast(message, true);
                 }
             }
-            (PlatformTag::Pick { images }, Ok(PlatformValue::Files(files))) => self.picked_files(ui, files, images),
+            (PlatformTag::Pick { images }, Ok(PlatformValue::Files(files))) => {
+                self.picked_files(ui, files, images)
+            }
             (PlatformTag::Pick { .. }, Err(error)) => {
                 if error.code != "cancelled" {
-                    let message = if error.message.trim().is_empty() { t("composer.errors.uploadFailed") } else { error.message };
+                    let message = if error.message.trim().is_empty() {
+                        t("composer.errors.uploadFailed")
+                    } else {
+                        error.message
+                    };
                     ui.toast(message, true);
                 }
             }

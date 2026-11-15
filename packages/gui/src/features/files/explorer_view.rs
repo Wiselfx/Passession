@@ -43,8 +43,15 @@ pub enum ExplorerEvent {
     Action(&'static str),
     FileSelected(Entry),
     /// Right click (with the window position) or long press (None) on a row.
-    EntryMenu { entry: Entry, at: Option<DVec2>, row: Rect },
-    BackgroundMenu { at: Option<DVec2>, anchor: Rect },
+    EntryMenu {
+        entry: Entry,
+        at: Option<DVec2>,
+        row: Rect,
+    },
+    BackgroundMenu {
+        at: Option<DVec2>,
+        anchor: Rect,
+    },
 }
 
 pub struct ExplorerView {
@@ -95,7 +102,15 @@ impl ExplorerView {
     }
 
     /// Draws into `area`; `widget` is the owner's area (animation clock registration).
-    pub fn draw(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, state: &ExplorerState, look: &ExplorerLook, widget: Area) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        state: &ExplorerState,
+        look: &ExplorerLook,
+        widget: Area,
+    ) {
         let p = &look.palette;
         let ty = &look.typography;
         self.hits.clear();
@@ -106,16 +121,51 @@ impl ExplorerView {
         let bar = rect(area.pos.x, area.pos.y, area.size.x, toolbar_h);
         ui::toolbar(cx, kit, bar, true, p);
         let small = ty.ui_size(12.0);
-        let sort_label = t(&format!("workspace.fileExplorer.sort.{}", state.sort().id()));
-        let sort_w = kit.measure(cx, spec(Font::Regular, small, p.muted), &sort_label).x + 4.0 + 12.0 + 8.0;
+        let sort_label = t(&format!(
+            "workspace.fileExplorer.sort.{}",
+            state.sort().id()
+        ));
+        let sort_w = kit
+            .measure(cx, spec(Font::Regular, small, p.muted), &sort_label)
+            .x
+            + 4.0
+            + 12.0
+            + 8.0;
         let sort_h = 24.0_f64.max(small * 1.4);
-        let sort = rect(bar.pos.x + 8.0, bar.pos.y + (toolbar_h - sort_h) / 2.0, sort_w, sort_h);
+        let sort = rect(
+            bar.pos.x + 8.0,
+            bar.pos.y + (toolbar_h - sort_h) / 2.0,
+            sort_w,
+            sort_h,
+        );
         let sort_state = self.state_of(&Hot::Sort, true, false);
         if sort_state.hovered || sort_state.pressed {
             kit.fill(cx, sort, ui::sidebar_hover(p), 4.0);
         }
-        kit.text_in(cx, rect(sort.pos.x + 4.0, sort.pos.y, sort.size.x - 20.0, sort.size.y), spec(Font::Regular, small, p.muted), &sort_label, 0.0);
-        kit.icon(cx, rect(sort.pos.x + sort.size.x - 16.0, sort.pos.y, 12.0, sort.size.y), "chevron-down", 12.0, p.muted);
+        kit.text_in(
+            cx,
+            rect(
+                sort.pos.x + 4.0,
+                sort.pos.y,
+                sort.size.x - 20.0,
+                sort.size.y,
+            ),
+            spec(Font::Regular, small, p.muted),
+            &sort_label,
+            0.0,
+        );
+        kit.icon(
+            cx,
+            rect(
+                sort.pos.x + sort.size.x - 16.0,
+                sort.pos.y,
+                12.0,
+                sort.size.y,
+            ),
+            "chevron-down",
+            12.0,
+            p.muted,
+        );
         self.hits.push(sort, Hot::Sort);
         // Trailing controls, right to left, 1px apart.
         let size = ui::toolbar_button_size(look.compact);
@@ -129,7 +179,14 @@ impl ExplorerView {
         };
         let refresh = place(&mut x);
         if state.refreshing() {
-            ui::spinner(cx, kit, refresh, ui::toolbar_icon_size(look.compact), p.extra_muted, clock::phase(900));
+            ui::spinner(
+                cx,
+                kit,
+                refresh,
+                ui::toolbar_icon_size(look.compact),
+                p.extra_muted,
+                clock::phase(900),
+            );
             clock::register(cx, widget);
         } else {
             let st = self.state_of(&Hot::Refresh, true, false);
@@ -138,7 +195,19 @@ impl ExplorerView {
         self.hits.push(refresh, Hot::Refresh);
         let hidden = place(&mut x);
         let st = self.state_of(&Hot::Hidden, true, !state.show_hidden());
-        ui::icon_button(cx, kit, hidden, if state.show_hidden() { "eye" } else { "eye-off" }, st, look.compact, p);
+        ui::icon_button(
+            cx,
+            kit,
+            hidden,
+            if state.show_hidden() {
+                "eye"
+            } else {
+                "eye-off"
+            },
+            st,
+            look.compact,
+            p,
+        );
         self.hits.push(hidden, Hot::Hidden);
         for action in look.actions.iter().rev() {
             let r = place(&mut x);
@@ -150,11 +219,23 @@ impl ExplorerView {
         let mut top = bar.pos.y + toolbar_h;
         if let Some(error) = state.stale_root_error() {
             let width = area.size.x - 24.0;
-            let h = kit.paragraph_height(cx, width, spec(Font::Regular, small, p.destructive), error);
-            kit.paragraph(cx, dvec2(area.pos.x + 12.0, top + 8.0), width, spec(Font::Regular, small, p.destructive), error);
+            let h =
+                kit.paragraph_height(cx, width, spec(Font::Regular, small, p.destructive), error);
+            kit.paragraph(
+                cx,
+                dvec2(area.pos.x + 12.0, top + 8.0),
+                width,
+                spec(Font::Regular, small, p.destructive),
+                error,
+            );
             top += 8.0 + h;
         }
-        let list = rect(area.pos.x, top, area.size.x, (area.pos.y + area.size.y - top).max(0.0));
+        let list = rect(
+            area.pos.x,
+            top,
+            area.size.x,
+            (area.pos.y + area.size.y - top).max(0.0),
+        );
         self.list_rect = list;
         self.hits.push(list, Hot::Background);
         let base = ty.ui_size(14.0);
@@ -162,19 +243,34 @@ impl ExplorerView {
         if let Some(error) = state.root_error() {
             // Destructive base text over outline pill actions.
             let width = (list.size.x - 32.0).max(1.0);
-            let text_h = kit.paragraph_height(cx, width, spec(Font::Regular, base, p.destructive), error);
+            let text_h =
+                kit.paragraph_height(cx, width, spec(Font::Regular, base, p.destructive), error);
             let pill_h = base * 1.4 + 8.0;
             let total = text_h + 8.0 + pill_h;
             let mut y0 = list.pos.y + (list.size.y - total) / 2.0;
-            let text_w = kit.measure(cx, spec(Font::Regular, base, p.destructive), error).x.min(width);
-            kit.paragraph(cx, dvec2(list.pos.x + (list.size.x - text_w) / 2.0, y0), width, spec(Font::Regular, base, p.destructive), error);
+            let text_w = kit
+                .measure(cx, spec(Font::Regular, base, p.destructive), error)
+                .x
+                .min(width);
+            kit.paragraph(
+                cx,
+                dvec2(list.pos.x + (list.size.x - text_w) / 2.0, y0),
+                width,
+                spec(Font::Regular, base, p.destructive),
+                error,
+            );
             y0 += text_h + 8.0;
             let mut pills: Vec<(Hot, String)> = Vec::new();
             if state.can_go_back() {
                 pills.push((Hot::Back, t("workspace.fileExplorer.actions.back")));
             }
             pills.push((Hot::Retry, t("workspace.fileExplorer.actions.retry")));
-            let widths: Vec<f64> = pills.iter().map(|(_, label)| kit.measure(cx, spec(Font::Medium, base, p.muted), label).x + 24.0).collect();
+            let widths: Vec<f64> = pills
+                .iter()
+                .map(|(_, label)| {
+                    kit.measure(cx, spec(Font::Medium, base, p.muted), label).x + 24.0
+                })
+                .collect();
             let total_w = widths.iter().sum::<f64>() + 8.0 * (pills.len() - 1) as f64;
             let mut px = list.pos.x + (list.size.x - total_w) / 2.0;
             for ((hot, label), w) in pills.into_iter().zip(widths) {
@@ -187,18 +283,54 @@ impl ExplorerView {
         } else if state.initial_loading() {
             let label = t("workspace.fileExplorer.states.loading");
             let cy = list.pos.y + list.size.y / 2.0;
-            ui::spinner(cx, kit, rect(list.pos.x + list.size.x / 2.0 - 10.0, cy - 24.0, 20.0, 20.0), 20.0, p.muted, clock::phase(900));
+            ui::spinner(
+                cx,
+                kit,
+                rect(list.pos.x + list.size.x / 2.0 - 10.0, cy - 24.0, 20.0, 20.0),
+                20.0,
+                p.muted,
+                clock::phase(900),
+            );
             clock::register(cx, widget);
-            kit.text_in(cx, rect(list.pos.x, cy + 4.0, list.size.x, base * 1.4), muted, &label, 0.5);
+            kit.text_in(
+                cx,
+                rect(list.pos.x, cy + 4.0, list.size.x, base * 1.4),
+                muted,
+                &label,
+                0.5,
+            );
         } else if state.rows().is_empty() {
-            let label = t(if state.show_hidden() { "workspace.fileExplorer.empty.noFiles" } else { "workspace.fileExplorer.empty.noVisibleFiles" });
-            kit.text_in(cx, rect(list.pos.x, list.pos.y + list.size.y / 2.0 - base, list.size.x, base * 2.0), muted, &label, 0.5);
+            let label = t(if state.show_hidden() {
+                "workspace.fileExplorer.empty.noFiles"
+            } else {
+                "workspace.fileExplorer.empty.noVisibleFiles"
+            });
+            kit.text_in(
+                cx,
+                rect(
+                    list.pos.x,
+                    list.pos.y + list.size.y / 2.0 - base,
+                    list.size.x,
+                    base * 2.0,
+                ),
+                muted,
+                &label,
+                0.5,
+            );
         } else {
             self.draw_rows(cx, kit, list, state, look, widget);
         }
     }
 
-    fn draw_rows(&mut self, cx: &mut Cx2d, kit: &mut Kit, list: Rect, state: &ExplorerState, look: &ExplorerLook, area: Area) {
+    fn draw_rows(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        list: Rect,
+        state: &ExplorerState,
+        look: &ExplorerLook,
+        area: Area,
+    ) {
         let p = &look.palette;
         let ty = &look.typography;
         let base = ty.ui_size(14.0);
@@ -237,8 +369,23 @@ impl ExplorerView {
                 kit.texture(cx, slot, &texture, 0.0, 1.0);
             }
             let name_x = x + 16.0 + 8.0;
-            let name_color = if hovered { p.foreground } else { name_color_rest };
-            kit.text_in(cx, rect(name_x, y, r.pos.x + r.size.x - ui::TRAILING_GLYPH_RAIL - name_x, row_h), spec(Font::Regular, base, name_color), &row.entry.name, 0.0);
+            let name_color = if hovered {
+                p.foreground
+            } else {
+                name_color_rest
+            };
+            kit.text_in(
+                cx,
+                rect(
+                    name_x,
+                    y,
+                    r.pos.x + r.size.x - ui::TRAILING_GLYPH_RAIL - name_x,
+                    row_h,
+                ),
+                spec(Font::Regular, base, name_color),
+                &row.entry.name,
+                0.0,
+            );
             self.hits.push(r, hot);
             self.row_rects.push((index, r));
         }
@@ -249,27 +396,51 @@ impl ExplorerView {
         if max > 0.0 {
             let thumb_h = (list.size.y * list.size.y / content_h).max(24.0);
             let thumb_y = list.pos.y + (list.size.y - thumb_h) * (self.scroll_y / max);
-            kit.fill(cx, rect(list.pos.x + list.size.x - 6.0, thumb_y, 4.0, thumb_h), with_alpha(p.muted, 0.35), 2.0);
+            kit.fill(
+                cx,
+                rect(list.pos.x + list.size.x - 6.0, thumb_y, 4.0, thumb_h),
+                with_alpha(p.muted, 0.35),
+                2.0,
+            );
         }
         cx.end_turtle();
     }
 
     pub fn row_rect(&self, index: usize) -> Option<Rect> {
-        self.row_rects.iter().find(|(i, _)| *i == index).map(|(_, r)| *r)
+        self.row_rects
+            .iter()
+            .find(|(i, _)| *i == index)
+            .map(|(_, r)| *r)
     }
 
-    pub fn animate_scroll(&mut self, cx: &mut Cx, event: &Event, state: &ExplorerState, enabled: bool) -> bool {
+    pub fn animate_scroll(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        state: &ExplorerState,
+        enabled: bool,
+    ) -> bool {
         if !enabled {
             self.touch_scroll.reset();
             return false;
         }
-        let Some(delta) = self.touch_scroll.frame(cx, event) else { return false };
+        let Some(delta) = self.touch_scroll.frame(cx, event) else {
+            return false;
+        };
         let max = 8.0 + state.rows().len() as f64 * self.row_height + 16.0 - self.list_rect.size.y;
-        self.touch_scroll.apply_delta(&mut self.scroll_y, delta, max)
+        self.touch_scroll
+            .apply_delta(&mut self.scroll_y, delta, max)
     }
 
     /// Pointer input on the owner's area. `changed` tells the owner to redraw.
-    pub fn handle_hit(&mut self, cx: &mut Cx, hit: &Hit, state: &mut ExplorerState, look: &ExplorerLook, changed: &mut bool) -> ExplorerEvent {
+    pub fn handle_hit(
+        &mut self,
+        cx: &mut Cx,
+        hit: &Hit,
+        state: &mut ExplorerState,
+        look: &ExplorerLook,
+        changed: &mut bool,
+    ) -> ExplorerEvent {
         match hit {
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
                 let hot = self.hits.at(fe.abs);
@@ -277,8 +448,23 @@ impl ExplorerView {
                     self.hovered = hot;
                     *changed = true;
                 }
-                let hand = matches!(self.hovered, Some(Hot::Row(_) | Hot::Sort | Hot::Action(_) | Hot::Hidden | Hot::Refresh | Hot::Back | Hot::Retry));
-                cx.set_cursor(if hand { MouseCursor::Hand } else { MouseCursor::Default });
+                let hand = matches!(
+                    self.hovered,
+                    Some(
+                        Hot::Row(_)
+                            | Hot::Sort
+                            | Hot::Action(_)
+                            | Hot::Hidden
+                            | Hot::Refresh
+                            | Hot::Back
+                            | Hot::Retry
+                    )
+                );
+                cx.set_cursor(if hand {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
             }
             Hit::FingerHoverOut(_) => {
                 if self.hovered.take().is_some() {
@@ -299,19 +485,30 @@ impl ExplorerView {
                 self.pressed = hot.clone();
                 if secondary {
                     if let Some(Hot::Row(index)) = hot
-                        && let Some(entry) = state.rows().get(index).map(|row| row.entry.clone()) {
-                            state.selected = Some(entry.path.clone());
-                            *changed = true;
-                            return ExplorerEvent::EntryMenu { entry, at: Some(fe.abs), row: self.row_rect(index).unwrap_or_default() };
-                        }
+                        && let Some(entry) = state.rows().get(index).map(|row| row.entry.clone())
+                    {
+                        state.selected = Some(entry.path.clone());
+                        *changed = true;
+                        return ExplorerEvent::EntryMenu {
+                            entry,
+                            at: Some(fe.abs),
+                            row: self.row_rect(index).unwrap_or_default(),
+                        };
+                    }
                     if hot == Some(Hot::Background) {
-                        return ExplorerEvent::BackgroundMenu { at: Some(fe.abs), anchor: rect(fe.abs.x, fe.abs.y, 0.0, 0.0) };
+                        return ExplorerEvent::BackgroundMenu {
+                            at: Some(fe.abs),
+                            anchor: rect(fe.abs.x, fe.abs.y, 0.0, 0.0),
+                        };
                     }
                     return ExplorerEvent::None;
                 }
                 if let Some(list) = Some(self.list_rect) {
                     let content_h = 8.0 + state.rows().len() as f64 * self.row_height + 16.0;
-                    if content_h > list.size.y && fe.abs.x > list.pos.x + list.size.x - 10.0 && list.contains(fe.abs) {
+                    if content_h > list.size.y
+                        && fe.abs.x > list.pos.x + list.size.x - 10.0
+                        && list.contains(fe.abs)
+                    {
                         self.thumb_drag = Some((fe.abs.y, self.scroll_y));
                         return ExplorerEvent::None;
                     }
@@ -325,15 +522,18 @@ impl ExplorerView {
             Hit::FingerMove(fe) => {
                 if let Some((start, scroll)) = self.thumb_drag {
                     let content_h = 8.0 + state.rows().len() as f64 * self.row_height + 16.0;
-                    self.scroll_y = scroll + (fe.abs.y - start) * content_h / self.list_rect.size.y.max(1.0);
+                    self.scroll_y =
+                        scroll + (fe.abs.y - start) * content_h / self.list_rect.size.y.max(1.0);
                     *changed = true;
                 } else if let Some(dy) = self.touch_scroll.handle_hit(hit)
-                    && self.list_rect.contains(fe.abs_start) {
-                        let max = 8.0 + state.rows().len() as f64 * self.row_height + 16.0 - self.list_rect.size.y;
-                        self.touch_scroll.apply_delta(&mut self.scroll_y, dy, max);
-                        self.pressed = None;
-                        *changed = true;
-                    }
+                    && self.list_rect.contains(fe.abs_start)
+                {
+                    let max = 8.0 + state.rows().len() as f64 * self.row_height + 16.0
+                        - self.list_rect.size.y;
+                    self.touch_scroll.apply_delta(&mut self.scroll_y, dy, max);
+                    self.pressed = None;
+                    *changed = true;
+                }
             }
             Hit::FingerLongPress(fe) => {
                 self.touch_scroll.reset();
@@ -341,12 +541,21 @@ impl ExplorerView {
                 *changed = true;
                 match hot {
                     Some(Hot::Row(index)) => {
-                        let Some(row) = state.rows().get(index).cloned() else { return ExplorerEvent::None };
+                        let Some(row) = state.rows().get(index).cloned() else {
+                            return ExplorerEvent::None;
+                        };
                         state.selected = Some(row.entry.path.clone());
-                        return ExplorerEvent::EntryMenu { entry: row.entry, at: None, row: self.row_rect(index).unwrap_or_default() };
+                        return ExplorerEvent::EntryMenu {
+                            entry: row.entry,
+                            at: None,
+                            row: self.row_rect(index).unwrap_or_default(),
+                        };
                     }
                     Some(Hot::Background) => {
-                        return ExplorerEvent::BackgroundMenu { at: None, anchor: rect(fe.abs.x, fe.abs.y, 0.0, 0.0) };
+                        return ExplorerEvent::BackgroundMenu {
+                            at: None,
+                            anchor: rect(fe.abs.x, fe.abs.y, 0.0, 0.0),
+                        };
                     }
                     _ => {}
                 }
@@ -371,7 +580,12 @@ impl ExplorerView {
         ExplorerEvent::None
     }
 
-    fn activate(&mut self, hot: Option<Hot>, state: &mut ExplorerState, look: &ExplorerLook) -> ExplorerEvent {
+    fn activate(
+        &mut self,
+        hot: Option<Hot>,
+        state: &mut ExplorerState,
+        look: &ExplorerLook,
+    ) -> ExplorerEvent {
         match hot {
             Some(Hot::Sort) => state.cycle_sort(),
             Some(Hot::Hidden) => state.toggle_hidden(),
@@ -387,7 +601,9 @@ impl ExplorerView {
                 state.reload(&path);
             }
             Some(Hot::Row(index)) => {
-                let Some(row) = state.rows().get(index).cloned() else { return ExplorerEvent::None };
+                let Some(row) = state.rows().get(index).cloned() else {
+                    return ExplorerEvent::None;
+                };
                 if row.entry.is_directory() {
                     state.toggle(&row.entry.path);
                 } else {
@@ -403,7 +619,9 @@ impl ExplorerView {
 
 /// Tree row height for a `base` UI font size: 28px minimum, 44px touch targets on compact.
 fn tree_row_height(base: f64, compact: bool) -> f64 {
-    (base * 1.2 + 12.0).max(if compact { 44.0 } else { 28.0 }).round()
+    (base * 1.2 + 12.0)
+        .max(if compact { 44.0 } else { 28.0 })
+        .round()
 }
 
 #[cfg(test)]

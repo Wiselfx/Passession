@@ -162,21 +162,22 @@ pub(super) fn allowed_origin(origin: &str, config: &Value, listen: &Value) -> bo
 
 pub(super) fn cors(headers: &mut HeaderMap, origin: Option<&str>, config: &Value, listen: &Value) {
     if let Some(origin) = origin.filter(|origin| allowed_origin(origin, config, listen))
-        && let Ok(value) = HeaderValue::from_str(origin) {
-            headers.insert("access-control-allow-origin", value);
-            headers.insert(
-                "access-control-allow-methods",
-                HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
-            );
-            headers.insert(
-                "access-control-allow-headers",
-                HeaderValue::from_static("Content-Type, Authorization"),
-            );
-            headers.insert(
-                "access-control-allow-credentials",
-                HeaderValue::from_static("true"),
-            );
-        }
+        && let Ok(value) = HeaderValue::from_str(origin)
+    {
+        headers.insert("access-control-allow-origin", value);
+        headers.insert(
+            "access-control-allow-methods",
+            HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
+        );
+        headers.insert(
+            "access-control-allow-headers",
+            HeaderValue::from_static("Content-Type, Authorization"),
+        );
+        headers.insert(
+            "access-control-allow-credentials",
+            HeaderValue::from_static("true"),
+        );
+    }
 }
 
 pub(super) fn activity_peer(ip: Option<IpAddr>) -> bool {

@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use makepad_widgets::*;
-use paseo_gui_platform::{PlatformAction, PlatformEvent, PlatformRequestId, PlatformValue, QuitReason};
+use paseo_gui_platform::{
+    PlatformAction, PlatformEvent, PlatformRequestId, PlatformValue, QuitReason,
+};
 use serde_json::{Value, json};
 
 use crate::common::MAIN_WINDOW_ID;
@@ -39,7 +41,10 @@ pub struct Ctx<'a> {
 
 /// App startup: arms the driver when the harness provided a proof directory.
 pub fn start(cx: &mut Cx) {
-    let Some(proof) = std::env::var_os("PASEO_DESKTOP_SMOKE_PROOF").filter(|v| !v.is_empty()) else { return };
+    let Some(proof) = std::env::var_os("PASEO_DESKTOP_SMOKE_PROOF").filter(|v| !v.is_empty())
+    else {
+        return;
+    };
     let driver = Driver {
         proof: PathBuf::from(proof),
         panel: std::env::var("PASEO_SMOKE_PANEL").map_or(true, |v| v != "0"),
@@ -151,15 +156,23 @@ impl Driver {
             Event::Actions(actions) => {
                 for action in shell::platform::actions(actions) {
                     match action {
-                        PlatformAction::Completed { request, result } if Some(request) == self.daemon_request => {
+                        PlatformAction::Completed { request, result }
+                            if Some(request) == self.daemon_request =>
+                        {
                             self.daemon_request = None;
                             match result {
                                 Ok(PlatformValue::Json(status)) => self.daemon = Some(status),
-                                Ok(_) => return Err("The daemon status had an unexpected shape".into()),
-                                Err(error) => return Err(format!("Daemon status failed: {}", error.message)),
+                                Ok(_) => {
+                                    return Err("The daemon status had an unexpected shape".into());
+                                }
+                                Err(error) => {
+                                    return Err(format!("Daemon status failed: {}", error.message));
+                                }
                             }
                         }
-                        PlatformAction::Event(PlatformEvent::QuitCancelled) => self.quit_cancelled = true,
+                        PlatformAction::Event(PlatformEvent::QuitCancelled) => {
+                            self.quit_cancelled = true
+                        }
                         PlatformAction::Event(PlatformEvent::HostError { message }) => {
                             self.record("desktop-error", Value::String(message.clone()));
                             self.errors.push(message);
@@ -174,7 +187,9 @@ impl Driver {
                 }
             }
             Event::Draw(_) => {
-                if let Some(present) = self.present.as_mut() && !present.drawn {
+                if let Some(present) = self.present.as_mut()
+                    && !present.drawn
+                {
                     present.drawn = true;
                     cx.new_next_frame();
                 }
@@ -207,37 +222,57 @@ impl Driver {
                 if !self.visible(ctx, MAIN_WINDOW_ID) {
                     return self.waiting("first visible session shell in the primary window");
                 }
-                require(shell::window_states().len() == 1, "The primary process did not start with exactly one window")?;
-                require(self.errors.is_empty(), &format!("Desktop startup failed: {:?}", self.errors))?;
+                require(
+                    shell::window_states().len() == 1,
+                    "The primary process did not start with exactly one window",
+                )?;
+                require(
+                    self.errors.is_empty(),
+                    &format!("Desktop startup failed: {:?}", self.errors),
+                )?;
                 self.query_daemon();
                 self.go(Step::StartupDaemon)
             }
             Step::StartupDaemon => {
-                let Some(status) = self.daemon.take() else { return self.waiting("desktop daemon status") };
+                let Some(status) = self.daemon.take() else {
+                    return self.waiting("desktop daemon status");
+                };
                 if status.get("status").and_then(Value::as_str) != Some("running") {
                     // A starting daemon reports `starting` first; ask again shortly.
                     if Instant::now() > self.deadline {
-                        return Err(format!("Desktop coordinator failed to start native daemon: {status}"));
+                        return Err(format!(
+                            "Desktop coordinator failed to start native daemon: {status}"
+                        ));
                     }
                     self.next_query = Some(Instant::now() + Duration::from_millis(500));
                     return Ok(false);
                 }
                 self.started_pid = status.get("pid").cloned().unwrap_or(Value::Null);
-                write_atomic(&self.proof, "started.json", status.to_string().as_bytes()).map_err(|e| format!("Writing started.json failed: {e}"))?;
+                write_atomic(&self.proof, "started.json", status.to_string().as_bytes())
+                    .map_err(|e| format!("Writing started.json failed: {e}"))?;
                 let windows = shell::window_states().len();
-                self.record("native-single-primary-user-engine", json!({ "primary": MAIN_WINDOW_ID, "windowCount": windows, "daemon": status }));
+                self.record(
+                    "native-single-primary-user-engine",
+                    json!({ "primary": MAIN_WINDOW_ID, "windowCount": windows, "daemon": status }),
+                );
                 self.go(Step::ColdStart)
             }
             Step::ColdStart => {
                 let path = self.proof.display().to_string();
                 let routed = hosts::hosts(ctx.state).iter().any(|h| {
-                    h.is_local() && h.projects().iter().any(|p| p.get("projectRootPath").and_then(Value::as_str) == Some(path.as_str()))
+                    h.is_local()
+                        && h.projects().iter().any(|p| {
+                            p.get("projectRootPath").and_then(Value::as_str) == Some(path.as_str())
+                        })
                 });
                 if !routed {
-                    return self.waiting("cold-start project routed after shell and connection readiness");
+                    return self
+                        .waiting("cold-start project routed after shell and connection readiness");
                 }
                 self.record("primary-cold-start-project-route", Value::String(path));
-                let window = main.os_window().ok_or("The first window has no OS window")?;
+                let window = main
+                    .os_window()
+                    .ok_or("The first window has no OS window")?;
                 self.restore_size = match main.drawn_layout() {
                     _ if self.main_size.x > 0.0 => self.main_size,
                     Some((size, _)) => size,
@@ -247,12 +282,19 @@ impl Driver {
                 self.go(Step::SheetCompact)
             }
             Step::SheetCompact => {
-                let compact = main.drawn_layout().is_some_and(|(size, compact)| compact && size.x <= 412.5);
+                let compact = main
+                    .drawn_layout()
+                    .is_some_and(|(size, compact)| compact && size.x <= 412.5);
                 if !compact {
                     return self.waiting("compact session shell");
                 }
                 let detail = json!({ "type": "plain_text", "label": WAIT_COMMAND, "text": "" });
-                self.sheet = Some(timeline::show_tool_call_sheet(cx, MAIN_WINDOW_ID, "Wait", &detail));
+                self.sheet = Some(timeline::show_tool_call_sheet(
+                    cx,
+                    MAIN_WINDOW_ID,
+                    "Wait",
+                    &detail,
+                ));
                 self.go(Step::SheetOpen)
             }
             Step::SheetOpen => {
@@ -273,7 +315,9 @@ impl Driver {
                     return self.waiting("capturing wait command sheet");
                 }
                 timeline::close_tool_call_sheet(cx, self.sheet.take().unwrap());
-                let window = main.os_window().ok_or("The first window has no OS window")?;
+                let window = main
+                    .os_window()
+                    .ok_or("The first window has no OS window")?;
                 cx.push_unique_platform_op(CxOsOp::ResizeWindow(window, self.restore_size));
                 self.go(Step::SheetRestored)
             }
@@ -293,7 +337,10 @@ impl Driver {
                 if shell::window_state(MAIN_WINDOW_ID) != Some(WindowState::Tray) {
                     return self.waiting("primary window hidden to tray");
                 }
-                require(shell::window_states().len() == 1, "Closing the sole primary destroyed its window")?;
+                require(
+                    shell::window_states().len() == 1,
+                    "Closing the sole primary destroyed its window",
+                )?;
                 self.query_daemon();
                 self.go(Step::TrayDaemon)
             }
@@ -303,12 +350,17 @@ impl Driver {
                 }
                 shell::platform::show_windows();
                 shell::set_tray_hidden(false);
-                require(self.visible(ctx, MAIN_WINDOW_ID), "Primary tray window did not restore")?;
+                require(
+                    self.visible(ctx, MAIN_WINDOW_ID),
+                    "Primary tray window did not restore",
+                )?;
                 self.record("primary-tray-hide-and-restore", Value::Null);
                 self.open_second()
             }
             Step::SecondOpen => {
-                let Some(second) = self.new_visible_window(ctx) else { return self.waiting("second actual visible user window") };
+                let Some(second) = self.new_visible_window(ctx) else {
+                    return self.waiting("second actual visible user window");
+                };
                 self.second = second;
                 CLOSE_GUARD.with(|g| g.set(true));
                 main.request_close(cx);
@@ -320,9 +372,13 @@ impl Driver {
                     return Ok(false);
                 }
                 self.settle = None;
-                require(self.visible(ctx, MAIN_WINDOW_ID), "Closing the primary ignored a dirty-document cancellation")?;
+                require(
+                    self.visible(ctx, MAIN_WINDOW_ID),
+                    "Closing the primary ignored a dirty-document cancellation",
+                )?;
                 self.quit_cancelled = false;
-                let platform = paseo_gui_platform::platform().ok_or("The platform is not running")?;
+                let platform =
+                    paseo_gui_platform::platform().ok_or("The platform is not running")?;
                 platform.request_quit(QuitReason::Quit, false);
                 self.go(Step::GuardQuit)
             }
@@ -330,7 +386,10 @@ impl Driver {
                 if !self.quit_cancelled {
                     return self.waiting("dirty-document guard cancelling Quit");
                 }
-                require(self.visible(ctx, MAIN_WINDOW_ID), "Cancelled Quit hid the primary")?;
+                require(
+                    self.visible(ctx, MAIN_WINDOW_ID),
+                    "Cancelled Quit hid the primary",
+                )?;
                 self.query_daemon();
                 self.go(Step::GuardDaemon)
             }
@@ -345,7 +404,8 @@ impl Driver {
             }
             Step::PrimaryDormant => {
                 if shell::window_state(MAIN_WINDOW_ID) != Some(WindowState::Dormant) {
-                    return self.waiting("primary retained but hidden while second window stays open");
+                    return self
+                        .waiting("primary retained but hidden while second window stays open");
                 }
                 require(
                     self.visible(ctx, &self.second) && shell::window_states().len() == 2,
@@ -359,16 +419,23 @@ impl Driver {
                 if !self.visible(ctx, MAIN_WINDOW_ID) {
                     return self.waiting("secondary New Window restores the retained primary");
                 }
-                require(shell::window_states().len() == 2, "New Window failed to reuse the retained primary")?;
+                require(
+                    shell::window_states().len() == 2,
+                    "New Window failed to reuse the retained primary",
+                )?;
                 let second = (ctx.shell)(&self.second).ok_or("The second window is missing")?;
                 second.request_close(cx);
                 self.go(Step::SecondTornDown)
             }
             Step::SecondTornDown => {
                 if shell::window_states().len() != 1 {
-                    return self.waiting("secondary window destroyed while primary continues rendering");
+                    return self
+                        .waiting("secondary window destroyed while primary continues rendering");
                 }
-                require(self.visible(ctx, MAIN_WINDOW_ID), "Secondary close hid the primary")?;
+                require(
+                    self.visible(ctx, MAIN_WINDOW_ID),
+                    "Secondary close hid the primary",
+                )?;
                 self.present(cx, "primary-reuse-and-secondary-teardown", Value::Null);
                 self.go(Step::ReusePresented)
             }
@@ -386,7 +453,9 @@ impl Driver {
                 self.go(Step::ReplacementOpen)
             }
             Step::ReplacementOpen => {
-                let Some(second) = self.new_visible_window(ctx) else { return self.waiting("replacement secondary visible") };
+                let Some(second) = self.new_visible_window(ctx) else {
+                    return self.waiting("replacement secondary visible");
+                };
                 self.second = second;
                 main.request_close(cx);
                 self.go(Step::ReplacementDormant)
@@ -402,7 +471,11 @@ impl Driver {
                 if !self.same_daemon("Closing one window stopped or replaced the daemon")? {
                     return self.waiting("desktop daemon status");
                 }
-                self.present(cx, "multiwindow-close-retains-daemon", json!({ "retained": self.second }));
+                self.present(
+                    cx,
+                    "multiwindow-close-retains-daemon",
+                    json!({ "retained": self.second }),
+                );
                 self.go(Step::RetainPresented)
             }
             Step::RetainPresented => {
@@ -437,7 +510,11 @@ impl Driver {
                     return self.waiting("desktop daemon status");
                 }
                 // The hidden state shows nothing to draw: the next frame after hiding proves it.
-                self.present = Some(Present { phase: "last-window-hidden-to-tray", value: Value::Null, drawn: true });
+                self.present = Some(Present {
+                    phase: "last-window-hidden-to-tray",
+                    value: Value::Null,
+                    drawn: true,
+                });
                 cx.new_next_frame();
                 self.go(Step::LastPresented)
             }
@@ -451,15 +528,27 @@ impl Driver {
                 if !self.captured("last-window-hidden-to-tray") {
                     return self.waiting("capturing the hidden window");
                 }
-                write_atomic(&self.proof, "panel-command.json", br#"{"action":"activate"}"#).map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
+                write_atomic(
+                    &self.proof,
+                    "panel-command.json",
+                    br#"{"action":"activate"}"#,
+                )
+                .map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
                 self.go(Step::Activated)
             }
             Step::Activated => {
                 if !self.visible(ctx, &self.second) {
                     return self.waiting("real tray activation restores user window");
                 }
-                require(self.errors.is_empty(), &format!("Desktop lifecycle failed: {:?}", self.errors))?;
-                self.present(cx, "tray-activation-restores-same-engine", Value::String(self.second.clone()));
+                require(
+                    self.errors.is_empty(),
+                    &format!("Desktop lifecycle failed: {:?}", self.errors),
+                )?;
+                self.present(
+                    cx,
+                    "tray-activation-restores-same-engine",
+                    Value::String(self.second.clone()),
+                );
                 self.go(Step::ActivatedPresented)
             }
             Step::ActivatedPresented => {
@@ -473,12 +562,14 @@ impl Driver {
                     return self.waiting("restoring the same rendered window");
                 }
                 if self.logout {
-                    let second = (ctx.shell)(&self.second).ok_or("The retained window is missing")?;
+                    let second =
+                        (ctx.shell)(&self.second).ok_or("The retained window is missing")?;
                     second.request_close(cx);
                     return self.go(Step::FinalHidden);
                 }
                 self.record("expect-real-tray-menu-quit", Value::Null);
-                write_atomic(&self.proof, "panel-command.json", br#"{"action":"quit"}"#).map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
+                write_atomic(&self.proof, "panel-command.json", br#"{"action":"quit"}"#)
+                    .map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
                 self.go(Step::Done)
             }
             Step::FinalHidden => {
@@ -486,7 +577,8 @@ impl Driver {
                     return self.waiting("hidden before logout");
                 }
                 self.record("expect-session-logout-quit", Value::Null);
-                write_atomic(&self.proof, "panel-command.json", br#"{"action":"logout"}"#).map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
+                write_atomic(&self.proof, "panel-command.json", br#"{"action":"logout"}"#)
+                    .map_err(|e| format!("Writing panel-command.json failed: {e}"))?;
                 self.go(Step::Done)
             }
             Step::Done => Ok(false),
@@ -518,7 +610,8 @@ impl Driver {
 
     /// Logically open, shown, and drawn at least once.
     fn visible(&self, ctx: &Ctx, id: &str) -> bool {
-        shell::window_state(id) == Some(WindowState::Visible) && (ctx.shell)(id).is_some_and(|s| s.os_window().is_some())
+        shell::window_state(id) == Some(WindowState::Visible)
+            && (ctx.shell)(id).is_some_and(|s| s.os_window().is_some())
     }
 
     /// A visible secondary window other than the current `second`.
@@ -538,13 +631,22 @@ impl Driver {
 
     /// `Some` once the queried status arrived: whether the daemon pid is still the started one.
     fn same_daemon(&mut self, message: &str) -> Result<bool, String> {
-        let Some(status) = self.daemon.take() else { return Ok(false) };
-        require(status.get("pid") == Some(&self.started_pid) && !self.started_pid.is_null(), message)?;
+        let Some(status) = self.daemon.take() else {
+            return Ok(false);
+        };
+        require(
+            status.get("pid") == Some(&self.started_pid) && !self.started_pid.is_null(),
+            message,
+        )?;
         Ok(true)
     }
 
     fn present(&mut self, cx: &mut Cx, phase: &'static str, value: Value) {
-        self.present = Some(Present { phase, value, drawn: false });
+        self.present = Some(Present {
+            phase,
+            value,
+            drawn: false,
+        });
         cx.redraw_all();
     }
 
@@ -571,7 +673,11 @@ impl Driver {
 }
 
 fn require(condition: bool, message: &str) -> Result<(), String> {
-    if condition { Ok(()) } else { Err(message.to_string()) }
+    if condition {
+        Ok(())
+    } else {
+        Err(message.to_string())
+    }
 }
 
 /// Writes `<name>.<pid>.tmp` in `dir`, then renames it over `name`.

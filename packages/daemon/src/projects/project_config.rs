@@ -89,7 +89,10 @@ async fn canonical_root(root: &str) -> PathBuf {
 async fn revision(root: &Path) -> std::io::Result<Value> {
     match tokio::fs::metadata(root.join(FILE_NAME)).await {
         Ok(metadata) => {
-            let modified = metadata.modified()?.duration_since(UNIX_EPOCH).unwrap_or_default();
+            let modified = metadata
+                .modified()?
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default();
             let mtime_ms =
                 modified.as_secs() as f64 * 1e3 + f64::from(modified.subsec_nanos()) / 1e6;
             Ok(json!({"mtimeMs":mtime_ms,"size":metadata.len()}))
@@ -193,7 +196,13 @@ async fn uncommitted_setup_changes(root: &Path, current: &Value) -> Result<bool>
     let cancel = tokio_util::sync::CancellationToken::new();
     let prefix = command::text(root, &["rev-parse", "--show-prefix"], &env, cancel.clone()).await?;
     let path = format!("{prefix}{FILE_NAME}");
-    command::text(root, &["rev-parse", "--verify", "HEAD"], &env, cancel.clone()).await?;
+    command::text(
+        root,
+        &["rev-parse", "--verify", "HEAD"],
+        &env,
+        cancel.clone(),
+    )
+    .await?;
     let tracked = command::text(
         root,
         &["ls-tree", "--name-only", "HEAD", "--", &path],
@@ -249,7 +258,11 @@ fn parse_raw(value: &Value) -> Option<Value> {
     if let Some(metadata) = object.get("metadataGeneration") {
         output.insert("metadataGeneration".into(), parse_metadata(metadata));
     }
-    passthrough(object, &mut output, &["worktree", "scripts", "metadataGeneration"]);
+    passthrough(
+        object,
+        &mut output,
+        &["worktree", "scripts", "metadataGeneration"],
+    );
     Some(Value::Object(output))
 }
 
@@ -371,16 +384,26 @@ mod tests {
     async fn writes_are_revision_guarded_and_round_trip() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        assert_eq!(read_for_edit(root).await.unwrap(), (Value::Null, Value::Null));
+        assert_eq!(
+            read_for_edit(root).await.unwrap(),
+            (Value::Null, Value::Null)
+        );
         let config = json!({"worktree": {"setup": ["npm ci"]}});
         let (written, revision) = write_for_edit(root, &config, &Value::Null).await.unwrap();
         assert_eq!(written, config);
-        assert_eq!(read_for_edit(root).await.unwrap(), (config.clone(), revision.clone()));
         assert_eq!(
-            tokio::fs::read_to_string(root.join(FILE_NAME)).await.unwrap(),
+            read_for_edit(root).await.unwrap(),
+            (config.clone(), revision.clone())
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(root.join(FILE_NAME))
+                .await
+                .unwrap(),
             "{\n  \"worktree\": {\n    \"setup\": [\n      \"npm ci\"\n    ]\n  }\n}\n"
         );
-        let stale = write_for_edit(root, &config, &Value::Null).await.unwrap_err();
+        let stale = write_for_edit(root, &config, &Value::Null)
+            .await
+            .unwrap_err();
         assert_eq!(stale["code"], "stale_project_config");
         assert_eq!(stale["currentRevision"], revision);
         assert_eq!(

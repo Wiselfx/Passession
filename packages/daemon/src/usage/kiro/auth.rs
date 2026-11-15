@@ -260,12 +260,14 @@ mod tests {
         let path = dir.path().join("auth.db");
         store(&path, "github");
         let db = Connection::open(&path).unwrap();
-        db.execute("UPDATE credentials SET id = 'another-account'", []).unwrap();
+        db.execute("UPDATE credentials SET id = 'another-account'", [])
+            .unwrap();
         assert!(read(&path).is_err());
         db.execute(
             "INSERT INTO credentials VALUES ('active', ?1)",
             ["x".repeat(1_048_577)],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(read(&path).is_err());
         let before = std::fs::read(&path).unwrap();
         assert!(read(&path).is_err());
@@ -275,8 +277,10 @@ mod tests {
     #[test]
     fn auth_preserves_all_managed_provider_kinds_and_profile_regions() {
         for (kind, provider) in [
-            ("social", "google"), ("social", "github"),
-            ("oidc", "builder-id"), ("oidc", "identity-center"),
+            ("social", "google"),
+            ("social", "github"),
+            ("oidc", "builder-id"),
+            ("oidc", "identity-center"),
         ] {
             let value = json!({
                 "kind":kind,"provider":provider,"access_token":"private-token",
@@ -287,8 +291,14 @@ mod tests {
             });
             let credential = parse(&value.to_string()).unwrap();
             assert_eq!(credential.provider, provider);
-            assert_eq!(credential.expires_at.to_rfc3339(), "2099-01-01T00:00:00+00:00");
-            assert_eq!(credential.profile_arn.as_deref(), value["profile_arn"].as_str());
+            assert_eq!(
+                credential.expires_at.to_rfc3339(),
+                "2099-01-01T00:00:00+00:00"
+            );
+            assert_eq!(
+                credential.profile_arn.as_deref(),
+                value["profile_arn"].as_str()
+            );
         }
     }
 }

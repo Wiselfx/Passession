@@ -30,6 +30,7 @@ Paseo's runtime, SDKs and build tools require neither Node, Electron, nor Chromi
 | Automation and integrations | `automation/`, `mcp/`, `mcp_client/`, `hosts/`, `hub/`                                 | Schedules, MCP client/server, connected-host and Hub behavior                             |
 | Desktop lifecycle           | `desktop_host.rs`, `desktop_host/`, `daemon_control/`                                  | Structured IPC, process identity, ownership, supervisor and worker lifecycle              |
 | Client runtime              | `packages/gui-core/src`                                                                | Host connections, directory synchronization, persisted client state, request/event boundary |
+| Embedded tailnet             | `packages/tailnet`, `packages/client/src/transport`, `packages/gui-core/src/runtime` | App-owned libtailscale lifecycle, authenticated loopback transport, host routing and cancellation |
 | Client UI                   | `packages/gui/src` (`shell/`, `common/`, `features/*`)                                 | Makepad shell, navigation, tabs/windows, feature views and controllers                    |
 | Platform integration        | `packages/gui-platform/src`, `packages/gui-platform/{android,ios}`                     | Desktop host, updater, tray, notifications, pickers, audio, mobile bridges                |
 | Terminal emulation          | `packages/terminal`                                                                    | Ghostty VT engine shared by daemon screens, terminal tabs and logs                        |
@@ -44,6 +45,8 @@ The existing JSON request/response and event contracts, binary stream framing, r
 The default daemon home is `~/.paseo`. `PASEO_HOME` and CLI `--home` select another instance. State remains in that home: `config.json`, agent/session records and history, project/workspace records, schedules, plugin configuration, credentials and runtime bookkeeping. A UI cutover is not permission to delete, reset, or relocate a user's state. Checkout development defaults to `.dev/paseo-home` and `127.0.0.1:6768`, separate from the ordinary `6767` endpoint.
 
 A client disconnect does not end a provider turn or archive a session. Daemon-owned operations must survive socket replacement. Request failures, persistence failures, and unsupported capabilities are visible; the client must not acknowledge a durable mutation before it succeeds.
+
+Embedded Tailscale is a client transport, not an OS VPN or a replacement daemon. One app-owned node is shared across windows; `gui-platform` supplies its OS-backed encryption key, `paseo-tailnet` owns encrypted state and the pinned native engine, and `gui-core` owns host admission and lifecycle. Explicitly selected tailnet hosts cannot fall back to saved Normal/relay alternatives. Normal hosts and unrelated public HTTP remain usable at the same time. Host HTTP uses the same network boundary; daemon credentials are restricted to the admitted origin and never follow externally initiated redirect/icon chains.
 
 ## Client state and navigation
 

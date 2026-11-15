@@ -398,16 +398,18 @@ pub async fn sessions_dir(
         && cfg!(any(target_os = "linux", target_os = "macos"))
         && (profile.is_some()
             || env
-                .get("PI_CODING_AGENT_DIR").is_none_or(|s| s.trim().is_empty()))
-        && let Some(xdg) = env.get("XDG_DATA_HOME").filter(|s| !s.is_empty()) {
-            let mut root = Path::new(xdg).join("omp");
-            if let Some(profile) = &profile {
-                root = root.join("profiles").join(profile);
-            }
-            if fs::try_exists(&root).await.unwrap_or(false) {
-                return Ok(root.join("sessions"));
-            }
+                .get("PI_CODING_AGENT_DIR")
+                .is_none_or(|s| s.trim().is_empty()))
+        && let Some(xdg) = env.get("XDG_DATA_HOME").filter(|s| !s.is_empty())
+    {
+        let mut root = Path::new(xdg).join("omp");
+        if let Some(profile) = &profile {
+            root = root.join("profiles").join(profile);
         }
+        if fs::try_exists(&root).await.unwrap_or(false) {
+            return Ok(root.join("sessions"));
+        }
+    }
     Ok(agent.join("sessions"))
 }
 
@@ -463,9 +465,10 @@ pub async fn discover(
     let mut ranked = Vec::new();
     for file in files(&root).await {
         if let Ok(meta) = fs::metadata(&file).await
-            && let Ok(mtime) = meta.modified() {
-                ranked.push((file, mtime));
-            }
+            && let Ok(mtime) = meta.modified()
+        {
+            ranked.push((file, mtime));
+        }
     }
     ranked.sort_by(|a, b| b.1.cmp(&a.1));
     let limit = options["limit"].as_u64().unwrap_or(20) as usize;
@@ -547,9 +550,10 @@ pub async fn resolve_session_file(
     });
     for file in files {
         if let Ok((head, _, _)) = chunks(&file).await
-            && header(family, &head).is_some_and(|h| h["id"] == handle) {
-                return Ok(Some(file));
-            }
+            && header(family, &head).is_some_and(|h| h["id"] == handle)
+        {
+            return Ok(Some(file));
+        }
     }
     Ok(None)
 }
@@ -561,7 +565,10 @@ pub fn import_persistence(provider: &str, handle: &str, cwd: &str, stored_config
     json!({"provider":provider,"sessionId":handle,"nativeHandle":handle,"metadata":metadata})
 }
 
-async fn active_entries_with_coverage(path: &Path, active_entry_id: Option<&str>) -> Result<(Vec<Value>, bool)> {
+async fn active_entries_with_coverage(
+    path: &Path,
+    active_entry_id: Option<&str>,
+) -> Result<(Vec<Value>, bool)> {
     let content = fs::read(path).await?;
     let text = String::from_utf8_lossy(&content);
     let mut complete = matches!(text, std::borrow::Cow::Borrowed(_));
@@ -569,9 +576,12 @@ async fn active_entries_with_coverage(path: &Path, active_entry_id: Option<&str>
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         match record(line) {
             // OMP's title preamble is file metadata, not a session-tree entry.
-            Some(entry) if entry["type"] == "title" && entry["title"].is_string()
-                && entry.get("id").is_none() && entry.get("parentId").is_none()
-                && entry.get("message").is_none() => {}
+            Some(entry)
+                if entry["type"] == "title"
+                    && entry["title"].is_string()
+                    && entry.get("id").is_none()
+                    && entry.get("parentId").is_none()
+                    && entry.get("message").is_none() => {}
             Some(entry) if entry["id"].is_string() => entries.push(entry),
             Some(_) => complete = false,
             None => complete = false,
@@ -584,7 +594,10 @@ async fn active_entries_with_coverage(path: &Path, active_entry_id: Option<&str>
         .collect();
     complete &= by_id.len() == entries.len();
     if let Some(id) = active_entry_id.filter(|id| !id.is_empty())
-        && !by_id.contains_key(id) { return Ok((Vec::new(), false)); }
+        && !by_id.contains_key(id)
+    {
+        return Ok((Vec::new(), false));
+    }
     let parents: HashSet<_> = entries
         .iter()
         .filter_map(|e| e["parentId"].as_str())
@@ -669,18 +682,18 @@ fn entry_message(family: &str, entry: &Value) -> Option<Value> {
         }
         if role == "developer"
             && let Some(content) = message["content"].as_array().filter(|c| c.len() == 1)
-                && content[0]["type"] == "text"
-                    && let Some(text) = content[0]["text"].as_str() {
-                        let text = text.trim();
-                        if text.ends_with("</system-reminder>")
-                            && text.strip_prefix("<system-reminder").is_some_and(|s| {
-                                s.starts_with('>')
-                                    || s.chars().next().is_some_and(char::is_whitespace)
-                            })
-                        {
-                            return None;
-                        }
-                    }
+            && content[0]["type"] == "text"
+            && let Some(text) = content[0]["text"].as_str()
+        {
+            let text = text.trim();
+            if text.ends_with("</system-reminder>")
+                && text.strip_prefix("<system-reminder").is_some_and(|s| {
+                    s.starts_with('>') || s.chars().next().is_some_and(char::is_whitespace)
+                })
+            {
+                return None;
+            }
+        }
         return Some(fallback_message(role, message));
     }
     if entry["type"] == "custom_message" {
@@ -758,12 +771,19 @@ pub async fn load_live(
 /// it with the file's last entry as the leaf. A complete file ending at the live
 /// runtime's leaf is therefore an authoritative replay of the live conversation,
 /// including after a tree rewind. Stale, newer, torn or missing files are not.
-pub async fn verified_pi_live(provider: &str, path: &Path, live_leaf: &Value) -> Result<Option<History>> {
+pub async fn verified_pi_live(
+    provider: &str,
+    path: &Path,
+    live_leaf: &Value,
+) -> Result<Option<History>> {
     if !live_leaf.is_string() {
         return Ok(None);
     }
     let history = load_live("pi", provider, path, None, &Value::Null).await?;
-    Ok((history.complete && history.descriptor["activeBranchEntryId"] == *live_leaf).then_some(history))
+    Ok(
+        (history.complete && history.descriptor["activeBranchEntryId"] == *live_leaf)
+            .then_some(history),
+    )
 }
 
 fn push_event(history: &mut History, event: Value) {
@@ -903,13 +923,12 @@ fn project(
             let event = transcript.upsert(provider, transcript.status, &title, timestamp);
             push_event(&mut history, event);
         }
-        if append_todo
-            && let Some(todo) = todo_state(entries) {
-                push_event(
-                    &mut history,
-                    json!({"type":"timeline","provider":provider,"item":todo}),
-                );
-            }
+        if append_todo && let Some(todo) = todo_state(entries) {
+            push_event(
+                &mut history,
+                json!({"type":"timeline","provider":provider,"item":todo}),
+            );
+        }
     } else {
         for child in mapper.drain_child_sessions() {
             if let Some(event) = pi_child_source(provider, &child) {
@@ -970,11 +989,10 @@ async fn omp_child_history(
     request: &SubagentHistoryRequest,
     source: &Value,
 ) -> Result<Vec<Value>> {
-    let path = Path::new(
-        source["path"]
-            .as_str()
-            .ok_or_else(|| anyhow!("OMP subagent '{}' has no transcript path", request.child_id))?,
-    );
+    let path =
+        Path::new(source["path"].as_str().ok_or_else(|| {
+            anyhow!("OMP subagent '{}' has no transcript path", request.child_id)
+        })?);
     let (entries, complete) = active_entries_with_coverage(path, None)
         .await
         .map_err(|error| {
@@ -1002,7 +1020,9 @@ async fn omp_child_history(
         })
         .next_back();
     let descriptor = describe("omp", path).await?.unwrap_or(Value::Null);
-    let child = project("omp", provider, path, descriptor, &entries, complete, false, None, true);
+    let child = project(
+        "omp", provider, path, descriptor, &entries, complete, false, None, true,
+    );
     let coverage = if child.complete {
         HistoryCoverage::Complete
     } else {
@@ -1042,7 +1062,10 @@ async fn pi_child_history(
     let data = fs::read(file)
         .await
         .map_err(|error| anyhow!("Pi subagent transcript {file} is unavailable: {error}"))?;
-    let end = data.iter().rposition(|b| *b == b'\n').map_or(0, |last| last + 1);
+    let end = data
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |last| last + 1);
     let text = String::from_utf8_lossy(&data[..end]);
     let mut complete = end == data.len() && matches!(text, std::borrow::Cow::Borrowed(_));
     let mut mapper = Mapper::new("pi", provider).native_ids();
@@ -1070,7 +1093,13 @@ async fn pi_child_history(
     Ok(rows
         .into_iter()
         .map(|(item, timestamp)| {
-            subagent_row(provider, &request.child_id, item, timestamp.as_ref(), coverage)
+            subagent_row(
+                provider,
+                &request.child_id,
+                item,
+                timestamp.as_ref(),
+                coverage,
+            )
         })
         .collect())
 }
@@ -1117,22 +1146,25 @@ fn subagent_transcripts(messages: &[Value], parent: &Path) -> Vec<Transcript> {
     for message in messages {
         if message["role"] == "assistant" {
             for block in message["content"].as_array().into_iter().flatten() {
-                if block["type"] == "toolCall" && block["name"] == "task"
-                    && let Some(id) = block["id"].as_str() {
-                        calls.insert(
-                            id,
-                            block["arguments"]["agent"]
-                                .as_str()
-                                .unwrap_or("OMP subagent"),
-                        );
-                    }
+                if block["type"] == "toolCall"
+                    && block["name"] == "task"
+                    && let Some(id) = block["id"].as_str()
+                {
+                    calls.insert(
+                        id,
+                        block["arguments"]["agent"]
+                            .as_str()
+                            .unwrap_or("OMP subagent"),
+                    );
+                }
             }
         }
         for (id, status) in omp_task_completions(message) {
             if let Some(index) = children.get(id)
-                && out[*index].status == "running" {
-                    out[*index].status = status;
-                }
+                && out[*index].status == "running"
+            {
+                out[*index].status = status;
+            }
         }
         if message["role"] != "toolResult" || message["toolName"] != "task" {
             continue;
@@ -1155,7 +1187,8 @@ fn subagent_transcripts(messages: &[Value], parent: &Path) -> Vec<Transcript> {
                 if existing.is_some_and(|index| out[index].tool_call == id) {
                     continue;
                 }
-                let status = if terminal && (message["isError"] == true || truthy(&result["error"])) {
+                let status = if terminal && (message["isError"] == true || truthy(&result["error"]))
+                {
                     "failed"
                 } else {
                     omp_task_status(result, terminal)
@@ -1164,7 +1197,9 @@ fn subagent_transcripts(messages: &[Value], parent: &Path) -> Vec<Transcript> {
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy();
-                let path = result["sessionFile"].as_str().filter(|s| !s.is_empty())
+                let path = result["sessionFile"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
                     .map(PathBuf::from)
                     .unwrap_or_else(|| parent.with_extension("").join(format!("{basename}.jsonl")));
                 let transcript = Transcript {
@@ -1197,7 +1232,11 @@ fn subagent_transcripts(messages: &[Value], parent: &Path) -> Vec<Transcript> {
             .unwrap_or_default();
         if let Some(capture) = LEGACY_TRANSCRIPT.captures(&text) {
             let path = PathBuf::from(&capture[1]);
-            let child_id = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let child_id = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             if children.contains_key(child_id.as_str()) {
                 continue;
             }
@@ -1380,9 +1419,15 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
         fs::write(&path, rewound_session()).await.unwrap();
-        let history = verified_pi_live("pi", &path, &json!("r1")).await.unwrap()
+        let history = verified_pi_live("pi", &path, &json!("r1"))
+            .await
+            .unwrap()
             .expect("a complete file ending at the live leaf is authoritative");
-        let texts: Vec<_> = history.timeline.iter().filter_map(|item| item["text"].as_str()).collect();
+        let texts: Vec<_> = history
+            .timeline
+            .iter()
+            .filter_map(|item| item["text"].as_str())
+            .collect();
         assert_eq!(texts, ["first", "one"]);
         assert_eq!(history.timeline[0]["messageId"], "u1");
     }
@@ -1392,15 +1437,36 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.jsonl");
         // Unflushed or older Pi: no file, or no live leaf evidence.
-        assert!(verified_pi_live("pi", &path, &json!("r1")).await.unwrap().is_none());
+        assert!(
+            verified_pi_live("pi", &path, &json!("r1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
         fs::write(&path, rewound_session()).await.unwrap();
         // The live runtime is behind or ahead of the file, or reported no leaf.
         for leaf in [json!("a2"), json!("a1"), json!("later"), Value::Null] {
-            assert!(verified_pi_live("pi", &path, &leaf).await.unwrap().is_none(), "{leaf}");
+            assert!(
+                verified_pi_live("pi", &path, &leaf)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{leaf}"
+            );
         }
         // A torn append can hide entries even when the last valid entry matches.
-        fs::write(&path, rewound_session() + "{\"type\":\"message\",\"id\":\"u3\"").await.unwrap();
-        assert!(verified_pi_live("pi", &path, &json!("r1")).await.unwrap().is_none());
+        fs::write(
+            &path,
+            rewound_session() + "{\"type\":\"message\",\"id\":\"u3\"",
+        )
+        .await
+        .unwrap();
+        assert!(
+            verified_pi_live("pi", &path, &json!("r1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn lines(entries: &[Value]) -> String {
@@ -1409,8 +1475,10 @@ mod tests {
 
     /// An OMP session whose `task` tool spawned `children`, each with an agent name.
     fn omp_session(id: &str, children: &[(&str, &str)], reply: &str) -> String {
-        let results: Vec<_> =
-            children.iter().map(|(child, agent)| json!({"id":child,"agent":agent})).collect();
+        let results: Vec<_> = children
+            .iter()
+            .map(|(child, agent)| json!({"id":child,"agent":agent}))
+            .collect();
         lines(&[
             json!({"type":"session","id":id,"cwd":"/work","timestamp":"2026-01-01T00:00:00.000Z"}),
             json!({"type":"model_change","id":"m0","parentId":null,"provider":"anthropic","modelId":"claude"}),
@@ -1426,18 +1494,24 @@ mod tests {
     }
 
     fn omp_background_session(id: &str, progress: Value, jobs: Value) -> String {
-        omp_background_session_with_delivery(id, progress,
+        omp_background_session_with_delivery(
+            id,
+            progress,
             json!({"type":"custom_message","id":"c1","parentId":"r1","customType":"async-result",
                 "timestamp":"2026-01-01T00:00:04.000Z","content":"<system-notice>Background delivery</system-notice>",
-                "details":{"jobs":jobs}}))
+                "details":{"jobs":jobs}}),
+        )
     }
 
     fn omp_wait_session(id: &str, progress: Value, jobs: Value) -> String {
-        omp_background_session_with_delivery(id, progress,
+        omp_background_session_with_delivery(
+            id,
+            progress,
             json!({"type":"message","id":"w1","parentId":"r1",
                 "timestamp":"2026-01-01T00:00:04.000Z","message":{
                     "role":"toolResult","toolName":"wait","toolCallId":"wait-1",
-                    "content":text("completed"),"details":{"jobs":jobs}}}))
+                    "content":text("completed"),"details":{"jobs":jobs}}}),
+        )
     }
 
     fn omp_background_session_with_delivery(id: &str, progress: Value, delivery: Value) -> String {
@@ -1479,8 +1553,14 @@ mod tests {
         ] {
             fs::create_dir_all(path).await.unwrap();
         }
-        let history = load_live("omp", "custom-omp", &parent, None, &Value::Null).await.unwrap();
-        let children: Vec<_> = history.subagent_events.iter().map(|e| &e["event"]).collect();
+        let history = load_live("omp", "custom-omp", &parent, None, &Value::Null)
+            .await
+            .unwrap();
+        let children: Vec<_> = history
+            .subagent_events
+            .iter()
+            .map(|e| &e["event"])
+            .collect();
         assert_eq!(children.len(), 4);
         for (child, (id, title, status)) in children.iter().zip([
             ("Exact.Child", "scout", "completed"),
@@ -1494,7 +1574,10 @@ mod tests {
             assert_eq!(child["toolCallId"], "task-1");
             assert_eq!(child["type"], "upsert");
         }
-        assert_eq!(children[0]["source"]["path"], json!(parent.with_extension("").join("Exact.Child.jsonl")));
+        assert_eq!(
+            children[0]["source"]["path"],
+            json!(parent.with_extension("").join("Exact.Child.jsonl"))
+        );
         assert_eq!(children[1]["source"]["path"], json!(explicit));
     }
 
@@ -1502,68 +1585,138 @@ mod tests {
     async fn omp_task_wait_history_restores_terminal_jobs() {
         let directory = tempfile::tempdir().unwrap();
         let parent = directory.path().join("parent.jsonl");
-        fs::write(&parent, omp_wait_session("parent", json!([
-            {"id":"done","status":"pending"},{"id":"bad","status":"pending"},
-            {"id":"stopped","status":"pending"},{"id":"active","status":"pending"}
-        ]), json!([
-            {"type":"task","id":"done","status":"completed"},
-            {"type":"task","id":"bad","status":"failed"},
-            {"type":"task","id":"stopped","status":"canceled"},
-            {"type":"task","id":"unknown","status":"completed"},
-            {"type":"bash","id":"active","status":"completed"},
-            {"type":"task","id":"active","status":"pending"},
-            {"type":"task","id":"active","status":"running"},
-            {"type":"task","id":"active","status":"unknown"}
-        ]))).await.unwrap();
-        let history = load_live("omp", "omp", &parent, None, &Value::Null).await.unwrap();
-        let children: Vec<_> = history.subagent_events.iter().map(|e|
-            (e["event"]["id"].as_str().unwrap(), e["event"]["status"].as_str().unwrap())).collect();
-        assert_eq!(children, [
-            ("done", "completed"), ("bad", "failed"), ("stopped", "canceled"), ("active", "running")
-        ]);
+        fs::write(
+            &parent,
+            omp_wait_session(
+                "parent",
+                json!([
+                    {"id":"done","status":"pending"},{"id":"bad","status":"pending"},
+                    {"id":"stopped","status":"pending"},{"id":"active","status":"pending"}
+                ]),
+                json!([
+                    {"type":"task","id":"done","status":"completed"},
+                    {"type":"task","id":"bad","status":"failed"},
+                    {"type":"task","id":"stopped","status":"canceled"},
+                    {"type":"task","id":"unknown","status":"completed"},
+                    {"type":"bash","id":"active","status":"completed"},
+                    {"type":"task","id":"active","status":"pending"},
+                    {"type":"task","id":"active","status":"running"},
+                    {"type":"task","id":"active","status":"unknown"}
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+        let history = load_live("omp", "omp", &parent, None, &Value::Null)
+            .await
+            .unwrap();
+        let children: Vec<_> = history
+            .subagent_events
+            .iter()
+            .map(|e| {
+                (
+                    e["event"]["id"].as_str().unwrap(),
+                    e["event"]["status"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            children,
+            [
+                ("done", "completed"),
+                ("bad", "failed"),
+                ("stopped", "canceled"),
+                ("active", "running")
+            ]
+        );
     }
 
     #[tokio::test]
     async fn omp_progress_child_without_source_replays_nested_outcomes() {
         for wait in [false, true] {
-        let session = if wait { omp_wait_session } else { omp_background_session };
-        let directory = tempfile::tempdir().unwrap();
-        let parent = directory.path().join("parent.jsonl");
-        let child = parent.with_extension("").join("child.jsonl");
-        fs::create_dir_all(child.parent().unwrap()).await.unwrap();
-        fs::write(&parent, omp_background_session("parent", json!([
-            {"id":"child","agent":"scout","status":"pending"},
-            {"id":"sibling","agent":"worker","status":"pending"}
-        ]), json!([]))).await.unwrap();
-        fs::create_dir_all(parent.with_extension("").join("sibling.jsonl")).await.unwrap();
-        fs::write(&child, session("child", json!([
-            {"id":"nested-ok","agent":"scout","status":"pending"},
-            {"id":"nested-failed","agent":"worker","status":"pending"}
-        ]), json!([
-            {"type":"task","id":"nested-ok","status":"completed"},
-            {"type":"task","id":"nested-failed","status":"failed"}
-        ]))).await.unwrap();
-        let events = child_history("omp", "omp", &request("child", &parent, Value::Null)).await.unwrap();
-        assert_eq!(events[0]["event"]["title"], "scout");
-        let rows: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "timeline").collect();
-        assert!(rows.iter().any(|e| e["event"]["item"]["text"] == "child body"));
-        assert!(rows.iter().all(|e| e["event"]["id"] == "child" && e["event"]["historyComplete"] == true));
-        let nested: Vec<_> = events.iter().filter(|e| e["event"]["parentSubagentId"] == "child").collect();
-        assert_eq!(nested.len(), 2);
-        assert_eq!(nested[0]["event"]["id"], "nested-ok");
-        assert_eq!(nested[0]["event"]["status"], "completed");
-        assert_eq!(nested[1]["event"]["id"], "nested-failed");
-        assert_eq!(nested[1]["event"]["status"], "failed");
-        assert_eq!(nested[1]["event"]["source"]["path"], json!(child.with_extension("").join("nested-failed.jsonl")));
+            let session = if wait {
+                omp_wait_session
+            } else {
+                omp_background_session
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let parent = directory.path().join("parent.jsonl");
+            let child = parent.with_extension("").join("child.jsonl");
+            fs::create_dir_all(child.parent().unwrap()).await.unwrap();
+            fs::write(
+                &parent,
+                omp_background_session(
+                    "parent",
+                    json!([
+                        {"id":"child","agent":"scout","status":"pending"},
+                        {"id":"sibling","agent":"worker","status":"pending"}
+                    ]),
+                    json!([]),
+                ),
+            )
+            .await
+            .unwrap();
+            fs::create_dir_all(parent.with_extension("").join("sibling.jsonl"))
+                .await
+                .unwrap();
+            fs::write(
+                &child,
+                session(
+                    "child",
+                    json!([
+                        {"id":"nested-ok","agent":"scout","status":"pending"},
+                        {"id":"nested-failed","agent":"worker","status":"pending"}
+                    ]),
+                    json!([
+                        {"type":"task","id":"nested-ok","status":"completed"},
+                        {"type":"task","id":"nested-failed","status":"failed"}
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+            let events = child_history("omp", "omp", &request("child", &parent, Value::Null))
+                .await
+                .unwrap();
+            assert_eq!(events[0]["event"]["title"], "scout");
+            let rows: Vec<_> = events
+                .iter()
+                .filter(|e| e["event"]["type"] == "timeline")
+                .collect();
+            assert!(
+                rows.iter()
+                    .any(|e| e["event"]["item"]["text"] == "child body")
+            );
+            assert!(
+                rows.iter()
+                    .all(|e| e["event"]["id"] == "child" && e["event"]["historyComplete"] == true)
+            );
+            let nested: Vec<_> = events
+                .iter()
+                .filter(|e| e["event"]["parentSubagentId"] == "child")
+                .collect();
+            assert_eq!(nested.len(), 2);
+            assert_eq!(nested[0]["event"]["id"], "nested-ok");
+            assert_eq!(nested[0]["event"]["status"], "completed");
+            assert_eq!(nested[1]["event"]["id"], "nested-failed");
+            assert_eq!(nested[1]["event"]["status"], "failed");
+            assert_eq!(
+                nested[1]["event"]["source"]["path"],
+                json!(child.with_extension("").join("nested-failed.jsonl"))
+            );
         }
     }
 
     #[test]
     fn omp_task_history_rejects_text_claims_and_unrelated_identities() {
-        let call = |id: &str| json!({"role":"assistant","content":[
-            {"type":"toolCall","name":"task","id":id,"arguments":{"agent":"worker"}}]});
-        let result = |call: &str, child: &str, agent: &str| json!({"role":"toolResult","toolName":"task",
-            "toolCallId":call,"details":{"results":[],"progress":[{"id":child,"agent":agent,"status":"pending"}]}});
+        let call = |id: &str| {
+            json!({"role":"assistant","content":[
+            {"type":"toolCall","name":"task","id":id,"arguments":{"agent":"worker"}}]})
+        };
+        let result = |call: &str, child: &str, agent: &str| {
+            json!({"role":"toolResult","toolName":"task",
+            "toolCallId":call,"details":{"results":[],"progress":[{"id":child,"agent":agent,"status":"pending"}]}})
+        };
         let messages = [
             call("task-1"),
             result("task-1", "known", "scout"),
@@ -1591,28 +1744,32 @@ mod tests {
 
     #[test]
     fn omp_task_history_does_not_apply_earlier_completion_to_later_spawn() {
-        let call = |id: &str| json!({"role":"assistant","content":[
-            {"type":"toolCall","name":"task","id":id,"arguments":{"agent":"worker"}}]});
-        let result = |id: &str| json!({"role":"toolResult","toolName":"task","toolCallId":id,
-            "details":{"results":[],"progress":[{"id":"reused","status":"pending"}]}});
+        let call = |id: &str| {
+            json!({"role":"assistant","content":[
+            {"type":"toolCall","name":"task","id":id,"arguments":{"agent":"worker"}}]})
+        };
+        let result = |id: &str| {
+            json!({"role":"toolResult","toolName":"task","toolCallId":id,
+            "details":{"results":[],"progress":[{"id":"reused","status":"pending"}]}})
+        };
         for delivery in [
             json!({"role":"custom","customType":"async-result",
                 "details":{"jobs":[{"type":"task","agentId":"reused","status":"completed"}]}}),
             json!({"role":"toolResult","toolName":"wait",
                 "details":{"jobs":[{"type":"task","id":"reused","status":"completed"}]}}),
         ] {
-        let messages = [
-            delivery.clone(),
-            call("first"),
-            result("first"),
-            delivery,
-            call("second"),
-            result("second"),
-        ];
-        let children = subagent_transcripts(&messages, Path::new("/tmp/parent.jsonl"));
-        assert_eq!(children.len(), 1);
-        assert_eq!(children[0].status, "running");
-        assert_eq!(children[0].tool_call, "second");
+            let messages = [
+                delivery.clone(),
+                call("first"),
+                result("first"),
+                delivery,
+                call("second"),
+                result("second"),
+            ];
+            let children = subagent_transcripts(&messages, Path::new("/tmp/parent.jsonl"));
+            assert_eq!(children.len(), 1);
+            assert_eq!(children[0].status, "running");
+            assert_eq!(children[0].tool_call, "second");
         }
     }
 
@@ -1632,7 +1789,10 @@ mod tests {
         assert_eq!(children.len(), 4);
         assert_eq!(children[0].path, Path::new("/tmp/legacy-child.jsonl"));
         assert_eq!(children[0].title, "reviewer");
-        assert_eq!(children.iter().map(|c| c.status).collect::<Vec<_>>(), ["completed", "completed", "failed", "canceled"]);
+        assert_eq!(
+            children.iter().map(|c| c.status).collect::<Vec<_>>(),
+            ["completed", "completed", "failed", "canceled"]
+        );
     }
 
     fn request(child: &str, parent: &Path, source: Value) -> SubagentHistoryRequest {
@@ -1653,56 +1813,134 @@ mod tests {
     async fn omp_parent_history_announces_children_without_reading_their_transcripts() {
         let directory = tempfile::tempdir().unwrap();
         let parent = directory.path().join("parent.jsonl");
-        fs::write(&parent, omp_session("parent", &[("child-a", "reviewer"), ("child-b", "scout")], "parent text"))
-            .await.unwrap();
+        fs::write(
+            &parent,
+            omp_session(
+                "parent",
+                &[("child-a", "reviewer"), ("child-b", "scout")],
+                "parent text",
+            ),
+        )
+        .await
+        .unwrap();
         let children = directory.path().join("parent");
         // An unreadable sibling fails any read of it: parent recovery must not touch it.
-        fs::create_dir_all(children.join("child-a.jsonl")).await.unwrap();
-        fs::create_dir_all(children.join("child-b.jsonl")).await.unwrap();
-        let history = load_live("omp", "omp", &parent, None, &Value::Null).await.unwrap();
+        fs::create_dir_all(children.join("child-a.jsonl"))
+            .await
+            .unwrap();
+        fs::create_dir_all(children.join("child-b.jsonl"))
+            .await
+            .unwrap();
+        let history = load_live("omp", "omp", &parent, None, &Value::Null)
+            .await
+            .unwrap();
         assert!(history.complete);
-        assert!(history.timeline.iter().any(|item| item["text"] == "parent text"));
-        let descriptors: Vec<_> = history.subagent_events.iter().map(|e| &e["event"]).collect();
-        assert!(descriptors.iter().all(|e| e["type"] == "upsert"), "{descriptors:?}");
-        let ids: Vec<_> = descriptors.iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert!(
+            history
+                .timeline
+                .iter()
+                .any(|item| item["text"] == "parent text")
+        );
+        let descriptors: Vec<_> = history
+            .subagent_events
+            .iter()
+            .map(|e| &e["event"])
+            .collect();
+        assert!(
+            descriptors.iter().all(|e| e["type"] == "upsert"),
+            "{descriptors:?}"
+        );
+        let ids: Vec<_> = descriptors
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, ["child-a", "child-b"]);
         assert_eq!(descriptors[0]["title"], "reviewer");
         assert_eq!(descriptors[0]["status"], "completed");
         assert_eq!(descriptors[0]["toolCallId"], "task-1");
         assert_eq!(descriptors[0]["timestamp"], "2026-01-01T00:00:03.000Z");
-        assert_eq!(descriptors[0]["source"]["path"], json!(children.join("child-a.jsonl")));
+        assert_eq!(
+            descriptors[0]["source"]["path"],
+            json!(children.join("child-a.jsonl"))
+        );
     }
 
     #[tokio::test]
     async fn opened_omp_child_replays_only_its_transcript_and_announces_grandchildren() {
         let directory = tempfile::tempdir().unwrap();
         let parent = directory.path().join("parent.jsonl");
-        fs::write(&parent, omp_session("parent", &[("child-a", "reviewer"), ("child-b", "scout")], "parent text"))
-            .await.unwrap();
+        fs::write(
+            &parent,
+            omp_session(
+                "parent",
+                &[("child-a", "reviewer"), ("child-b", "scout")],
+                "parent text",
+            ),
+        )
+        .await
+        .unwrap();
         let children = directory.path().join("parent");
-        fs::create_dir_all(children.join("child-b.jsonl")).await.unwrap();
-        fs::write(children.join("child-a.jsonl"), omp_session("child-a", &[("grand", "digger")], "child text"))
-            .await.unwrap();
-        let history = load_live("omp", "omp", &parent, None, &Value::Null).await.unwrap();
+        fs::create_dir_all(children.join("child-b.jsonl"))
+            .await
+            .unwrap();
+        fs::write(
+            children.join("child-a.jsonl"),
+            omp_session("child-a", &[("grand", "digger")], "child text"),
+        )
+        .await
+        .unwrap();
+        let history = load_live("omp", "omp", &parent, None, &Value::Null)
+            .await
+            .unwrap();
         let source = history.subagent_events[0]["event"]["source"].clone();
         for source in [source, Value::Null] {
-            let events = child_history("omp", "omp", &request("child-a", &parent, source)).await.unwrap();
-            assert_eq!(events[0]["event"], json!({"type":"upsert","id":"child-a","title":"reviewer · claude (anthropic)"}));
-            let rows: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "timeline").collect();
-            assert!(rows.iter().any(|row| row["event"]["item"]["text"] == "child text"));
-            assert!(!rows.iter().any(|row| row["event"]["item"]["text"] == "parent text"));
-            assert!(rows.iter().all(|row| row["event"]["id"] == "child-a" && row["event"]["historyComplete"] == true));
-            let nested: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "upsert").skip(1).collect();
+            let events = child_history("omp", "omp", &request("child-a", &parent, source))
+                .await
+                .unwrap();
+            assert_eq!(
+                events[0]["event"],
+                json!({"type":"upsert","id":"child-a","title":"reviewer · claude (anthropic)"})
+            );
+            let rows: Vec<_> = events
+                .iter()
+                .filter(|e| e["event"]["type"] == "timeline")
+                .collect();
+            assert!(
+                rows.iter()
+                    .any(|row| row["event"]["item"]["text"] == "child text")
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row["event"]["item"]["text"] == "parent text")
+            );
+            assert!(
+                rows.iter().all(|row| row["event"]["id"] == "child-a"
+                    && row["event"]["historyComplete"] == true)
+            );
+            let nested: Vec<_> = events
+                .iter()
+                .filter(|e| e["event"]["type"] == "upsert")
+                .skip(1)
+                .collect();
             assert_eq!(nested.len(), 1);
             assert_eq!(nested[0]["event"]["id"], "grand");
             assert_eq!(nested[0]["event"]["parentSubagentId"], "child-a");
-            assert_eq!(nested[0]["event"]["source"]["path"], json!(children.join("child-a").join("grand.jsonl")));
+            assert_eq!(
+                nested[0]["event"]["source"]["path"],
+                json!(children.join("child-a").join("grand.jsonl"))
+            );
         }
         let sibling = child_history("omp", "omp", &request("child-b", &parent, Value::Null)).await;
         assert!(sibling.unwrap_err().to_string().contains("unavailable"));
-        fs::remove_file(children.join("child-a.jsonl")).await.unwrap();
+        fs::remove_file(children.join("child-a.jsonl"))
+            .await
+            .unwrap();
         let missing = child_history("omp", "omp", &request("child-a", &parent, Value::Null)).await;
-        assert!(missing.unwrap_err().to_string().contains("unavailable"), "a missing body is never an empty replay");
+        assert!(
+            missing.unwrap_err().to_string().contains("unavailable"),
+            "a missing body is never an empty replay"
+        );
         let unknown = child_history("omp", "omp", &request("stranger", &parent, Value::Null)).await;
         assert!(unknown.is_err());
     }
@@ -1725,24 +1963,54 @@ mod tests {
             json!({"type":"message","timestamp":"2026-01-01T00:00:05.000Z","message":{"role":"assistant","content":text("child text")}}),
         ]);
         fs::write(&child, &body).await.unwrap();
-        let history = load_live("pi", "pi", &parent, None, &Value::Null).await.unwrap();
-        assert!(history.subagent_events.iter().all(|e| e["event"]["type"] != "timeline"),
-            "parent recovery never replays the child file");
-        let source = history.subagent_events.iter().map(|e| &e["event"])
-            .find(|e| e["id"] == "spawn" && e["source"].is_object()).expect("child file attached")["source"].clone();
+        let history = load_live("pi", "pi", &parent, None, &Value::Null)
+            .await
+            .unwrap();
+        assert!(
+            history
+                .subagent_events
+                .iter()
+                .all(|e| e["event"]["type"] != "timeline"),
+            "parent recovery never replays the child file"
+        );
+        let source = history
+            .subagent_events
+            .iter()
+            .map(|e| &e["event"])
+            .find(|e| e["id"] == "spawn" && e["source"].is_object())
+            .expect("child file attached")["source"]
+            .clone();
         assert_eq!(source, json!({"file":child}));
         for source in [source, Value::Null] {
-            let events = child_history("pi", "pi", &request("spawn", &parent, source)).await.unwrap();
+            let events = child_history("pi", "pi", &request("spawn", &parent, source))
+                .await
+                .unwrap();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0]["event"]["item"]["text"], "child text");
             assert_eq!(events[0]["event"]["historyComplete"], true);
             assert_eq!(events[0]["event"]["timestamp"], "2026-01-01T00:00:05.000Z");
         }
-        fs::write(&child, body + "{\"type\":\"message\"").await.unwrap();
-        let torn = child_history("pi", "pi", &request("spawn", &parent, json!({"file":child}))).await.unwrap();
-        assert_eq!(torn[0]["event"]["historyComplete"], false, "a torn tail is not complete");
+        fs::write(&child, body + "{\"type\":\"message\"")
+            .await
+            .unwrap();
+        let torn = child_history(
+            "pi",
+            "pi",
+            &request("spawn", &parent, json!({"file":child})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            torn[0]["event"]["historyComplete"], false,
+            "a torn tail is not complete"
+        );
         fs::remove_file(&child).await.unwrap();
-        let missing = child_history("pi", "pi", &request("spawn", &parent, json!({"file":child}))).await;
+        let missing = child_history(
+            "pi",
+            "pi",
+            &request("spawn", &parent, json!({"file":child})),
+        )
+        .await;
         assert!(missing.unwrap_err().to_string().contains("unavailable"));
     }
 
@@ -1752,9 +2020,7 @@ mod tests {
         let parent = directory.path().join("parent.jsonl");
         let path = directory.path().join("parent").join("child-a.jsonl");
         fs::create_dir_all(path.parent().unwrap()).await.unwrap();
-        let message = |text_value: &str, stamp: u64| {
-            json!({"role":"assistant","content":text(text_value),"timestamp":stamp})
-        };
+        let message = |text_value: &str, stamp: u64| json!({"role":"assistant","content":text(text_value),"timestamp":stamp});
         fs::write(&path, lines(&[
             json!({"type":"session","id":"child-a","cwd":"/work","timestamp":"2026-01-01T00:00:00.000Z"}),
             json!({"type":"message","id":"m1","parentId":null,"message":message("earlier", 1_000)}),
@@ -1775,10 +2041,19 @@ mod tests {
         )
         .await
         .unwrap();
-        let rows: Vec<_> = replay.iter().filter(|e| e["event"]["type"] == "timeline").collect();
-        let ids: Vec<_> = rows.iter().map(|e| e["event"]["item"]["messageId"].clone()).collect();
+        let rows: Vec<_> = replay
+            .iter()
+            .filter(|e| e["event"]["type"] == "timeline")
+            .collect();
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|e| e["event"]["item"]["messageId"].clone())
+            .collect();
         assert_eq!(ids.len(), 2);
         assert_ne!(ids[0], ids[1]);
-        assert_eq!(rows[1]["event"]["item"], live_row["event"]["item"], "the same record, read live or replayed");
+        assert_eq!(
+            rows[1]["event"]["item"], live_row["event"]["item"],
+            "the same record, read live or replayed"
+        );
     }
 }

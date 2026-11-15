@@ -30,11 +30,17 @@ pub(super) fn command() -> Command {
                 .arg(switch("all", "all"))
                 .arg(switch("check", "check"))
                 .arg(switch("yes", "yes"))
-                .arg(option("ref", "ref").conflicts_with_all(["version", "url", "sha256", "format"]))
+                .arg(
+                    option("ref", "ref").conflicts_with_all(["version", "url", "sha256", "format"]),
+                )
                 .arg(option("version", "version").help("Cargo crate or release archive version"))
                 .arg(option("url", "url").requires_all(["version", "sha256"]))
                 .arg(option("sha256", "sha256").requires("url"))
-                .arg(option("format", "format").requires("url").value_parser(["tar.gz", "zip"])),
+                .arg(
+                    option("format", "format")
+                        .requires("url")
+                        .value_parser(["tar.gz", "zip"]),
+                ),
             Command::new("reload").arg(positional("id", true)),
             Command::new("enable").arg(positional("id", true)),
             Command::new("disable").arg(positional("id", true)),
@@ -46,18 +52,22 @@ fn identity(value: &Value) -> String {
         return text(value, "path").into();
     }
     if value["registry"].is_object()
-        && let Ok(url) = url::Url::parse(text(&value["registry"], "url")) {
-            return format!(
-                "{}/{}",
-                &url[url::Position::BeforeHost..url::Position::AfterPort],
-                text(&value["registry"], "id")
-            );
-        }
+        && let Ok(url) = url::Url::parse(text(&value["registry"], "url"))
+    {
+        return format!(
+            "{}/{}",
+            &url[url::Position::BeforeHost..url::Position::AfterPort],
+            text(&value["registry"], "id")
+        );
+    }
     let source = match value["kind"].as_str() {
         Some("cargo") => format!("cargo:{}", text(value, "crateName")),
         Some("release") => format!("release:{}", text(value, "origin")),
         // Preserve the identity of installed legacy records so users can migrate them.
-        Some("npm") => format!("npm:{} (legacy; reinstall a native release)", text(value, "packageName")),
+        Some("npm") => format!(
+            "npm:{} (legacy; reinstall a native release)",
+            text(value, "packageName")
+        ),
         Some("git") => format!("git:{}", text(value, "remote")),
         _ => return "unknown source".into(),
     };
@@ -273,22 +283,32 @@ fn install_request(m: &ArgMatches) -> Result<Value> {
     };
     if release {
         if string(m, "version").is_none() || string(m, "sha256").is_none() {
-            return Err(anyhow!("Release installation requires --version and --sha256"));
+            return Err(anyhow!(
+                "Release installation requires --version and --sha256"
+            ));
         }
         if string(m, "ref").is_some() {
-            return Err(anyhow!("--ref applies to Git sources, not release archives"));
+            return Err(anyhow!(
+                "--ref applies to Git sources, not release archives"
+            ));
         }
-    } else if ["version", "sha256", "format"].iter().any(|key| string(m, key).is_some()) {
-        return Err(anyhow!("--version, --sha256, and --format require a release: source; pin Cargo versions with cargo:<crate>@<version>"));
+    } else if ["version", "sha256", "format"]
+        .iter()
+        .any(|key| string(m, key).is_some())
+    {
+        return Err(anyhow!(
+            "--version, --sha256, and --format require a release: source; pin Cargo versions with cargo:<crate>@<version>"
+        ));
     }
     let mut request = json!({"type":"plugin.source.install.request","source":source});
-    if release
-        && let Some(path) = path {
-            if !portable(path) {
-                return Err(anyhow!("Plugin path must be a portable path relative to the archive"));
-            }
-            request["pluginPath"] = json!(path);
+    if release && let Some(path) = path {
+        if !portable(path) {
+            return Err(anyhow!(
+                "Plugin path must be a portable path relative to the archive"
+            ));
         }
+        request["pluginPath"] = json!(path);
+    }
     for key in ["id", "ref", "version", "sha256", "format"] {
         if let Some(value) = string(m, key).filter(|value| !value.is_empty()) {
             request[key] = json!(value);
@@ -439,18 +459,28 @@ pub(super) async fn init(m: &ArgMatches) -> Result<Output> {
     {
         return Err(anyhow!("Invalid plugin ID: {id}"));
     }
-    let version = env!("CARGO_PKG_VERSION");
+    let version = crate::VERSION;
     let sdk = if let Some(path) = string(m, "sdk-path") {
         let path = tokio::fs::canonicalize(path)
             .await
             .map_err(|error| anyhow!("Cannot resolve SDK directory {path}: {error}"))?;
-        if !tokio::fs::metadata(path.join("Cargo.toml")).await?.is_file() {
+        if !tokio::fs::metadata(path.join("Cargo.toml"))
+            .await?
+            .is_file()
+        {
             return Err(anyhow!("SDK directory must contain Cargo.toml"));
         }
-        let path = path.to_str().ok_or_else(|| anyhow!("SDK path must be valid UTF-8"))?;
-        format!("{{ path = {}, version = \"={version}\" }}", serde_json::to_string(path)?)
+        let path = path
+            .to_str()
+            .ok_or_else(|| anyhow!("SDK path must be valid UTF-8"))?;
+        format!(
+            "{{ path = {}, version = \"={version}\" }}",
+            serde_json::to_string(path)?
+        )
     } else {
-        format!("{{ git = \"https://github.com/emotionbug/Passession.git\", version = \"={version}\" }}")
+        format!(
+            "{{ git = \"https://github.com/emotionbug/Passession.git\", version = \"={version}\" }}"
+        )
     };
     tokio::fs::create_dir_all(&directory).await?;
     if tokio::fs::read_dir(&directory)
@@ -464,7 +494,10 @@ pub(super) async fn init(m: &ArgMatches) -> Result<Output> {
             directory.display()
         ));
     }
-    let executable = format!("target/release/paseo-plugin-server{}", std::env::consts::EXE_SUFFIX);
+    let executable = format!(
+        "target/release/paseo-plugin-server{}",
+        std::env::consts::EXE_SUFFIX
+    );
     let manifest = json!({
         "id": id,
         "runtime": "native",
@@ -481,7 +514,10 @@ pub(super) async fn init(m: &ArgMatches) -> Result<Output> {
         windows_executable = executable.replace('/', "\\")
     );
     let files = [
-        ("paseo-plugin.json", format!("{}\n", serde_json::to_string_pretty(&manifest)?)),
+        (
+            "paseo-plugin.json",
+            format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+        ),
         ("Cargo.toml", cargo),
         ("src/main.rs", PLUGIN_MAIN.into()),
         ("README.md", readme),
@@ -586,52 +622,97 @@ mod tests {
     }
     #[test]
     fn native_update_selections_keep_explicit_release_pins() {
-        let cargo = command().try_get_matches_from([
-            "plugin", "update", "example", "--version", "1.2.3",
-        ]).unwrap();
+        let cargo = command()
+            .try_get_matches_from(["plugin", "update", "example", "--version", "1.2.3"])
+            .unwrap();
         assert_eq!(
             update_target(cargo.subcommand_matches("update").unwrap()).unwrap(),
             Some(json!({"kind":"cargo","version":"1.2.3"}))
         );
         let digest = "a".repeat(64);
-        let release = command().try_get_matches_from([
-            "plugin", "update", "example", "--url", "https://example.com/plugin.zip",
-            "--version", "1.2.3", "--sha256", &digest, "--format", "zip",
-        ]).unwrap();
+        let release = command()
+            .try_get_matches_from([
+                "plugin",
+                "update",
+                "example",
+                "--url",
+                "https://example.com/plugin.zip",
+                "--version",
+                "1.2.3",
+                "--sha256",
+                &digest,
+                "--format",
+                "zip",
+            ])
+            .unwrap();
         assert_eq!(
             update_target(release.subcommand_matches("update").unwrap()).unwrap(),
-            Some(json!({"kind":"release","url":"https://example.com/plugin.zip","version":"1.2.3","sha256":digest,"format":"zip"}))
+            Some(
+                json!({"kind":"release","url":"https://example.com/plugin.zip","version":"1.2.3","sha256":digest,"format":"zip"})
+            )
         );
-        assert!(command().try_get_matches_from([
-            "plugin", "update", "example", "--url", "https://example.com/plugin.zip",
-            "--version", "1.2.3",
-        ]).is_err());
-        assert!(command().try_get_matches_from([
-            "plugin", "update", "example", "--ref", "main", "--version", "1.2.3",
-        ]).is_err());
+        assert!(
+            command()
+                .try_get_matches_from([
+                    "plugin",
+                    "update",
+                    "example",
+                    "--url",
+                    "https://example.com/plugin.zip",
+                    "--version",
+                    "1.2.3",
+                ])
+                .is_err()
+        );
+        assert!(
+            command()
+                .try_get_matches_from([
+                    "plugin",
+                    "update",
+                    "example",
+                    "--ref",
+                    "main",
+                    "--version",
+                    "1.2.3",
+                ])
+                .is_err()
+        );
     }
 
     #[test]
     fn release_install_requires_digest_and_rejects_cross_source_options() {
         let digest = "b".repeat(64);
-        let release = command().try_get_matches_from([
-            "plugin", "install", "release:https://example.com/plugin.zip",
-            "--version", "1.2.3", "--sha256", &digest, "--format", "zip",
-        ]).unwrap();
+        let release = command()
+            .try_get_matches_from([
+                "plugin",
+                "install",
+                "release:https://example.com/plugin.zip",
+                "--version",
+                "1.2.3",
+                "--sha256",
+                &digest,
+                "--format",
+                "zip",
+            ])
+            .unwrap();
         let request = install_request(release.subcommand_matches("install").unwrap()).unwrap();
         assert_eq!(request["source"], "release:https://example.com/plugin.zip");
         assert_eq!(request["sha256"], digest);
         assert_eq!(request["version"], "1.2.3");
         for args in [
-            vec!["plugin", "install", "release:https://example.com/plugin.zip"],
+            vec![
+                "plugin",
+                "install",
+                "release:https://example.com/plugin.zip",
+            ],
             vec!["plugin", "install", "cargo:example", "--version", "1.2.3"],
         ] {
             let matches = command().try_get_matches_from(args).unwrap();
             assert!(install_request(matches.subcommand_matches("install").unwrap()).is_err());
         }
-        let cargo = command().try_get_matches_from([
-            "plugin", "install", "cargo:example@1.2.3",
-        ]).unwrap();
+        let cargo = command()
+            .try_get_matches_from(["plugin", "install", "cargo:example@1.2.3"])
+            .unwrap();
         assert_eq!(
             install_request(cargo.subcommand_matches("install").unwrap()).unwrap()["source"],
             "cargo:example@1.2.3"
@@ -642,17 +723,39 @@ mod tests {
     fn release_subpath_preserves_archive_url() {
         let digest = "c".repeat(64);
         let source = "release:https://example.com/plugin.zip?signature=part:one";
-        let matches = command().try_get_matches_from([
-            "plugin", "install", source, "--version", "1.2.3",
-            "--sha256", &digest, "--format", "zip", "--path", "archive/plugin",
-        ]).unwrap();
+        let matches = command()
+            .try_get_matches_from([
+                "plugin",
+                "install",
+                source,
+                "--version",
+                "1.2.3",
+                "--sha256",
+                &digest,
+                "--format",
+                "zip",
+                "--path",
+                "archive/plugin",
+            ])
+            .unwrap();
         let request = install_request(matches.subcommand_matches("install").unwrap()).unwrap();
         assert_eq!(request["source"], source);
         assert_eq!(request["pluginPath"], "archive/plugin");
-        let matches = command().try_get_matches_from([
-            "plugin", "install", source, "--version", "1.2.3",
-            "--sha256", &digest, "--format", "zip", "--path", "../escape",
-        ]).unwrap();
+        let matches = command()
+            .try_get_matches_from([
+                "plugin",
+                "install",
+                source,
+                "--version",
+                "1.2.3",
+                "--sha256",
+                &digest,
+                "--format",
+                "zip",
+                "--path",
+                "../escape",
+            ])
+            .unwrap();
         assert!(install_request(matches.subcommand_matches("install").unwrap()).is_err());
     }
 
@@ -661,18 +764,35 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("my-plugin");
         let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin");
-        let matches = command().try_get_matches_from([
-            "plugin".to_owned(), "init".into(), directory.to_string_lossy().into_owned(),
-            "--sdk-path".into(), sdk.to_string_lossy().into_owned(),
-        ]).unwrap();
-        init(matches.subcommand_matches("init").unwrap()).await.unwrap();
-        let manifest = crate::plugins::read_plugin_manifest(&directory).await.unwrap();
+        let matches = command()
+            .try_get_matches_from([
+                "plugin".to_owned(),
+                "init".into(),
+                directory.to_string_lossy().into_owned(),
+                "--sdk-path".into(),
+                sdk.to_string_lossy().into_owned(),
+            ])
+            .unwrap();
+        init(matches.subcommand_matches("init").unwrap())
+            .await
+            .unwrap();
+        let manifest = crate::plugins::read_plugin_manifest(&directory)
+            .await
+            .unwrap();
         assert_eq!(manifest["id"], "my-plugin");
         assert_eq!(manifest["runtime"], "native");
         assert_eq!(manifest["server"]["args"], json!([]));
-        assert_eq!(manifest["server"]["executable"],
-            format!("target/release/paseo-plugin-server{}", std::env::consts::EXE_SUFFIX));
-        assert_eq!(manifest["build"], json!([["cargo","build","--release","--target-dir","target"]]));
+        assert_eq!(
+            manifest["server"]["executable"],
+            format!(
+                "target/release/paseo-plugin-server{}",
+                std::env::consts::EXE_SUFFIX
+            )
+        );
+        assert_eq!(
+            manifest["build"],
+            json!([["cargo", "build", "--release", "--target-dir", "target"]])
+        );
         assert!(directory.join("Cargo.toml").is_file());
         assert!(directory.join("src/main.rs").is_file());
         assert!(!directory.join("package.json").exists());
@@ -683,10 +803,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         for id in ["with.dot", "with_underscore"] {
             let directory = root.path().join(id);
-            let matches = command().try_get_matches_from([
-                "plugin".to_owned(), "init".into(), directory.to_string_lossy().into_owned(),
-            ]).unwrap();
-            assert!(init(matches.subcommand_matches("init").unwrap()).await.is_err());
+            let matches = command()
+                .try_get_matches_from([
+                    "plugin".to_owned(),
+                    "init".into(),
+                    directory.to_string_lossy().into_owned(),
+                ])
+                .unwrap();
+            assert!(
+                init(matches.subcommand_matches("init").unwrap())
+                    .await
+                    .is_err()
+            );
             assert!(!directory.exists());
         }
     }

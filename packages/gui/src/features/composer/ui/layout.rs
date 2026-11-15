@@ -6,9 +6,9 @@
 
 use super::look::Look;
 use super::panel::{ComposerPanel, Item};
-use crate::common::paint::{rect, Font, TextSpec};
-use crate::common::{with_combo, UiContext};
-use crate::features::composer::attachments::{describe, file_type_label, AttachmentGlyph};
+use crate::common::paint::{Font, TextSpec, rect};
+use crate::common::{UiContext, with_combo};
+use crate::features::composer::attachments::{AttachmentGlyph, describe, file_type_label};
 use crate::features::composer::controls_model::*;
 use crate::features::composer::i18n::{t, t_args};
 use crate::features::composer::json::*;
@@ -51,17 +51,29 @@ impl ComposerPanel {
         self.st.next_frame = cx.new_next_frame();
     }
 
-    pub(super) fn draw_composer(&mut self, cx: &mut Cx2d, ui: &mut UiContext, look: &Look, walk: Walk) {
+    pub(super) fn draw_composer(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut UiContext,
+        look: &Look,
+        walk: Walk,
+    ) {
         self.st.hits.clear();
         self.st.tips.clear();
         self.st.mode_shortcut = crate::common::shortcut_label(ui, "cycle-agent-mode");
         self.st.interrupt_shortcut = crate::common::shortcut_label(ui, "agent-interrupt");
         let ctl_sheet = self.ctl_ref().is_sheet();
         let subagent = self.ctl_ref().is_subagent();
-        let probe = cx.peek_walk_turtle(Walk { height: Size::Fixed(0.0), ..walk });
+        let probe = cx.peek_walk_turtle(Walk {
+            height: Size::Fixed(0.0),
+            ..walk
+        });
         if ctl_sheet || subagent {
             // pane-context host "sheet" and provider subagents show no composer.
-            let r = cx.walk_turtle(Walk { height: Size::Fixed(0.0), ..walk });
+            let r = cx.walk_turtle(Walk {
+                height: Size::Fixed(0.0),
+                ..walk
+            });
             self.draw_bg.draw_abs(cx, r);
             return;
         }
@@ -71,7 +83,10 @@ impl ComposerPanel {
 
         let draft = self.ctl_ref().draft();
         let blocks = self.blocks(&draft);
-        let block_heights: Vec<f64> = blocks.iter().map(|b| self.block_height(cx, look, b, content_width)).collect();
+        let block_heights: Vec<f64> = blocks
+            .iter()
+            .map(|b| self.block_height(cx, look, b, content_width))
+            .collect();
         self.st.input_cap = None;
         self.st.tray_cap = None;
         let (mut card_height, input_visible) = self.card_height(cx, look, &draft, content_width);
@@ -99,7 +114,10 @@ impl ComposerPanel {
                 }
             }
         }
-        let r = cx.walk_turtle(Walk { height: Size::Fixed(total), ..walk });
+        let r = cx.walk_turtle(Walk {
+            height: Size::Fixed(total),
+            ..walk
+        });
         self.draw_bg.draw_abs(cx, r);
 
         let mut y = r.pos.y;
@@ -107,14 +125,23 @@ impl ComposerPanel {
             self.draw_block(cx, look, block, rect(left, y, content_width, height));
             y += height + 12.0;
         }
-        self.draw_card(cx, ui, look, &draft, rect(left, y, content_width, card_height));
+        self.draw_card(
+            cx,
+            ui,
+            look,
+            &draft,
+            rect(left, y, content_width, card_height),
+        );
     }
 
     fn blocks(&self, draft: &Value) -> Vec<Block> {
         let ctl = self.ctl_ref();
         let mut blocks = Vec::new();
         // A dequeued (sending) message leaves the queue track; the stream shows it.
-        let queue: Vec<Value> = maps(get(draft, "queue")).into_iter().filter(|q| s(get(q, "state")) != "sending").collect();
+        let queue: Vec<Value> = maps(get(draft, "queue"))
+            .into_iter()
+            .filter(|q| s(get(q, "state")) != "sending")
+            .collect();
         if !queue.is_empty() {
             blocks.push(Block::Queue(queue.clone()));
         }
@@ -125,7 +152,13 @@ impl ComposerPanel {
             blocks.push(Block::Error(error.clone(), true));
         }
         if let Some(error) = service::with(|svc| svc.persistence_error()) {
-            blocks.push(Block::Error(t_args("composer.errors.draftPersistenceFailed", &[("error", error.as_str())]), false));
+            blocks.push(Block::Error(
+                t_args(
+                    "composer.errors.draftPersistenceFailed",
+                    &[("error", error.as_str())],
+                ),
+                false,
+            ));
         }
         if ctl.not_ready_notice && ctl.execution_blocked() {
             blocks.push(Block::Muted(t("composer.delivery.agentNotReady")));
@@ -138,7 +171,10 @@ impl ComposerPanel {
         if non_empty_obj(failed) {
             blocks.push(Block::Failed(failed.clone()));
         }
-        for queued in queue.iter().filter(|q| s(get(q, "state")) == "unacknowledged") {
+        for queued in queue
+            .iter()
+            .filter(|q| s(get(q, "state")) == "unacknowledged")
+        {
             blocks.push(Block::Pending(queued.clone()));
         }
         blocks
@@ -158,10 +194,15 @@ impl ComposerPanel {
                 }
                 h
             }
-            Block::Error(text, _) | Block::Muted(text) => self.painter.paragraph_height(cx, width - 24.0, body, text),
+            Block::Error(text, _) | Block::Muted(text) => {
+                self.painter.paragraph_height(cx, width - 24.0, body, text)
+            }
             Block::Pending(_) => self.painter.line_height(cx, small) + 4.0 + 32.0,
             Block::Failed(message) => {
-                let text = t_args("composer.delivery.notSent", &[("preview", s(get(message, "text")))]);
+                let text = t_args(
+                    "composer.delivery.notSent",
+                    &[("preview", s(get(message, "text")))],
+                );
                 self.painter.paragraph_height(cx, width, body, &text) + 4.0 + 32.0
             }
         }
@@ -173,8 +214,16 @@ impl ComposerPanel {
         let text_width = (width - 24.0 - 8.0 - 72.0).max(40.0);
         let line = self.painter.line_height(cx, body);
         let text = s(get(item, "text"));
-        let lines = self.painter.paragraph_height(cx, text_width, body, text).min(line * 2.0).max(line);
-        let status = if s_or(get(item, "state"), "queued") != "queued" { self.painter.line_height(cx, small) } else { 0.0 };
+        let lines = self
+            .painter
+            .paragraph_height(cx, text_width, body, text)
+            .min(line * 2.0)
+            .max(line);
+        let status = if s_or(get(item, "state"), "queued") != "queued" {
+            self.painter.line_height(cx, small)
+        } else {
+            0.0
+        };
         (lines + status + 16.0).max(48.0)
     }
 
@@ -192,7 +241,8 @@ impl ComposerPanel {
             Block::Error(text, dismissable) => {
                 // index.tsx sendErrorText: red-500, base size.
                 let spec = TextSpec::new(Font::Regular, look.body(), look.red500());
-                self.painter.paragraph(cx, r.pos, r.size.x - 24.0, spec, text);
+                self.painter
+                    .paragraph(cx, r.pos, r.size.x - 24.0, spec, text);
                 if *dismissable {
                     let x = rect(r.pos.x + r.size.x - 20.0, r.pos.y, 20.0, 20.0);
                     self.painter.icon(cx, x, "x", 14.0, p.muted);
@@ -225,20 +275,45 @@ impl ComposerPanel {
         if full > line * 2.0 + 0.5 {
             // Two lines, the second ellipsized.
             let first_end = self.fit_prefix(cx, body, text, text_width);
-            self.painter.text(cx, dvec2(r.pos.x + 12.0, y), body, &text[..first_end]);
+            self.painter
+                .text(cx, dvec2(r.pos.x + 12.0, y), body, &text[..first_end]);
             let rest = text[first_end..].trim_start();
-            self.painter.text_in(cx, rect(r.pos.x + 12.0, y + line, text_width, line), body, rest, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(r.pos.x + 12.0, y + line, text_width, line),
+                body,
+                rest,
+                0.0,
+            );
             y += line * 2.0;
         } else {
-            y += self.painter.paragraph(cx, dvec2(r.pos.x + 12.0, y), text_width, body, text).y.max(line);
+            y += self
+                .painter
+                .paragraph(cx, dvec2(r.pos.x + 12.0, y), text_width, body, text)
+                .y
+                .max(line);
         }
         if state != "queued" {
             let error = get(item, "error");
-            let status = if error.is_null() { state.clone() } else { format!("{state}: {}", display(error)) };
-            let color = if state == "rejected" { p.destructive } else { p.muted };
+            let status = if error.is_null() {
+                state.clone()
+            } else {
+                format!("{state}: {}", display(error))
+            };
+            let color = if state == "rejected" {
+                p.destructive
+            } else {
+                p.muted
+            };
             let small = TextSpec::new(Font::Regular, look.small(), color);
             let h = self.painter.line_height(cx, small);
-            self.painter.text_in(cx, rect(r.pos.x + 12.0, y, text_width, h), small, &status, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(r.pos.x + 12.0, y, text_width, h),
+                small,
+                &status,
+                0.0,
+            );
         }
         let cy = r.pos.y + r.size.y * 0.5;
         let send = rect(r.pos.x + r.size.x - 12.0 - 32.0, cy - 16.0, 32.0, 32.0);
@@ -262,13 +337,27 @@ impl ComposerPanel {
         self.tip(send, t("composer.attachments.sendQueuedMessageNow"));
     }
 
-    fn circle_button(&mut self, cx: &mut Cx2d, r: Rect, fill: Vec4, icon: &str, color: Vec4, enabled: bool) {
+    fn circle_button(
+        &mut self,
+        cx: &mut Cx2d,
+        r: Rect,
+        fill: Vec4,
+        icon: &str,
+        color: Vec4,
+        enabled: bool,
+    ) {
         let alpha = if enabled { 1.0 } else { 0.5 };
         self.painter.fill(cx, r, fade(fill, alpha), r.size.x * 0.5);
         self.painter.icon(cx, r, icon, 14.0, fade(color, alpha));
     }
 
-    pub(super) fn fit_prefix(&mut self, cx: &mut Cx2d, spec: TextSpec, text: &str, width: f64) -> usize {
+    pub(super) fn fit_prefix(
+        &mut self,
+        cx: &mut Cx2d,
+        spec: TextSpec,
+        text: &str,
+        width: f64,
+    ) -> usize {
         let laid = self.painter.layout(cx, spec, text, Some(width));
         let end = laid
             .rows
@@ -307,20 +396,51 @@ impl ComposerPanel {
         let checking = ctl.checking;
         let sending = ctl.sending();
         let draft_kind = ctl.is_draft();
-        let can_retry = if remote { crate::features::composer::drafts::receipt_can_retry(&receipt) } else { !sending };
+        let can_retry = if remote {
+            crate::features::composer::drafts::receipt_can_retry(&receipt)
+        } else {
+            !sending
+        };
         let small = TextSpec::new(Font::Regular, look.small(), look.p.muted);
         let h = self.painter.line_height(cx, small);
-        self.painter.paragraph(cx, r.pos, r.size.x, small, &t(&format!("composer.delivery.{status}")));
+        self.painter.paragraph(
+            cx,
+            r.pos,
+            r.size.x,
+            small,
+            &t(&format!("composer.delivery.{status}")),
+        );
         let mut x = r.pos.x;
         let y = r.pos.y + h + 4.0;
         if remote {
-            x = self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.checkAgain"), !checking, Item::Check(id.clone()));
+            x = self.text_button(
+                cx,
+                look,
+                dvec2(x, y),
+                &t("composer.delivery.checkAgain"),
+                !checking,
+                Item::Check(id.clone()),
+            );
         }
         if can_retry {
-            x = self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.retrySame"), !sending && !checking, Item::Retry(id.clone()));
+            x = self.text_button(
+                cx,
+                look,
+                dvec2(x, y),
+                &t("composer.delivery.retrySame"),
+                !sending && !checking,
+                Item::Retry(id.clone()),
+            );
         }
         if !draft_kind {
-            self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.stopWaiting"), !checking, Item::StopWaiting(id));
+            self.text_button(
+                cx,
+                look,
+                dvec2(x, y),
+                &t("composer.delivery.stopWaiting"),
+                !checking,
+                Item::StopWaiting(id),
+            );
         }
     }
 
@@ -334,21 +454,61 @@ impl ComposerPanel {
         let receipt = get(get(&draft, "receipts"), s(get(message, "messageId"))).clone();
         let sending = ctl.sending();
         let body = TextSpec::new(Font::Regular, look.body(), look.p.foreground);
-        let text = t_args("composer.delivery.notSent", &[("preview", s(get(message, "text")))]);
+        let text = t_args(
+            "composer.delivery.notSent",
+            &[("preview", s(get(message, "text")))],
+        );
         let h = self.painter.paragraph(cx, r.pos, r.size.x, body, &text).y;
         let y = r.pos.y + h + 4.0;
         let mut x = r.pos.x;
-        x = self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.restore"), can_restore && !sending, Item::Restore);
+        x = self.text_button(
+            cx,
+            look,
+            dvec2(x, y),
+            &t("composer.delivery.restore"),
+            can_restore && !sending,
+            Item::Restore,
+        );
         if crate::features::composer::drafts::receipt_can_retry(&receipt) {
-            x = self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.retrySame"), !sending, Item::RetryFailed);
+            x = self.text_button(
+                cx,
+                look,
+                dvec2(x, y),
+                &t("composer.delivery.retrySame"),
+                !sending,
+                Item::RetryFailed,
+            );
         }
-        self.text_button(cx, look, dvec2(x, y), &t("composer.delivery.discard"), !sending, Item::Discard);
+        self.text_button(
+            cx,
+            look,
+            dvec2(x, y),
+            &t("composer.delivery.discard"),
+            !sending,
+            Item::Discard,
+        );
     }
 
     /// Material TextButton: primary label, 12px insets, hover fill.
-    fn text_button(&mut self, cx: &mut Cx2d, look: &Look, at: DVec2, label: &str, enabled: bool, item: Item) -> f64 {
+    fn text_button(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        at: DVec2,
+        label: &str,
+        enabled: bool,
+        item: Item,
+    ) -> f64 {
         let (x, y) = (at.x, at.y);
-        let spec = TextSpec::new(Font::Medium, look.body(), if enabled { look.p.primary } else { fade(look.p.primary, 0.38) });
+        let spec = TextSpec::new(
+            Font::Medium,
+            look.body(),
+            if enabled {
+                look.p.primary
+            } else {
+                fade(look.p.primary, 0.38)
+            },
+        );
         let w = self.painter.measure(cx, spec, label).x + 24.0;
         let r = rect(x, y, w, 32.0);
         if enabled && self.st.hover.as_ref() == Some(&item) {
@@ -363,11 +523,17 @@ impl ComposerPanel {
 
     fn insets(look: &Look) -> (f64, f64, f64) {
         // (top, bottom, side)
-        if look.narrow { (8.0, 8.0, 12.0) } else { (16.0, 12.0, 16.0) }
+        if look.narrow {
+            (8.0, 8.0, 12.0)
+        } else {
+            (16.0, 12.0, 16.0)
+        }
     }
 
     fn has_tray(&self, draft: &Value) -> bool {
-        non_empty_list(get(draft, "images")) || non_empty_list(get(draft, "attachments")) || self.ctl_ref().uploading()
+        non_empty_list(get(draft, "images"))
+            || non_empty_list(get(draft, "attachments"))
+            || self.ctl_ref().uploading()
     }
 
     /// The tray's width inside a card `card_width` wide (its frames carry the disc overhang).
@@ -404,11 +570,20 @@ impl ComposerPanel {
         out
     }
 
-    fn label_pill_width(&mut self, cx: &mut Cx2d, look: &Look, title: &str, subtitle: Option<&str>) -> f64 {
+    fn label_pill_width(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        title: &str,
+        subtitle: Option<&str>,
+    ) -> f64 {
         let body = TextSpec::new(Font::Regular, look.body(), look.p.foreground);
         let small = TextSpec::new(Font::Regular, look.small(), look.p.muted);
         let tw = self.painter.measure(cx, body, title).x;
-        let sw = self.painter.measure(cx, small, subtitle.unwrap_or("File")).x;
+        let sw = self
+            .painter
+            .measure(cx, small, subtitle.unwrap_or("File"))
+            .x;
         (12.0 + 18.0 + 8.0 + tw.max(sw) + 12.0).min(260.0)
     }
 
@@ -426,7 +601,11 @@ impl ComposerPanel {
         if look.native {
             min = min.max(30.0);
         }
-        let mut max = if look.compact { 160.0 } else { (look.window.y * 0.5).floor().max(160.0) };
+        let mut max = if look.compact {
+            160.0
+        } else {
+            (look.window.y * 0.5).floor().max(160.0)
+        };
         if let Some(cap) = self.st.input_cap {
             // The slot capacity shrinks the input, never below its minimum.
             max = max.min(cap).max(min);
@@ -438,12 +617,19 @@ impl ComposerPanel {
     /// coverage already removed by the shell) less 5, 60% of it on compact so conversation
     /// stays visible above; fullscreen takes the whole viewport.
     fn slot_capacity(&self, look: &Look) -> Option<f64> {
-        let viewport = self.st.viewport_height.filter(|h| h.is_finite() && *h > 0.0)?;
+        let viewport = self
+            .st
+            .viewport_height
+            .filter(|h| h.is_finite() && *h > 0.0)?;
         if matches!(self.st.overlay(), super::panel::Overlay::Fullscreen) {
             return Some(viewport);
         }
         let capacity = (viewport - 5.0).max(0.0);
-        Some(if look.compact { capacity * 0.6 } else { capacity })
+        Some(if look.compact {
+            capacity * 0.6
+        } else {
+            capacity
+        })
     }
 
     /// The card height and the text input's visible height within it.
@@ -464,12 +650,25 @@ impl ComposerPanel {
     }
 
     /// The tray's (content, visible) heights in a card `card_width` wide.
-    fn tray_visible(&mut self, cx: &mut Cx2d, look: &Look, draft: &Value, card_width: f64) -> (f64, f64) {
+    fn tray_visible(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        draft: &Value,
+        card_width: f64,
+    ) -> (f64, f64) {
         let full = self.tray_height(cx, look, draft, Self::tray_width(look, card_width));
         (full, self.st.tray_cap.map_or(full, |cap| cap.min(full)))
     }
 
-    fn draw_card(&mut self, cx: &mut Cx2d, ui: &mut UiContext, look: &Look, draft: &Value, r: Rect) {
+    fn draw_card(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut UiContext,
+        look: &Look,
+        draft: &Value,
+        r: Rect,
+    ) {
         let p = look.p;
         let (top, bottom, side) = Self::insets(look);
         self.st.wrapper = r;
@@ -477,14 +676,21 @@ impl ComposerPanel {
         self.layer(cx);
         if look.compact {
             let shadow = rect(r.pos.x, r.pos.y + 2.0, r.size.x, r.size.y);
-            self.painter.fill(cx, shadow, crate::theme::argb(0x40000000), 16.0);
+            self.painter
+                .fill(cx, shadow, crate::theme::argb(0x40000000), 16.0);
         }
-        self.painter.outline(cx, r, p.surface1, p.border_accent, 1.0, 16.0);
+        self.painter
+            .outline(cx, r, p.surface1, p.border_accent, 1.0, 16.0);
         let mut y = r.pos.y + top;
         if self.has_tray(draft) {
             let tray_top = y - OVERHANG;
             let (full, visible) = self.tray_visible(cx, look, draft, r.size.x);
-            let viewport = rect(r.pos.x + side - OVERHANG, tray_top, Self::tray_width(look, r.size.x), visible);
+            let viewport = rect(
+                r.pos.x + side - OVERHANG,
+                tray_top,
+                Self::tray_width(look, r.size.x),
+                visible,
+            );
             self.draw_tray(cx, look, draft, viewport, full);
             y = tray_top + visible + 12.0;
         } else {
@@ -508,19 +714,38 @@ impl ComposerPanel {
         if compact && self.st.input_natural > line * 2.0 + vertical * 2.0 + 0.5 {
             // presentation.tsx Maximize2 on the send rail, after more than two lines.
             let glyph = look.glyph();
-            let rail = (28.0 - glyph) / 2.0 + 5.0 * glyph / 24.0 - ((28.0 - 16.0) / 2.0 + 3.0 * 16.0 / 24.0);
-            let b = rect(text_rect.pos.x + text_rect.size.x - 28.0 + 6.0 - rail, text_rect.pos.y, 28.0, 28.0);
+            let rail = (28.0 - glyph) / 2.0 + 5.0 * glyph / 24.0
+                - ((28.0 - 16.0) / 2.0 + 3.0 * 16.0 / 24.0);
+            let b = rect(
+                text_rect.pos.x + text_rect.size.x - 28.0 + 6.0 - rail,
+                text_rect.pos.y,
+                28.0,
+                28.0,
+            );
             self.painter.icon(cx, b, "maximize-2", 16.0, p.muted);
             self.st.hits.push(b, Item::Expand);
             self.tip(b, t("composer.input.fullscreen"));
         }
         y += visible + 12.0;
-        self.draw_toolbar(cx, ui, look, rect(r.pos.x + side - 6.0, y, r.size.x - (side - 6.0) * 2.0, 28.0));
+        self.draw_toolbar(
+            cx,
+            ui,
+            look,
+            rect(r.pos.x + side - 6.0, y, r.size.x - (side - 6.0) * 2.0, 28.0),
+        );
         let _ = bottom;
     }
 
     /// The editor inside the composer's clipped, scrollable viewport.
-    pub(super) fn draw_input(&mut self, cx: &mut Cx2d, _look: &Look, r: Rect, reserve: f64, vertical: f64, min: f64) {
+    pub(super) fn draw_input(
+        &mut self,
+        cx: &mut Cx2d,
+        _look: &Look,
+        r: Rect,
+        reserve: f64,
+        vertical: f64,
+        min: f64,
+    ) {
         let viewport = rect(r.pos.x, r.pos.y, (r.size.x - reserve).max(10.0), r.size.y);
         self.st.input_clip = viewport;
         let natural = self.editor_natural(cx, viewport.size.x, vertical, min);
@@ -531,13 +756,17 @@ impl ComposerPanel {
         } else if max_scroll > 0.0 && !self.st.input_manual_scroll {
             // Measure through the editor: system-font replacement, scaling and
             // wrapping must be identical to the rows it paints and hit-tests.
-            let laid = self.input.text_layout(cx, &text, Some(viewport.size.x as f32));
+            let laid = self
+                .input
+                .text_layout(cx, &text, Some(viewport.size.x as f32));
             let cursor = self.input.cursor();
             let position = laid.cursor_to_position(cursor);
             if let Some(row) = laid.rows.get(position.row_index) {
                 let scale = self.input.text_scale() as f64;
-                let caret_top = (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64 * scale + vertical;
-                let caret_bottom = caret_top + (row.ascender_in_lpxs - row.descender_in_lpxs) as f64 * scale;
+                let caret_top =
+                    (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64 * scale + vertical;
+                let caret_bottom =
+                    caret_top + (row.ascender_in_lpxs - row.descender_in_lpxs) as f64 * scale;
                 if caret_bottom > self.st.input_scroll + viewport.size.y {
                     self.st.input_scroll = caret_bottom - viewport.size.y + vertical;
                 } else if caret_top < self.st.input_scroll {
@@ -556,8 +785,17 @@ impl ComposerPanel {
         );
         // Text that fits fills the viewport so its blank lines also focus the editor and
         // place the caret; longer text keeps its own height and the viewport scrolls it.
-        let height = if natural <= viewport.size.y + 0.5 { Size::Fixed((viewport.size.y - vertical * 2.0).max(0.0)) } else { Size::Fit };
-        let walk = Walk { abs_pos: None, margin: Margin::default(), width: Size::Fill, height };
+        let height = if natural <= viewport.size.y + 0.5 {
+            Size::Fixed((viewport.size.y - vertical * 2.0).max(0.0))
+        } else {
+            Size::Fit
+        };
+        let walk = Walk {
+            abs_pos: None,
+            margin: Margin::default(),
+            width: Size::Fill,
+            height,
+        };
         let _ = self.input.draw_walk(cx, &mut Scope::empty(), walk);
         cx.end_turtle();
     }
@@ -574,7 +812,9 @@ impl ComposerPanel {
         let height = if text.is_empty() {
             line
         } else {
-            let laid = self.input.text_layout(cx, &text, Some(width.max(10.0) as f32));
+            let laid = self
+                .input
+                .text_layout(cx, &text, Some(width.max(10.0) as f32));
             laid.size_in_lpxs.height as f64 * self.input.text_scale() as f64
         };
         let natural = (height + vertical * 2.0).max(min);
@@ -584,10 +824,16 @@ impl ComposerPanel {
 
     /// input.tsx FocusHint: "⌘L to focus" while the empty wide desktop input is unfocused.
     fn draw_focus_hint(&mut self, cx: &mut Cx2d, ui: &mut UiContext, look: &Look, r: Rect) {
-        if look.compact || look.native || self.st.input_focused || !self.ctl_ref().editor_text.is_empty() {
+        if look.compact
+            || look.native
+            || self.st.input_focused
+            || !self.ctl_ref().editor_text.is_empty()
+        {
             return;
         }
-        let Some(combo) = crate::common::shortcut_label(ui, "focus-message-input") else { return };
+        let Some(combo) = crate::common::shortcut_label(ui, "focus-message-input") else {
+            return;
+        };
         let first = combo.split(' ').next().unwrap_or("").to_owned();
         let text = t_args("composer.input.focusHint", &[("shortcut", first.as_str())]);
         let spec = TextSpec::new(Font::Regular, look.small(), fade(look.p.muted, 0.5));
@@ -601,7 +847,8 @@ impl ComposerPanel {
                 return;
             }
         }
-        self.painter.text(cx, dvec2(r.pos.x + r.size.x - w, r.pos.y), spec, &text);
+        self.painter
+            .text(cx, dvec2(r.pos.x + r.size.x - w, r.pos.y), spec, &text);
     }
 
     /// index.tsx attachmentTray: removable pills carry their 8px disc overhang. `r` is the
@@ -643,16 +890,29 @@ impl ComposerPanel {
             };
             if index < images.len() {
                 let image = images[index].clone();
-                self.painter.outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
+                self.painter
+                    .outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
                 match service::with(|svc| svc.blobs.texture(&image, true)) {
                     Ok(Some((texture, size))) => {
-                        let inner = rect(frame.pos.x + 1.0, frame.pos.y + 1.0, frame.size.x - 2.0, frame.size.y - 2.0);
+                        let inner = rect(
+                            frame.pos.x + 1.0,
+                            frame.pos.y + 1.0,
+                            frame.size.x - 2.0,
+                            frame.size.y - 2.0,
+                        );
                         self.draw_image.paint(cx, inner, &texture, size, 5.0, false);
                     }
-                    Ok(None) => self.spinner(cx, rect(frame.pos.x + 15.0, frame.pos.y + 15.0, 18.0, 18.0), p.muted),
+                    Ok(None) => self.spinner(
+                        cx,
+                        rect(frame.pos.x + 15.0, frame.pos.y + 15.0, 18.0, 18.0),
+                        p.muted,
+                    ),
                     Err(_) => self.painter.icon(cx, frame, "image", 16.0, p.muted),
                 }
-                self.tip(crate::common::paint::intersect(frame, r), t("composer.attachments.openImage"));
+                self.tip(
+                    crate::common::paint::intersect(frame, r),
+                    t("composer.attachments.openImage"),
+                );
             } else if index < images.len() + attachments.len() {
                 let attachment = attachments[index - images.len()].clone();
                 let (title, subtitle, glyph) = describe(&attachment);
@@ -661,18 +921,41 @@ impl ComposerPanel {
                     AttachmentGlyph::CircleDot => "circle-dot",
                     AttachmentGlyph::GitPullRequest => "git-pull-request",
                 };
-                self.label_pill(cx, look, frame, Some(icon), &title, &subtitle.unwrap_or_else(|| t("message.attachments.file")));
+                self.label_pill(
+                    cx,
+                    look,
+                    frame,
+                    Some(icon),
+                    &title,
+                    &subtitle.unwrap_or_else(|| t("message.attachments.file")),
+                );
             } else {
                 let name = uploading[index - images.len() - attachments.len()].clone();
-                self.painter.outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
-                self.spinner(cx, rect(frame.pos.x + 12.0, frame.pos.y + 15.0, 18.0, 18.0), p.muted);
-                self.label_pill(cx, look, frame, None, &name, &file_type_label(&name).unwrap_or_default());
+                self.painter
+                    .outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
+                self.spinner(
+                    cx,
+                    rect(frame.pos.x + 12.0, frame.pos.y + 15.0, 18.0, 18.0),
+                    p.muted,
+                );
+                self.label_pill(
+                    cx,
+                    look,
+                    frame,
+                    None,
+                    &name,
+                    &file_type_label(&name).unwrap_or_default(),
+                );
             }
             if removable {
                 if !sending {
                     self.st.hits.push(frame, open.clone());
                 }
-                let hovered = self.st.hover.as_ref().is_some_and(|h| *h == open || *h == remove);
+                let hovered = self
+                    .st
+                    .hover
+                    .as_ref()
+                    .is_some_and(|h| *h == open || *h == remove);
                 if show_remove_always || hovered {
                     discs.push(disc);
                 }
@@ -691,7 +974,8 @@ impl ComposerPanel {
         if !discs.is_empty() {
             self.layer(cx);
             for disc in discs {
-                self.painter.outline(cx, disc, p.surface2, p.border, 1.0, 12.0);
+                self.painter
+                    .outline(cx, disc, p.surface2, p.border, 1.0, 12.0);
                 self.painter.icon(cx, disc, "x", 12.0, p.muted);
             }
             self.layer(cx);
@@ -701,11 +985,26 @@ impl ComposerPanel {
     }
 
     /// AttachmentLabel: 18px glyph slot, title over the small muted subtitle.
-    fn label_pill(&mut self, cx: &mut Cx2d, look: &Look, frame: Rect, icon: Option<&str>, title: &str, subtitle: &str) {
+    fn label_pill(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        frame: Rect,
+        icon: Option<&str>,
+        title: &str,
+        subtitle: &str,
+    ) {
         let p = look.p;
         if icon.is_some() {
-            self.painter.outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
-            self.painter.icon(cx, rect(frame.pos.x + 12.0, frame.pos.y + 15.0, 18.0, 18.0), icon.unwrap_or("file"), 14.0, p.muted);
+            self.painter
+                .outline(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
+            self.painter.icon(
+                cx,
+                rect(frame.pos.x + 12.0, frame.pos.y + 15.0, 18.0, 18.0),
+                icon.unwrap_or("file"),
+                14.0,
+                p.muted,
+            );
         }
         let body = TextSpec::new(Font::Regular, look.body(), p.foreground);
         let small = TextSpec::new(Font::Regular, look.small(), p.muted);
@@ -714,8 +1013,10 @@ impl ComposerPanel {
         let bh = self.painter.line_height(cx, body);
         let sh = self.painter.line_height(cx, small);
         let top = frame.pos.y + (48.0 - bh - sh) * 0.5;
-        self.painter.text_in(cx, rect(tx, top, tw, bh), body, title, 0.0);
-        self.painter.text_in(cx, rect(tx, top + bh, tw, sh), small, subtitle, 0.0);
+        self.painter
+            .text_in(cx, rect(tx, top, tw, bh), body, title, 0.0);
+        self.painter
+            .text_in(cx, rect(tx, top + bh, tw, sh), small, subtitle, 0.0);
     }
 
     /// input.tsx buttonRow: attach, agent controls; context meter and the primary action.
@@ -731,7 +1032,13 @@ impl ComposerPanel {
             self.painter.fill(cx, attach, p.surface2, 14.0);
         }
         let color = if hovered { p.foreground } else { p.muted };
-        self.painter.icon(cx, attach, "plus", glyph, fade(color, if connected { 1.0 } else { 0.5 }));
+        self.painter.icon(
+            cx,
+            attach,
+            "plus",
+            glyph,
+            fade(color, if connected { 1.0 } else { 0.5 }),
+        );
         if connected {
             self.st.hits.push(attach, Item::Attach);
         }
@@ -741,7 +1048,8 @@ impl ComposerPanel {
         let mut right = r.pos.x + r.size.x;
         let send_width = self.draw_send_control(cx, ui, look, right, r.pos.y);
         right -= send_width;
-        let has_agent = !self.ctl_ref().is_draft() && !get(&self.ctl_ref().agent.agent, "status").is_null();
+        let has_agent =
+            !self.ctl_ref().is_draft() && !get(&self.ctl_ref().agent.agent, "status").is_null();
         if has_agent {
             let meter = rect(right - 4.0 - 28.0, r.pos.y, 28.0, 28.0);
             self.draw_meter(cx, look, meter);
@@ -749,7 +1057,12 @@ impl ComposerPanel {
         } else {
             self.st.meter_rect = Rect::default();
         }
-        let controls = rect(attach.pos.x + 28.0, r.pos.y, (right - attach.pos.x - 28.0 - 4.0).max(0.0), 28.0);
+        let controls = rect(
+            attach.pos.x + 28.0,
+            r.pos.y,
+            (right - attach.pos.x - 28.0 - 4.0).max(0.0),
+            28.0,
+        );
         self.draw_agent_controls(cx, look, controls);
     }
 
@@ -760,21 +1073,40 @@ impl ComposerPanel {
         let usage = get(&self.ctl_ref().agent.agent, "lastUsage").clone();
         let percentage = meter_percentage(&usage);
         let value = percentage.unwrap_or(0.0);
-        let progress = if value > 90.0 { p.destructive } else if value >= 70.0 { look.amber500() } else { p.muted };
+        let progress = if value > 90.0 {
+            p.destructive
+        } else if value >= 70.0 {
+            look.amber500()
+        } else {
+            p.muted
+        };
         let glyph = if look.compact { 16.0 } else { look.glyph() };
-        let ring = rect(r.pos.x + (28.0 - glyph) * 0.5, r.pos.y + (28.0 - glyph) * 0.5, glyph, glyph);
+        let ring = rect(
+            r.pos.x + (28.0 - glyph) * 0.5,
+            r.pos.y + (28.0 - glyph) * 0.5,
+            glyph,
+            glyph,
+        );
         self.painter.ring(cx, ring, p.surface3, 2.0, 1.0, 0.0);
         if let Some(percentage) = percentage {
             let fraction = (percentage / 100.0).clamp(0.0, 1.0);
             if fraction > 0.0 {
-                self.painter.ring(cx, ring, progress, 2.0, fraction.min(0.9999), -0.25);
+                self.painter
+                    .ring(cx, ring, progress, 2.0, fraction.min(0.9999), -0.25);
             }
         }
         self.st.hits.push(r, Item::Meter);
     }
 
     /// input.tsx PrimaryAction. Returns the width used (with its 4px leading gap).
-    fn draw_send_control(&mut self, cx: &mut Cx2d, ui: &mut UiContext, look: &Look, right: f64, y: f64) -> f64 {
+    fn draw_send_control(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut UiContext,
+        look: &Look,
+        right: f64,
+        y: f64,
+    ) -> f64 {
         let p = look.p;
         let glyph = look.glyph();
         let (running, has_message, loading, connected, cancelling, behavior, blocked) = {
@@ -797,18 +1129,35 @@ impl ComposerPanel {
         let r = rect(right - 28.0, y, 28.0, 28.0);
         if !has_message && running {
             let enabled = connected && !cancelling;
-            self.painter.fill(cx, r, fade(look.red600(), if enabled { 1.0 } else { 0.5 }), 14.0);
+            self.painter.fill(
+                cx,
+                r,
+                fade(look.red600(), if enabled { 1.0 } else { 0.5 }),
+                14.0,
+            );
             if cancelling {
-                self.spinner(cx, rect(r.pos.x + 7.0, r.pos.y + 7.0, 14.0, 14.0), look.white());
+                self.spinner(
+                    cx,
+                    rect(r.pos.x + 7.0, r.pos.y + 7.0, 14.0, 14.0),
+                    look.white(),
+                );
             } else {
                 let square = glyph * 0.6;
-                let inner = rect(r.pos.x + (28.0 - square) * 0.5, r.pos.y + (28.0 - square) * 0.5, square, square);
+                let inner = rect(
+                    r.pos.x + (28.0 - square) * 0.5,
+                    r.pos.y + (28.0 - square) * 0.5,
+                    square,
+                    square,
+                );
                 self.painter.fill(cx, inner, look.white(), 2.0);
             }
             if enabled {
                 self.st.hits.push(r, Item::Stop);
             }
-            let tip = with_combo(t("composer.cancel.interrupt"), self.st.interrupt_shortcut.clone());
+            let tip = with_combo(
+                t("composer.cancel.interrupt"),
+                self.st.interrupt_shortcut.clone(),
+            );
             self.tip(r, tip);
             return 32.0;
         }
@@ -818,11 +1167,26 @@ impl ComposerPanel {
         let can_press_loading = loading && running;
         let queues = behavior == "queue" && running;
         let disabled = !can_press_loading && (loading || !connected || blocked);
-        self.painter.fill(cx, r, fade(p.accent, if disabled { 0.5 } else { 1.0 }), 14.0);
+        self.painter.fill(
+            cx,
+            r,
+            fade(p.accent, if disabled { 0.5 } else { 1.0 }),
+            14.0,
+        );
         if loading {
-            self.spinner(cx, rect(r.pos.x + 7.0, r.pos.y + 7.0, 14.0, 14.0), p.on_tertiary);
+            self.spinner(
+                cx,
+                rect(r.pos.x + 7.0, r.pos.y + 7.0, 14.0, 14.0),
+                p.on_tertiary,
+            );
         } else {
-            self.painter.icon(cx, r, "arrow-up", glyph, fade(p.on_tertiary, if disabled { 0.5 } else { 1.0 }));
+            self.painter.icon(
+                cx,
+                r,
+                "arrow-up",
+                glyph,
+                fade(p.on_tertiary, if disabled { 0.5 } else { 1.0 }),
+            );
         }
         if !disabled {
             self.st.hits.push(r, Item::Send);
@@ -850,7 +1214,12 @@ impl ComposerPanel {
             let ctl = self.ctl_ref();
             (ctl.providers.clone(), ctl.modes(), ctl.features())
         };
-        let model = ControlsModel { providers: &providers, config: &config, modes: &modes, features: &features };
+        let model = ControlsModel {
+            providers: &providers,
+            config: &config,
+            modes: &modes,
+            features: &features,
+        };
         let (select_model, loading, error, unknown, extra) = (
             t("modelSelector.selectModel"),
             t("modelSelector.loading"),
@@ -858,7 +1227,13 @@ impl ComposerPanel {
             t("agentControls.thinking.unknown"),
             t("agentControls.thinking.extraHigh"),
         );
-        let labels = ModelLabels { select_model: &select_model, loading: &loading, error: &error, thinking_unknown: &unknown, extra_high: &extra };
+        let labels = ModelLabels {
+            select_model: &select_model,
+            loading: &loading,
+            error: &error,
+            thinking_unknown: &unknown,
+            extra_high: &extra,
+        };
         let body = TextSpec::new(Font::Regular, look.body(), fade(p.muted, alpha));
         let thinking = model.thinking_options();
         let provider = owned(get(&config, "provider"));
@@ -870,7 +1245,15 @@ impl ComposerPanel {
             Density::Tight
         } else {
             let font_scale = look.t.ui_base_font_size / 14.0;
-            resolve_density(r.size.x, self.st.density, true, !thinking.is_empty(), !modes.is_empty(), &features, font_scale)
+            resolve_density(
+                r.size.x,
+                self.st.density,
+                true,
+                !thinking.is_empty(),
+                !modes.is_empty(),
+                &features,
+                font_scale,
+            )
         };
         self.st.density = presentation_density;
         let presentation = presentation(presentation_density);
@@ -879,24 +1262,51 @@ impl ComposerPanel {
         let room = (max_x - x).max(0.0);
         let caret = presentation.show_carets && !look.compact;
         // Model trigger.
-        let icon_w = if provider.trim().is_empty() { 0.0 } else { glyph + 4.0 };
+        let icon_w = if provider.trim().is_empty() {
+            0.0
+        } else {
+            glyph + 4.0
+        };
         let thinking_suffix = look.compact && !thinking.is_empty();
-        let suffix_w = if thinking_suffix { self.painter.measure(cx, body, &thinking_text).x + 4.0 } else { 0.0 };
+        let suffix_w = if thinking_suffix {
+            self.painter.measure(cx, body, &thinking_text).x + 4.0
+        } else {
+            0.0
+        };
         let caret_w = if caret { 18.0 } else { 0.0 };
         let text_w = self.painter.measure(cx, body, &model_text).x;
         let mut reserved_right = 0.0;
         if !look.compact {
             if !thinking.is_empty() {
-                reserved_right += 4.0 + self.trigger_width(cx, body, presentation.show_thinking_label.then_some(thinking_text.as_str()), glyph, caret);
+                reserved_right += 4.0
+                    + self.trigger_width(
+                        cx,
+                        body,
+                        presentation
+                            .show_thinking_label
+                            .then_some(thinking_text.as_str()),
+                        glyph,
+                        caret,
+                    );
             }
             if !modes.is_empty() {
-                reserved_right += 4.0 + self.trigger_width(cx, body, presentation.show_mode_label.then_some(mode_text.as_str()), glyph, caret);
+                reserved_right += 4.0
+                    + self.trigger_width(
+                        cx,
+                        body,
+                        presentation.show_mode_label.then_some(mode_text.as_str()),
+                        glyph,
+                        caret,
+                    );
             }
             if !features.is_empty() {
                 reserved_right += if presentation.aggregate_features {
                     4.0 + 28.0
                 } else {
-                    features.iter().map(|f| 4.0 + self.feature_width(cx, body, &model, f, glyph)).sum::<f64>()
+                    features
+                        .iter()
+                        .map(|f| 4.0 + self.feature_width(cx, body, &model, f, glyph))
+                        .sum::<f64>()
                 };
             }
         }
@@ -920,7 +1330,11 @@ impl ComposerPanel {
         if model_w > 0.0 {
             let trigger = rect(x, r.pos.y, model_w, 28.0);
             self.trigger_bg(cx, look, trigger, Item::Model, disabled);
-            let caret_w = if model_w >= MODEL_MIN_WIDTH { caret_w } else { 0.0 };
+            let caret_w = if model_w >= MODEL_MIN_WIDTH {
+                caret_w
+            } else {
+                0.0
+            };
             // Glyph, name, suffix and caret all stay inside the trigger (its hit area).
             let end = trigger.pos.x + model_w - 8.0 - caret_w;
             let mut tx = trigger.pos.x + 8.0;
@@ -938,18 +1352,51 @@ impl ComposerPanel {
                 tx += icon_w;
             }
             // The compact thinking suffix shows only beside some of the model name.
-            let suffix_w = if end - tx + 0.5 >= suffix_w + text_w.min(24.0) { suffix_w } else { 0.0 };
-            let drawn = self.painter.text_in(cx, rect(tx, trigger.pos.y, (end - suffix_w - tx).max(0.0), 28.0), body, &model_text, 0.0);
+            let suffix_w = if end - tx + 0.5 >= suffix_w + text_w.min(24.0) {
+                suffix_w
+            } else {
+                0.0
+            };
+            let drawn = self.painter.text_in(
+                cx,
+                rect(tx, trigger.pos.y, (end - suffix_w - tx).max(0.0), 28.0),
+                body,
+                &model_text,
+                0.0,
+            );
             if suffix_w > 0.0 {
                 let sx = drawn.pos.x + drawn.size.x + 4.0;
                 let extra_spec = TextSpec::new(Font::Regular, look.body(), fade(p.muted, alpha));
-                self.painter.text_in(cx, rect(sx, trigger.pos.y, (end - sx).max(0.0), 28.0), extra_spec, &thinking_text, 0.0);
+                self.painter.text_in(
+                    cx,
+                    rect(sx, trigger.pos.y, (end - sx).max(0.0), 28.0),
+                    extra_spec,
+                    &thinking_text,
+                    0.0,
+                );
             }
             if caret_w > 0.0 {
-                self.painter.icon(cx, rect(trigger.pos.x + model_w - 8.0 - 14.0, trigger.pos.y + 7.0, 14.0, 14.0), "chevron-down", 14.0, fade(p.muted, alpha));
+                self.painter.icon(
+                    cx,
+                    rect(
+                        trigger.pos.x + model_w - 8.0 - 14.0,
+                        trigger.pos.y + 7.0,
+                        14.0,
+                        14.0,
+                    ),
+                    "chevron-down",
+                    14.0,
+                    fade(p.muted, alpha),
+                );
             }
             let model_label = model.selected_model_label(&labels);
-            self.tip(trigger, t_args("modelSelector.selectedModel", &[("model", model_label.as_str())]));
+            self.tip(
+                trigger,
+                t_args(
+                    "modelSelector.selectedModel",
+                    &[("model", model_label.as_str())],
+                ),
+            );
             x += model_w + 4.0;
         }
         if look.compact {
@@ -958,16 +1405,42 @@ impl ComposerPanel {
         if collapsed {
             if x + 28.0 <= max_x + 0.5 {
                 let fr = rect(x, r.pos.y, 28.0, 28.0);
-                self.icon_trigger(cx, look, fr, Trigger { icon: "settings-2", tint: None, label: None, caret: false }, Item::Features, disabled);
+                self.icon_trigger(
+                    cx,
+                    look,
+                    fr,
+                    Trigger {
+                        icon: "settings-2",
+                        tint: None,
+                        label: None,
+                        caret: false,
+                    },
+                    Item::Features,
+                    disabled,
+                );
                 self.tip(fr, t("agentControls.features.open"));
             }
             return;
         }
         if !thinking.is_empty() {
-            let label = presentation.show_thinking_label.then_some(thinking_text.as_str());
+            let label = presentation
+                .show_thinking_label
+                .then_some(thinking_text.as_str());
             let w = self.trigger_width(cx, body, label, glyph, caret);
             let tr = rect(x, r.pos.y, w, 28.0);
-            self.icon_trigger(cx, look, tr, Trigger { icon: "brain", tint: None, label, caret }, Item::Thinking, disabled);
+            self.icon_trigger(
+                cx,
+                look,
+                tr,
+                Trigger {
+                    icon: "brain",
+                    tint: None,
+                    label,
+                    caret,
+                },
+                Item::Thinking,
+                disabled,
+            );
             self.tip(tr, t("agentControls.hints.thinking"));
             x += w + 4.0;
         }
@@ -975,7 +1448,19 @@ impl ComposerPanel {
             let label = presentation.show_mode_label.then_some(mode_text.as_str());
             let w = self.trigger_width(cx, body, label, glyph, caret);
             let mr = rect(x, r.pos.y, w, 28.0);
-            self.icon_trigger(cx, look, mr, Trigger { icon: mode_icon(model.selected_mode()), tint: None, label, caret }, Item::Mode, disabled);
+            self.icon_trigger(
+                cx,
+                look,
+                mr,
+                Trigger {
+                    icon: mode_icon(model.selected_mode()),
+                    tint: None,
+                    label,
+                    caret,
+                },
+                Item::Mode,
+                disabled,
+            );
             let tip = with_combo(t("agentControls.hints.mode"), self.st.mode_shortcut.clone());
             self.tip(mr, tip);
             x += w + 4.0;
@@ -985,7 +1470,19 @@ impl ComposerPanel {
         }
         if presentation.aggregate_features {
             let fr = rect(x, r.pos.y, 28.0, 28.0);
-            self.icon_trigger(cx, look, fr, Trigger { icon: "settings-2", tint: None, label: None, caret: false }, Item::Features, disabled);
+            self.icon_trigger(
+                cx,
+                look,
+                fr,
+                Trigger {
+                    icon: "settings-2",
+                    tint: None,
+                    label: None,
+                    caret: false,
+                },
+                Item::Features,
+                disabled,
+            );
             self.tip(fr, t("agentControls.features.open"));
             return;
         }
@@ -999,29 +1496,81 @@ impl ComposerPanel {
             let label = s_or(get(feature, "label"), s(get(feature, "id"))).to_owned();
             let fr = rect(x, r.pos.y, w, 28.0);
             if s(get(feature, "type")) == "toggle" {
-                self.icon_trigger(cx, look, fr, Trigger { icon: feature_icon(feature), tint, label: None, caret: false }, Item::Feature(index), disabled);
+                self.icon_trigger(
+                    cx,
+                    look,
+                    fr,
+                    Trigger {
+                        icon: feature_icon(feature),
+                        tint,
+                        label: None,
+                        caret: false,
+                    },
+                    Item::Feature(index),
+                    disabled,
+                );
                 self.tip(fr, s_or(get(feature, "tooltip"), &label).to_owned());
             } else {
                 let options = maps(get(feature, "options"));
-                let selected = options.iter().find(|o| get(o, "id") == &value).map(|o| s_or(get(o, "label"), &label).to_owned()).unwrap_or(label.clone());
+                let selected = options
+                    .iter()
+                    .find(|o| get(o, "id") == &value)
+                    .map(|o| s_or(get(o, "label"), &label).to_owned())
+                    .unwrap_or(label.clone());
                 let icon_only = s(get(feature, "desktopTrigger")) == "icon";
                 let shown = (!icon_only).then_some(selected.as_str());
-                self.icon_trigger(cx, look, fr, Trigger { icon: feature_icon(feature), tint, label: shown, caret: false }, Item::Feature(index), disabled);
-                let hint = if icon_only { format!("{label}: {selected}") } else { s_or(get(feature, "tooltip"), &label).to_owned() };
+                self.icon_trigger(
+                    cx,
+                    look,
+                    fr,
+                    Trigger {
+                        icon: feature_icon(feature),
+                        tint,
+                        label: shown,
+                        caret: false,
+                    },
+                    Item::Feature(index),
+                    disabled,
+                );
+                let hint = if icon_only {
+                    format!("{label}: {selected}")
+                } else {
+                    s_or(get(feature, "tooltip"), &label).to_owned()
+                };
                 self.tip(fr, hint);
             }
             x += w + 4.0;
         }
     }
 
-    fn trigger_width(&mut self, cx: &mut Cx2d, body: TextSpec, label: Option<&str>, glyph: f64, caret: bool) -> f64 {
+    fn trigger_width(
+        &mut self,
+        cx: &mut Cx2d,
+        body: TextSpec,
+        label: Option<&str>,
+        glyph: f64,
+        caret: bool,
+    ) -> f64 {
         match label {
             None => 28.0,
-            Some(label) => 8.0 + glyph + 4.0 + self.painter.measure(cx, body, label).x + if caret { 18.0 } else { 0.0 } + 8.0,
+            Some(label) => {
+                8.0 + glyph
+                    + 4.0
+                    + self.painter.measure(cx, body, label).x
+                    + if caret { 18.0 } else { 0.0 }
+                    + 8.0
+            }
         }
     }
 
-    fn feature_width(&mut self, cx: &mut Cx2d, body: TextSpec, model: &ControlsModel, feature: &Value, glyph: f64) -> f64 {
+    fn feature_width(
+        &mut self,
+        cx: &mut Cx2d,
+        body: TextSpec,
+        model: &ControlsModel,
+        feature: &Value,
+        glyph: f64,
+    ) -> f64 {
         if s(get(feature, "type")) == "toggle" || s(get(feature, "desktopTrigger")) == "icon" {
             return 28.0;
         }
@@ -1043,8 +1592,21 @@ impl ComposerPanel {
         }
     }
 
-    fn icon_trigger(&mut self, cx: &mut Cx2d, look: &Look, r: Rect, trigger: Trigger, item: Item, disabled: bool) {
-        let Trigger { icon, tint, label, caret } = trigger;
+    fn icon_trigger(
+        &mut self,
+        cx: &mut Cx2d,
+        look: &Look,
+        r: Rect,
+        trigger: Trigger,
+        item: Item,
+        disabled: bool,
+    ) {
+        let Trigger {
+            icon,
+            tint,
+            label,
+            caret,
+        } = trigger;
         let alpha = if disabled { 0.5 } else { 1.0 };
         let glyph = look.glyph();
         self.trigger_bg(cx, look, r, item, disabled);
@@ -1057,9 +1619,21 @@ impl ComposerPanel {
                 let body = TextSpec::new(Font::Regular, look.body(), fade(look.p.muted, alpha));
                 let end = r.pos.x + r.size.x - 8.0 - if caret { 18.0 } else { 0.0 };
                 let tx = icon_rect.pos.x + glyph + 4.0;
-                self.painter.text_in(cx, rect(tx, r.pos.y, (end - tx).max(0.0), 28.0), body, label, 0.0);
+                self.painter.text_in(
+                    cx,
+                    rect(tx, r.pos.y, (end - tx).max(0.0), 28.0),
+                    body,
+                    label,
+                    0.0,
+                );
                 if caret {
-                    self.painter.icon(cx, rect(end + 4.0, r.pos.y + 7.0, 14.0, 14.0), "chevron-down", 14.0, fade(look.p.muted, alpha));
+                    self.painter.icon(
+                        cx,
+                        rect(end + 4.0, r.pos.y + 7.0, 14.0, 14.0),
+                        "chevron-down",
+                        14.0,
+                        fade(look.p.muted, alpha),
+                    );
                 }
             }
         }
@@ -1093,7 +1667,11 @@ pub fn format_session_cost(value: &Value) -> Option<String> {
     if !value.is_finite() || value <= 0.0 {
         return None;
     }
-    Some(if value < 0.01 { format!("${value:.4}") } else { format!("${value:.2}") })
+    Some(if value < 0.01 {
+        format!("${value:.4}")
+    } else {
+        format!("${value:.2}")
+    })
 }
 
 pub fn spec_body(look: &Look) -> TextSpec {
@@ -1115,21 +1693,36 @@ struct Trigger<'a> {
 #[cfg(test)]
 mod input_measurement_tests {
     use super::*;
-    use std::{cell::RefCell, rc::Rc, sync::Arc};
     use makepad_widgets::makepad_draw::text::{
-        font::FontId, fonts::Fonts, loader::{FontDefinition, FontFamilyDefinition},
+        font::FontId,
+        fonts::Fonts,
+        loader::{FontDefinition, FontFamilyDefinition},
     };
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
 
     #[test]
     fn korean_composer_height_uses_editor_font_scale_and_wrap_width() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let mut fonts = Fonts::new(&mut cx, Default::default());
         let font = FontId::from("composer-korean-test");
-        fonts.define_font(font, FontDefinition {
-            data: Arc::new(include_bytes!("../../../../resources/fonts/NotoSansKR-Regular.otf").to_vec()),
-            index: 0, variations: Vec::new(), ascender_fudge_in_ems: 0.0, descender_fudge_in_ems: 0.0,
-        });
-        fonts.define_font_family(0.into(), FontFamilyDefinition { font_ids: vec![font] });
+        fonts.define_font(
+            font,
+            FontDefinition {
+                data: Arc::new(
+                    include_bytes!("../../../../resources/fonts/NotoSansKR-Regular.otf").to_vec(),
+                ),
+                index: 0,
+                variations: Vec::new(),
+                ascender_fudge_in_ems: 0.0,
+                descender_fudge_in_ems: 0.0,
+            },
+        );
+        fonts.define_font_family(
+            0.into(),
+            FontFamilyDefinition {
+                font_ids: vec![font],
+            },
+        );
         cx.set_global(Rc::new(RefCell::new(fonts)));
         let mut panel = ComposerPanel::new(&mut cx);
         let text = "그리고 현재 UI의 폰트가 시스템하고 결합되지 않고 자체적으로 렌더링하는데 이거 시스템하고 잘 결합할 방법도 찾아봐";
@@ -1143,13 +1736,21 @@ mod input_measurement_tests {
                 let laid = panel.input.text_layout(&mut cx, text, Some(width as f32));
                 assert!(laid.rows.len() > 1);
                 let measured = panel.editor_natural(&mut cx, width, 6.0, 30.0);
-                let expected = (laid.size_in_lpxs.height as f64 * panel.input.text_scale() as f64 + 12.0).max(30.0);
+                let expected = (laid.size_in_lpxs.height as f64 * panel.input.text_scale() as f64
+                    + 12.0)
+                    .max(30.0);
                 assert_eq!(measured, expected);
                 assert_eq!(panel.st.input_natural, expected);
                 // Line breaking may hang trailing spaces beyond the fit width.
                 for row in &laid.rows {
-                    let visible = panel.input.text_layout(&mut cx, row.text.as_str().trim_end(), None);
-                    assert!(visible.size_in_lpxs.width * panel.input.text_scale() <= width as f32 + 0.01);
+                    let visible =
+                        panel
+                            .input
+                            .text_layout(&mut cx, row.text.as_str().trim_end(), None);
+                    assert!(
+                        visible.size_in_lpxs.width * panel.input.text_scale()
+                            <= width as f32 + 0.01
+                    );
                 }
             }
         }

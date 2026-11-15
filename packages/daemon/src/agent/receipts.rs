@@ -85,12 +85,13 @@ impl CreationReceipts {
             bail!("{}_request_key_conflict", input.kind);
         }
         if let Some(record) = &record
-            && let Some(receiver) = receiver {
-                return Ok(CreationAdmission::Running(CreationSubscription {
-                    snapshot: Some(record["snapshot"].clone()),
-                    receiver: Some(receiver),
-                }));
-            }
+            && let Some(receiver) = receiver
+        {
+            return Ok(CreationAdmission::Running(CreationSubscription {
+                snapshot: Some(record["snapshot"].clone()),
+                receiver: Some(receiver),
+            }));
+        }
         if let Some(record) = &mut record {
             if record["snapshot"]["phase"] == "completed" {
                 hooks.validate_completed(&record["snapshot"]).await?;
@@ -114,9 +115,10 @@ impl CreationReceipts {
             }
         };
         if input.kind == "workspace"
-            && let Some(id) = record["snapshot"]["workspaceId"].as_str() {
-                self.claim(&identity, "workspace", id, hooks).await?;
-            }
+            && let Some(id) = record["snapshot"]["workspaceId"].as_str()
+        {
+            self.claim(&identity, "workspace", id, hooks).await?;
+        }
         if let Some(id) = record["snapshot"]["agentId"].as_str() {
             self.claim(&identity, "agent", id, hooks).await?;
         }
@@ -163,9 +165,10 @@ impl CreationReceipts {
         let (mut record, receiver) = self.inner.read_with_active(&identity).await?;
         if let Some(record) = &mut record {
             if receiver.is_none()
-                && let Some(stage) = record["inFlight"].as_str().map(str::to_owned) {
-                    self.inner.publish(&identity, record, json!({"phase":"failed","failedStage":stage,"outcomeUnknown":true,"error":format!("{kind}_request_outcome_unknown")}), None, &[]).await?;
-                }
+                && let Some(stage) = record["inFlight"].as_str().map(str::to_owned)
+            {
+                self.inner.publish(&identity, record, json!({"phase":"failed","failedStage":stage,"outcomeUnknown":true,"error":format!("{kind}_request_outcome_unknown")}), None, &[]).await?;
+            }
             if record["snapshot"]["phase"] == "completed" {
                 hooks.validate_completed(&record["snapshot"]).await?;
             }
@@ -428,9 +431,10 @@ impl CreationSubscription {
     pub async fn completion(&mut self) -> Result<Value> {
         loop {
             if let Some(snapshot) = &self.snapshot
-                && matches!(snapshot["phase"].as_str(), Some("completed" | "failed")) {
-                    return Ok(snapshot.clone());
-                }
+                && matches!(snapshot["phase"].as_str(), Some("completed" | "failed"))
+            {
+                return Ok(snapshot.clone());
+            }
             if self.changed().await?.is_none() {
                 bail!("Creation operation ended before committing its outcome");
             }

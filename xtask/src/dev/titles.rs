@@ -94,19 +94,19 @@ fn fingerprint(paseo: &Path, codex: &Path) -> Result<String> {
             } else if kind.is_file() && entry.path().extension().is_some_and(|e| e == "json") {
                 let text = optional(&entry.path(), "null")?;
                 let agent: Value = serde_json::from_str(&text)?;
-                if agent["provider"] == "codex" {
-                    if let (Some(id), Some(session)) = (
+                if agent["provider"] == "codex"
+                    && let (Some(id), Some(session)) = (
                         agent["id"].as_str(),
                         agent
                             .pointer("/persistence/sessionId")
                             .and_then(Value::as_str),
-                    ) {
-                        titles.push((
-                            id.into(),
-                            session.into(),
-                            agent["title"].as_str().unwrap_or("").into(),
-                        ));
-                    }
+                    )
+                {
+                    titles.push((
+                        id.into(),
+                        session.into(),
+                        agent["title"].as_str().unwrap_or("").into(),
+                    ));
                 }
             }
         }

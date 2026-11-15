@@ -43,12 +43,20 @@ pub const IMAGE_FILE_PANEL: FilePanelCandidate = FilePanelCandidate {
     filenames: &[],
 };
 /// Paseo's editor, the floor for text files no other built-in claims.
-pub const SOURCE_FILE_PANEL: FilePanelCandidate =
-    FilePanelCandidate { id: "builtin:source", file_kind: "text", extensions: None, filenames: &[] };
+pub const SOURCE_FILE_PANEL: FilePanelCandidate = FilePanelCandidate {
+    id: "builtin:source",
+    file_kind: "text",
+    extensions: None,
+    filenames: &[],
+};
 
 /// Original `filePanelCatalog`, in resolver order: the built-ins that render a file, then Source.
-pub const BUILTIN_FILE_PANELS: [FilePanelCandidate; 4] =
-    [MARKDOWN_FILE_PANEL, HTML_FILE_PANEL, IMAGE_FILE_PANEL, SOURCE_FILE_PANEL];
+pub const BUILTIN_FILE_PANELS: [FilePanelCandidate; 4] = [
+    MARKDOWN_FILE_PANEL,
+    HTML_FILE_PANEL,
+    IMAGE_FILE_PANEL,
+    SOURCE_FILE_PANEL,
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FilePanelResolution {
@@ -77,7 +85,9 @@ fn matches(name: &str, extension: &str, candidate: &FilePanelCandidate) -> bool 
         None => true,
         Some(extensions) => {
             candidate.filenames.contains(&name)
-                || extensions.iter().any(|entry| entry.to_lowercase() == extension)
+                || extensions
+                    .iter()
+                    .any(|entry| entry.to_lowercase() == extension)
         }
     }
 }
@@ -99,18 +109,30 @@ pub fn resolve_file_panel(
         .collect();
     let claimed_by_builtin = matching.iter().any(|candidate| !candidate.claims_all());
     let offered: Vec<FilePanelCandidate> = if claimed_by_builtin {
-        matching.into_iter().filter(|candidate| !candidate.claims_all()).collect()
+        matching
+            .into_iter()
+            .filter(|candidate| !candidate.claims_all())
+            .collect()
     } else {
         matching
     };
     let matched_filename = offered
         .iter()
         .any(|candidate| !candidate.claims_all() && candidate.filenames.contains(&name));
-    let selector_key =
-        if matched_filename { format!("name:{name}") } else { format!("ext:{extension}") };
+    let selector_key = if matched_filename {
+        format!("name:{name}")
+    } else {
+        format!("ext:{extension}")
+    };
     let associated_id = associations.get(&selector_key).and_then(Value::as_str);
-    let associated = offered.iter().copied().find(|candidate| Some(candidate.id) == associated_id);
-    let chosen = offered.iter().copied().find(|candidate| Some(candidate.id) == choice);
+    let associated = offered
+        .iter()
+        .copied()
+        .find(|candidate| Some(candidate.id) == associated_id);
+    let chosen = offered
+        .iter()
+        .copied()
+        .find(|candidate| Some(candidate.id) == choice);
     FilePanelResolution {
         panel: chosen.or(associated).or_else(|| offered.first().copied()),
         candidates: offered,
@@ -145,8 +167,16 @@ impl FileTextPresentation {
 /// Files above the platform's display budget are refused before reading; the editor platform
 /// (desktop) edits files up to 1 MiB; everything else is shown read-only.
 pub fn file_text_presentation(size: u64, editor_platform: bool) -> FileTextPresentation {
-    let highlighted = if editor_platform { 10 * 1024 * 1024 } else { 1024 * 1024 };
-    let plain = if editor_platform { 50 * 1024 * 1024 } else { 10 * 1024 * 1024 };
+    let highlighted = if editor_platform {
+        10 * 1024 * 1024
+    } else {
+        1024 * 1024
+    };
+    let plain = if editor_platform {
+        50 * 1024 * 1024
+    } else {
+        10 * 1024 * 1024
+    };
     if size > plain {
         return FileTextPresentation::Unsupported;
     }
@@ -205,9 +235,15 @@ mod tests {
         assert_eq!(file_text_presentation(1024 * 1024, true), Editable);
         assert_eq!(file_text_presentation(1024 * 1024 + 1, true), Highlighted);
         assert_eq!(file_text_presentation(20 * 1024 * 1024, true), Plain);
-        assert_eq!(file_text_presentation(50 * 1024 * 1024 + 1, true), Unsupported);
+        assert_eq!(
+            file_text_presentation(50 * 1024 * 1024 + 1, true),
+            Unsupported
+        );
         assert_eq!(file_text_presentation(10, false), Highlighted);
         assert_eq!(file_text_presentation(2 * 1024 * 1024, false), Plain);
-        assert_eq!(file_text_presentation(10 * 1024 * 1024 + 1, false), Unsupported);
+        assert_eq!(
+            file_text_presentation(10 * 1024 * 1024 + 1, false),
+            Unsupported
+        );
     }
 }

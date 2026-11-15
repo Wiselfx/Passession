@@ -158,7 +158,8 @@ impl<'de> Deserialize<'de> for SessionMessage {
         let fields = Map::<String, Value>::deserialize(d)?;
         if fields
             .get("type")
-            .and_then(Value::as_str).is_none_or(|s| s.is_empty())
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.is_empty())
         {
             return Err(serde::de::Error::custom("message type is required"));
         }
@@ -281,9 +282,10 @@ fn validate_semantics(value: &Value) -> Result<(), ProtocolError> {
         let payload = &value["payload"];
         if let (Some(agent_id), Some(nested_id)) =
             (payload["agentId"].as_str(), payload["agent"]["id"].as_str())
-            && agent_id != nested_id {
-                return Err(ProtocolError::Invalid("hub agent correlation"));
-            }
+            && agent_id != nested_id
+        {
+            return Err(ProtocolError::Invalid("hub agent correlation"));
+        }
     }
     if value["type"] == "browser.automation.execute.request" {
         let command = value.get("command").unwrap_or(value);
@@ -299,13 +301,14 @@ fn validate_semantics(value: &Value) -> Result<(), ProtocolError> {
                 }
             }
             if matches!(command["command"].as_str(), Some("new_tab" | "navigate"))
-                && let Some(raw) = args["url"].as_str() {
-                    let url =
-                        url::Url::parse(raw).map_err(|_| ProtocolError::Invalid("browser URL"))?;
-                    if !matches!(url.scheme(), "http" | "https") {
-                        return Err(ProtocolError::Invalid("browser URL"));
-                    }
+                && let Some(raw) = args["url"].as_str()
+            {
+                let url =
+                    url::Url::parse(raw).map_err(|_| ProtocolError::Invalid("browser URL"))?;
+                if !matches!(url.scheme(), "http" | "https") {
+                    return Err(ProtocolError::Invalid("browser URL"));
                 }
+            }
         }
     }
     Ok(())

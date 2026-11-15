@@ -2,11 +2,10 @@ pub(crate) mod input;
 #[cfg(test)]
 mod tests;
 
-use crate::{
-    daemon_control::{self as control, DaemonInstance, StartOptions, StopOptions},
-};
-use paseo_client::{ClientError, DaemonTarget};
+use crate::daemon_control::{self as control, DaemonInstance, StartOptions, StopOptions};
 use anyhow::{Context as _, Result, bail, ensure};
+use paseo_client::{ClientError, DaemonTarget};
+use paseo_protocol::components::{ComponentIdentity, validate_identity, validate_sha256};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -18,11 +17,15 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Runtime {
     pub executable: PathBuf,
     pub cli_shim_path: PathBuf,
     pub working_directory: PathBuf,
+    #[serde(default)]
+    pub identity: Option<ComponentIdentity>,
+    #[serde(default)]
+    pub executable_sha256: Option<String>,
 }
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,7 +60,6 @@ impl Intake {
 struct Session {
     runtime: Option<Runtime>,
     home: Option<PathBuf>,
-    app_version: Option<String>,
     settings: Settings,
     owned: Arc<Mutex<Option<DaemonInstance>>>,
     closing: bool,
@@ -67,7 +69,6 @@ impl Default for Session {
         Self {
             runtime: None,
             home: None,
-            app_version: None,
             settings: Settings::default(),
             owned: Arc::new(Mutex::new(None)),
             closing: false,
@@ -77,12 +78,81 @@ impl Default for Session {
 fn failure(code: &str, message: impl Into<String>) -> anyhow::Error {
     ClientError::new(code, message).into()
 }
-fn normalized_version(version: &str) -> &str {
-    let version = version.trim();
-    version
-        .strip_prefix('v')
-        .or_else(|| version.strip_prefix('V'))
-        .unwrap_or(version)
+const PROTOCOL_VERSION: u32 = 1;
+const RUNTIME_CAPABILITY: &str = "component-runtime-v1";
+
+fn initialize_protocol(args: &Value) -> Result<()> {
+    ensure!(
+        args["protocolVersion"].as_u64() == Some(u64::from(PROTOCOL_VERSION))
+            && args["capabilities"].as_array().is_some_and(|capabilities| {
+                capabilities.len() <= 16
+                    && capabilities.iter().all(Value::is_string)
+                    && capabilities.iter().any(|value| value == RUNTIME_CAPABILITY)
+            }),
+        "DESKTOP_ABI_MISMATCH: a compatible component-aware desktop host is required"
+    );
+    Ok(())
+}
+
+async fn validate_runtime(runtime: &mut Runtime) -> Result<()> {
+    for (name, path) in [
+        ("executable", &runtime.executable),
+        ("cliShimPath", &runtime.cli_shim_path),
+    ] {
+        ensure!(path.is_absolute(), "Missing absolute runtime path: {name}");
+        assert_executable(path).await?;
+    }
+    ensure!(
+        runtime.working_directory.is_absolute()
+            && tokio::fs::metadata(&runtime.working_directory)
+                .await?
+                .is_dir(),
+        "Missing absolute runtime directory: workingDirectory"
+    );
+    runtime.executable = tokio::fs::canonicalize(&runtime.executable).await?;
+    runtime.cli_shim_path = tokio::fs::canonicalize(&runtime.cli_shim_path).await?;
+    runtime.working_directory = tokio::fs::canonicalize(&runtime.working_directory).await?;
+    ensure!(
+        runtime.executable == std::env::current_exe()?.canonicalize()?
+            && runtime.cli_shim_path == runtime.executable,
+        "Desktop runtime must use this exact selected host image for the daemon and CLI"
+    );
+    ensure!(
+        runtime.executable.starts_with(&runtime.working_directory),
+        "Desktop runtime working directory does not contain its image"
+    );
+    match (&runtime.identity, &runtime.executable_sha256) {
+        (Some(identity), Some(expected)) => {
+            validate_identity(identity)?;
+            validate_sha256(expected)?;
+            ensure!(
+                identity.abi_version == PROTOCOL_VERSION
+                    && identity.input_hash
+                        == option_env!("PASEO_COMPONENT_INPUT_HASH").unwrap_or("")
+                    && identity.version == crate::VERSION
+                    && identity.source_sha == option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or(""),
+                "DESKTOP_ABI_MISMATCH: selected daemon component does not match this host"
+            );
+            use sha2::{Digest, Sha256};
+            let mut file = tokio::fs::File::open(&runtime.executable).await?;
+            let mut hash = Sha256::new();
+            let mut bytes = [0u8; 64 * 1024];
+            loop {
+                let count = file.read(&mut bytes).await?;
+                if count == 0 {
+                    break;
+                }
+                hash.update(&bytes[..count]);
+            }
+            ensure!(
+                format!("{:x}", hash.finalize()) == *expected,
+                "Desktop runtime executable digest changed"
+            );
+        }
+        (None, None) => {}
+        _ => bail!("Desktop runtime identity and executable digest must be supplied together"),
+    }
+    Ok(())
 }
 fn error_code(error: &anyhow::Error) -> &str {
     if let Some(error) = error.downcast_ref::<ClientError>() {
@@ -135,22 +205,10 @@ impl Session {
             self.runtime.is_none(),
             "Daemon helper is already initialized."
         );
-        let runtime: Runtime = serde_json::from_value(args["runtime"].clone())
+        initialize_protocol(args)?;
+        let mut runtime: Runtime = serde_json::from_value(args["runtime"].clone())
             .context("Missing native runtime paths: executable, cliShimPath, workingDirectory")?;
-        for (name, path) in [
-            ("executable", &runtime.executable),
-            ("cliShimPath", &runtime.cli_shim_path),
-        ] {
-            ensure!(path.is_absolute(), "Missing absolute runtime path: {name}");
-            assert_executable(path).await?;
-        }
-        ensure!(
-            runtime.working_directory.is_absolute()
-                && tokio::fs::metadata(&runtime.working_directory)
-                    .await?
-                    .is_dir(),
-            "Missing absolute runtime directory: workingDirectory"
-        );
+        validate_runtime(&mut runtime).await?;
         let configured_home = std::env::var("PASEO_HOME").ok();
         let home = paseo_client::resolve_home(
             args["home"]
@@ -159,11 +217,14 @@ impl Session {
                 .or(configured_home.as_deref()),
         )?;
         let settings = serde_json::from_value(args.get("settings").cloned().unwrap_or(json!({})))?;
-        self.app_version = args["appVersion"].as_str().map(str::to_owned);
         self.settings = settings;
         self.home = Some(home);
         self.runtime = Some(runtime);
-        Ok(Value::Null)
+        Ok(
+            json!({"protocolVersion":PROTOCOL_VERSION,"capabilities":[RUNTIME_CAPABILITY],
+            "daemon":{"version":crate::VERSION,"sourceSha":option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or(""),
+                "abiVersion":PROTOCOL_VERSION}}),
+        )
     }
     fn status_from(&self, payload: &Value) -> Value {
         let state = match payload["localDaemon"].as_str() {
@@ -172,7 +233,11 @@ impl Session {
             _ => "stopped",
         };
         let owned = self.owned.lock().unwrap();
-        json!({"serverId":payload["serverId"].as_str().unwrap_or(""),"status":state,"listen":payload["listen"],"hostname":if state=="running"{payload["hostname"].clone()}else{Value::Null},"pid":if state=="stopped"{Value::Null}else{payload["pid"].clone()},"home":self.home,"version":payload["daemonVersion"],"desktopManaged":payload["desktopManaged"]==true,"ownedByDesktop":owned.as_ref().is_some_and(|o|payload["pid"].as_u64()==Some(o.pid as u64)&&payload["startedAt"]==o.started_at),"startedAt":payload["startedAt"],"error":null,"connectedDaemon":payload["connectedDaemon"],"note":payload["note"]})
+        let home = self
+            .home
+            .as_deref()
+            .map(control::managed::desktop_protocol_path);
+        json!({"serverId":payload["serverId"].as_str().unwrap_or(""),"status":state,"listen":payload["listen"],"hostname":if state=="running"{payload["hostname"].clone()}else{Value::Null},"pid":if state=="stopped"{Value::Null}else{payload["pid"].clone()},"home":home,"version":payload["daemonVersion"],"sourceSha":payload["sourceSha"],"componentIdentity":payload["componentIdentity"],"desktopManaged":payload["desktopManaged"]==true,"ownedByDesktop":owned.as_ref().is_some_and(|o|payload["pid"].as_u64()==Some(o.pid as u64)&&payload["startedAt"]==o.started_at),"startedAt":payload["startedAt"],"error":null,"connectedDaemon":payload["connectedDaemon"],"note":payload["note"]})
     }
     async fn status(&self) -> Result<Value> {
         let result = async {
@@ -245,23 +310,17 @@ impl Session {
             );
         }
         if matches!(status["status"].as_str(), Some("running" | "starting")) {
-            let mismatch = status["ownedByDesktop"] == true
-                && self
-                    .app_version
-                    .as_deref()
-                    .zip(status["version"].as_str())
-                    .is_some_and(|(a, b)| {
-                        let a = normalized_version(a);
-                        let b = normalized_version(b);
-                        !a.is_empty() && !b.is_empty() && a != b
-                    });
-            if mismatch {
-                self.stop(&json!({"reason":"version_mismatch"})).await?;
-            } else {
-                return Ok(status);
-            }
+            // The selected runtime is pinned at initialize. App and daemon versions
+            // are independent; a live owned daemon is never replaced by GUI skew.
+            return Ok(status);
         }
         ensure!(!cancel.is_cancelled(), "Desktop daemon start cancelled.");
+        validate_runtime(
+            self.runtime
+                .as_mut()
+                .context("Daemon helper has not been initialized.")?,
+        )
+        .await?;
         let runtime = self
             .runtime
             .as_ref()
@@ -284,9 +343,10 @@ impl Session {
         )
         .await;
         if let Err(error) = result
-            && error_code(&error) != "DAEMON_NOT_READY" {
-                return Err(error);
-            }
+            && error_code(&error) != "DAEMON_NOT_READY"
+        {
+            return Err(error);
+        }
         self.status().await
     }
     async fn restart(&mut self, args: &Value) -> Result<Value> {
@@ -322,16 +382,144 @@ impl Session {
         .await?;
         self.status().await
     }
+    async fn app_update_drain(&self, args: &Value, release: bool) -> Result<Value> {
+        let home = self.home()?;
+        let instance = control::read_daemon_instance(home)
+            .await?
+            .context("Owned desktop daemon is not running")?;
+        ensure!(
+            instance.desktop_managed && self.owns(&instance),
+            "This desktop session does not own the daemon"
+        );
+        let server = instance
+            .server_id
+            .as_deref()
+            .context("Desktop daemon has no server identity")?;
+        let owner = crate::daemon_admin::desktop_update::owner(home, server).await?;
+        let id =
+            crate::daemon_admin::update_operation_id(args["operationId"].as_str().unwrap_or(""))?;
+        let mut options = crate::client::ConnectOptions::new(DaemonTarget::Instance {
+            home: home.to_owned(),
+        });
+        options.instance = Some(instance.clone());
+        let client = crate::client::connect(options, CancellationToken::new()).await?;
+        let result = async {
+            ensure!(
+                client.server_info()["serverId"] == server,
+                "Desktop drain server identity changed"
+            );
+            let (kind, response) = if release {
+                (
+                    "daemon.appUpdate.drain.release.request",
+                    "daemon.appUpdate.drain.release.response",
+                )
+            } else {
+                (
+                    "daemon.appUpdate.drain.request",
+                    "daemon.appUpdate.drain.response",
+                )
+            };
+            let mut request = json!({"type":kind,"operationId":id,"ownerToken":owner.token});
+            let timeout = if release {
+                Duration::from_secs(10)
+            } else {
+                let policy = crate::daemon_admin::desktop_update::drain_policy(args)?;
+                request["forceRunning"] = json!(policy.0);
+                request["idleTimeoutMs"] = json!(policy.1);
+                Duration::from_millis(policy.1) + Duration::from_secs(10)
+            };
+            let result = client.request(request, response, timeout).await?;
+            let current = control::read_daemon_instance(home)
+                .await?
+                .context("Desktop daemon stopped during drain")?;
+            ensure!(
+                control::same_daemon_instance(&instance, &current),
+                "Desktop daemon changed during drain"
+            );
+            Ok(result)
+        }
+        .await;
+        client.close().await;
+        result
+    }
+    async fn runtime_processes(&self) -> Result<Value> {
+        let Some(home) = self.home.as_deref() else {
+            return tokio::task::spawn_blocking(control::managed::desktop_host_process).await?;
+        };
+        let Some(instance) = control::read_daemon_instance(home).await? else {
+            ensure!(
+                self.owned.lock().unwrap().is_none(),
+                "Owned desktop supervisor disappeared; its runtime cohort requires recovery"
+            );
+            return tokio::task::spawn_blocking(control::managed::desktop_host_process).await?;
+        };
+        ensure!(
+            instance.desktop_managed && self.owns(&instance),
+            "This desktop session does not own the daemon"
+        );
+        let runtime = self
+            .runtime
+            .as_ref()
+            .context("Desktop runtime is not initialized")?;
+        let mut options = crate::client::ConnectOptions::new(DaemonTarget::Instance {
+            home: home.to_owned(),
+        });
+        options.instance = Some(instance.clone());
+        let status = match crate::client::connect(options, CancellationToken::new()).await {
+            Ok(client) => {
+                let status = client.daemon_status(Duration::from_secs(10)).await;
+                client.close().await;
+                status
+            }
+            Err(error) => Err(error),
+        };
+        let status = match status {
+            Ok(status) => status,
+            Err(_) => {
+                let expected = runtime.executable.clone();
+                return tokio::task::spawn_blocking(move || {
+                    control::managed::desktop_partial_runtime_processes(&instance, &expected)
+                })
+                .await?;
+            }
+        };
+        ensure!(
+            status["serverId"].as_str() == instance.server_id.as_deref(),
+            "Desktop runtime server changed"
+        );
+        let worker = u32::try_from(status["pid"].as_u64().context("Missing worker PID")?)?;
+        let expected = runtime.executable.clone();
+        tokio::task::spawn_blocking(move || {
+            control::managed::desktop_runtime_processes(&instance, worker, &expected)
+        })
+        .await?
+    }
     async fn close(&mut self, keep: bool) -> Result<()> {
         if self.closing {
             return Ok(());
         }
         self.closing = true;
-        if self.runtime.is_some() && !keep
-            && let Err(error) = self.stop(&json!({"reason":"quit"})).await {
-                self.closing = false;
-                return Err(error);
-            }
+        if self.runtime.is_some()
+            && !keep
+            && let Err(error) = self.stop(&json!({"reason":"quit"})).await
+        {
+            self.closing = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+    async fn close_for_update(&mut self) -> Result<()> {
+        if let Some(instance) = control::read_daemon_instance(self.home()?).await? {
+            ensure!(
+                instance.desktop_managed && self.owns(&instance),
+                "APP handoff refused: a live daemon is not owned by this desktop session"
+            );
+        }
+        self.close(false).await?;
+        if control::read_daemon_instance(self.home()?).await?.is_some() {
+            self.closing = false;
+            bail!("APP handoff refused: a daemon is still running in this home");
+        }
         Ok(())
     }
     async fn dispatch(
@@ -342,6 +530,13 @@ impl Session {
     ) -> Result<Value> {
         if command == "initialize" {
             return self.initialize(args).await;
+        }
+        if command == "runtime_processes" {
+            return self.runtime_processes().await;
+        }
+        if command == "close" && self.home.is_none() && args["requireOwnedStopped"] != true {
+            self.close(false).await?;
+            return Ok(Value::Null);
         }
         self.home()?;
         if let Some(settings) = args.get("settings") {
@@ -355,8 +550,18 @@ impl Session {
             }
             "stop" => self.stop(args).await,
             "restart" => self.restart(args).await,
+            "app_update_drain" => self.app_update_drain(args, false).await,
+            "app_update_drain_release" => self.app_update_drain(args, true).await,
             "logs" => read_logs(&control::daemon_log_path(self.home()?)).await,
             "close" => {
+                if args["requireOwnedStopped"] == true {
+                    ensure!(
+                        args["keepRunning"] != true,
+                        "APP handoff cannot keep the daemon running"
+                    );
+                    self.close_for_update().await?;
+                    return Ok(Value::Null);
+                }
                 self.close(
                     args["keepRunning"]
                         .as_bool()

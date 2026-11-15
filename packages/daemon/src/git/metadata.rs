@@ -89,13 +89,13 @@ impl GitService {
         if let Ok(root) =
             command::text(cwd, &["rev-parse", "--show-toplevel"], &env, cancel.clone()).await
             && let Ok(bytes) = tokio::fs::read(Path::new(&root).join("paseo.json")).await
-                && let Ok(config) = serde_json::from_slice::<Value>(&bytes)
-                    && let Some(instructions) = config["metadataGeneration"][key]["instructions"]
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                    {
-                        style = instructions.trim().into();
-                    }
+            && let Ok(config) = serde_json::from_slice::<Value>(&bytes)
+            && let Some(instructions) = config["metadataGeneration"][key]["instructions"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+        {
+            style = instructions.trim().into();
+        }
         let (contract, hint, name, title, schema, fallback) = if pull_request {
             (
                 "Write a pull request title and body for the changes below.",

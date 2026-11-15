@@ -20,7 +20,10 @@ pub fn open(host_id: &str, terminal_id: &str, scrollback: usize) -> Result<Strea
 
 /// `settings.terminalScrollbackLines`: 0..1000000, default 10000.
 pub fn scrollback_preference(preferences: &Value) -> usize {
-    match preferences.get("terminalScrollbackLines").and_then(Value::as_f64) {
+    match preferences
+        .get("terminalScrollbackLines")
+        .and_then(Value::as_f64)
+    {
         Some(value) if value.is_finite() => value.clamp(0.0, 1_000_000.0) as usize,
         _ => 10_000,
     }
@@ -41,8 +44,14 @@ mod tests {
 
     #[test]
     fn scrollback_preference_clamps() {
-        assert_eq!(scrollback_preference(&serde_json::json!({"terminalScrollbackLines": 2_000_000})), 1_000_000);
-        assert_eq!(scrollback_preference(&serde_json::json!({"terminalScrollbackLines": 42_000})), 42_000);
+        assert_eq!(
+            scrollback_preference(&serde_json::json!({"terminalScrollbackLines": 2_000_000})),
+            1_000_000
+        );
+        assert_eq!(
+            scrollback_preference(&serde_json::json!({"terminalScrollbackLines": 42_000})),
+            42_000
+        );
         assert_eq!(scrollback_preference(&serde_json::json!({})), 10_000);
     }
 

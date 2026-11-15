@@ -1,5 +1,8 @@
 //! Shared native socket, encrypted relay, IPC and SSH transport.
 pub mod connector;
+pub mod http;
+mod network;
+mod socks;
 pub mod target;
 use anyhow::{Result, ensure};
 use bytes::Bytes;

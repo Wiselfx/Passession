@@ -12,7 +12,7 @@ cargo test --locked -p <changed-crate> --lib <test-name-filter>
 cargo clippy --locked -p paseo-gui-core -p paseo-gui-platform -p paseo-gui --all-targets
 ```
 
-Use bounded package/test filters locally; do not run the complete workspace suite on the development host. Default CI runs the Rust workspace tests, GUI crates included, on one Ubuntu x64 runner, without a platform matrix.
+Use bounded package/test filters locally; do not run the complete workspace suite on the development host. Default CI derives affected Rust packages and reverse dependencies, Go checks and workflow checks from the change set on one Ubuntu x64 runner, without a native platform matrix. A docs-only change still produces a successful required check.
 
 Rust tests are colocated with the daemon, GUI crates, SDKs, relay and `xtask` modules, with protocol integration tests under each crate's `tests/`. Actual app integration runs must launch the native Makepad client, not a browser rendering of the old UI. Native plugin checks must exercise executable IPC. Packaging/tooling tests validate artifact contracts, not the actual behavior of every target OS.
 
@@ -34,8 +34,23 @@ Use a disposable `PASEO_HOME`, checkout, endpoint, and model cache where applica
 - Exercise schedules, MCP, connected-host forwarding, profiles, and native CLI operations at their real protocol boundaries.
 - Exercise desktop start/idempotence, worker restart, supervisor ownership, owned shutdown, keep-running policy, and preservation of an unowned daemon. A direct Rust unit test is not a client-to-desktop-host IPC test.
 - Exercise native tray/menu behavior on the actual desktop. Compilation alone does not prove it.
+- For Markdown, compare chat, nested detail sheets and file previews using multilingual emphasis, nested styles, code with intentional delimiters/trailing blank lines, linked images and table cells. Check both displayed content and exact source-copy behavior. After scrolling a large row behind fixed chrome, verify header actions remain reachable.
+- Render Mermaid sequence notes, self calls, activation/deactivation and nested alternative/loop regions. Expand/collapse source after the Markdown snapshot is published; verify exported SVG/PNG reflect the same diagram. Exercise native save cancellation and errors as well as success.
+- Use an isolated Tailnet control/DERP fixture for app-only routing, encrypted state, reconnect/logout and forbidden Normal-route fallback. On Android, run the actual app UID: host-side Go tests and `adb shell` do not exercise app-sandbox restrictions on network-interface enumeration. Compare system routes and VPN state before/after connection. A real account login requires explicit user authorization; a fixture is not production Tailnet enrollment. Keep physical devices and their VPN settings untouched.
+- For component delivery, exercise no-change, a single Go image, a shared Rust dependency and package-only changes. Verify unchanged references retain their original identities, shared archives download once, ABI-incompatible selections fail and signed cohorts stay coherent.
+- Exercise helper-only activation without restart, daemon-only activation with the GUI PID retained, and GUI/Tailnet handoff with dirty-document veto. Require actual component/process health and a connected, hydrated GUI after both commit and rollback: process health alone can miss subscriptions rejected during update drain. Read-only permission alternatives must remain admitted while mutations stay blocked. Also check fail-closed corrupt selection and restart recovery. Do not substitute unit tests for an actual installed-GUI handoff scenario.
+- Label local component inventory/handshake proofs separately from public-feed updates. Before the first component feed is published, report the unavailable public upgrade boundary rather than inventing a release or changing production trust to make a smoke pass.
 
 The client deliberately excludes embedded browser/automation, web, and executable React UI plugins. Do not keep obsolete Electron/Metro/browser/xterm smoke commands as the acceptance path for the native product.
+
+### Embedded network and component verification (2026-11-15)
+
+The owned Android emulator exercised browser login against an isolated control/DERP server, authenticated WebSocket access to a real private daemon through the embedded node, disconnect without Normal-route fallback, retained-login reconnect and logout. Logout removed the encrypted node state. System VPN state and route structure remained unchanged (excluding IPv6 lease countdowns); no physical device or real Tailnet account was used. The fixture daemon must allow the test MagicDNS hostname and receive its configured password; otherwise transport success is rejected by ordinary host/authentication policy.
+
+The Windows Tailnet DLL cross-build and Wine library load passed, but Wine rejected the Go UDP socket operation with WinAPI error 10045 during node startup. This does not establish native Windows networking support; an actual Windows execution remains required. No fallback transport or safety bypass was added to hide that limitation.
+
+The private Linux GUI/component-helper run exercised helper-only replacement with unchanged GUI/runtime PIDs, actual GUI replacement and a deliberately withheld GUI-authored health record followed by coherent rollback. Both replacement and rollback restored the real connected GUI, not just process health. This caught and fixed update-drain admission incorrectly blocking read subscriptions with alternative Hub permissions; the focused regression and strict daemon Clippy passed. Candidates changed packaging, not compiled identities. Initial preparation/handoff were explicitly orchestrated inside the disposable installation; native processes authored health, stop acknowledgments and terminal results. This does not prove public-feed download or remote owner acceptance. The first published component feed is still required for that boundary and the daemon-only retained-GUI owner scenario.
+
 
 ## Linux desktop lifecycle regression
 

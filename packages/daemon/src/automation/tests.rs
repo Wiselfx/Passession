@@ -25,7 +25,13 @@ async fn worktree_schedules_remain_readable_but_cannot_be_created() {
     let mut request = input();
     request["target"] = target;
     let error = service.create(&request).await.unwrap_err();
-    assert_eq!(error.downcast_ref::<crate::projects::RequestError>().unwrap().code, "unsupported");
+    assert_eq!(
+        error
+            .downcast_ref::<crate::projects::RequestError>()
+            .unwrap()
+            .code,
+        "unsupported"
+    );
     request["target"]["config"]["isolation"] = json!("local");
     assert!(service.create(&request).await.is_ok());
 }
@@ -142,9 +148,10 @@ async fn manual_run_outlives_its_request_and_commits_its_outcome() {
             .set(Store::open(app.home.join("schedules")).await.unwrap())
             .is_ok()
     );
-    app.agents.storage.get_or_init(|| async {
-        crate::agent::storage::AgentStorage::new(app.home.clone())
-    }).await;
+    app.agents
+        .storage
+        .get_or_init(|| async { crate::agent::storage::AgentStorage::new(app.home.clone()) })
+        .await;
     let schedule = service.create(&input()).await.unwrap();
     let id = schedule["id"].as_str().unwrap().to_owned();
     let writer = service.store().unwrap().writer.lock().await;
@@ -157,7 +164,9 @@ async fn manual_run_outlives_its_request_and_commits_its_outcome() {
         while !service.running.lock().unwrap().contains(&id) {
             tokio::task::yield_now().await;
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     requester.abort();
     assert!(requester.await.unwrap_err().is_cancelled());
     drop(writer);
@@ -169,9 +178,16 @@ async fn manual_run_outlives_its_request_and_commits_its_outcome() {
             }
             tokio::task::yield_now().await;
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     assert_eq!(runs.len(), 1);
     assert!(runs[0]["endedAt"].is_string());
-    assert!(runs[0]["error"].as_str().unwrap().contains("no longer exists"));
+    assert!(
+        runs[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no longer exists")
+    );
     assert_eq!(service.inspect(&id).await.unwrap()["status"], "completed");
 }

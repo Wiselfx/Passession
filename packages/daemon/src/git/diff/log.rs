@@ -48,7 +48,13 @@ pub async fn log(
     let env = readonly(env);
     let cwd = root(cwd, &env, &cancel).await?;
     let head = resolve(&cwd, "HEAD", &env, &cancel).await?;
-    let mut command = args(&["log", "--date-order", "--decorate=full", "--no-color", LOG_FORMAT]);
+    let mut command = args(&[
+        "log",
+        "--date-order",
+        "--decorate=full",
+        "--no-color",
+        LOG_FORMAT,
+    ]);
     command.push(format!("--skip={}", query.skip.unwrap_or(0)));
     command.push(format!("--max-count={}", limit + 1));
     if query.text.is_some() || query.author.is_some() {
@@ -155,7 +161,8 @@ pub async fn refs(
                 "committerDate":date,
             }));
         } else if let Some(name) = refname.strip_prefix("refs/remotes/") {
-            let (Some((remote_name, branch_name)), Some(date)) = (name.split_once('/'), unix(date)?)
+            let (Some((remote_name, branch_name)), Some(date)) =
+                (name.split_once('/'), unix(date)?)
             else {
                 continue;
             };
@@ -300,8 +307,17 @@ fn parse_log(bytes: &[u8]) -> Result<Vec<Value>> {
         .map(|record| {
             let record = String::from_utf8_lossy(record);
             let fields: Vec<&str> = record.splitn(9, '\0').collect();
-            let [sha, short, parents, name, email, authored, committed, refs, subject] =
-                fields[..]
+            let [
+                sha,
+                short,
+                parents,
+                name,
+                email,
+                authored,
+                committed,
+                refs,
+                subject,
+            ] = fields[..]
             else {
                 bail!("Incomplete git log record");
             };

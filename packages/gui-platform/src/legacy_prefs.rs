@@ -20,8 +20,13 @@ pub fn load_legacy_preferences() -> Map<String, Value> {
 #[cfg(any(target_os = "linux", windows))]
 fn platform_values() -> Vec<(String, Value)> {
     // shared_preferences_linux / _windows: <support>/shared_preferences.json.
-    let file = crate::paths::app_paths().support_dir.join("shared_preferences.json");
-    match std::fs::read(&file).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()) {
+    let file = crate::paths::app_paths()
+        .support_dir
+        .join("shared_preferences.json");
+    match std::fs::read(&file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    {
         Some(Value::Object(map)) => map.into_iter().collect(),
         _ => Vec::new(),
     }
@@ -38,7 +43,9 @@ fn platform_values() -> Vec<(String, Value)> {
     let Some(data_dir) = crate::paths::app_paths().support_dir.parent() else {
         return Vec::new();
     };
-    let file = data_dir.join("shared_prefs").join("FlutterSharedPreferences.xml");
+    let file = data_dir
+        .join("shared_prefs")
+        .join("FlutterSharedPreferences.xml");
     std::fs::read_to_string(file)
         .map(|xml| parse_android_preferences(&xml))
         .unwrap_or_default()
@@ -61,10 +68,14 @@ pub(crate) fn parse_android_preferences(xml: &str) -> Vec<(String, Value)> {
             }
             None => continue,
         };
-        let Some(name) = attribute(attributes, "name") else { continue };
+        let Some(name) = attribute(attributes, "name") else {
+            continue;
+        };
         match kind {
             "string" if !self_closing => {
-                let Some(close) = rest.find("</string>") else { break };
+                let Some(close) = rest.find("</string>") else {
+                    break;
+                };
                 values.push((name, Value::String(unescape(&rest[..close]))));
                 rest = &rest[close + "</string>".len()..];
             }
@@ -74,22 +85,31 @@ pub(crate) fn parse_android_preferences(xml: &str) -> Vec<(String, Value)> {
                 }
             }
             "int" | "long" => {
-                if let Some(value) = attribute(attributes, "value").and_then(|v| v.parse::<i64>().ok()) {
+                if let Some(value) =
+                    attribute(attributes, "value").and_then(|v| v.parse::<i64>().ok())
+                {
                     values.push((name, Value::from(value)));
                 }
             }
             "float" => {
-                if let Some(value) = attribute(attributes, "value").and_then(|v| v.parse::<f64>().ok()) {
+                if let Some(value) =
+                    attribute(attributes, "value").and_then(|v| v.parse::<f64>().ok())
+                {
                     values.push((name, Value::from(value)));
                 }
             }
             "set" if !self_closing => {
-                let Some(close) = rest.find("</set>") else { break };
+                let Some(close) = rest.find("</set>") else {
+                    break;
+                };
                 let body = &rest[..close];
                 let items = body
                     .split("<string>")
                     .skip(1)
-                    .filter_map(|item| item.split_once("</string>").map(|(v, _)| Value::String(unescape(v))))
+                    .filter_map(|item| {
+                        item.split_once("</string>")
+                            .map(|(v, _)| Value::String(unescape(v)))
+                    })
                     .collect();
                 values.push((name, Value::Array(items)));
                 rest = &rest[close + "</set>".len()..];
@@ -121,7 +141,9 @@ fn unescape(text: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            _ if entity.starts_with("#x") => u32::from_str_radix(&entity[2..], 16).ok().and_then(char::from_u32),
+            _ if entity.starts_with("#x") => u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32),
             _ if entity.starts_with('#') => entity[1..].parse().ok().and_then(char::from_u32),
             _ => None,
         };
@@ -154,7 +176,13 @@ mod tests {
     <set name="flutter.items"><string>x</string><string>y</string></set>
 </map>"#;
         let values = parse_android_preferences(xml);
-        assert_eq!(values[0], ("flutter.mobile.expo.installationId".into(), Value::String("a&b".into())));
+        assert_eq!(
+            values[0],
+            (
+                "flutter.mobile.expo.installationId".into(),
+                Value::String("a&b".into())
+            )
+        );
         assert_eq!(values[1], ("flutter.flag".into(), Value::Bool(true)));
         assert_eq!(values[2], ("flutter.count".into(), Value::from(12)));
         assert_eq!(values[3].1, Value::Array(vec!["x".into(), "y".into()]));

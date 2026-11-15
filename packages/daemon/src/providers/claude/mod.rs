@@ -9,13 +9,13 @@ use super::api::{
     AgentProvider, AgentSession, EventSink, HistoryCoverage, ImportedSession, LaunchContext,
     ProviderSpec, RewindTarget, SubagentHistory, SubagentHistoryRequest,
 };
-use paseo_client::process::{CommandSpec, run};
 use crate::providers::registry::catalog::{
     memo::{self, Loaded, Memo},
     refresh_activity,
 };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::{CommandSpec, run};
 use projection::Projection;
 use serde_json::{Value, json};
 use std::{
@@ -40,8 +40,14 @@ fn merged_env(spec: &ProviderSpec, context: Option<&LaunchContext>) -> BTreeMap<
 /// later status or a message still streaming, is covered only by an identical
 /// row, so a newer update with the same ID is kept.
 fn covered_by_snapshot(item: &Value, snapshot: &[Value], finished: &HashSet<String>) -> bool {
-    let text = matches!(item["type"].as_str(), Some("assistant_message" | "reasoning"));
-    (text && item["messageId"].as_str().is_some_and(|id| finished.contains(id)))
+    let text = matches!(
+        item["type"].as_str(),
+        Some("assistant_message" | "reasoning")
+    );
+    (text
+        && item["messageId"]
+            .as_str()
+            .is_some_and(|id| finished.contains(id)))
         || snapshot.contains(item)
 }
 pub struct ClaudeProvider {
@@ -122,8 +128,11 @@ impl ClaudeProvider {
             bail!("Cannot resume: persistence handle has no sessionId");
         }
         let mut history_events = Vec::new();
-        let mut history_coverage = if native_id.is_none() { crate::providers::api::HistoryCoverage::Complete }
-            else { crate::providers::api::HistoryCoverage::Unverified };
+        let mut history_coverage = if native_id.is_none() {
+            crate::providers::api::HistoryCoverage::Complete
+        } else {
+            crate::providers::api::HistoryCoverage::Unverified
+        };
         let mut anchors = Vec::new();
         if let Some(id) = &native_id {
             let loaded = async {
@@ -137,7 +146,9 @@ impl ClaudeProvider {
                         remember_anchor(&mut anchors, entry);
                     }
                     history_events = projection::project_history(&self.spec.id, &history);
-                    if history.complete { history_coverage = crate::providers::api::HistoryCoverage::Complete; }
+                    if history.complete {
+                        history_coverage = crate::providers::api::HistoryCoverage::Complete;
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(error=%error,"Claude persisted history could not be loaded; retaining native resume handle")
@@ -467,14 +478,20 @@ impl AgentProvider for ClaudeProvider {
             request.source.clone()
         } else {
             // A descriptor stored before `source`: locate it from the parent alone.
-            let announced = projection::project_history(&self.spec.id, &storage::read_history(&path).await?);
-            let mut announced = announced
-                .iter()
-                .filter(|event| event["type"] == "provider_subagent" && event["event"]["id"] == child);
-            match announced.clone().find(|event| event["event"]["source"].is_object()) {
+            let announced =
+                projection::project_history(&self.spec.id, &storage::read_history(&path).await?);
+            let mut announced = announced.iter().filter(|event| {
+                event["type"] == "provider_subagent" && event["event"]["id"] == child
+            });
+            match announced
+                .clone()
+                .find(|event| event["event"]["source"].is_object())
+            {
                 Some(event) => event["event"]["source"].clone(),
                 None if announced.next().is_some() => return Ok(SubagentHistory::Collected),
-                None => bail!("Claude subagent '{child}' cannot be located from its parent transcript"),
+                None => {
+                    bail!("Claude subagent '{child}' cannot be located from its parent transcript")
+                }
             }
         };
         let live = self
@@ -484,7 +501,10 @@ impl AgentProvider for ClaudeProvider {
             .iter()
             .filter_map(Weak::upgrade)
             .find(|live| live.publishes_for(session));
-        let finished = matches!(request.status.as_str(), Some("completed" | "failed" | "canceled"));
+        let finished = matches!(
+            request.status.as_str(),
+            Some("completed" | "failed" | "canceled")
+        );
         let open_tail_is_live = live.is_some() && !finished;
         // Messages the snapshot holds in their final form, by API message ID.
         let final_messages = Arc::new(Mutex::new(HashSet::new()));
@@ -505,12 +525,26 @@ impl AgentProvider for ClaudeProvider {
                     let (workflow, mut entries, mut complete) =
                         storage::read_workflow(&path, run).await?;
                     keep_finished(&mut entries, &mut complete);
-                    projection::project_workflow(&self.spec.id, child, &workflow, &entries, complete)
+                    projection::project_workflow(
+                        &self.spec.id,
+                        child,
+                        &workflow,
+                        &entries,
+                        complete,
+                    )
                 }
                 (None, Some(agent)) => {
-                    let (mut body, others, mut complete) = storage::read_subagent(&path, agent).await?;
+                    let (mut body, others, mut complete) =
+                        storage::read_subagent(&path, agent).await?;
                     keep_finished(&mut body.entries, &mut complete);
-                    projection::project_subagent(&self.spec.id, child, &source, &body, &others, complete)
+                    projection::project_subagent(
+                        &self.spec.id,
+                        child,
+                        &source,
+                        &body,
+                        &others,
+                        complete,
+                    )
                 }
                 (None, None) => {
                     bail!("Claude subagent '{child}' has an unrecognized transcript locator")
@@ -532,9 +566,15 @@ impl AgentProvider for ClaudeProvider {
             let finals = final_messages.clone();
             return live
                 .holds
-                .publish_replay(&request, &self.spec.id, &live.sink, read, move |item, snapshot| {
-                    covered_by_snapshot(item, snapshot, &finals.lock().unwrap())
-                })
+                .publish_replay(
+                    &request,
+                    &self.spec.id,
+                    &live.sink,
+                    read,
+                    move |item, snapshot| {
+                        covered_by_snapshot(item, snapshot, &finals.lock().unwrap())
+                    },
+                )
                 .await;
         }
         let (mut events, read) = read.await?;
@@ -669,9 +709,10 @@ fn remember_anchor(anchors: &mut Vec<(String, Option<String>)>, frame: &Value) {
         }
     } else if (frame["type"] == "assistant"
         || (frame["type"] == "stream_event" && frame["event"]["type"] == "message_start"))
-        && let Some(anchor) = anchors.last_mut() {
-            anchor.1 = Some(id.to_owned());
-        }
+        && let Some(anchor) = anchors.last_mut()
+    {
+        anchor.1 = Some(id.to_owned());
+    }
 }
 
 impl ClaudeSession {
@@ -699,9 +740,9 @@ impl ClaudeSession {
                 && (!state.restart
                     || state.active_generation.as_deref() == Some(runtime.generation.as_str())
                     || state.projection.is_autonomous())
-                {
-                    return Ok(runtime.clone());
-                }
+            {
+                return Ok(runtime.clone());
+            }
             (
                 state.runtime.take(),
                 state.config.clone(),
@@ -798,7 +839,8 @@ impl ClaudeSession {
             let mut state = self.state.lock().unwrap();
             if state
                 .runtime
-                .as_ref().is_none_or(|r| r.generation != runtime.generation)
+                .as_ref()
+                .is_none_or(|r| r.generation != runtime.generation)
             {
                 return;
             }
@@ -942,10 +984,11 @@ impl ClaudeSession {
                 }
                 if frame["type"] == "command_lifecycle" {
                     if frame["state"] != "queued"
-                        && let Some(id) = frame["command_uuid"].as_str() {
-                            state.unstarted.remove(id);
-                            state.clearing_steers.remove(id);
-                        }
+                        && let Some(id) = frame["command_uuid"].as_str()
+                    {
+                        state.unstarted.remove(id);
+                        state.clearing_steers.remove(id);
+                    }
                     if frame["state"] == "started" {
                         state.main_running = true;
                     }
@@ -1141,9 +1184,17 @@ impl AgentSession for ClaudeSession {
         Ok(json!({"status":"accepted"}))
     }
 
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
-        let (events, coverage) = std::mem::replace(&mut *self.history_events.lock().unwrap(),
-            (Vec::new(), crate::providers::api::HistoryCoverage::Unverified));
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
+        let (events, coverage) = std::mem::replace(
+            &mut *self.history_events.lock().unwrap(),
+            (
+                Vec::new(),
+                crate::providers::api::HistoryCoverage::Unverified,
+            ),
+        );
         for event in events {
             sink.emit(event).await?;
         }
@@ -1307,13 +1358,14 @@ impl AgentSession for ClaudeSession {
         let _ = self.emit(events).await;
         if self.persist == Some(false)
             && let Some(id) = id
-                && let Ok(path) = storage::transcript_path(&cwd, &id, &self.env).await {
-                    match tokio::fs::remove_file(path).await {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                }
+            && let Ok(path) = storage::transcript_path(&cwd, &id, &self.env).await
+        {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(())
     }
     async fn list_commands(&self) -> Result<Vec<Value>> {
@@ -1466,14 +1518,24 @@ impl AgentSession for ClaudeSession {
             if let Some(old) = old {
                 old.close().await?;
             }
-            *self.history_events.lock().unwrap() = (Vec::new(),
-                if fresh { crate::providers::api::HistoryCoverage::Complete } else { crate::providers::api::HistoryCoverage::Unverified });
+            *self.history_events.lock().unwrap() = (
+                Vec::new(),
+                if fresh {
+                    crate::providers::api::HistoryCoverage::Complete
+                } else {
+                    crate::providers::api::HistoryCoverage::Unverified
+                },
+            );
             if !fresh {
                 let path = storage::transcript_path(&cwd, &next, &self.env).await?;
                 let history = storage::read_history(&path).await?;
                 *self.history_events.lock().unwrap() = (
                     projection::project_history(&self.spec.id, &history),
-                    if history.complete { crate::providers::api::HistoryCoverage::Complete } else { crate::providers::api::HistoryCoverage::Unverified },
+                    if history.complete {
+                        crate::providers::api::HistoryCoverage::Complete
+                    } else {
+                        crate::providers::api::HistoryCoverage::Unverified
+                    },
                 );
                 let mut state = self.state.lock().unwrap();
                 for entry in history.parent_entries {
@@ -1650,23 +1712,25 @@ mod tests {
             runtime_settings: json!({}),
             configured_models: Vec::new(),
         });
-        let session = provider.session(
-            json!({"cwd":root.path(),"modeId":"plan"}),
-            LaunchContext {
-                agent_id: "permission-test".into(),
-                home: root.path().into(),
-                executable: std::env::current_exe()?,
-                env: BTreeMap::new(),
-                mcp_servers: json!({}),
-                tool_catalog: json!([]),
-                tool_manifest: json!([]),
-                tool_executor: None,
-                cancel: cancel.child_token(),
-            },
-            json!({}),
-            None,
-            sink,
-        ).await?;
+        let session = provider
+            .session(
+                json!({"cwd":root.path(),"modeId":"plan"}),
+                LaunchContext {
+                    agent_id: "permission-test".into(),
+                    home: root.path().into(),
+                    executable: std::env::current_exe()?,
+                    env: BTreeMap::new(),
+                    mcp_servers: json!({}),
+                    tool_catalog: json!([]),
+                    tool_manifest: json!([]),
+                    tool_executor: None,
+                    cancel: cancel.child_token(),
+                },
+                json!({}),
+                None,
+                sink,
+            )
+            .await?;
         // Reject the real control-channel mode request before any approval reply.
         let script = r#"
 while IFS= read -r line; do
@@ -1688,24 +1752,33 @@ done
                 clear_env: true,
             },
             cancel.child_token(),
-        ).await?;
-        let request = json!({"id":"plan","kind":"plan","name":"ExitPlanMode","input":{"plan":"Plan"}});
+        )
+        .await?;
+        let request =
+            json!({"id":"plan","kind":"plan","name":"ExitPlanMode","input":{"plan":"Plan"}});
         {
             let mut state = session.state.lock().unwrap();
             state.runtime = Some(runtime.clone());
-            state.permissions.insert("plan".into(), Permission {
-                request: request.clone(),
-                native_id: "native-plan".into(),
-            });
+            state.permissions.insert(
+                "plan".into(),
+                Permission {
+                    request: request.clone(),
+                    native_id: "native-plan".into(),
+                },
+            );
         }
         for _ in 0..2 {
-            let error = session.respond_to_permission("plan", json!({"behavior":"allow"}))
-                .await.unwrap_err();
+            let error = session
+                .respond_to_permission("plan", json!({"behavior":"allow"}))
+                .await
+                .unwrap_err();
             assert_eq!(error.to_string(), "Mode change rejected");
             assert_eq!(session.pending_permissions(), vec![request.clone()]);
             assert!(events.try_recv().is_err());
         }
-        session.respond_to_permission("plan", json!({"behavior":"deny"})).await?;
+        session
+            .respond_to_permission("plan", json!({"behavior":"deny"}))
+            .await?;
         assert!(session.pending_permissions().is_empty());
         assert_eq!(events.recv().await.unwrap()["type"], "timeline");
         assert_eq!(events.recv().await.unwrap()["type"], "permission_resolved");

@@ -69,8 +69,14 @@ fn retired_service_settings_migrate_without_changing_agent_providers() {
     assert_eq!(persisted["features"], json!({}));
     assert_eq!(persisted["agents"]["providers"], providers);
     let environment = std::collections::BTreeMap::from([
-        ("PASEO_DICTATION_STT_PROVIDER".to_owned(), "retired-provider".to_owned()),
-        ("PASEO_VOICE_LOCAL_TTS_SPEED".to_owned(), "retired-value".to_owned()),
+        (
+            "PASEO_DICTATION_STT_PROVIDER".to_owned(),
+            "retired-provider".to_owned(),
+        ),
+        (
+            "PASEO_VOICE_LOCAL_TTS_SPEED".to_owned(),
+            "retired-value".to_owned(),
+        ),
         ("OPENAI_API_KEY".to_owned(), "retired-key".to_owned()),
     ]);
     let resolved =
@@ -88,7 +94,8 @@ fn retired_service_settings_migrate_without_changing_agent_providers() {
 fn plugin_opt_out_survives_config_updates_and_reload() {
     let home = tempfile::tempdir().unwrap();
     let environment = std::collections::BTreeMap::new();
-    let initial = json!({"plugins":{"held":{"source":"directory","path":"/plugins/held","enabled":false}}});
+    let initial =
+        json!({"plugins":{"held":{"source":"directory","path":"/plugins/held","enabled":false}}});
     let resolve = |persisted: &serde_json::Value| {
         super::resolve::resolve(home.path(), home.path(), persisted, &environment).unwrap()
     };
@@ -139,7 +146,8 @@ fn retired_kiro_plugin_registration_preserves_profiles_and_private_state() {
     assert_eq!(loaded["agents"], original["agents"]);
     assert_eq!(loaded["pluginsEnabled"], false);
     let patch = transactions::supported_patch(
-        json!({"plugins":original["plugins"],"pluginsEnabled":false}), false,
+        json!({"plugins":original["plugins"],"pluginsEnabled":false}),
+        false,
     )
     .unwrap();
     let next = transactions::persist_patch(&loaded, &patch, &[]).unwrap();
@@ -148,7 +156,10 @@ fn retired_kiro_plugin_registration_preserves_profiles_and_private_state() {
     assert!(saved["plugins"].get("omp-kiro").is_none());
     assert_eq!(saved["plugins"]["other"], original["plugins"]["other"]);
     assert_eq!(saved["agents"], original["agents"]);
-    assert_eq!(std::fs::read(settings).unwrap(), b"retained-plugin-settings");
+    assert_eq!(
+        std::fs::read(settings).unwrap(),
+        b"retained-plugin-settings"
+    );
     assert_eq!(std::fs::read(auth).unwrap(), b"retained-managed-login");
 }
 

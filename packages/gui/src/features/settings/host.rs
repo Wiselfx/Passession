@@ -50,7 +50,11 @@ impl HostView {
 
     /// Flutter `manage`: no permissions list means full access.
     pub fn can_manage(&self) -> bool {
-        match self.server_info.get("permissions").and_then(Value::as_array) {
+        match self
+            .server_info
+            .get("permissions")
+            .and_then(Value::as_array)
+        {
             None => true,
             Some(list) => list.iter().any(|p| p.as_str() == Some("daemon.manage")),
         }
@@ -67,7 +71,11 @@ impl HostView {
     /// The server id the live connection reports (identity check after replies).
     pub fn reported_server_id(&self) -> String {
         let reported = str_of(&self.server_info, "serverId");
-        if reported.is_empty() { self.server_id.clone() } else { reported.to_string() }
+        if reported.is_empty() {
+            self.server_id.clone()
+        } else {
+            reported.to_string()
+        }
     }
 }
 
@@ -85,17 +93,26 @@ pub fn hosts(state: &Value) -> Vec<HostView> {
     let mut remote = Vec::new();
     for entry in arr(state, "hosts") {
         let config = entry.get("config").cloned().unwrap_or_else(|| json!({}));
-        let server_id = [str_of(entry, "serverId"), str_of(entry, "id"), str_of(&config, "expectedServerId"), str_of(&config, "id")]
-            .into_iter()
-            .find(|id| !id.is_empty())
-            .unwrap_or("")
-            .to_string();
+        let server_id = [
+            str_of(entry, "serverId"),
+            str_of(entry, "id"),
+            str_of(&config, "expectedServerId"),
+            str_of(&config, "id"),
+        ]
+        .into_iter()
+        .find(|id| !id.is_empty())
+        .unwrap_or("")
+        .to_string();
         let label = [str_of(entry, "label"), str_of(&config, "label")]
             .into_iter()
             .find(|l| !l.is_empty())
             .map(String::from)
             .unwrap_or_else(|| server_id.clone());
-        let server_info = entry.get("serverInfo").or_else(|| entry.get("server_info")).cloned().unwrap_or(Value::Null);
+        let server_info = entry
+            .get("serverInfo")
+            .or_else(|| entry.get("server_info"))
+            .cloned()
+            .unwrap_or(Value::Null);
         let mut connections: Vec<Value> = arr(entry, "connections").to_vec();
         if connections.is_empty() && config.is_object() {
             connections.push(config.clone());
@@ -106,17 +123,25 @@ pub fn hosts(state: &Value) -> Vec<HostView> {
             status: Status::parse(str_of(entry, "status")),
             server_info,
             error: error_text(get(entry, "error")),
-            local: !config.get("localCredentialPath").map(Value::is_null).unwrap_or(true),
+            local: !config
+                .get("localCredentialPath")
+                .map(Value::is_null)
+                .unwrap_or(true),
             connections,
             projects: arr(entry, "projects").to_vec(),
             loading_projects: super::json::is_true(entry, "loading")
                 || loading_lists.iter().any(|v| v.as_str() == Some("project")),
             project_error: error_text(get(get(entry, "listErrors"), "project")),
-            maintenance_operation: Some(str_of(entry, "maintenanceOperationId").to_string()).filter(|s| !s.is_empty()),
+            maintenance_operation: Some(str_of(entry, "maintenanceOperationId").to_string())
+                .filter(|s| !s.is_empty()),
             config,
             server_id,
         };
-        if view.local { local.push(view) } else { remote.push(view) }
+        if view.local {
+            local.push(view)
+        } else {
+            remote.push(view)
+        }
     }
     local.extend(remote);
     local
@@ -136,18 +161,50 @@ pub fn update_operation_key(server_id: &str) -> String {
     format!("paseo.daemonUpdate.operation.{server_id}")
 }
 
-/// Flutter `DaemonUpdateOperationStore.read`: `state.prefs[<key>]`.
+/// Read old ID-only records as well as a flushed, retryable submit request.
 pub fn stored_update_operation(state: &Value, server_id: &str) -> Option<String> {
-    get(state, "prefs")
-        .get(update_operation_key(server_id))
-        .and_then(Value::as_str)
+    let record = get(state, "prefs").get(update_operation_key(server_id))?;
+    record
+        .as_str()
+        .or_else(|| record["operationId"].as_str())
         .filter(|id| !id.is_empty())
         .map(String::from)
 }
 
+pub fn stored_update_request(state: &Value, server_id: &str) -> Option<Value> {
+    let record = get(state, "prefs").get(update_operation_key(server_id))?;
+    if !record.is_object()
+        || record["operationId"].as_str().is_none_or(str::is_empty)
+        || record["source"] != "release"
+    {
+        return None;
+    }
+    if record["targetKind"] == "app" {
+        let selected = record["selectedComponents"].as_array()?;
+        if selected.is_empty()
+            || selected.len() > 4
+            || selected.iter().enumerate().any(|(index, id)| {
+                id.as_str().is_none_or(|id| {
+                    !super::model::daemon_update::COMPONENT_IDS.contains(&id)
+                }) || selected[..index].contains(id)
+            })
+            || record["expectedRelease"]["version"].as_str().is_none_or(str::is_empty)
+            || record["expectedRelease"]["manifestSha512"].as_str().is_none_or(|pin| pin.len() != 88)
+            || !record["forceRunning"].is_boolean()
+            || record["idleTimeoutMs"].as_u64().is_none_or(|timeout| timeout == 0)
+        {
+            return None;
+        }
+    }
+    Some(record.clone())
+}
+
 /// Flutter `DaemonUpdateOperationStore.clear`.
 pub fn clear_update_operation(core: &CoreHandle, server_id: &str) {
-    core.save_state(&format!("prefs:{}", update_operation_key(server_id)), Value::Null);
+    core.save_state(
+        &format!("prefs:{}", update_operation_key(server_id)),
+        Value::Null,
+    );
 }
 
 /// Flutter `updateHost`: an existing connection id updates that connection.
@@ -254,7 +311,9 @@ fn split_url(input: &str) -> Option<(String, String, String, Option<u16>, String
     };
     let (host, port) = if let Some(stripped) = hostport.strip_prefix('[') {
         let end = stripped.find(']')?;
-        let port = stripped[end + 1..].strip_prefix(':').and_then(|p| p.parse().ok());
+        let port = stripped[end + 1..]
+            .strip_prefix(':')
+            .and_then(|p| p.parse().ok());
         (format!("[{}]", &stripped[..end]), port)
     } else {
         match hostport.rsplit_once(':') {
@@ -286,7 +345,13 @@ pub fn resolve_endpoint(endpoint: &str) -> Option<Endpoint> {
             Some((host, port)) => (host.to_string(), port.parse().ok()),
             None => (address.to_string(), None),
         };
-        return Some(Endpoint { kind: EndpointKind::Relay, host, port, path: String::new(), user: String::new() });
+        return Some(Endpoint {
+            kind: EndpointKind::Relay,
+            host,
+            port,
+            path: String::new(),
+            user: String::new(),
+        });
     }
     if !input.is_empty() && input.bytes().all(|b| b.is_ascii_digit()) {
         input = format!("ws://localhost:{input}/ws");
@@ -296,11 +361,23 @@ pub fn resolve_endpoint(endpoint: &str) -> Option<Endpoint> {
             if path.is_empty() || path == "~" {
                 return None;
             }
-            return Some(Endpoint { kind: EndpointKind::Local, host: String::new(), port: None, path: path.to_string(), user: String::new() });
+            return Some(Endpoint {
+                kind: EndpointKind::Local,
+                host: String::new(),
+                port: None,
+                path: path.to_string(),
+                user: String::new(),
+            });
         }
     }
     if input.starts_with(r"\\.\pipe\") || input.starts_with('/') || input.starts_with("~/") {
-        return Some(Endpoint { kind: EndpointKind::Local, host: String::new(), port: None, path: input, user: String::new() });
+        return Some(Endpoint {
+            kind: EndpointKind::Local,
+            host: String::new(),
+            port: None,
+            path: input,
+            user: String::new(),
+        });
     }
     if !input.contains("://") {
         input = format!("ws://{input}/ws");
@@ -312,7 +389,13 @@ pub fn resolve_endpoint(endpoint: &str) -> Option<Endpoint> {
         "tcp" | "ws" | "wss" => EndpointKind::Tcp,
         _ => return None,
     };
-    Some(Endpoint { kind, host, port, path, user })
+    Some(Endpoint {
+        kind,
+        host,
+        port,
+        path,
+        user,
+    })
 }
 
 fn endpoint_of(config: &Value) -> Option<Endpoint> {
@@ -322,18 +405,28 @@ fn endpoint_of(config: &Value) -> Option<Endpoint> {
 /// Flutter `hostConnectionLabel`.
 pub fn connection_label(config: &Value) -> String {
     use super::i18n::t;
-    match endpoint_of(config) {
+    let label = match endpoint_of(config) {
         Some(e) => match e.kind {
             EndpointKind::Relay => format!("{} ({})", t("settings.host.badges.relay"), e.address()),
             EndpointKind::Local => format!("{} ({})", t("settings.host.badges.local"), e.path),
             EndpointKind::Ssh => {
-                let user = if e.user.is_empty() { String::new() } else { format!("{}@", e.user) };
+                let user = if e.user.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}@", e.user)
+                };
                 format!("{} ({user}{})", t("settings.host.badges.remoteSsh"), e.host)
             }
             EndpointKind::Tcp => format!("TCP ({})", e.address()),
         },
         None => t("settingsNative.invalidEndpoint"),
-    }
+    };
+    let mode = t(if str_of(config, "networkMode") == "tailnet" {
+        "tailnet.embedded"
+    } else {
+        "tailnet.normal"
+    });
+    format!("{mode} · {label}")
 }
 
 /// Settings host picker hint (original `formatActiveConnectionLabel`).
@@ -352,6 +445,9 @@ pub fn active_connection_label(host: &HostView) -> String {
 /// `(remote, label)`; remote picks the globe glyph.
 pub fn connection_badge(host: &HostView) -> Option<(bool, String)> {
     use super::i18n::t;
+    if str_of(&host.config, "networkMode") == "tailnet" {
+        return Some((true, t("tailnet.embedded")));
+    }
     let e = endpoint_of(&host.config)?;
     Some(match e.kind {
         EndpointKind::Relay => (true, t("settings.host.badges.relay")),
@@ -392,5 +488,57 @@ pub fn project_name(project: &Value) -> String {
     if !name.is_empty() {
         return name.to_string();
     }
-    project_root(project).rsplit('/').next().unwrap_or("").to_string()
+    project_root(project)
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+#[cfg(test)]
+mod update_restore_tests {
+    use super::*;
+
+    #[test]
+    fn restores_exact_host_request_and_legacy_ids_without_cross_wiring() {
+        let request = json!({"operationId":"op-a","source":"release","targetKind":"app",
+            "forceRunning":false,"idleTimeoutMs":300_000,
+            "selectedComponents":["daemon","update-helper"],
+            "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)}});
+        let mut state = json!({"prefs":{}});
+        state["prefs"][update_operation_key("host-a")] = request.clone();
+        state["prefs"][update_operation_key("host-b")] = json!("op-b");
+        assert_eq!(
+            stored_update_operation(&state, "host-a").as_deref(),
+            Some("op-a")
+        );
+        assert_eq!(stored_update_request(&state, "host-a"), Some(request));
+        assert_eq!(
+            stored_update_operation(&state, "host-b").as_deref(),
+            Some("op-b")
+        );
+        assert_eq!(stored_update_request(&state, "host-b"), None);
+        assert_eq!(stored_update_operation(&state, "host-c"), None);
+    }
+
+    #[test]
+    fn incomplete_desktop_approval_keeps_id_for_observation_but_never_reconstructs_submit() {
+        let request = json!({"operationId":"op-a","source":"release","targetKind":"app",
+            "forceRunning":true,"idleTimeoutMs":300_000,"selectedComponents":["daemon"],
+            "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)}});
+        for field in ["selectedComponents", "expectedRelease", "forceRunning", "idleTimeoutMs"] {
+            let mut partial = request.clone();
+            partial.as_object_mut().unwrap().remove(field);
+            let mut state = json!({"prefs":{}});
+            state["prefs"][update_operation_key("host")] = partial;
+            assert_eq!(stored_update_operation(&state, "host").as_deref(), Some("op-a"));
+            assert!(stored_update_request(&state, "host").is_none(), "{field}");
+        }
+        for selected in [json!([]), json!(["daemon","daemon"]), json!(["unknown"])] {
+            let mut state = json!({"prefs":{}});
+            state["prefs"][update_operation_key("host")] = request.clone();
+            state["prefs"][update_operation_key("host")]["selectedComponents"] = selected;
+            assert!(stored_update_request(&state, "host").is_none());
+        }
+    }
 }

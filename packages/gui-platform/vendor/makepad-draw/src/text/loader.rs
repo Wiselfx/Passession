@@ -28,6 +28,7 @@ pub struct Loader {
     /// Definitions whose bytes did not parse at their face index. They are
     /// skipped by every family that lists them instead of aborting the app.
     failed_fonts: HashSet<FontId>,
+    fallback_requests: Rc<RefCell<Option<Arc<super::fallback::FallbackRequests>>>>,
 }
 
 impl Loader {
@@ -40,6 +41,7 @@ impl Loader {
             font_family_cache: HashMap::new(),
             font_cache: HashMap::new(),
             failed_fonts: HashSet::new(),
+            fallback_requests: Rc::new(RefCell::new(None)),
         };
         //builtins::define(&mut loader);
         loader
@@ -47,6 +49,10 @@ impl Loader {
 
     pub fn rasterizer(&self) -> &Rc<RefCell<Rasterizer>> {
         &self.rasterizer
+    }
+
+    pub fn set_fallback_requests(&mut self, requests: Option<Arc<super::fallback::FallbackRequests>>) {
+        *self.fallback_requests.borrow_mut() = requests;
     }
 
     pub fn is_font_family_known(&self, id: FontFamilyId) -> bool {
@@ -115,6 +121,7 @@ impl Loader {
                 .into_iter()
                 .filter_map(|font_id| self.get_or_load_font(font_id).cloned())
                 .collect(),
+            self.fallback_requests.clone(),
         )
     }
 

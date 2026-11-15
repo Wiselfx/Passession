@@ -18,8 +18,8 @@ pub mod ui;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
-use makepad_widgets::*;
 use makepad_widgets::event::TouchState;
+use makepad_widgets::*;
 use paseo_gui_core::{CoreError, CoreEvent, RequestId};
 use serde_json::Value;
 
@@ -144,7 +144,13 @@ pub fn unregister_window(id: &str) {
 }
 
 pub fn window_state(id: &str) -> Option<WindowState> {
-    WINDOW_STATES.with(|states| states.borrow().iter().find(|(w, _)| w == id).map(|(_, s)| *s))
+    WINDOW_STATES.with(|states| {
+        states
+            .borrow()
+            .iter()
+            .find(|(w, _)| w == id)
+            .map(|(_, s)| *s)
+    })
 }
 
 pub fn window_states() -> Vec<(String, WindowState)> {
@@ -162,12 +168,22 @@ pub(crate) fn set_window_state(id: &str, state: WindowState) {
 /// Logically open windows (visible or hidden to the tray): close-to-tray / quit decisions and
 /// quit votes.
 pub(crate) fn open_windows() -> usize {
-    WINDOW_STATES.with(|states| states.borrow().iter().filter(|(_, s)| *s != WindowState::Dormant).count())
+    WINDOW_STATES.with(|states| {
+        states
+            .borrow()
+            .iter()
+            .filter(|(_, s)| *s != WindowState::Dormant)
+            .count()
+    })
 }
 
 /// The platform hid (`true`) or showed (`false`) every logically open window.
 pub(crate) fn set_tray_hidden(hidden: bool) {
-    let (from, to) = if hidden { (WindowState::Visible, WindowState::Tray) } else { (WindowState::Tray, WindowState::Visible) };
+    let (from, to) = if hidden {
+        (WindowState::Visible, WindowState::Tray)
+    } else {
+        (WindowState::Tray, WindowState::Visible)
+    };
     WINDOW_STATES.with(|states| {
         for entry in states.borrow_mut().iter_mut().filter(|(_, s)| *s == from) {
             entry.1 = to;
@@ -181,17 +197,31 @@ pub(crate) fn set_tray_hidden(hidden: bool) {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
     /// `SettingsScreen` (always full window, a pushed route in Flutter).
-    Settings { host_id: Option<String>, page: String },
-    Schedules { host_id: String },
+    Settings {
+        host_id: Option<String>,
+        page: String,
+    },
+    Schedules {
+        host_id: String,
+    },
     /// `/sessions` history (`showSessionHistory`).
-    Sessions { host_id: String, all_hosts: bool, cwd: String, project_key: String },
+    Sessions {
+        host_id: String,
+        all_hosts: bool,
+        cwd: String,
+        project_key: String,
+    },
 }
 
 /// What a core response we issued means to the shell.
 #[derive(Clone, Debug)]
 pub enum Pending {
     /// `openAgent`: `fetch_agent_request`, then the tab opens (with a submission error).
-    OpenAgent { host_id: String, error: Option<String>, placement: crate::common::TabPlacement },
+    OpenAgent {
+        host_id: String,
+        error: Option<String>,
+        placement: crate::common::TabPlacement,
+    },
     /// `navigationRequest` whose success refreshes the host; failures toast.
     Refresh { host_id: String },
     /// `archive_agent_request`: mark History archived only after the daemon confirms.
@@ -210,11 +240,23 @@ pub enum Pending {
     Silent,
     /// `AppPreferenceSettings.save`: a failed durable write of `key` restores `previous`
     /// (`None`: the key was absent) and toasts the error.
-    SavePreference { key: String, previous: Option<Value> },
+    SavePreference {
+        key: String,
+        previous: Option<Value>,
+    },
     /// `list_terminals_request` deciding whether closing `key` needs the terminal confirmation.
-    TerminalCloseCheck { key: String, host_id: String, terminal_id: String },
+    TerminalCloseCheck {
+        key: String,
+        host_id: String,
+        terminal_id: String,
+    },
     /// `workspace.terminal.new`: `create_terminal_request`, then the terminal tab opens.
-    CreateTerminal { host_id: String, workspace_id: String, cwd: String, placement: crate::common::TabPlacement },
+    CreateTerminal {
+        host_id: String,
+        workspace_id: String,
+        cwd: String,
+        placement: crate::common::TabPlacement,
+    },
 }
 
 #[derive(Default)]
@@ -308,7 +350,6 @@ pub struct PaseoShell {
     data: Data,
 }
 
-
 impl PaseoShell {
     fn ui<'a>(scope: &'a mut Scope) -> Option<&'a mut UiContext> {
         scope.data.get_mut::<UiContext>()
@@ -324,7 +365,11 @@ impl PaseoShell {
             return;
         }
         self.data.restored = true;
-        let id = if self.data.window_id.is_empty() { MAIN_WINDOW_ID } else { self.data.window_id.as_str() };
+        let id = if self.data.window_id.is_empty() {
+            MAIN_WINDOW_ID
+        } else {
+            self.data.window_id.as_str()
+        };
         let windows = j::object(&ui.state, "windowLayouts");
         let saved = match windows.get(id) {
             Some(layout @ Value::Object(_)) => layout.clone(),
@@ -347,7 +392,11 @@ impl PaseoShell {
     }
 
     fn save_layout(&self, ui: &UiContext) {
-        let key = if self.is_main() { "layout".to_string() } else { format!("layout:{}", self.data.window_id) };
+        let key = if self.is_main() {
+            "layout".to_string()
+        } else {
+            format!("layout:{}", self.data.window_id)
+        };
         ui.core.save_state(&key, self.data.layout.to_json());
     }
 
@@ -375,7 +424,9 @@ impl PaseoShell {
                         self.redraw(cx);
                     }
                 }
-                CoreEvent::Response { request_id, result, .. } => {
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
                     if let Some(pending) = self.data.pending.remove(request_id) {
                         commands::on_response(self, cx, ui, request_id, pending, result);
                     }
@@ -383,7 +434,12 @@ impl PaseoShell {
                 CoreEvent::Connected { .. } | CoreEvent::Disconnected { .. } => self.redraw(cx),
                 CoreEvent::Error { error, .. } => {
                     if error.code != "INVALID_STATE_KEY" {
-                        overlays::toast(&mut self.data.overlays, cx, crate::common::error_message(error), true);
+                        overlays::toast(
+                            &mut self.data.overlays,
+                            cx,
+                            crate::common::error_message(error),
+                            true,
+                        );
                     }
                 }
             }
@@ -405,7 +461,11 @@ impl PaseoShell {
             self.open_overlay(cx, request);
         }
         if let Some(tip) = overlay_api::take_tooltip(&self.data.window_id) {
-            let tip = if self.data.overlays.is_modal() { None } else { tip };
+            let tip = if self.data.overlays.is_modal() {
+                None
+            } else {
+                tip
+            };
             overlays::show_tooltip(&mut self.data.overlays, cx, tip);
         }
     }
@@ -417,7 +477,14 @@ impl PaseoShell {
     }
 
     /// Answers an overlay back to its owner (feature tab, page, or the shell itself).
-    pub(crate) fn overlay_answer(&mut self, cx: &mut Cx, ui: &mut UiContext, owner: &str, id: u64, args: Value) {
+    pub(crate) fn overlay_answer(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        owner: &str,
+        id: u64,
+        args: Value,
+    ) {
         if owner == SHELL_OWNER {
             commands::shell_overlay_result(self, cx, ui, id, &args);
             return;
@@ -435,25 +502,52 @@ impl PaseoShell {
 
     /// Commands go to one tab root on the next signal (Flutter `PaseoCommands.invoke`).
     pub(crate) fn queue_command(&mut self, tab_key: String, action: String, args: Value) {
-        self.data.commands.push(UiCommand { tab_key, action, args, handled: false });
+        self.data.commands.push(UiCommand {
+            tab_key,
+            action,
+            args,
+            handled: false,
+        });
         SignalToUI::set_ui_signal();
     }
 
     /// Dispatches `event` to every mounted root with its own route/target/activity.
-    fn dispatch_panels(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope, window_modal: bool) {
+    fn dispatch_panels(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        scope: &mut Scope,
+        window_modal: bool,
+    ) {
         let requires_visibility = crate::common::is_user_input(event);
-        let commands = if matches!(event, Event::Signal) { std::mem::take(&mut self.data.commands) } else { Vec::new() };
+        // The compact sidebar replaces the pane. Its controls must not reach
+        // retained conversation/new-session editors underneath.
+        if requires_visibility && self.data.compact && chrome::sidebar_visible(self) {
+            return;
+        }
+        let commands = if matches!(event, Event::Signal) {
+            std::mem::take(&mut self.data.commands)
+        } else {
+            Vec::new()
+        };
         let mut unhandled: Vec<UiCommand> = Vec::new();
         let mut keys: Vec<String> = self.data.panels.keys().cloned().collect();
         let command_center_input = requires_visibility && self.data.command_center_open;
-        let explorer_input = requires_visibility && !command_center_input
-            && self.data.compact && self.data.chrome.explorer_position > 0.0;
+        let explorer_input = requires_visibility
+            && !command_center_input
+            && self.data.compact
+            && self.data.chrome.explorer_position > 0.0;
         if explorer_input {
             let selected = chrome::explorer_keys(self).1;
             keys.retain(|key| selected.as_ref() == Some(key));
         }
-        let page_accepts_input = !command_center_input && !explorer_input
-            && (!window_modal || overlay_api::window_modal_accepts_tab(&self.data.window_id, overlay_api::PAGE_OWNER));
+        let page_accepts_input = !command_center_input
+            && !explorer_input
+            && (!window_modal
+                || overlay_api::window_modal_accepts_tab(
+                    &self.data.window_id,
+                    overlay_api::PAGE_OWNER,
+                ));
         if window_modal {
             // Snapshot before dispatch: closing a sheet must not pass its
             // dismissal input through to another pane in the same event.
@@ -467,7 +561,9 @@ impl PaseoShell {
         let snapshot = std::rc::Rc::new(self.data.layout.snapshot());
         let mut routed: HashSet<String> = HashSet::new();
         for key in keys {
-            let Some(panel) = self.data.panels.get(&key) else { continue };
+            let Some(panel) = self.data.panels.get(&key) else {
+                continue;
+            };
             let is_visible = visible.contains(&key);
             if command_center_input || (requires_visibility && !is_visible) {
                 continue;
@@ -479,11 +575,19 @@ impl PaseoShell {
                 ui.route = Route::from_target(&target);
                 ui.target = Some(target);
                 ui.tab_key = Some(key.clone());
-                ui.activity = PanelActivity { visible: is_visible, focused: is_visible && focused.as_deref() == Some(key.as_str()), app_active };
+                ui.activity = PanelActivity {
+                    visible: is_visible,
+                    focused: is_visible && focused.as_deref() == Some(key.as_str()),
+                    app_active,
+                };
                 ui.compact = compact;
                 ui.window_id = window_id.clone();
                 ui.layout = snapshot.clone();
-                ui.commands = commands.iter().filter(|c| c.tab_key == key).cloned().collect();
+                ui.commands = commands
+                    .iter()
+                    .filter(|c| c.tab_key == key)
+                    .cloned()
+                    .collect();
                 if !ui.commands.is_empty() {
                     routed.insert(key.clone());
                 }
@@ -497,12 +601,17 @@ impl PaseoShell {
             }
         }
         // Pages and the command center (no tab key; owner "page").
-        if page_accepts_input && !(requires_visibility && self.data.command_center_open)
+        if page_accepts_input
+            && !(requires_visibility && self.data.command_center_open)
             && let Some((page, widget)) = self.data.page_root.clone()
         {
             if let Some(ui) = Self::ui(scope) {
                 ui.route = commands::page_route(&page);
-                ui.commands = commands.iter().filter(|c| c.tab_key == overlay_api::PAGE_OWNER).cloned().collect();
+                ui.commands = commands
+                    .iter()
+                    .filter(|c| c.tab_key == overlay_api::PAGE_OWNER)
+                    .cloned()
+                    .collect();
             }
             widget.handle_event(cx, event, scope);
             if let Some(ui) = Self::ui(scope) {
@@ -583,28 +692,42 @@ impl Widget for PaseoShell {
 
         // Standalone tool-call sheets (timeline, drawn above the shell overlays) take input first;
         // while one is open the shell overlays, shortcuts, chrome and panels get no input events.
-        let tool_sheet = crate::features::timeline::handle_tool_call_sheets(cx, event, &self.data.window_id);
+        let tool_sheet =
+            crate::features::timeline::handle_tool_call_sheets(cx, event, &self.data.window_id);
         let input = crate::common::is_user_input(event);
         let locked = input && (tool_sheet || shell_modal);
         // A panel's full-window sheet (`overlay::set_window_modal`) owns the window's input:
         // panels still dispatch (the sheet lives in one), the shell's chrome does not. Shell
         // overlays opened above it (its confirm dialogs) still take input first.
-        let window_modal = input && overlay_api::window_modal_open(&self.data.window_id)
-            && !shell_modal && !command_center;
+        let window_modal = input
+            && overlay_api::window_modal_open(&self.data.window_id)
+            && !shell_modal
+            && !command_center;
         // The compact explorer's controls own input before its full-window
         // backdrop. Dispatch only that root, not the conversation underneath.
-        let explorer_input = input && self.data.compact && self.data.chrome.explorer_position > 0.0
-            && !tool_sheet && !shell_modal && !window_modal && !command_center;
+        let explorer_input = input
+            && self.data.compact
+            && self.data.chrome.explorer_position > 0.0
+            && !tool_sheet
+            && !shell_modal
+            && !window_modal
+            && !command_center;
         if explorer_input {
             cx.sweep_unlock(self.data.overlays.area);
             self.dispatch_panels(cx, event, scope, false);
         }
 
         // Modal overlays get the event first and lock the sweep for the content below.
-        let modal = if tool_sheet || window_modal || (command_center && !shell_modal) { true } else { overlays::handle_event(self, cx, event, scope) };
+        let modal = if tool_sheet || window_modal || (command_center && !shell_modal) {
+            true
+        } else {
+            overlays::handle_event(self, cx, event, scope)
+        };
         let modal = shell_modal || modal;
-        let sidebar_blocked = !chrome::sidebar_visible(self) || self.data.app_inactive
-            || modal || overlay_api::window_modal_open(&self.data.window_id)
+        let sidebar_blocked = !chrome::sidebar_visible(self)
+            || self.data.app_inactive
+            || modal
+            || overlay_api::window_modal_open(&self.data.window_id)
             || (self.data.compact && self.data.chrome.explorer_position > 0.0);
         let fresh_pointer = matches!(event, Event::MouseDown(_) | Event::TextHandle(_))
             || matches!(event, Event::TouchUpdate(e) if e.touches.iter().any(|t| matches!(t.state, TouchState::Start)));
@@ -643,7 +766,13 @@ impl Widget for PaseoShell {
             if let Some(search) = self.data.search.clone() {
                 search.handle_event(cx, event, scope);
             }
-            for widget in [self.data.header_git.clone(), self.data.header_open_in.clone()].into_iter().flatten() {
+            for widget in [
+                self.data.header_git.clone(),
+                self.data.header_open_in.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 widget.handle_event(cx, event, scope);
             }
         }
@@ -676,7 +805,8 @@ impl Widget for PaseoShell {
             self.data.os_window = cx.get_current_window_id();
         }
         self.data.size = rect.size;
-        let compact = crate::common::is_compact_width(rect.size.x) || theme::MOBILE && rect.size.x < crate::common::COMPACT_WIDTH;
+        let compact = crate::common::is_compact_width(rect.size.x)
+            || theme::MOBILE && rect.size.x < crate::common::COMPACT_WIDTH;
         if compact != self.data.compact {
             self.data.compact = compact;
         }
@@ -738,7 +868,8 @@ impl PaseoShellRef {
 
     /// Last drawn size of this window's shell and whether it laid out compact.
     pub fn drawn_layout(&self) -> Option<(DVec2, bool)> {
-        self.borrow().map(|shell| (shell.data.size, shell.data.compact))
+        self.borrow()
+            .map(|shell| (shell.data.size, shell.data.compact))
     }
 }
 

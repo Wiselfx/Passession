@@ -55,6 +55,7 @@ pub(super) fn names(id: &Identity, runtime: &str) -> Result<Vec<String>> {
         .map(|ext| format!("{stem}-{}-{}.{ext}", id.version, id.target))
         .collect())
 }
+#[cfg(test)]
 pub(super) fn feed(id: &Identity, runtime: &str) -> String {
     format!(
         "{}-{}-{}.json",
@@ -159,27 +160,9 @@ pub(super) fn validate_manifest(
     }
     Ok(entries)
 }
-fn validate_desktop(dir: &Path, id: &Identity) -> Result<()> {
-    for runtime in [CLIENT, DAEMON] {
-        let manifest = common::read_json(&dir.join(feed(id, runtime)))?;
-        for entry in validate_manifest(&manifest, id, runtime)? {
-            let path = dir.join(entry["name"].as_str().unwrap());
-            ensure!(
-                fs::symlink_metadata(&path)?.file_type().is_file(),
-                "Artifact is not a regular file"
-            );
-            ensure!(
-                entry["size"] == fs::metadata(&path)?.len() && entry["sha512"] == digest512(&path)?,
-                "Manifest integrity failure: {}",
-                path.display()
-            );
-        }
-    }
-    Ok(())
-}
 /// Reject renamed APKs as bundles and ABI labels that disagree with the payload.
 /// Store/signature acceptance still requires the platform signing tools.
-fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
+pub(crate) fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
     let abis: &[(&str, u8, u16)] = match arch {
         "arm64" => &[("arm64-v8a", 2, 183)],
         "x64" => &[("x86_64", 2, 62)],
@@ -188,11 +171,22 @@ fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
     };
     let (required, prefix): (&[&str], &str) = match format {
         "apk" => (
-            &["AndroidManifest.xml", "classes.dex", "resources.arsc", "assets/THIRD-PARTY-NOTICES.txt"],
+            &[
+                "AndroidManifest.xml",
+                "classes.dex",
+                "resources.arsc",
+                "assets/THIRD-PARTY-NOTICES.txt",
+            ],
             "lib/",
         ),
         "aab" => (
-            &["BundleConfig.pb", "base/manifest/AndroidManifest.xml", "base/dex/classes.dex", "base/resources.pb", "base/assets/THIRD-PARTY-NOTICES.txt"],
+            &[
+                "BundleConfig.pb",
+                "base/manifest/AndroidManifest.xml",
+                "base/dex/classes.dex",
+                "base/resources.pb",
+                "base/assets/THIRD-PARTY-NOTICES.txt",
+            ],
             "base/lib/",
         ),
         _ => bail!("Unknown Android artifact format {format}"),
@@ -208,13 +202,18 @@ fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
             "Unsafe or duplicate Android archive member: {name}"
         );
         if required.contains(&name.as_str()) {
-            ensure!(member.size() > 0 && member.is_file(), "Empty Android member: {name}");
+            ensure!(
+                member.size() > 0 && member.is_file(),
+                "Empty Android member: {name}"
+            );
         }
         if let Some(relative) = name.strip_prefix(prefix) {
             if member.is_dir() {
                 continue;
             }
-            let (abi, library) = relative.split_once('/').context("Invalid Android library path")?;
+            let (abi, library) = relative
+                .split_once('/')
+                .context("Invalid Android library path")?;
             let (_, class, machine) = abis
                 .iter()
                 .find(|(expected, _, _)| *expected == abi)
@@ -232,8 +231,8 @@ fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
                     && u16::from_le_bytes([header[18], header[19]]) == *machine,
                 "Android native library architecture mismatch: {name}"
             );
-            if library == "libmakepad.so" {
-                libraries.insert(abi.to_owned());
+            if matches!(library, "libmakepad.so" | "libpaseo_tailscale.so") {
+                libraries.insert((abi.to_owned(), library.to_owned()));
             }
         }
     }
@@ -242,104 +241,178 @@ fn validate_android(path: &Path, arch: &str, format: &str) -> Result<()> {
         "Incomplete Android {format} structure"
     );
     ensure!(
-        libraries == abis.iter().map(|(abi, _, _)| (*abi).to_owned()).collect(),
-        "Android native ABI inventory mismatch"
+        libraries
+            == abis
+                .iter()
+                .flat_map(|(abi, _, _)| {
+                    ["libmakepad.so", "libpaseo_tailscale.so"]
+                        .map(|name| ((*abi).to_owned(), name.to_owned()))
+                })
+                .collect(),
+        "Android native ABI inventory mismatch (Makepad and embedded Tailscale are required for every ABI)"
     );
     Ok(())
 }
 
-fn inventory(dir: &Path, id: &Identity) -> Result<Vec<String>> {
-    let t = target(&id.target)?;
-    if t.desktop {
-        let metadata_name = format!("packages-{}.json", id.target);
-        let metadata = common::read_json(&dir.join(&metadata_name))?;
-        ensure!(
-            metadata["version"] == id.version
-                && metadata["platform"] == t.platform
-                && metadata["arch"] == t.arch,
-            "Package metadata identity mismatch"
-        );
-        let actual: Vec<String> = serde_json::from_value(metadata["artifacts"].clone())?;
-        let expected = names(id, CLIENT)?;
-        ensure!(
-            actual.len() == expected.len()
-                && actual.iter().collect::<BTreeSet<_>>()
-                    == expected.iter().collect::<BTreeSet<_>>(),
-            "Package metadata inventory mismatch"
-        );
-        validate_desktop(dir, id)?;
-        let mut result = expected;
-        result.push(metadata_name);
-        result.push(feed(id, CLIENT));
-        result.extend(names(id, DAEMON)?);
-        result.push(feed(id, DAEMON));
-        Ok(result)
-    } else if t.platform == "android" {
-        let metadata_name = format!("packages-{}.json", id.target);
-        let metadata = common::read_json(&dir.join(&metadata_name))?;
-        ensure!(
-            metadata["version"] == id.version
-                && metadata["platform"] == "android"
-                && metadata["arch"] == t.arch
-                && metadata["format"] == t.format
-                && metadata["profile"] == "release"
-                && metadata["sourceSha"] == id.sha,
-            "Android package metadata identity mismatch"
-        );
-        let stem = format!("Passession-{}-android-{}", id.version, t.arch);
-        let allowed = [
-            format!("{stem}.{}", t.format),
-            format!("{stem}-debug-signed.{}", t.format),
-        ];
-        let actual: Vec<String> = serde_json::from_value(metadata["artifacts"].clone())?;
-        ensure!(
-            actual.len() == 1 && allowed.contains(&actual[0]),
-            "Expected exactly one correctly signing-labelled Android artifact"
-        );
-        let siblings: Vec<_> = fs::read_dir(dir)?
-            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|name| {
-                (name.starts_with(&format!("{stem}.")) || name.starts_with(&format!("{stem}-")))
-                    && name.ends_with(&format!(".{}", t.format))
-            })
-            .collect();
-        ensure!(siblings == actual, "Ambiguous Android artifact inventory");
-        validate_android(&dir.join(&actual[0]), t.arch, t.format)?;
-        Ok(vec![actual[0].clone(), metadata_name])
-    } else {
-        let stem = format!("Passession-{}-{}", id.version, id.target);
-        let allowed = [format!("{stem}.ipa"), format!("{stem}-unsigned.app.zip")];
-        let actual: Vec<_> = fs::read_dir(dir)?
-            .map(|e| Ok(e?.file_name().to_string_lossy().into_owned()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|n| n.starts_with(&format!("{stem}.")) || n.starts_with(&format!("{stem}-")))
-            .collect();
-        ensure!(
-            actual.len() == 1 && allowed.contains(&actual[0]),
-            "Expected exactly one correctly signing-labelled mobile artifact"
-        );
-        Ok(actual)
+pub(crate) fn component_plan() -> Result<crate::components::plan::Plan> {
+    crate::components::plan::read(
+        &common::root()?.join(var("COMPONENT_PLAN", "artifacts/component-plan.json")),
+    )
+}
+pub(crate) fn artifact_name(artifact: &paseo_protocol::components::ArtifactRef) -> Result<&str> {
+    let name = artifact
+        .url
+        .rsplit('/')
+        .next()
+        .context("Artifact URL has no filename")?;
+    basename(name)?;
+    Ok(name)
+}
+fn component_inventory(
+    dir: &Path,
+    id: &Identity,
+) -> Result<(
+    crate::components::plan::TargetPlan,
+    paseo_protocol::components::TargetInventory,
+    BTreeSet<String>,
+)> {
+    use paseo_protocol::components::{self, TargetInventory};
+    let plan = component_plan()?;
+    ensure!(
+        plan.version == id.version && plan.source_sha == id.sha && plan.channel == id.channel,
+        "Collection/record identity mismatch"
+    );
+    let decision = plan
+        .targets
+        .iter()
+        .find(|p| p.target == id.target)
+        .context("Target is outside component plan")?
+        .clone();
+    ensure!(
+        decision.changed(),
+        "No-change target must not produce native artifacts"
+    );
+    let name = format!("components-{}.json", id.target);
+    let inventory: TargetInventory = serde_json::from_value(common::read_json(&dir.join(&name))?)?;
+    components::validate_target_inventory(&inventory, &id.target, REPOSITORY)?;
+    ensure!(
+        inventory.atomic_groups == decision.atomic_groups,
+        "Atomic inventory differs from plan"
+    );
+    ensure!(
+        inventory.components.len() == decision.inputs.len(),
+        "Component inventory is incomplete"
+    );
+    let mut files = BTreeSet::from([name]);
+    for (component, reference) in &inventory.components {
+        if let Some(reused) = decision.reuse.get(component) {
+            if reference != reused {
+                let origin = components::component_artifact_origin(&inventory, *component)?;
+                ensure!(
+                    decision.package
+                        && !decision.atomic_groups.is_empty()
+                        && origin.package.is_some()
+                        && origin.version == id.version
+                        && origin.source_sha == id.sha
+                        && reference.identity == reused.identity
+                        && reference.requires == reused.requires
+                        && reference.executable == reused.executable,
+                    "Reused component provenance changed outside signed cohort: {component}"
+                );
+                verify_artifact(dir, &reference.artifact)?;
+                files.insert(artifact_name(&reference.artifact)?.to_owned());
+            }
+        } else {
+            ensure!(
+                decision.build.contains(component)
+                    && reference.identity.version == id.version
+                    && reference.identity.source_sha == id.sha
+                    && decision.inputs.get(component) == Some(&reference.identity.input_hash)
+                    && reference.artifact.origin_tag == format!("v{}", id.version),
+                "Built component identity mismatch: {component}"
+            );
+            verify_artifact(dir, &reference.artifact)?;
+            files.insert(artifact_name(&reference.artifact)?.to_owned());
+        }
     }
+    if decision.package {
+        ensure!(
+            !inventory.packages.is_empty(),
+            "Missing rebuilt bootstrap package"
+        );
+        for package in &inventory.packages {
+            ensure!(
+                package.version == id.version
+                    && package.source_sha == id.sha
+                    && package.artifact.origin_tag == format!("v{}", id.version),
+                "Package source mismatch"
+            );
+            let identities = inventory
+                .components
+                .iter()
+                .map(|(id, c)| (*id, c.identity.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let signed_cohort = inventory.atomic_groups.iter().any(|group| {
+                group.len() == package.components.len()
+                    && group.iter().all(|member| {
+                        package.components.get(member) == identities.get(member)
+                            && inventory
+                                .components
+                                .get(member)
+                                .is_some_and(|reference| reference.artifact == package.artifact)
+                    })
+            });
+            ensure!(
+                package.components == identities || signed_cohort,
+                "Package component cohort mismatch"
+            );
+            verify_artifact(dir, &package.artifact)?;
+            if target(&id.target)?.platform == "android" {
+                validate_android(
+                    &dir.join(artifact_name(&package.artifact)?),
+                    target(&id.target)?.arch,
+                    &package.artifact.format,
+                )?;
+            }
+            files.insert(artifact_name(&package.artifact)?.to_owned());
+        }
+    } else {
+        ensure!(
+            inventory.packages == decision.packages,
+            "Unchanged packages were rebuilt or relabelled"
+        );
+    }
+    Ok((decision, inventory, files))
+}
+pub(crate) fn verify_artifact(
+    dir: &Path,
+    artifact: &paseo_protocol::components::ArtifactRef,
+) -> Result<()> {
+    let path = dir.join(artifact_name(artifact)?);
+    let meta = fs::symlink_metadata(&path)?;
+    ensure!(
+        meta.file_type().is_file()
+            && meta.len() == artifact.size
+            && common::sha256_file(&path)? == artifact.sha256,
+        "Artifact digest/size mismatch: {}",
+        path.display()
+    );
+    Ok(())
 }
 pub(super) fn record(dir: &Path, id: &Identity) -> Result<()> {
+    let (decision, inventory, names) = component_inventory(dir, id)?;
     let mut files = Vec::new();
-    for name in inventory(dir, id)? {
-        basename(&name)?;
+    for name in names {
         let path = dir.join(&name);
-        let meta = fs::symlink_metadata(&path)?;
-        ensure!(
-            meta.file_type().is_file() && meta.len() > 0,
-            "Empty or nonregular artifact {name}"
-        );
-        files.push(json!({"name":name,"size":meta.len(),"sha256":common::sha256_file(&path)?}));
+        files.push(json!({"name":name,"size":fs::metadata(&path)?.len(),"sha256":common::sha256_file(&path)?}));
     }
     let mut record = serde_json::to_value(id)?;
-    record["schemaVersion"] = json!(1);
+    record["schemaVersion"] = json!(2);
     record["workflow"] = json!(WORKFLOW);
     record["files"] = json!(files);
+    record["plan"] = serde_json::to_value(decision)?;
+    record["components"] = serde_json::to_value(inventory.components)?;
+    record["packages"] = serde_json::to_value(inventory.packages)?;
     common::write_json(&dir.join(format!("provenance-{}.json", id.target)), &record)
 }
 pub(super) fn verify(dir: &Path, id: &Identity) -> Result<Value> {
@@ -352,14 +425,22 @@ pub(super) fn verify(dir: &Path, id: &Identity) -> Result<Value> {
         );
     }
     ensure!(
-        record["schemaVersion"] == 1 && record["workflow"] == WORKFLOW,
-        "Invalid provenance schema/workflow"
+        record["schemaVersion"] == 2 && record["workflow"] == WORKFLOW,
+        "Legacy or invalid component provenance; rebuild required"
     );
-    let entries = record["files"]
-        .as_array()
-        .context("Missing artifact hashes")?;
+    let (decision, inventory, required) = component_inventory(dir, id)?;
+    ensure!(
+        record["plan"] == serde_json::to_value(&decision)?
+            && record["components"] == serde_json::to_value(&inventory.components)?
+            && record["packages"] == serde_json::to_value(&inventory.packages)?,
+        "Recorded component decisions differ from plan"
+    );
+    remote::authenticate_reuse(&decision)?;
     let mut actual = BTreeSet::new();
-    for entry in entries {
+    for entry in record["files"]
+        .as_array()
+        .context("Missing artifact hashes")?
+    {
         let name = entry["name"].as_str().context("Missing artifact name")?;
         basename(name)?;
         ensure!(actual.insert(name.to_owned()), "Duplicate artifact {name}");
@@ -373,7 +454,6 @@ pub(super) fn verify(dir: &Path, id: &Identity) -> Result<Value> {
             "Artifact integrity failure {name}"
         );
     }
-    let required: BTreeSet<_> = inventory(dir, id)?.into_iter().collect();
     ensure!(
         actual == required,
         "Provenance inventory is not exact for {}",
@@ -381,6 +461,7 @@ pub(super) fn verify(dir: &Path, id: &Identity) -> Result<Value> {
     );
     Ok(record)
 }
+#[cfg(test)]
 fn check_header(path: &Path, format: &str) -> Result<()> {
     let mut header = [0; 12];
     File::open(path)?.read_exact(&mut header)?;
@@ -398,79 +479,107 @@ fn check_header(path: &Path, format: &str) -> Result<()> {
     ensure!(valid, "Not a real {format}: {}", path.display());
     Ok(())
 }
+pub(crate) fn assemble(dir: &Path) -> Result<paseo_protocol::components::ReleaseInventory> {
+    use paseo_protocol::components::{self, ReleaseInventory, TargetInventory};
+    let plan = component_plan()?;
+    let mut targets = plan.retained_targets.clone();
+    for decision in &plan.targets {
+        let inventory = if decision.changed() {
+            serde_json::from_value(common::read_json(
+                &dir.join(format!("components-{}.json", decision.target)),
+            )?)?
+        } else {
+            TargetInventory {
+                components: decision.reuse.clone(),
+                packages: decision.packages.clone(),
+                atomic_groups: decision.atomic_groups.clone(),
+            }
+        };
+        ensure!(
+            targets.insert(decision.target.clone(), inventory).is_none(),
+            "Duplicate collection target"
+        );
+    }
+    let inventory = ReleaseInventory {
+        schema_version: 1,
+        version: plan.version,
+        source_sha: plan.source_sha,
+        channel: plan.channel,
+        targets,
+    };
+    components::validate_inventory(&inventory, REPOSITORY)?;
+    Ok(inventory)
+}
 pub(super) fn manifests(dir: &Path) -> Result<()> {
-    let v = common::version()?;
-    let parsed = version(&v)?;
-    let channel = var("PASEO_RELEASE_CHANNEL", channel(&parsed));
-    ensure!(
-        channel == super::channel(&parsed),
-        "Channel disagrees with release version"
+    let date = var(
+        "PASEO_RELEASE_DATE",
+        &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     );
-    let sha = required("SOURCE_SHA")?;
-    ensure!(valid_sha(&sha), "Exact source SHA required");
-    let date = if let Ok(date) = env::var("PASEO_RELEASE_DATE") {
-        chrono::DateTime::parse_from_rfc3339(&date)?.with_timezone(&chrono::Utc)
-    } else if let Ok(epoch) = env::var("SOURCE_DATE_EPOCH") {
-        chrono::DateTime::from_timestamp(epoch.parse()?, 0).context("Invalid SOURCE_DATE_EPOCH")?
-    } else {
-        chrono::Utc::now()
-    };
-    let notes = if let Ok(file) = env::var("PASEO_RELEASE_NOTES_FILE") {
-        fs::read_to_string(file)?
-    } else {
-        var("PASEO_RELEASE_NOTES", "")
-    };
-    let mut generated = 0;
-    for t in TARGETS.iter().filter(|t| t.desktop) {
-        let metadata_path = dir.join(format!("packages-{}.json", t.id()));
-        if !metadata_path.exists() {
+    manifests_at(dir, &date)
+}
+pub(crate) fn manifests_at(dir: &Path, date: &str) -> Result<()> {
+    use paseo_protocol::components::ComponentId;
+    let plan = component_plan()?;
+    if plan.no_changes {
+        return Ok(());
+    }
+    let inventory = assemble(dir)?;
+    let name = format!("components-{}.json", inventory.channel);
+    let inventory_path = dir.join(&name);
+    common::write_json(&inventory_path, &serde_json::to_value(&inventory)?)?;
+    let reference = json!({"url":format!("https://github.com/{REPOSITORY}/releases/download/v{}/{}",inventory.version,name),"size":fs::metadata(&inventory_path)?.len(),"sha512":digest512(&inventory_path)?});
+    chrono::DateTime::parse_from_rfc3339(date)?;
+    for (target_id, target_inventory) in &inventory.targets {
+        let target = target(target_id)?;
+        if !target.desktop {
             continue;
         }
-        let id = Identity {
-            sha: sha.clone(),
-            source_tag: String::new(),
-            version: v.clone(),
-            channel: channel.clone(),
-            run_id: String::new(),
-            target: t.id(),
-        };
-        let metadata = common::read_json(&metadata_path)?;
-        ensure!(
-            metadata["version"] == v
-                && metadata["platform"] == t.platform
-                && metadata["arch"] == t.arch,
-            "Package metadata mismatch"
-        );
-        let expected = names(&id, CLIENT)?;
-        let actual: Vec<String> = serde_json::from_value(metadata["artifacts"].clone())?;
-        ensure!(
-            expected.len() == actual.len()
-                && expected.iter().collect::<BTreeSet<_>>()
-                    == actual.iter().collect::<BTreeSet<_>>(),
-            "Incomplete package metadata"
-        );
-        let mut artifacts = Vec::new();
-        for name in expected {
-            let format = name.rsplit('.').next().unwrap().to_ascii_lowercase();
-            let path = dir.join(&name);
-            check_header(&path, &format)?;
-            artifacts.push(json!({"name":name,"format":format,"size":fs::metadata(&path)?.len(),"sha512":digest512(&path)?}));
+        for (id, runtime, prefix, app_id) in [
+            (ComponentId::App, CLIENT, CLIENT, CLIENT_APP_ID),
+            (ComponentId::Daemon, DAEMON, "daemon", "sh.paseo.daemon"),
+        ] {
+            let component = target_inventory
+                .components
+                .get(&id)
+                .context("Missing desktop feed component")?;
+            let manifest = json!({"schemaVersion":2,"runtime":runtime,"appId":app_id,"channel":inventory.channel,"platform":target.platform,"arch":target.arch,
+                "version":component.identity.version,"sourceSha":component.identity.source_sha,"collectionVersion":inventory.version,"collectionSourceSha":inventory.source_sha,
+                "inventory":reference,"component":component,"releaseDate":date,"rolloutHours":hours(&var("ROLLOUT_HOURS","36"))?});
+            common::write_json(
+                &dir.join(format!("{prefix}-{}-{target_id}.json", inventory.channel)),
+                &manifest,
+            )?;
         }
-        let mut manifest = json!({"schemaVersion":1,"runtime":CLIENT,"appId":CLIENT_APP_ID,"channel":channel,"platform":t.platform,"arch":t.arch,"version":v,"releaseDate":date.to_rfc3339_opts(chrono::SecondsFormat::Millis,true),"rolloutHours":hours(&var("ROLLOUT_HOURS","36"))?,"releaseNotes":notes,"sourceSha":sha});
-        if artifacts.len() == 1 {
-            manifest["artifact"] = artifacts.remove(0);
-        } else {
-            manifest["artifacts"] = json!(artifacts);
-        }
-        validate_manifest(&manifest, &id, CLIENT)?;
-        common::write_json(&dir.join(feed(&id, CLIENT)), &manifest)?;
-        generated += 1;
     }
-    ensure!(generated > 0, "No desktop package metadata found");
     Ok(())
 }
 pub(super) fn restamp(mut manifest: Value, amount: f64) -> Result<Value> {
     ensure!(amount.is_finite() && amount >= 0.0, "Invalid rollout hours");
+    if manifest["schemaVersion"] == 2 {
+        let target = format!(
+            "{}-{}",
+            manifest["platform"].as_str().context("Missing platform")?,
+            manifest["arch"].as_str().context("Missing arch")?
+        );
+        super::target(&target)?;
+        let component: paseo_protocol::components::ComponentRef =
+            serde_json::from_value(manifest["component"].clone())?;
+        paseo_protocol::components::validate_component(&component, &target, REPOSITORY)?;
+        ensure!(
+            component.id == paseo_protocol::components::ComponentId::App
+                && manifest["runtime"] == CLIENT
+                && manifest["version"] == component.identity.version
+                && manifest["sourceSha"] == component.identity.source_sha,
+            "Invalid component rollout identity"
+        );
+        chrono::DateTime::parse_from_rfc3339(
+            manifest["releaseDate"]
+                .as_str()
+                .context("Missing release date")?,
+        )?;
+        manifest["rolloutHours"] = json!(amount);
+        return Ok(manifest);
+    }
     let date = manifest["releaseDate"]
         .as_str()
         .context("Missing release date")?;
@@ -515,18 +624,43 @@ mod tests {
     use std::io::Write;
 
     fn android_fixture(dir: &Path, id: &Identity, debug_signed: bool) -> PathBuf {
+        android_fixture_libraries(dir, id, debug_signed, true)
+    }
+
+    fn android_fixture_libraries(
+        dir: &Path,
+        id: &Identity,
+        debug_signed: bool,
+        tailnet: bool,
+    ) -> PathBuf {
         let t = target(&id.target).unwrap();
         let label = if debug_signed { "-debug-signed" } else { "" };
-        let name = format!("Passession-{}-android-{}{label}.{}", id.version, t.arch, t.format);
+        let name = format!(
+            "Passession-{}-android-{}{label}.{}",
+            id.version, t.arch, t.format
+        );
         let path = dir.join(&name);
         let mut archive = zip::ZipWriter::new(File::create(&path).unwrap());
         let required: &[&str] = if t.format == "apk" {
-            &["AndroidManifest.xml", "classes.dex", "resources.arsc", "assets/THIRD-PARTY-NOTICES.txt"]
+            &[
+                "AndroidManifest.xml",
+                "classes.dex",
+                "resources.arsc",
+                "assets/THIRD-PARTY-NOTICES.txt",
+            ]
         } else {
-            &["BundleConfig.pb", "base/manifest/AndroidManifest.xml", "base/dex/classes.dex", "base/resources.pb", "base/assets/THIRD-PARTY-NOTICES.txt"]
+            &[
+                "BundleConfig.pb",
+                "base/manifest/AndroidManifest.xml",
+                "base/dex/classes.dex",
+                "base/resources.pb",
+                "base/assets/THIRD-PARTY-NOTICES.txt",
+            ]
         };
         for name in required {
-            archive.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            archive
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
             archive.write_all(b"fixture").unwrap();
         }
         for (arch, abi, class, machine) in [
@@ -537,16 +671,23 @@ mod tests {
                 continue;
             }
             let prefix = if t.format == "aab" { "base/" } else { "" };
-            archive.start_file(
-                format!("{prefix}lib/{abi}/libmakepad.so"),
-                zip::write::SimpleFileOptions::default(),
-            ).unwrap();
-            let mut header = [0; 20];
-            header[..4].copy_from_slice(b"\x7fELF");
-            header[4] = class;
-            header[5] = 1;
-            header[18..20].copy_from_slice(&machine.to_le_bytes());
-            archive.write_all(&header).unwrap();
+            for library in ["libmakepad.so", "libpaseo_tailscale.so"] {
+                if !tailnet && library == "libpaseo_tailscale.so" {
+                    continue;
+                }
+                archive
+                    .start_file(
+                        format!("{prefix}lib/{abi}/{library}"),
+                        zip::write::SimpleFileOptions::default(),
+                    )
+                    .unwrap();
+                let mut header = [0; 20];
+                header[..4].copy_from_slice(b"\x7fELF");
+                header[4] = class;
+                header[5] = 1;
+                header[18..20].copy_from_slice(&machine.to_le_bytes());
+                archive.write_all(&header).unwrap();
+            }
         }
         archive.finish().unwrap();
         common::write_json(
@@ -554,6 +695,15 @@ mod tests {
             &json!({"version":id.version,"platform":"android","arch":t.arch,"format":t.format,"profile":"release","sourceSha":id.sha,"artifacts":[name]}),
         ).unwrap();
         path
+    }
+
+    #[test]
+    fn android_requires_embedded_tailnet_for_every_abi() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut id = identity();
+        id.target = "android-arm64".into();
+        let incomplete = android_fixture_libraries(directory.path(), &id, true, false);
+        assert!(validate_android(&incomplete, "arm64", "apk").is_err());
     }
 
     fn identity() -> Identity {
@@ -568,13 +718,13 @@ mod tests {
     }
     /// Installed clients accept only this exact feed identity.
     fn manifest() -> Value {
-        json!({"schemaVersion":1,"runtime":"flutter","appId":"sh.paseo.sessions.desktop","platform":"windows","arch":"x64","version":"0.13.1","channel":"stable","sourceSha":"a".repeat(40),"releaseDate":"2026-10-01T00:00:00Z","rolloutHours":36,"artifact":{"name":"Passession-0.13.1-windows-x64.exe","size":42,"format":"exe","sha512":STANDARD.encode([0_u8;64])}})
+        json!({"schemaVersion":1,"runtime":"app","appId":"sh.paseo.sessions.desktop","platform":"windows","arch":"x64","version":"0.13.1","channel":"stable","sourceSha":"a".repeat(40),"releaseDate":"2026-10-01T00:00:00Z","rolloutHours":36,"artifact":{"name":"Passession-0.13.1-windows-x64.exe","size":42,"format":"exe","sha512":STANDARD.encode([0_u8;64])}})
     }
     #[test]
     fn manifest_identity_and_hashes_are_strict() {
         let good = manifest();
         assert!(validate_manifest(&good, &identity(), CLIENT).is_ok());
-        assert_eq!(feed(&identity(), CLIENT), "flutter-stable-windows-x64.json");
+        assert_eq!(feed(&identity(), CLIENT), "app-stable-windows-x64.json");
         for (field, value) in [
             ("sourceSha", json!("b".repeat(40))),
             ("version", json!("0.13.2")),
@@ -609,16 +759,27 @@ mod tests {
     #[test]
     fn provenance_rejects_tampering_and_wrong_run() {
         let dir = tempfile::tempdir().unwrap();
-        let mut id = identity();
-        id.target = "android-arm64".into();
-        let file = android_fixture(dir.path(), &id, true);
-        record(dir.path(), &id).unwrap();
-        verify(dir.path(), &id).unwrap();
+        let id = identity();
+        let file = dir.path().join("component.tar.gz");
+        fs::write(&file, b"component archive").unwrap();
+        let artifact = paseo_protocol::components::ArtifactRef {
+            url:"https://github.com/emotionbug/Passession/releases/download/v0.13.26/component.tar.gz".into(),
+            sha256:common::sha256_file(&file).unwrap(),size:fs::metadata(&file).unwrap().len(),format:"tar.gz".into(),origin_tag:"v0.13.26".into(),
+        };
+        verify_artifact(dir.path(), &artifact).unwrap();
+        let mut record = serde_json::to_value(&id).unwrap();
+        record["schemaVersion"] = json!(2);
+        record["workflow"] = json!(WORKFLOW);
+        common::write_json(
+            &dir.path().join(format!("provenance-{}.json", id.target)),
+            &record,
+        )
+        .unwrap();
         let mut wrong = id.clone();
         wrong.run_id = "124".into();
         assert!(verify(dir.path(), &wrong).is_err());
-        fs::write(file, b"changed APK bytes").unwrap();
-        assert!(verify(dir.path(), &id).is_err());
+        fs::write(file, b"corrupt archive").unwrap();
+        assert!(verify_artifact(dir.path(), &artifact).is_err());
     }
     #[test]
     fn installer_headers_match_their_formats() {
@@ -642,55 +803,29 @@ mod tests {
         }
     }
     #[test]
-    fn mobile_inventory_preserves_signing_labels_and_rejects_ambiguity() {
-        for (target, suffixes) in [("ios-arm64", [".ipa", "-unsigned.app.zip"])] {
-            let dir = tempfile::tempdir().unwrap();
-            let mut id = identity();
-            id.target = target.into();
-            let stem = format!("Passession-{}-{target}", id.version);
-            for suffix in suffixes {
-                let name = format!("{stem}{suffix}");
-                fs::write(dir.path().join(&name), b"mobile artifact").unwrap();
-                assert_eq!(inventory(dir.path(), &id).unwrap(), vec![name.clone()]);
-                fs::remove_file(dir.path().join(name)).unwrap();
-            }
-            for suffix in suffixes {
-                fs::write(
-                    dir.path().join(format!("{stem}{suffix}")),
-                    b"mobile artifact",
-                )
-                .unwrap();
-            }
-            assert!(inventory(dir.path(), &id).is_err());
-        }
-    }
-    #[test]
-    fn android_variants_preserve_identity_and_reject_ambiguous_signing() {
-        for t in TARGETS.iter().filter(|t| t.platform == "android") {
-            let dir = tempfile::tempdir().unwrap();
-            let mut id = identity();
-            id.target = t.id();
-            for debug_signed in [false, true] {
-                let path = android_fixture(dir.path(), &id, debug_signed);
-                record(dir.path(), &id).unwrap();
-                let verified = verify(dir.path(), &id).unwrap();
-                let names: BTreeSet<_> = verified["files"].as_array().unwrap()
-                    .iter().map(|entry| entry["name"].as_str().unwrap()).collect();
-                let metadata_name = format!("packages-{}.json", id.target);
-                assert_eq!(names, BTreeSet::from([
-                    path.file_name().unwrap().to_str().unwrap(),
-                    metadata_name.as_str(),
-                ]));
-                fs::remove_file(path).unwrap();
-            }
-            android_fixture(dir.path(), &id, false);
-            android_fixture(dir.path(), &id, true);
-            assert!(record(dir.path(), &id).is_err());
-        }
+    fn legacy_provenance_is_not_reinterpreted_as_component_inventory() {
+        let directory = tempfile::tempdir().unwrap();
+        let id = identity();
+        let mut record = serde_json::to_value(&id).unwrap();
+        record["schemaVersion"] = json!(1);
+        record["workflow"] = json!(WORKFLOW);
+        common::write_json(
+            &directory
+                .path()
+                .join(format!("provenance-{}.json", id.target)),
+            &record,
+        )
+        .unwrap();
+        assert!(
+            verify(directory.path(), &id)
+                .unwrap_err()
+                .to_string()
+                .contains("Legacy")
+        );
     }
 
     #[test]
-    fn android_rejects_wrong_format_abi_and_source_metadata() {
+    fn android_rejects_wrong_format_and_abi() {
         let dir = tempfile::tempdir().unwrap();
         let mut id = identity();
         id.target = "android-arm64".into();
@@ -698,19 +833,5 @@ mod tests {
         assert!(validate_android(&apk, "arm64", "aab").is_err());
         assert!(validate_android(&apk, "x64", "apk").is_err());
         assert!(validate_android(&apk, "universal", "apk").is_err());
-        let metadata_path = dir.path().join("packages-android-arm64.json");
-        let metadata = common::read_json(&metadata_path).unwrap();
-        for (key, value) in [
-            ("sourceSha", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-            ("profile", "dev-fast"),
-            ("format", "aab"),
-            ("arch", "x64"),
-        ] {
-            let mut wrong = metadata.clone();
-            wrong[key] = json!(value);
-            common::write_json(&metadata_path, &wrong).unwrap();
-            assert!(record(dir.path(), &id).is_err());
-        }
     }
-
 }

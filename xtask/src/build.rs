@@ -5,7 +5,6 @@ use std::{
     env, fs,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 fn valid_source(value: &str) -> bool {
@@ -121,26 +120,18 @@ pub fn build_daemon(args: &[String]) -> Result<()> {
         [] => "dev-fast",
         [option] if option == "--release" => "release",
         [option, profile] if option == "--profile" => profile.as_str(),
-        _ => bail!("Usage: cargo xtask build-daemon [--release | --profile dev-fast|debug|release]"),
+        _ => {
+            bail!("Usage: cargo xtask build-daemon [--release | --profile dev-fast|debug|release]")
+        }
     };
     build_native(profile, false)
 }
 
 pub fn build_native(profile: &str, container: bool) -> Result<()> {
-    build_native_command(profile, container, None)
+    build_native_command(profile, container)
 }
 
-/// Linux/Windows releases share one Cargo graph and compile-time identity.
-/// Local identities and macOS deployment targets require separate builds.
-pub fn build_desktop_release(profile: &str, command: &mut Command) -> Result<()> {
-    ensure!(
-        native_release_env(),
-        "Combined desktop builds require an official release identity"
-    );
-    build_native_command(profile, false, Some(command))
-}
-
-fn build_native_command(profile: &str, container: bool, desktop: Option<&mut Command>) -> Result<()> {
+fn build_native_command(profile: &str, container: bool) -> Result<()> {
     platform()?;
     arch()?;
     ensure!(
@@ -156,7 +147,7 @@ fn build_native_command(profile: &str, container: bool, desktop: Option<&mut Com
     if let Ok(expected) = env::var("PASEO_VERSION") {
         ensure!(
             expected == version()?,
-            "PASEO_VERSION must match workspace.package.version"
+            "PASEO_VERSION must match packaging/release.json"
         );
     }
     let source = if container {
@@ -187,28 +178,38 @@ fn build_native_command(profile: &str, container: bool, desktop: Option<&mut Com
     );
     let directory = directory(profile)?;
     remove_if_exists(&directory.join("paseo-build.json"))?;
-    if let Some(command) = desktop {
-        run(command)?;
-    } else {
-        let mut cargo = command(cargo())?;
-        cargo
-            .args(["build", "--locked", "-p", "paseo-daemon", "--bin", "paseo"])
-            .env("PASEO_BUILD_SOURCE_SHA", &source);
-        cargo.args(["--profile", if profile == "debug" { "dev" } else { profile }]);
-        if !release {
-            for key in [
-                "PASEO_NATIVE_RELEASE",
-                "PASEO_UPDATE_REPOSITORY",
-                "PASEO_RELEASE_CHANNEL",
-            ] {
-                cargo.env_remove(key);
-            }
+    let mut cargo = command(cargo())?;
+    cargo
+        .args(["build", "--locked", "-p", "paseo-daemon", "--bin", "paseo"])
+        .env(
+            "PASEO_DAEMON_VERSION",
+            identity["version"]
+                .as_str()
+                .context("Missing daemon version")?,
+        )
+        .env("PASEO_BUILD_SOURCE_SHA", &source);
+    cargo.args([
+        "--profile",
+        if profile == "debug" { "dev" } else { profile },
+    ]);
+    if !release {
+        for key in [
+            "PASEO_NATIVE_RELEASE",
+            "PASEO_UPDATE_REPOSITORY",
+            "PASEO_RELEASE_CHANNEL",
+        ] {
+            cargo.env_remove(key);
         }
-        run(&mut cargo)?;
     }
+    run(&mut cargo)?;
     fs::create_dir_all(&directory)?;
     let executable = directory.join(executable());
-    copy_tree(&target_root()?.join(profile).join(crate::common::executable()), &executable)?;
+    copy_tree(
+        &target_root()?
+            .join(profile)
+            .join(crate::common::executable()),
+        &executable,
+    )?;
     assert_architecture(&executable)?;
     for name in ["skills", "lib", "plugin-worker"] {
         remove_if_exists(&directory.join(name))?;

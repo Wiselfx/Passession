@@ -22,9 +22,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::bridge::Bridge;
+use crate::providers::api::{LaunchContext, ProviderSpec};
 use crate::providers::registry::catalog::refresh_activity;
 use paseo_client::process::{self, CommandSpec, ManagedProcess};
-use crate::{ providers::api::{LaunchContext, ProviderSpec}, };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -225,9 +225,9 @@ impl RuntimeManager {
                     .get(&key)
                     .and_then(Weak::upgrade)
                     .filter(|r| !r.is_exited())
-                {
-                    return Ok(runtime);
-                }
+            {
+                return Ok(runtime);
+            }
             if let Some(pending) = state.pending.get(&key) {
                 pending.clone()
             } else {
@@ -472,9 +472,10 @@ impl Runtime {
                             listening_url(&text)
                         };
                         if let Some(url) = url
-                            && let Some(sender) = sender.take() {
-                                let _ = sender.send(url);
-                            }
+                            && let Some(sender) = sender.take()
+                        {
+                            let _ = sender.send(url);
+                        }
                     }
                 }
             }
@@ -816,19 +817,20 @@ impl DeltaUtf16 {
         let error = match serde_json::from_slice::<Value>(bytes) {
             Ok(event) => {
                 if !self.pending.is_empty()
-                    && let Some(key) = delta_part(&event) {
-                        let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-                        if !event_type.ends_with(".delta") {
-                            self.pending.remove(&key);
-                        } else if self.pending.contains_key(&key)
-                            && event
-                                .pointer("/data/delta")
-                                .and_then(Value::as_str)
-                                .is_some_and(|text| !text.is_empty())
-                        {
-                            bail!("OpenCode text delta contains an unpaired UTF-16 surrogate");
-                        }
+                    && let Some(key) = delta_part(&event)
+                {
+                    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+                    if !event_type.ends_with(".delta") {
+                        self.pending.remove(&key);
+                    } else if self.pending.contains_key(&key)
+                        && event
+                            .pointer("/data/delta")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty())
+                    {
+                        bail!("OpenCode text delta contains an unpaired UTF-16 surrogate");
                     }
+                }
                 return Ok(event);
             }
             Err(error) => error,

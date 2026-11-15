@@ -111,15 +111,16 @@ pub fn expand_template(template: &str, args: &str) -> String {
             }
             if ch == '\\'
                 && let Some(&next) = chars.peek()
-                    && (next == q || matches!(next, '\\' | 'n' | 't')) {
-                        chars.next();
-                        current.push(match next {
-                            'n' => '\n',
-                            't' => '\t',
-                            other => other,
-                        });
-                        continue;
-                    }
+                && (next == q || matches!(next, '\\' | 'n' | 't'))
+            {
+                chars.next();
+                current.push(match next {
+                    'n' => '\n',
+                    't' => '\t',
+                    other => other,
+                });
+                continue;
+            }
             current.push(ch);
         } else if matches!(ch, '\'' | '"') {
             quote = Some(ch);
@@ -204,11 +205,11 @@ pub async fn expand(home: &Path, prompt: &Value, skills: &[Value]) -> Result<Val
                 .await?
                 .iter()
                 .any(|p| p["name"] == name))
-        {
-            let text =
-                fs::read_to_string(home.join("prompts").join(format!("{prompt_name}.md"))).await?;
-            return Ok(Value::String(expand_template(front_matter(&text).1, args)));
-        }
+    {
+        let text =
+            fs::read_to_string(home.join("prompts").join(format!("{prompt_name}.md"))).await?;
+        return Ok(Value::String(expand_template(front_matter(&text).1, args)));
+    }
     if let Some(skill) = skills
         .iter()
         .find(|skill| skill["name"] == name && skill["enabled"] != false)

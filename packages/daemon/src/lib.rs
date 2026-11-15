@@ -1,3 +1,18 @@
+/// The independently released daemon component, not the collection or GUI version.
+pub const VERSION: &str = match option_env!("PASEO_DAEMON_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+pub fn component_identity() -> paseo_protocol::components::ComponentIdentity {
+    paseo_protocol::components::ComponentIdentity {
+        version: VERSION.into(),
+        source_sha: option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or("").into(),
+        input_hash: option_env!("PASEO_COMPONENT_INPUT_HASH").unwrap_or("").into(),
+        abi_version: 1,
+    }
+}
+
 pub mod activity;
 pub mod agent;
 pub mod automation;

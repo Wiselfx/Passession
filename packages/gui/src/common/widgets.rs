@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use crate::common::paint::{Font, HitMap, Painter, TextSpec, rect};
 use crate::common::{UiContext, UiEffect, clock};
-use crate::theme::{self, ControlSize, Palette, Typography, control_height, control_icon_size, fade};
+use crate::theme::{
+    self, ControlSize, Palette, Typography, control_height, control_icon_size, fade,
+};
 
 /// Measured line extents shared by custom-painted list rows. Measure once per
 /// style per draw; virtualized lists use `height` for culling and advancing too.
@@ -23,33 +25,71 @@ impl RowMetrics {
         Self {
             title_height: title_height.max(0.0),
             subtitle_height: subtitle_height.max(0.0),
-            gap: if subtitle_height > 0.0 { gap.max(0.0) } else { 0.0 },
+            gap: if subtitle_height > 0.0 {
+                gap.max(0.0)
+            } else {
+                0.0
+            },
         }
     }
 
-    pub fn measure(painter: &mut Painter, cx: &mut Cx, title: TextSpec, subtitle: Option<TextSpec>, gap: f64) -> Self {
+    pub fn measure(
+        painter: &mut Painter,
+        cx: &mut Cx,
+        title: TextSpec,
+        subtitle: Option<TextSpec>,
+        gap: f64,
+    ) -> Self {
         let title_height = painter.line_height(cx, title);
         let subtitle_height = subtitle.map_or(0.0, |spec| painter.line_height(cx, spec));
         Self::new(title_height, subtitle_height, gap)
     }
 
     pub fn height(self, minimum: f64, padding_y: f64, leading_height: f64) -> f64 {
-        minimum.max((self.title_height + self.gap + self.subtitle_height).max(leading_height) + padding_y * 2.0)
+        minimum.max(
+            (self.title_height + self.gap + self.subtitle_height).max(leading_height)
+                + padding_y * 2.0,
+        )
     }
 
     /// Side slots reserve space before text. Narrow rows sacrifice text width,
     /// never let it overlap a trailing action. The caller paints custom icons
     /// or metadata in the slots and registers `bounds` with its existing hits.
-    pub fn layout(self, bounds: Rect, padding_x: f64, leading_width: f64, trailing_width: f64, slot_gap: f64) -> RowLayout {
+    pub fn layout(
+        self,
+        bounds: Rect,
+        padding_x: f64,
+        leading_width: f64,
+        trailing_width: f64,
+        slot_gap: f64,
+    ) -> RowLayout {
         let padding = padding_x.max(0.0).min(bounds.size.x.max(0.0) * 0.5);
         let left = bounds.pos.x + padding;
         let right = bounds.pos.x + bounds.size.x.max(0.0) - padding;
         let trailing_width = trailing_width.max(0.0).min(right - left);
-        let trailing = rect(right - trailing_width, bounds.pos.y, trailing_width, bounds.size.y);
-        let content_right = (trailing.pos.x - if trailing_width > 0.0 { slot_gap.max(0.0) } else { 0.0 }).max(left);
+        let trailing = rect(
+            right - trailing_width,
+            bounds.pos.y,
+            trailing_width,
+            bounds.size.y,
+        );
+        let content_right = (trailing.pos.x
+            - if trailing_width > 0.0 {
+                slot_gap.max(0.0)
+            } else {
+                0.0
+            })
+        .max(left);
         let leading_width = leading_width.max(0.0).min(content_right - left);
         let leading = rect(left, bounds.pos.y, leading_width, bounds.size.y);
-        let text_left = (left + leading_width + if leading_width > 0.0 { slot_gap.max(0.0) } else { 0.0 }).min(content_right);
+        let text_left = (left
+            + leading_width
+            + if leading_width > 0.0 {
+                slot_gap.max(0.0)
+            } else {
+                0.0
+            })
+        .min(content_right);
         let text_width = content_right - text_left;
         let text_height = self.title_height + self.gap + self.subtitle_height;
         let top = bounds.pos.y + (bounds.size.y - text_height) * 0.5;
@@ -57,7 +97,12 @@ impl RowMetrics {
             bounds,
             leading,
             title: rect(text_left, top, text_width, self.title_height),
-            subtitle: rect(text_left, top + self.title_height + self.gap, text_width, self.subtitle_height),
+            subtitle: rect(
+                text_left,
+                top + self.title_height + self.gap,
+                text_width,
+                self.subtitle_height,
+            ),
             trailing,
         }
     }
@@ -82,13 +127,24 @@ pub struct InlineMetrics {
 }
 
 impl InlineMetrics {
-    pub fn from_layout(layout: &makepad_widgets::makepad_draw::text::layouter::LaidoutText) -> Self {
-        let above = layout.rows.first().map_or(0.0, |row| row.origin_in_lpxs.y as f64);
-        Self { above, below: (layout.size_in_lpxs.height as f64 - above).max(0.0) }
+    pub fn from_layout(
+        layout: &makepad_widgets::makepad_draw::text::layouter::LaidoutText,
+    ) -> Self {
+        let above = layout
+            .rows
+            .first()
+            .map_or(0.0, |row| row.origin_in_lpxs.y as f64);
+        Self {
+            above,
+            below: (layout.size_in_lpxs.height as f64 - above).max(0.0),
+        }
     }
 
     pub fn union(self, other: Self) -> Self {
-        Self { above: self.above.max(other.above), below: self.below.max(other.below) }
+        Self {
+            above: self.above.max(other.above),
+            below: self.below.max(other.below),
+        }
     }
 
     pub fn height(self) -> f64 {
@@ -109,12 +165,21 @@ mod row_tests {
         let metrics = RowMetrics::new(28.0, 24.0, 2.0);
         let height = metrics.height(48.0, 7.0, 14.0);
         let first = metrics.layout(rect(10.0, 50.0, 280.0, height), 12.0, 14.0, 32.0, 8.0);
-        let second = metrics.layout(rect(10.0, 50.0 + height, 280.0, height), 12.0, 14.0, 32.0, 8.0);
+        let second = metrics.layout(
+            rect(10.0, 50.0 + height, 280.0, height),
+            12.0,
+            14.0,
+            32.0,
+            8.0,
+        );
         assert_eq!(height, 68.0);
         assert_eq!(first.title.pos.y, 57.0);
         assert_eq!(first.subtitle.pos.y, 87.0);
         assert_eq!(first.subtitle.pos.y + first.subtitle.size.y, 111.0);
-        assert_eq!(second.bounds.pos.y, first.bounds.pos.y + first.bounds.size.y);
+        assert_eq!(
+            second.bounds.pos.y,
+            first.bounds.pos.y + first.bounds.size.y
+        );
         let mut hits = HitMap::default();
         hits.push(first.bounds, 1);
         hits.push(second.bounds, 2);
@@ -150,8 +215,14 @@ mod row_tests {
     #[test]
     fn adjacent_fallback_labels_share_a_baseline_without_escaping_the_row() {
         for scale in [1.0, 1.5, 2.0] {
-            let latin = InlineMetrics { above: 11.0 * scale, below: 4.0 * scale };
-            let hangul = InlineMetrics { above: 17.0 * scale, below: 3.0 * scale };
+            let latin = InlineMetrics {
+                above: 11.0 * scale,
+                below: 4.0 * scale,
+            };
+            let hangul = InlineMetrics {
+                above: 17.0 * scale,
+                below: 3.0 * scale,
+            };
             let joined = latin.union(hangul);
             let height = RowMetrics::new(joined.height(), 0.0, 0.0).height(30.0, 4.0, 22.0);
             let bounds = rect(0.0, 40.0, 240.0, height);
@@ -465,7 +536,11 @@ impl Widget for Surface {
             }
             Hit::FingerUp(fe) => {
                 let was_pressed = std::mem::take(&mut self.pressed);
-                if was_pressed && fe.is_over && !fe.has_long_press_occurred && (!fe.device.is_touch() || fe.was_tap()) {
+                if was_pressed
+                    && fe.is_over
+                    && !fe.has_long_press_occurred
+                    && (!fe.device.is_touch() || fe.was_tap())
+                {
                     cx.widget_action(uid, &scope.path, SurfaceAction::Clicked(fe.modifiers));
                 }
                 self.redraw(cx);
@@ -486,10 +561,20 @@ impl Widget for Surface {
         let border = self.border_role.color(&p);
         self.view.draw_bg.color = fill;
         let b = border.unwrap_or_default();
-        self.view.draw_bg.set_var_instance(cx, &[live_id!(border_color)], &[b.x, b.y, b.z, b.w]);
-        let width = if border.is_some() { self.border_width as f32 } else { 0.0 };
-        self.view.draw_bg.set_var_instance(cx, &[live_id!(border_width)], &[width]);
-        self.view.draw_bg.set_var_instance(cx, &[live_id!(radius)], &[self.radius as f32]);
+        self.view
+            .draw_bg
+            .set_var_instance(cx, &[live_id!(border_color)], &[b.x, b.y, b.z, b.w]);
+        let width = if border.is_some() {
+            self.border_width as f32
+        } else {
+            0.0
+        };
+        self.view
+            .draw_bg
+            .set_var_instance(cx, &[live_id!(border_width)], &[width]);
+        self.view
+            .draw_bg
+            .set_var_instance(cx, &[live_id!(radius)], &[self.radius as f32]);
         self.view.draw_walk(cx, scope, walk)
     }
 }
@@ -497,19 +582,33 @@ impl Widget for Surface {
 impl Palette {
     /// Hover fill for an interactive surface without an explicit hover role.
     pub fn sidebar_hover_over(&self, base: Vec4) -> Vec4 {
-        if base.w <= 0.0 { self.sidebar_hover } else { self.interaction_highlight_over(base) }
+        if base.w <= 0.0 {
+            self.sidebar_hover
+        } else {
+            self.interaction_highlight_over(base)
+        }
     }
 
     fn interaction_highlight_over(&self, base: Vec4) -> Vec4 {
         let h = self.interaction_highlight;
         let a = h.w;
-        vec4(base.x * (1.0 - a) + h.x * a, base.y * (1.0 - a) + h.y * a, base.z * (1.0 - a) + h.z * a, base.w)
+        vec4(
+            base.x * (1.0 - a) + h.x * a,
+            base.y * (1.0 - a) + h.y * a,
+            base.z * (1.0 - a) + h.z * a,
+            base.w,
+        )
     }
 }
 
 impl SurfaceRef {
     pub fn clicked(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|s| matches!(actions.find_widget_action(s.widget_uid()).cast_ref(), SurfaceAction::Clicked(_)))
+        self.borrow().is_some_and(|s| {
+            matches!(
+                actions.find_widget_action(s.widget_uid()).cast_ref(),
+                SurfaceAction::Clicked(_)
+            )
+        })
     }
 
     pub fn secondary_clicked(&self, actions: &Actions) -> Option<DVec2> {
@@ -530,7 +629,9 @@ impl SurfaceRef {
     }
 
     pub fn rect(&self, cx: &Cx) -> Rect {
-        self.borrow().map(|s| s.view.area().rect(cx)).unwrap_or_default()
+        self.borrow()
+            .map(|s| s.view.area().rect(cx))
+            .unwrap_or_default()
     }
 }
 
@@ -576,8 +677,16 @@ impl PLabel {
     fn spec(&self) -> (Font, f64, Vec4) {
         let p = theme::current_palette();
         let t = theme::current_typography();
-        let authored = if self.size > 0.0 { self.size } else { self.role.default_size() };
-        let px = if self.content { t.content_font_size } else { t.ui_size(authored) };
+        let authored = if self.size > 0.0 {
+            self.size
+        } else {
+            self.role.default_size()
+        };
+        let px = if self.content {
+            t.content_font_size
+        } else {
+            t.ui_size(authored)
+        };
         let font = if self.role == TextRole::Mono {
             Font::Mono
         } else if self.weight == FontWeight::Regular && self.role != TextRole::Title {
@@ -585,7 +694,11 @@ impl PLabel {
         } else {
             Font::Medium
         };
-        (font, px, self.color_override.unwrap_or_else(|| self.role.color(&p)))
+        (
+            font,
+            px,
+            self.color_override.unwrap_or_else(|| self.role.color(&p)),
+        )
     }
 }
 
@@ -603,7 +716,10 @@ impl Widget for PLabel {
         if self.ellipsis {
             let laid = drawer.layout(cx, 0.0, 0.0, None, false, Align::default(), &text);
             let height = laid.size_in_lpxs.height as f64;
-            let rect = cx.walk_turtle(Walk { height: Size::Fixed(height), ..walk });
+            let rect = cx.walk_turtle(Walk {
+                height: Size::Fixed(height),
+                ..walk
+            });
             let shown = fit_text(drawer, cx, &text, rect.size.x);
             drawer.draw_abs(cx, rect.pos, &shown);
         } else if !self.wrap {
@@ -630,7 +746,12 @@ impl Widget for PLabel {
 /// Truncates `text` with "…" to `max_width` using `drawer`'s current style.
 fn fit_text(drawer: &DrawText, cx: &mut Cx, text: &str, max_width: f64) -> String {
     let line = text.lines().next().unwrap_or("");
-    let width = |s: &str, cx: &mut Cx| drawer.layout(cx, 0.0, 0.0, None, false, Align::default(), s).size_in_lpxs.width as f64;
+    let width = |s: &str, cx: &mut Cx| {
+        drawer
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), s)
+            .size_in_lpxs
+            .width as f64
+    };
     if width(line, cx) <= max_width + 0.5 {
         return line.to_string();
     }
@@ -719,12 +840,20 @@ impl PButton {
             ButtonVariant::Ghost => (
                 Vec4::default(),
                 Vec4::default(),
-                if self.hovered && !disabled { p.foreground } else { p.muted },
+                if self.hovered && !disabled {
+                    p.foreground
+                } else {
+                    p.muted
+                },
             ),
             ButtonVariant::Destructive => (
                 p.destructive,
                 p.destructive,
-                if p.is_dark { vec4(1.0, 1.0, 1.0, 1.0) } else { p.surface0 },
+                if p.is_dark {
+                    vec4(1.0, 1.0, 1.0, 1.0)
+                } else {
+                    p.surface0
+                },
             ),
         }
     }
@@ -735,7 +864,11 @@ impl Widget for PButton {
         let disabled = !self.enabled || self.busy;
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(if disabled { MouseCursor::Default } else { MouseCursor::Hand });
+                cx.set_cursor(if disabled {
+                    MouseCursor::Default
+                } else {
+                    MouseCursor::Hand
+                });
                 self.hovered = true;
                 self.redraw(cx);
             }
@@ -748,8 +881,16 @@ impl Widget for PButton {
                 self.redraw(cx);
             }
             Hit::FingerUp(fe) => {
-                if std::mem::take(&mut self.pressed) && fe.is_over && !disabled && (!fe.device.is_touch() || fe.was_tap()) {
-                    cx.widget_action(self.widget_uid(), &scope.path, PButtonAction::Clicked(fe.modifiers));
+                if std::mem::take(&mut self.pressed)
+                    && fe.is_over
+                    && !disabled
+                    && (!fe.device.is_touch() || fe.was_tap())
+                {
+                    cx.widget_action(
+                        self.widget_uid(),
+                        &scope.path,
+                        PButtonAction::Clicked(fe.modifiers),
+                    );
                 }
                 self.redraw(cx);
             }
@@ -767,14 +908,37 @@ impl Widget for PButton {
             ControlSize::Lg => (24.0, 16.0),
         };
         let icon_size = control_icon_size(self.size);
-        let spec = TextSpec::new(Font::Regular, t.ui_size(if self.size == ControlSize::Xs { 12.0 } else { 14.0 }), p.foreground);
+        let spec = TextSpec::new(
+            Font::Regular,
+            t.ui_size(if self.size == ControlSize::Xs {
+                12.0
+            } else {
+                14.0
+            }),
+            p.foreground,
+        );
         let label = self.text.as_ref().to_string();
         let has_icon = !self.icon.as_ref().is_empty() || self.busy;
-        let text_w = if label.is_empty() { 0.0 } else { self.painter.measure(cx, spec, &label).x };
-        let content_w = text_w + if has_icon { icon_size + if label.is_empty() { 0.0 } else { 8.0 } } else { 0.0 };
+        let text_w = if label.is_empty() {
+            0.0
+        } else {
+            self.painter.measure(cx, spec, &label).x
+        };
+        let content_w = text_w
+            + if has_icon {
+                icon_size + if label.is_empty() { 0.0 } else { 8.0 }
+            } else {
+                0.0
+            };
         let natural = dvec2(content_w + pad * 2.0, height);
         let walk = Walk {
-            width: if self.expand { Size::Fill } else if matches!(walk.width, Size::Fit) { Size::Fixed(natural.x) } else { walk.width },
+            width: if self.expand {
+                Size::Fill
+            } else if matches!(walk.width, Size::Fit) {
+                Size::Fixed(natural.x)
+            } else {
+                walk.width
+            },
             height: match walk.height {
                 Size::Fit => Size::Fixed(natural.y),
                 Size::Fixed(h) if cfg!(target_os = "android") => Size::Fixed(h.max(natural.y)),
@@ -784,14 +948,33 @@ impl Widget for PButton {
         };
         let r = cx.walk_turtle(walk);
         let (bg, border, fg) = self.colors(&p);
-        let opacity = if !self.enabled || self.busy { 0.5 } else if self.pressed { 0.85 } else { 1.0 };
-        self.area = self.painter.capture_box(cx, r, fade(bg, opacity), fade(border, opacity), 1.0, radius.min(r.size.y * 0.5));
+        let opacity = if !self.enabled || self.busy {
+            0.5
+        } else if self.pressed {
+            0.85
+        } else {
+            1.0
+        };
+        self.area = self.painter.capture_box(
+            cx,
+            r,
+            fade(bg, opacity),
+            fade(border, opacity),
+            1.0,
+            radius.min(r.size.y * 0.5),
+        );
         let fg = fade(fg, opacity);
         let mut x = r.pos.x + ((r.size.x - content_w) * 0.5).max(pad.min(r.size.x * 0.5));
         if has_icon {
-            let icon_rect = rect(x, r.pos.y + (r.size.y - icon_size) * 0.5, icon_size, icon_size);
+            let icon_rect = rect(
+                x,
+                r.pos.y + (r.size.y - icon_size) * 0.5,
+                icon_size,
+                icon_size,
+            );
             if self.busy {
-                self.painter.ring(cx, icon_rect, fg, 1.5, 0.25, clock::phase(900));
+                self.painter
+                    .ring(cx, icon_rect, fg, 1.5, 0.25, clock::phase(900));
                 clock::register(cx, self.area);
             } else {
                 let icon = self.icon.as_ref().to_string();
@@ -801,7 +984,13 @@ impl Widget for PButton {
         }
         if !label.is_empty() {
             let avail = (r.pos.x + r.size.x - pad - x).max(0.0);
-            self.painter.text_in(cx, rect(x, r.pos.y, avail, r.size.y), TextSpec { color: fg, ..spec }, &label, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(x, r.pos.y, avail, r.size.y),
+                TextSpec { color: fg, ..spec },
+                &label,
+                0.0,
+            );
         }
         DrawStep::done()
     }
@@ -820,7 +1009,12 @@ impl Widget for PButton {
 
 impl PButtonRef {
     pub fn clicked(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|b| matches!(actions.find_widget_action(b.widget_uid()).cast_ref(), PButtonAction::Clicked(_)))
+        self.borrow().is_some_and(|b| {
+            matches!(
+                actions.find_widget_action(b.widget_uid()).cast_ref(),
+                PButtonAction::Clicked(_)
+            )
+        })
     }
 
     pub fn set_enabled(&self, cx: &mut Cx, enabled: bool) {
@@ -904,7 +1098,11 @@ impl Widget for PIconButton {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(if self.enabled { MouseCursor::Hand } else { MouseCursor::Default });
+                cx.set_cursor(if self.enabled {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
                 self.hovered = true;
                 self.redraw(cx);
             }
@@ -917,8 +1115,16 @@ impl Widget for PIconButton {
                 self.redraw(cx);
             }
             Hit::FingerUp(fe) => {
-                if std::mem::take(&mut self.pressed) && fe.is_over && self.enabled && (!fe.device.is_touch() || fe.was_tap()) {
-                    cx.widget_action(self.widget_uid(), &scope.path, PButtonAction::Clicked(fe.modifiers));
+                if std::mem::take(&mut self.pressed)
+                    && fe.is_over
+                    && self.enabled
+                    && (!fe.device.is_touch() || fe.was_tap())
+                {
+                    cx.widget_action(
+                        self.widget_uid(),
+                        &scope.path,
+                        PButtonAction::Clicked(fe.modifiers),
+                    );
                 }
                 self.redraw(cx);
             }
@@ -936,23 +1142,52 @@ impl Widget for PIconButton {
             26.0
         };
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(extent) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(extent) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(extent)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(extent)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
-        let fill = if self.enabled && (self.hovered || self.pressed) { p.interaction_highlight } else { Vec4::default() };
-        self.area = self.painter.capture_box(cx, r, fill, Vec4::default(), 0.0, self.radius);
+        let fill = if self.enabled && (self.hovered || self.pressed) {
+            p.interaction_highlight
+        } else {
+            Vec4::default()
+        };
+        self.area = self
+            .painter
+            .capture_box(cx, r, fill, Vec4::default(), 0.0, self.radius);
         let color = if self.strong { p.foreground } else { p.muted };
         let icon = self.icon.as_ref().to_string();
-        self.painter.icon(cx, r, &icon, self.icon_size, if self.enabled { color } else { fade(color, 0.5) });
+        self.painter.icon(
+            cx,
+            r,
+            &icon,
+            self.icon_size,
+            if self.enabled {
+                color
+            } else {
+                fade(color, 0.5)
+            },
+        );
         DrawStep::done()
     }
 }
 
 impl PIconButtonRef {
     pub fn clicked(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|b| matches!(actions.find_widget_action(b.widget_uid()).cast_ref(), PButtonAction::Clicked(_)))
+        self.borrow().is_some_and(|b| {
+            matches!(
+                actions.find_widget_action(b.widget_uid()).cast_ref(),
+                PButtonAction::Clicked(_)
+            )
+        })
     }
 
     /// Trigger rect for anchored menus.
@@ -1003,13 +1238,23 @@ impl Widget for PIcon {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let p = theme::current_palette();
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(self.size) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(self.size) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(self.size)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(self.size)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
         let icon = self.icon.as_ref().to_string();
-        let color = self.color_override.unwrap_or_else(|| self.color_role.color(&p));
+        let color = self
+            .color_override
+            .unwrap_or_else(|| self.color_role.color(&p));
         self.painter.icon(cx, r, &icon, self.size, color);
         DrawStep::done()
     }
@@ -1062,9 +1307,18 @@ impl Widget for PSwitch {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(_) if self.enabled => cx.set_cursor(MouseCursor::Hand),
-            Hit::FingerUp(fe) if fe.is_over && self.enabled && fe.is_primary_hit() && (!fe.device.is_touch() || fe.was_tap()) => {
+            Hit::FingerUp(fe)
+                if fe.is_over
+                    && self.enabled
+                    && fe.is_primary_hit()
+                    && (!fe.device.is_touch() || fe.was_tap()) =>
+            {
                 self.value = !self.value;
-                cx.widget_action(self.widget_uid(), &scope.path, ToggleAction::Changed(self.value));
+                cx.widget_action(
+                    self.widget_uid(),
+                    &scope.path,
+                    ToggleAction::Changed(self.value),
+                );
                 self.redraw(cx);
             }
             _ => {}
@@ -1074,15 +1328,39 @@ impl Widget for PSwitch {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let p = theme::current_palette();
         // hitSlop: 4px horizontal / 6px vertical around the 34x20 track.
-        let walk = Walk { width: Size::Fixed(42.0), height: Size::Fixed(32.0), ..walk };
+        let walk = Walk {
+            width: Size::Fixed(42.0),
+            height: Size::Fixed(32.0),
+            ..walk
+        };
         let r = cx.walk_turtle(walk);
         let opacity = if self.enabled { 1.0 } else { 0.5 };
         let track = rect(r.pos.x + 4.0, r.pos.y + 6.0, 34.0, 20.0);
-        self.area = self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
-        self.painter.fill(cx, track, fade(if self.value { p.accent } else { p.surface3 }, opacity), 10.0);
-        let thumb_x = if self.value { track.pos.x + 16.0 } else { track.pos.x + 2.0 };
-        let thumb = if self.value { p.on_tertiary } else { vec4(1.0, 1.0, 1.0, 1.0) };
-        self.painter.dot(cx, dvec2(thumb_x + 8.0, track.pos.y + 10.0), 16.0, fade(thumb, opacity));
+        self.area = self
+            .painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.painter.fill(
+            cx,
+            track,
+            fade(if self.value { p.accent } else { p.surface3 }, opacity),
+            10.0,
+        );
+        let thumb_x = if self.value {
+            track.pos.x + 16.0
+        } else {
+            track.pos.x + 2.0
+        };
+        let thumb = if self.value {
+            p.on_tertiary
+        } else {
+            vec4(1.0, 1.0, 1.0, 1.0)
+        };
+        self.painter.dot(
+            cx,
+            dvec2(thumb_x + 8.0, track.pos.y + 10.0),
+            16.0,
+            fade(thumb, opacity),
+        );
         DrawStep::done()
     }
 }
@@ -1135,9 +1413,18 @@ impl Widget for PCheckbox {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(_) if self.enabled => cx.set_cursor(MouseCursor::Hand),
-            Hit::FingerUp(fe) if fe.is_over && self.enabled && fe.is_primary_hit() && (!fe.device.is_touch() || fe.was_tap()) => {
+            Hit::FingerUp(fe)
+                if fe.is_over
+                    && self.enabled
+                    && fe.is_primary_hit()
+                    && (!fe.device.is_touch() || fe.was_tap()) =>
+            {
                 self.value = !self.value;
-                cx.widget_action(self.widget_uid(), &scope.path, ToggleAction::Changed(self.value));
+                cx.widget_action(
+                    self.widget_uid(),
+                    &scope.path,
+                    ToggleAction::Changed(self.value),
+                );
                 self.redraw(cx);
             }
             _ => {}
@@ -1149,24 +1436,55 @@ impl Widget for PCheckbox {
         let t = theme::current_typography();
         let spec = TextSpec::new(Font::Regular, t.ui_size(14.0), p.foreground);
         let label = self.text.as_ref().to_string();
-        let label_w = if label.is_empty() { 0.0 } else { self.painter.measure(cx, spec, &label).x + 8.0 };
+        let label_w = if label.is_empty() {
+            0.0
+        } else {
+            self.painter.measure(cx, spec, &label).x + 8.0
+        };
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(16.0 + label_w) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(28.0) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(16.0 + label_w)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(28.0)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
         let opacity = if self.enabled { 1.0 } else { 0.5 };
-        self.area = self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.area = self
+            .painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
         let boxr = rect(r.pos.x, r.pos.y + (r.size.y - 16.0) * 0.5, 16.0, 16.0);
         if self.value {
             self.painter.fill(cx, boxr, fade(p.accent, opacity), 4.0);
-            self.painter.icon(cx, boxr, "check", 12.0, fade(p.on_tertiary, opacity));
+            self.painter
+                .icon(cx, boxr, "check", 12.0, fade(p.on_tertiary, opacity));
         } else {
-            self.painter.outline(cx, boxr, Vec4::default(), fade(p.border_accent, opacity), 1.0, 4.0);
+            self.painter.outline(
+                cx,
+                boxr,
+                Vec4::default(),
+                fade(p.border_accent, opacity),
+                1.0,
+                4.0,
+            );
         }
         if !label.is_empty() {
-            self.painter.text_in(cx, rect(boxr.pos.x + 24.0, r.pos.y, r.size.x - 24.0, r.size.y), TextSpec { color: fade(p.foreground, opacity), ..spec }, &label, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(boxr.pos.x + 24.0, r.pos.y, r.size.x - 24.0, r.size.y),
+                TextSpec {
+                    color: fade(p.foreground, opacity),
+                    ..spec
+                },
+                &label,
+                0.0,
+            );
         }
         DrawStep::done()
     }
@@ -1244,7 +1562,11 @@ impl Widget for PSegmented {
                     self.hovered = hovered;
                     self.redraw(cx);
                 }
-                cx.set_cursor(if hovered.is_some() { MouseCursor::Hand } else { MouseCursor::Default });
+                cx.set_cursor(if hovered.is_some() {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
             }
             Hit::FingerHoverOut(_) => {
                 self.hovered = None;
@@ -1255,7 +1577,11 @@ impl Widget for PSegmented {
                     let segment = &self.segments[index];
                     if segment.enabled && segment.value != self.selected {
                         self.selected = segment.value.clone();
-                        cx.widget_action(self.widget_uid(), &scope.path, SegmentAction::Changed(self.selected.clone()));
+                        cx.widget_action(
+                            self.widget_uid(),
+                            &scope.path,
+                            SegmentAction::Changed(self.selected.clone()),
+                        );
                         self.redraw(cx);
                     }
                 }
@@ -1273,29 +1599,46 @@ impl Widget for PSegmented {
             _ => (38.0, 12.0, 16.0, 14.0, 16.0),
         };
         let outer = control_height(self.size);
-        let height = height + outer - match self.size {
-            ControlSize::Xs => 28.0,
-            ControlSize::Sm => 32.0,
-            _ => 44.0,
-        };
+        let height = height + outer
+            - match self.size {
+                ControlSize::Xs => 28.0,
+                ControlSize::Sm => 32.0,
+                _ => 44.0,
+            };
         let spec = TextSpec::new(Font::Regular, t.ui_size(font), p.muted);
         let widths: Vec<f64> = self
             .segments
             .iter()
             .map(|s| {
-                let label = if self.hide_labels { 0.0 } else { self.painter.measure(cx, spec, &s.label).x };
-                let icon_w = if s.icon.is_some() { icon + if label > 0.0 { 4.0 } else { 0.0 } } else { 0.0 };
+                let label = if self.hide_labels {
+                    0.0
+                } else {
+                    self.painter.measure(cx, spec, &s.label).x
+                };
+                let icon_w = if s.icon.is_some() {
+                    icon + if label > 0.0 { 4.0 } else { 0.0 }
+                } else {
+                    0.0
+                };
                 label + icon_w + pad * 2.0
             })
             .collect();
         let natural: f64 = widths.iter().sum::<f64>() + 4.0 * widths.len().saturating_sub(1) as f64;
         let walk = Walk {
-            width: if self.expand { Size::Fill } else if matches!(walk.width, Size::Fit) { Size::Fixed(natural) } else { walk.width },
+            width: if self.expand {
+                Size::Fill
+            } else if matches!(walk.width, Size::Fit) {
+                Size::Fixed(natural)
+            } else {
+                walk.width
+            },
             height: Size::Fixed(outer),
             ..walk
         };
         let r = cx.walk_turtle(walk);
-        self.area = self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.area = self
+            .painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
         self.hits.clear();
         let count = self.segments.len().max(1) as f64;
         let even = (r.size.x - 4.0 * (count - 1.0)) / count;
@@ -1314,16 +1657,36 @@ impl Widget for PSegmented {
             let opacity = if segment.enabled { 1.0 } else { 0.5 };
             self.painter.fill(cx, seg, bg, radius);
             let fg = fade(if selected { p.foreground } else { p.muted }, opacity);
-            let label_w = if self.hide_labels { 0.0 } else { self.painter.measure(cx, spec, &segment.label).x };
-            let icon_w = if segment.icon.is_some() { icon + if label_w > 0.0 { 4.0 } else { 0.0 } } else { 0.0 };
+            let label_w = if self.hide_labels {
+                0.0
+            } else {
+                self.painter.measure(cx, spec, &segment.label).x
+            };
+            let icon_w = if segment.icon.is_some() {
+                icon + if label_w > 0.0 { 4.0 } else { 0.0 }
+            } else {
+                0.0
+            };
             let mut cx_pos = seg.pos.x + ((w - label_w - icon_w) * 0.5).max(pad);
             if let Some(name) = &segment.icon {
-                self.painter.icon(cx, rect(cx_pos, seg.pos.y + (height - icon) * 0.5, icon, icon), name, icon, fg);
+                self.painter.icon(
+                    cx,
+                    rect(cx_pos, seg.pos.y + (height - icon) * 0.5, icon, icon),
+                    name,
+                    icon,
+                    fg,
+                );
                 cx_pos += icon_w;
             }
             if !self.hide_labels {
                 let avail = (seg.pos.x + w - pad - cx_pos).max(0.0);
-                self.painter.text_in(cx, rect(cx_pos, seg.pos.y, avail, height), TextSpec { color: fg, ..spec }, &segment.label, 0.0);
+                self.painter.text_in(
+                    cx,
+                    rect(cx_pos, seg.pos.y, avail, height),
+                    TextSpec { color: fg, ..spec },
+                    &segment.label,
+                    0.0,
+                );
             }
             self.hits.push(seg, index);
             x += w + 4.0;
@@ -1352,7 +1715,9 @@ impl PSegmentedRef {
     }
 
     pub fn selected(&self) -> String {
-        self.borrow().map(|s| s.selected.clone()).unwrap_or_default()
+        self.borrow()
+            .map(|s| s.selected.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -1375,7 +1740,14 @@ pub struct Divider {
 impl Widget for Divider {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let p = theme::current_palette();
-        let walk = if self.vertical { Walk { width: Size::Fixed(1.0), ..walk } } else { walk };
+        let walk = if self.vertical {
+            Walk {
+                width: Size::Fixed(1.0),
+                ..walk
+            }
+        } else {
+            walk
+        };
         let r = cx.walk_turtle(walk);
         let color = self.border_role.color(&p).unwrap_or(p.border);
         self.painter.fill(cx, r, color, 0.0);
@@ -1435,13 +1807,25 @@ pub fn agent_status_bucket(agent: &Value) -> StatusBucket {
 /// [`agent_status_bucket`] counting an open turn as running before the row's status catches up.
 pub fn agent_live_status_bucket(agent: &Value) -> StatusBucket {
     use crate::common::json as j;
-    let open = agent.get("activeTurn").is_some_and(|v| !v.is_null()) || j::text(j::object(agent, "turn"), "phase") == "open";
-    agent_bucket(agent, if open { Some("running") } else { agent.get("status").and_then(Value::as_str) })
+    let open = agent.get("activeTurn").is_some_and(|v| !v.is_null())
+        || j::text(j::object(agent, "turn"), "phase") == "open";
+    agent_bucket(
+        agent,
+        if open {
+            Some("running")
+        } else {
+            agent.get("status").and_then(Value::as_str)
+        },
+    )
 }
 
 fn agent_bucket(agent: &Value, status: Option<&str>) -> StatusBucket {
-    let pending = agent.get("pendingPermissions").and_then(Value::as_array).map_or(0, Vec::len);
-    let pending = pending.max(crate::common::json::int(agent, "pendingPermissionCount", 0).max(0) as usize);
+    let pending = agent
+        .get("pendingPermissions")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let pending =
+        pending.max(crate::common::json::int(agent, "pendingPermissionCount", 0).max(0) as usize);
     derive_status_bucket(
         status,
         pending,
@@ -1451,7 +1835,11 @@ fn agent_bucket(agent: &Value, status: Option<&str>) -> StatusBucket {
 }
 
 /// `statusDotColor` (the louder statusDot band).
-pub fn status_dot_color(p: &Palette, bucket: StatusBucket, show_done_as_inactive: bool) -> Option<Vec4> {
+pub fn status_dot_color(
+    p: &Palette,
+    bucket: StatusBucket,
+    show_done_as_inactive: bool,
+) -> Option<Vec4> {
     let dark = p.is_dark;
     match bucket {
         StatusBucket::NeedsInput => Some(theme::argb(if dark { 0xffdb932e } else { 0xffb37824 })),
@@ -1467,20 +1855,41 @@ pub const STATUS_DOT_SIZE: f64 = STATUS_FILLED_DOT_SIZE + 2.0;
 pub const STATUS_ALERT_SIZE: f64 = 12.0;
 pub const STATUS_RING_GAP: f64 = 1.5;
 pub const STATUS_RING_STROKE: f64 = 1.5;
-pub const STATUS_RING_SIZE: f64 = STATUS_FILLED_DOT_SIZE + (STATUS_RING_GAP + STATUS_RING_STROKE) * 2.0;
+pub const STATUS_RING_SIZE: f64 =
+    STATUS_FILLED_DOT_SIZE + (STATUS_RING_GAP + STATUS_RING_STROKE) * 2.0;
 pub const STATUS_RING_FRAME_SIZE: f64 = STATUS_RING_SIZE + 2.0;
 const RING_PERIOD_MS: u128 = 900;
 
 /// `StatusRing`: a 6px dot inside a 1.5px ring whose quarter turns every 900ms.
-pub fn paint_status_ring(painter: &mut Painter, cx: &mut Cx2d, center: DVec2, p: &Palette, backdrop: Option<Vec4>) {
+pub fn paint_status_ring(
+    painter: &mut Painter,
+    cx: &mut Cx2d,
+    center: DVec2,
+    p: &Palette,
+    backdrop: Option<Vec4>,
+) {
     if let Some(backdrop) = backdrop {
         painter.dot(cx, center, STATUS_RING_FRAME_SIZE, backdrop);
     }
     let size = STATUS_RING_SIZE;
     let r = rect(center.x - size * 0.5, center.y - size * 0.5, size, size);
-    painter.ring(cx, r, theme::with_alpha(p.running, 0.3), STATUS_RING_STROKE, 1.0, 0.0);
+    painter.ring(
+        cx,
+        r,
+        theme::with_alpha(p.running, 0.3),
+        STATUS_RING_STROKE,
+        1.0,
+        0.0,
+    );
     // Flutter arcs start at -π/2 (12 o'clock); the shader's angle 0 is 3 o'clock.
-    painter.ring(cx, r, theme::with_alpha(p.running, 0.9), STATUS_RING_STROKE, 0.25, clock::phase(RING_PERIOD_MS) - 0.25);
+    painter.ring(
+        cx,
+        r,
+        theme::with_alpha(p.running, 0.9),
+        STATUS_RING_STROKE,
+        0.25,
+        clock::phase(RING_PERIOD_MS) - 0.25,
+    );
     painter.dot(cx, center, STATUS_FILLED_DOT_SIZE, p.running);
 }
 
@@ -1499,24 +1908,38 @@ pub fn paint_status_badge(
     match bucket {
         Some(StatusBucket::Running) => {
             let offset = -2.0 - (STATUS_RING_FRAME_SIZE - STATUS_DOT_SIZE) * 0.5;
-            let center = dvec2(right - offset - STATUS_RING_FRAME_SIZE * 0.5, bottom - offset - STATUS_RING_FRAME_SIZE * 0.5);
+            let center = dvec2(
+                right - offset - STATUS_RING_FRAME_SIZE * 0.5,
+                bottom - offset - STATUS_RING_FRAME_SIZE * 0.5,
+            );
             paint_status_ring(painter, cx, center, p, Some(backdrop));
             true
         }
         Some(bucket @ (StatusBucket::Failed | StatusBucket::Attention)) => {
             let color = status_dot_color(p, bucket, false).unwrap_or(p.running);
-            let center = dvec2(right + 2.0 - STATUS_DOT_SIZE * 0.5, bottom + 2.0 - STATUS_DOT_SIZE * 0.5);
+            let center = dvec2(
+                right + 2.0 - STATUS_DOT_SIZE * 0.5,
+                bottom + 2.0 - STATUS_DOT_SIZE * 0.5,
+            );
             painter.dot(cx, center, STATUS_DOT_SIZE, backdrop);
             painter.dot(cx, center, STATUS_DOT_SIZE - 2.0, color);
             false
         }
         Some(StatusBucket::NeedsInput) => {
             let fill = status_dot_color(p, StatusBucket::NeedsInput, false).unwrap_or(p.warning);
-            let center = dvec2(right + 3.0 - STATUS_ALERT_SIZE * 0.5, bottom + 3.0 - STATUS_ALERT_SIZE * 0.5);
+            let center = dvec2(
+                right + 3.0 - STATUS_ALERT_SIZE * 0.5,
+                bottom + 3.0 - STATUS_ALERT_SIZE * 0.5,
+            );
             painter.dot(cx, center, STATUS_ALERT_SIZE - 2.0, fill);
             painter.icon(
                 cx,
-                rect(center.x - STATUS_ALERT_SIZE * 0.5, center.y - STATUS_ALERT_SIZE * 0.5, STATUS_ALERT_SIZE, STATUS_ALERT_SIZE),
+                rect(
+                    center.x - STATUS_ALERT_SIZE * 0.5,
+                    center.y - STATUS_ALERT_SIZE * 0.5,
+                    STATUS_ALERT_SIZE,
+                    STATUS_ALERT_SIZE,
+                ),
                 "circle-alert",
                 STATUS_ALERT_SIZE,
                 p.surface0,
@@ -1547,7 +1970,9 @@ impl Widget for StatusMark {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let p = theme::current_palette();
         let r = cx.walk_turtle(walk);
-        self.area = self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.area = self
+            .painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
         let center = dvec2(r.pos.x + r.size.x * 0.5, r.pos.y + r.size.y * 0.5);
         match self.bucket {
             Some(StatusBucket::Running) => {
@@ -1597,12 +2022,15 @@ impl Widget for Spinner {
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let p = theme::current_palette();
         let r = cx.walk_turtle(walk);
-        self.area = self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.area = self
+            .painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
         let color = match self.color_role {
             TextRole::Body => p.muted,
             role => role.color(&p),
         };
-        self.painter.ring(cx, r, color, self.stroke, 0.3, clock::phase(900));
+        self.painter
+            .ring(cx, r, color, self.stroke, 0.3, clock::phase(900));
         clock::register(cx, self.area);
         DrawStep::done()
     }
@@ -1662,7 +2090,10 @@ impl Widget for PTextField {
             input.release_focus(cx);
             self.focused = false;
             if let Some(ui) = scope.data.get_mut::<UiContext>() {
-                ui.push(UiEffect::SetFocusScope { owner: self.widget_uid(), scope: None });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.widget_uid(),
+                    scope: None,
+                });
             }
         }
         self.view.handle_event(cx, event, scope);
@@ -1687,9 +2118,16 @@ impl Widget for PTextField {
                 if let Some(focus) = focus {
                     self.focused = focus;
                     cx.widget_action(uid, &scope.path, PTextFieldAction::Focus(focus));
-                    let scope_name = if self.focus_scope.as_ref().is_empty() { "editable".to_string() } else { self.focus_scope.as_ref().to_string() };
+                    let scope_name = if self.focus_scope.as_ref().is_empty() {
+                        "editable".to_string()
+                    } else {
+                        self.focus_scope.as_ref().to_string()
+                    };
                     if let Some(ui) = scope.data.get_mut::<UiContext>() {
-                        ui.push(UiEffect::SetFocusScope { owner: uid, scope: focus.then_some(scope_name) });
+                        ui.push(UiEffect::SetFocusScope {
+                            owner: uid,
+                            scope: focus.then_some(scope_name),
+                        });
                     }
                     self.apply_theme(cx, true);
                 }
@@ -1698,7 +2136,9 @@ impl Widget for PTextField {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
+        self.view
+            .text_input(id!(input))
+            .set_is_multiline(cx, self.multiline);
         self.apply_theme(cx, false);
         self.view.draw_walk(cx, scope, walk)
     }
@@ -1739,19 +2179,36 @@ impl PTextField {
         } else if self.bare {
             (8.0, 8.0)
         } else {
-            (((if compact { 44.0 } else { 32.0 }) - 20.0 - 2.0) / 2.0, if compact { 16.0 } else { 12.0 })
+            (
+                ((if compact { 44.0 } else { 32.0 }) - 20.0 - 2.0) / 2.0,
+                if compact { 16.0 } else { 12.0 },
+            )
         };
         let clear = vec4(0.0, 0.0, 0.0, 0.0);
         let (fill, border, hover, active, hint) = if self.plain {
             (clear, clear, clear, clear, p.muted)
         } else if self.bare {
-            let hint = if p.is_dark { theme::argb(0xb3ffffff) } else { p.muted };
+            let hint = if p.is_dark {
+                theme::argb(0xb3ffffff)
+            } else {
+                p.muted
+            };
             let border = if self.focused { p.muted } else { p.border };
             (p.sidebar, border, border, p.muted, hint)
         } else {
             // The focus ring is `muted` (≥3:1 on surface2); `border_accent` stays the hover hint.
             let border = if self.focused { p.muted } else { clear };
-            (p.surface2, border, if self.focused { p.muted } else { p.border_accent }, p.muted, p.muted)
+            (
+                p.surface2,
+                border,
+                if self.focused {
+                    p.muted
+                } else {
+                    p.border_accent
+                },
+                p.muted,
+                p.muted,
+            )
         };
         let font_size = t.ui_pt(14.0) as f64;
         input.apply_over(
@@ -1779,7 +2236,10 @@ impl PTextField {
                 draw_cursor: { color: (p.foreground) }
             },
         );
-        input.apply_over(cx, &theme::text_selection(theme::with_alpha(p.accent, 0.35)));
+        input.apply_over(
+            cx,
+            &theme::text_selection(theme::with_alpha(p.accent, 0.35)),
+        );
         input.redraw(cx);
     }
 }
@@ -1806,7 +2266,12 @@ impl PTextFieldRef {
     }
 
     pub fn escaped(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|f| matches!(actions.find_widget_action(f.widget_uid()).cast_ref(), PTextFieldAction::Escaped))
+        self.borrow().is_some_and(|f| {
+            matches!(
+                actions.find_widget_action(f.widget_uid()).cast_ref(),
+                PTextFieldAction::Escaped
+            )
+        })
     }
 
     pub fn focus_changed(&self, actions: &Actions) -> Option<bool> {
@@ -1878,9 +2343,12 @@ impl PTextFieldRef {
     pub fn set_multiline(&self, cx: &mut Cx, multiline: bool) {
         if let Some(mut f) = self.borrow_mut() {
             f.multiline = multiline;
-            f.view.text_input(id!(input)).set_is_multiline(cx, multiline);
+            f.view
+                .text_input(id!(input))
+                .set_is_multiline(cx, multiline);
             if multiline {
-                f.view.apply_over(cx, live! { height: Fill, input = { height: Fill } });
+                f.view
+                    .apply_over(cx, live! { height: Fill, input = { height: Fill } });
             }
         }
     }

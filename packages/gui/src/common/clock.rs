@@ -31,7 +31,11 @@ pub fn register(cx: &mut Cx, area: Area) {
             clock.areas.push(area);
         }
         if !clock.running && !clock.hidden {
-            let interval = if clock.focused { FOCUSED_INTERVAL } else { UNFOCUSED_INTERVAL };
+            let interval = if clock.focused {
+                FOCUSED_INTERVAL
+            } else {
+                UNFOCUSED_INTERVAL
+            };
             clock.timer = cx.start_timeout(interval);
             clock.running = true;
         }

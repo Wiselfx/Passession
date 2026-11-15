@@ -181,9 +181,10 @@ impl Cadence {
     pub fn inherit_timezone(&mut self, current: &Self) {
         if let (Self::Cron { timezone: next, .. }, Self::Cron { timezone: old, .. }) =
             (self, current)
-            && next.is_none() {
-                *next = old.clone();
-            }
+            && next.is_none()
+        {
+            *next = old.clone();
+        }
     }
     pub fn run_on_create(&self) -> bool {
         matches!(self, Self::Every { .. })

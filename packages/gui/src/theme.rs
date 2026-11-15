@@ -210,7 +210,8 @@ impl Typography {
 
     /// `uiSize`: an authored size at the 14px base, scaled by `uiBaseFontSize`.
     pub fn ui_size(&self, authored_px: f64) -> f64 {
-        self.system_text_scale.logical_size((authored_px * self.authored_ui_base_font_size / 14.0).round())
+        self.system_text_scale
+            .logical_size((authored_px * self.authored_ui_base_font_size / 14.0).round())
     }
 
     /// Logical pixels to a Makepad `font_size` (points at 96 dpi).
@@ -273,7 +274,10 @@ pub fn with_alpha(color: Vec4, alpha: f32) -> Vec4 {
 
 /// Multiplies the existing alpha (Flutter `Opacity`).
 pub fn fade(color: Vec4, opacity: f32) -> Vec4 {
-    Vec4 { w: color.w * opacity, ..color }
+    Vec4 {
+        w: color.w * opacity,
+        ..color
+    }
 }
 
 /// The selection style of a Makepad `TextInput`, for `apply_over`. Its shader reads a
@@ -311,8 +315,18 @@ struct Status {
     success: u32,
 }
 
-const DARK_STATUS: Status = Status { removed: 0xfff87171, danger: 0xffd8847b, warning: 0xffc09664, success: 0xff6cb17b };
-const LIGHT_STATUS: Status = Status { removed: 0xffb91c1c, danger: 0xff9d433b, warning: 0xff7b5d39, success: 0xff3e704a };
+const DARK_STATUS: Status = Status {
+    removed: 0xfff87171,
+    danger: 0xffd8847b,
+    warning: 0xffc09664,
+    success: 0xff6cb17b,
+};
+const LIGHT_STATUS: Status = Status {
+    removed: 0xffb91c1c,
+    danger: 0xff9d433b,
+    warning: 0xff7b5d39,
+    success: 0xff3e704a,
+};
 
 fn dark_raw(name: &str) -> (Raw, u32) {
     match name {
@@ -368,7 +382,12 @@ fn dark_raw(name: &str) -> (Raw, u32) {
                 accent: 0xff89b4fa,
                 accent_bright: 0xffb4d0fc,
                 destructive: 0xffc44a55,
-                status: Status { removed: 0xfffa9090, danger: 0xffe2968e, warning: 0xffcca474, success: 0xff7cc08a },
+                status: Status {
+                    removed: 0xfffa9090,
+                    danger: 0xffe2968e,
+                    warning: 0xffcca474,
+                    success: 0xff7cc08a,
+                },
             },
             0xff3f4454,
         ),
@@ -435,7 +454,10 @@ pub fn theme_mode(preferences: &Value) -> Option<bool> {
         .and_then(Value::as_str)?;
     if value == "dark"
         || value.starts_with("dark-")
-        || matches!(value, "zinc" | "midnight" | "claude" | "ghostty" | "pureBlack")
+        || matches!(
+            value,
+            "zinc" | "midnight" | "claude" | "ghostty" | "pureBlack"
+        )
     {
         return Some(true);
     }
@@ -448,7 +470,11 @@ pub fn theme_mode(preferences: &Value) -> Option<bool> {
 /// WCAG 2.x relative luminance of an opaque colour.
 pub fn luminance(color: Vec4) -> f32 {
     fn channel(c: f32) -> f32 {
-        if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     }
     0.2126 * channel(color.x) + 0.7152 * channel(color.y) + 0.0722 * channel(color.z)
 }
@@ -461,9 +487,22 @@ pub fn contrast(a: Vec4, b: Vec4) -> f32 {
 
 /// `paseoTheme(brightness:, preferences:)` colours.
 pub fn palette_for(preferences: &Value, dark: bool) -> Palette {
-    let name = palette_name(preferences.get("theme").and_then(Value::as_str).unwrap_or(""));
-    let (raw, border_accent) = if dark { dark_raw(name) } else { (LIGHT, 0xffececf1) };
-    let foreground = if dark { argb(0xfffafafa) } else { argb(0xff1a1a1e) };
+    let name = palette_name(
+        preferences
+            .get("theme")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
+    let (raw, border_accent) = if dark {
+        dark_raw(name)
+    } else {
+        (LIGHT, 0xffececf1)
+    };
+    let foreground = if dark {
+        argb(0xfffafafa)
+    } else {
+        argb(0xff1a1a1e)
+    };
     let accent = argb(raw.accent);
     let surface0 = argb(raw.surfaces[0]);
     let surface1 = argb(raw.surfaces[1]);
@@ -478,30 +517,58 @@ pub fn palette_for(preferences: &Value, dark: bool) -> Palette {
         surface3,
         surface4,
         sidebar: argb(raw.sidebar),
-        sidebar_hover: if dark { argb(0x0fffffff) } else { argb(0x0a000000) },
+        sidebar_hover: if dark {
+            argb(0x0fffffff)
+        } else {
+            argb(0x0a000000)
+        },
         selected: if dark { surface2 } else { surface4 },
         muted: argb(raw.muted),
         extra_muted: argb(raw.extra_muted),
         accent,
         accent_bright: argb(raw.accent_bright),
-        added: if dark { argb(0xff4ade80) } else { argb(0xff15803d) },
+        added: if dark {
+            argb(0xff4ade80)
+        } else {
+            argb(0xff15803d)
+        },
         removed: argb(raw.status.removed),
         success: argb(raw.status.success),
         danger: argb(raw.status.danger),
         warning: argb(raw.status.warning),
-        running: if dark { argb(0xff5caaf6) } else { argb(0xff268ae0) },
+        running: if dark {
+            argb(0xff5caaf6)
+        } else {
+            argb(0xff268ae0)
+        },
         border: argb(raw.border),
         border_accent: argb(border_accent),
         foreground,
         primary: if dark { foreground } else { argb(0xff18181b) },
         on_primary: if dark { surface0 } else { argb(0xfffafafa) },
         // Text on accent fills: white, unless the accent is light (zinc, ghostty, claude).
-        on_tertiary: if contrast(argb(0xffffffff), accent) >= contrast(surface0, accent) { argb(0xffffffff) } else { surface0 },
+        on_tertiary: if contrast(argb(0xffffffff), accent) >= contrast(surface0, accent) {
+            argb(0xffffffff)
+        } else {
+            surface0
+        },
         destructive: argb(raw.destructive),
-        interaction_highlight: if dark { argb(0x14ffffff) } else { argb(0x0f000000) },
-        field_error: if dark { argb(0xfffca5a5) } else { argb(0xffb91c1c) },
+        interaction_highlight: if dark {
+            argb(0x14ffffff)
+        } else {
+            argb(0x0f000000)
+        },
+        field_error: if dark {
+            argb(0xfffca5a5)
+        } else {
+            argb(0xffb91c1c)
+        },
         scrim: argb(0x73000000),
-        merged: if dark { argb(0xffa78bfa) } else { argb(0xff7c3aed) },
+        merged: if dark {
+            argb(0xffa78bfa)
+        } else {
+            argb(0xff7c3aed)
+        },
         background: if dark { surface1 } else { surface0 },
         dialog: if dark { surface2 } else { surface0 },
     }
@@ -516,7 +583,11 @@ fn clamp_pref(preferences: &Value, key: &str, fallback: f64, min: f64, max: f64)
 
 /// `paseoTheme` typography (mobile defaults 15/16).
 pub fn typography_for(preferences: &Value, mobile: bool) -> Typography {
-    typography_with_text_scale(preferences, mobile, paseo_gui_platform::appearance::TextScale::default())
+    typography_with_text_scale(
+        preferences,
+        mobile,
+        paseo_gui_platform::appearance::TextScale::default(),
+    )
 }
 
 fn typography_with_text_scale(
@@ -524,11 +595,29 @@ fn typography_with_text_scale(
     mobile: bool,
     system_text_scale: paseo_gui_platform::appearance::TextScale,
 ) -> Typography {
-    let ui_base = clamp_pref(preferences, "uiBaseFontSize", if mobile { 15.0 } else { 14.0 }, 10.0, 21.0);
+    let ui_base = clamp_pref(
+        preferences,
+        "uiBaseFontSize",
+        if mobile { 15.0 } else { 14.0 },
+        10.0,
+        21.0,
+    );
     Typography {
         ui_base_font_size: system_text_scale.logical_size(ui_base),
-        content_font_size: system_text_scale.logical_size(clamp_pref(preferences, "contentFontSize", if mobile { 16.0 } else { 15.0 }, 10.0, 21.0)),
-        code_font_size: system_text_scale.logical_size(clamp_pref(preferences, "codeFontSize", 12.0, 9.0, 22.0)),
+        content_font_size: system_text_scale.logical_size(clamp_pref(
+            preferences,
+            "contentFontSize",
+            if mobile { 16.0 } else { 15.0 },
+            10.0,
+            21.0,
+        )),
+        code_font_size: system_text_scale.logical_size(clamp_pref(
+            preferences,
+            "codeFontSize",
+            12.0,
+            9.0,
+            22.0,
+        )),
         content_max_width: clamp_pref(preferences, "contentMaxWidth", 820.0, 600.0, 4000.0),
         mobile,
         authored_ui_base_font_size: ui_base,
@@ -555,7 +644,11 @@ thread_local! {
 
 /// Shell entry point: recomputes the palette and typography; returns whether anything changed.
 pub fn update(preferences: &Value, system_dark: bool) -> bool {
-    update_with_text_scale(preferences, system_dark, paseo_gui_platform::appearance::system_text_scale())
+    update_with_text_scale(
+        preferences,
+        system_dark,
+        paseo_gui_platform::appearance::system_text_scale(),
+    )
 }
 
 fn update_with_text_scale(
@@ -609,10 +702,7 @@ pub fn bump_epoch() {
 }
 
 /// Runs `apply` (typically `widget.apply_over(cx, live!{…})`) once per theme change.
-pub fn apply_if_changed(
-    seen_epoch: &mut u64,
-    apply: impl FnOnce(&Palette, &Typography),
-) {
+pub fn apply_if_changed(seen_epoch: &mut u64, apply: impl FnOnce(&Palette, &Typography)) {
     let now = epoch();
     if *seen_epoch != now {
         *seen_epoch = now;
@@ -635,14 +725,24 @@ mod tests {
         let preferences = json!({"uiBaseFontSize": 18, "contentFontSize": 20, "codeFontSize": 10, "contentMaxWidth": 900});
         let normal = typography_with_text_scale(&preferences, true, TextScale::default());
         let enlarged = typography_with_text_scale(&preferences, true, enlarged_text());
-        assert_eq!(enlarged.ui_size(14.0), enlarged_text().logical_size(normal.ui_size(14.0)));
-        assert_eq!(enlarged.ui_size(12.0), enlarged_text().logical_size(normal.ui_size(12.0)));
+        assert_eq!(
+            enlarged.ui_size(14.0),
+            enlarged_text().logical_size(normal.ui_size(14.0))
+        );
+        assert_eq!(
+            enlarged.ui_size(12.0),
+            enlarged_text().logical_size(normal.ui_size(12.0))
+        );
         assert_eq!(enlarged.content_font_size, 36.0);
         assert_eq!(enlarged.code_font_size, 20.0);
         assert_eq!(enlarged.content_max_width, normal.content_max_width);
         assert_eq!(Typography::pt(enlarged.content_font_size), 27.0);
-        let clamped = typography_with_text_scale(&json!({"contentFontSize": 200}), true, enlarged_text());
-        assert_eq!(clamped.content_font_size, enlarged_text().logical_size(21.0));
+        let clamped =
+            typography_with_text_scale(&json!({"contentFontSize": 200}), true, enlarged_text());
+        assert_eq!(
+            clamped.content_font_size,
+            enlarged_text().logical_size(21.0)
+        );
     }
 
     #[test]
@@ -655,9 +755,17 @@ mod tests {
         assert!(update_with_text_scale(&preferences, false, enlarged_text()));
         assert_eq!(epoch(), original_epoch + 1);
         assert!(control_height(ControlSize::Sm) > original_height);
-        assert!(!update_with_text_scale(&preferences, false, enlarged_text()));
+        assert!(!update_with_text_scale(
+            &preferences,
+            false,
+            enlarged_text()
+        ));
         assert_eq!(epoch(), original_epoch + 1);
-        assert!(update_with_text_scale(&preferences, false, TextScale::default()));
+        assert!(update_with_text_scale(
+            &preferences,
+            false,
+            TextScale::default()
+        ));
         assert_eq!(current_typography(), normal);
         assert_eq!(control_height(ControlSize::Sm), original_height);
     }
@@ -666,11 +774,25 @@ mod tests {
     /// for text, 3:1 for icons and focus borders.
     #[test]
     fn every_palette_meets_text_and_icon_contrast() {
-        let themes = ["dark", "dark-zinc", "dark-midnight", "dark-claude", "dark-ghostty", "dark-pure-black", "light"];
+        let themes = [
+            "dark",
+            "dark-zinc",
+            "dark-midnight",
+            "dark-claude",
+            "dark-ghostty",
+            "dark-pure-black",
+            "light",
+        ];
         let mut failures = Vec::new();
         for theme in themes {
             let p = palette_for(&json!({ "theme": theme }), theme != "light");
-            let backgrounds = [("surface0", p.surface0), ("surface1", p.surface1), ("surface2", p.surface2), ("sidebar", p.sidebar), ("dialog", p.dialog)];
+            let backgrounds = [
+                ("surface0", p.surface0),
+                ("surface1", p.surface1),
+                ("surface2", p.surface2),
+                ("sidebar", p.sidebar),
+                ("dialog", p.dialog),
+            ];
             let text = [
                 ("foreground", p.foreground),
                 ("muted", p.muted),
@@ -682,7 +804,11 @@ mod tests {
                 ("removed", p.removed),
                 ("added", p.added),
             ];
-            let icons = [("extra_muted", p.extra_muted), ("running", p.running), ("merged", p.merged)];
+            let icons = [
+                ("extra_muted", p.extra_muted),
+                ("running", p.running),
+                ("merged", p.merged),
+            ];
             for (bg_name, bg) in backgrounds {
                 for (name, color) in text {
                     let ratio = contrast(color, bg);
@@ -709,6 +835,10 @@ mod tests {
                 }
             }
         }
-        assert!(failures.is_empty(), "contrast below WCAG minimums:\n{}", failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "contrast below WCAG minimums:\n{}",
+            failures.join("\n")
+        );
     }
 }

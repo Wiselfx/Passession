@@ -100,6 +100,13 @@ impl Fonts {
         self.layouter.define_font_family(id, definition);
     }
 
+    pub fn set_fallback_requests(&mut self, requests: Arc<super::fallback::FallbackRequests>) {
+        let catalog = Arc::make_mut(&mut self.catalog);
+        catalog.revision += 1;
+        catalog.fallback_requests = Some(requests.clone());
+        self.layouter.set_fallback_requests(Some(requests));
+    }
+
     /// Replaces the font list of an existing (or new) family at runtime. The
     /// UI layouter drops the family and its layout cache; the catalog revision
     /// advances so asynchronous layouts requested against the old list are not

@@ -94,7 +94,10 @@ impl Output {
         key: &'static str,
         color: fn(&Value, &Value) -> Option<u8>,
     ) -> Self {
-        self.color = Some(ColumnColor { key, resolve: color });
+        self.color = Some(ColumnColor {
+            key,
+            resolve: color,
+        });
         self
     }
     pub fn render(&self, options: &OutputOptions) -> Result<String> {
@@ -102,9 +105,10 @@ impl Output {
             return Ok(String::new());
         }
         if options.quiet
-            && let Some(text) = &self.quiet {
-                return Ok(text.clone());
-            }
+            && let Some(text) = &self.quiet
+        {
+            return Ok(text.clone());
+        }
         if options.quiet {
             return Ok(match &self.data {
                 Value::Array(rows) => rows
@@ -146,10 +150,11 @@ impl Output {
                                 let text = cell(value);
                                 if color_enabled
                                     && let Some(color) = self.color
-                                        && color.key == *key
-                                            && let Some(code) = (color.resolve)(value, row) {
-                                                return format!("\u{1b}[{code}m{text}\u{1b}[39m");
-                                            }
+                                    && color.key == *key
+                                    && let Some(code) = (color.resolve)(value, row)
+                                {
+                                    return format!("\u{1b}[{code}m{text}\u{1b}[39m");
+                                }
                                 text
                             })
                             .collect()
@@ -257,7 +262,8 @@ pub fn error(error: &anyhow::Error, options: &OutputOptions) -> Result<()> {
     } else {
         "UNKNOWN_ERROR"
     };
-    let details = error.downcast_ref::<paseo_client::ClientError>()
+    let details = error
+        .downcast_ref::<paseo_client::ClientError>()
         .and_then(|error| error.details.as_ref());
     let mut value = json!({"error":{"code":code,"message":error.to_string()}});
     if let Some(details) = details {

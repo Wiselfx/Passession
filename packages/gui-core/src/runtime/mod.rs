@@ -5,9 +5,11 @@
 //! another component; take what you need, drop the borrow, then act.
 mod directory;
 mod hosts;
+mod http;
 mod requests;
 mod selector;
 mod store;
+mod tailnet;
 
 use std::{
     cell::{Cell, RefCell},
@@ -46,6 +48,7 @@ pub(crate) struct Core {
     pub initialized: Cell<bool>,
     pub closing: Cell<bool>,
     next_key: Cell<u64>,
+    tailnet: tailnet::Tailnet,
     state_scheduled: Cell<bool>,
     last_state: Cell<Option<Instant>>,
 }
@@ -54,6 +57,28 @@ pub(crate) struct Core {
 const STATE_INTERVAL: Duration = Duration::from_millis(16);
 
 impl Core {
+    fn new(config: CoreConfig, queue: Arc<EventQueue>) -> Rc<Self> {
+        Rc::new(Self {
+            store: RefCell::new(Store::new(&config.state_dir)),
+            tailnet: tailnet::Tailnet::new(config.tailnet_key_store.clone()),
+            config,
+            queue,
+            hosts: RefCell::new(Vec::new()),
+            requests: RefCell::new(HashMap::new()),
+            observations: RefCell::new(HashMap::new()),
+            client_id: RefCell::new(String::new()),
+            buffers: Arc::new(Semaphore::new(256 * 1024 * 1024)),
+            cancel: CancellationToken::new(),
+            protected_keys: RefCell::new(HashSet::new()),
+            routing: RefCell::new(HashSet::new()),
+            initialized: Cell::new(false),
+            closing: Cell::new(false),
+            next_key: Cell::new(0),
+            state_scheduled: Cell::new(false),
+            last_state: Cell::new(None),
+        })
+    }
+
     pub fn emit(&self, event: CoreEvent) {
         self.queue.push(event);
     }
@@ -88,11 +113,19 @@ impl Core {
 
     /// Flutter `AppStore.hostFor`: server id, active config id or any saved connection id.
     pub fn host_for(&self, id: &str) -> Option<Rc<Host>> {
-        self.hosts.borrow().iter().find(|host| host.matches(id)).cloned()
+        self.hosts
+            .borrow()
+            .iter()
+            .find(|host| host.matches(id))
+            .cloned()
     }
 
     pub fn host_by_key(&self, key: u64) -> Option<Rc<Host>> {
-        self.hosts.borrow().iter().find(|host| host.key == key).cloned()
+        self.hosts
+            .borrow()
+            .iter()
+            .find(|host| host.key == key)
+            .cloned()
     }
 
     pub fn contains(&self, host: &Rc<Host>) -> bool {
@@ -139,6 +172,7 @@ impl Core {
             "suppressedRoutes": store.suppressed,
             "prefs": store.prefs.values,
             "hosts": hosts,
+            "tailnet": self.tailnet.state(),
         })
     }
 }
@@ -148,24 +182,7 @@ pub(crate) async fn run(
     queue: Arc<EventQueue>,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) {
-    let core = Rc::new(Core {
-        store: RefCell::new(Store::new(&config.state_dir)),
-        config,
-        queue,
-        hosts: RefCell::new(Vec::new()),
-        requests: RefCell::new(HashMap::new()),
-        observations: RefCell::new(HashMap::new()),
-        client_id: RefCell::new(String::new()),
-        buffers: Arc::new(Semaphore::new(256 * 1024 * 1024)),
-        cancel: CancellationToken::new(),
-        protected_keys: RefCell::new(HashSet::new()),
-        routing: RefCell::new(HashSet::new()),
-        initialized: Cell::new(false),
-        closing: Cell::new(false),
-        next_key: Cell::new(0),
-        state_scheduled: Cell::new(false),
-        last_state: Cell::new(None),
-    });
+    let core = Core::new(config, queue);
     core.touch();
     hosts::initialize(&core).await;
     while let Some(command) = commands.recv().await {
@@ -175,10 +192,23 @@ pub(crate) async fn run(
         handle(&core, command).await;
     }
     hosts::shutdown(&core).await;
+    tailnet::shutdown(&core).await;
 }
 
 async fn handle(core: &Rc<Core>, command: Command) {
     match command {
+        Command::Tailnet {
+            request_id,
+            message,
+        } => tailnet::request(core, request_id, message),
+        Command::HostHttp {
+            host_id,
+            request_id,
+            url,
+            max_bytes,
+            reply,
+            cancel,
+        } => http::request(core, host_id, request_id, url, max_bytes, reply, cancel),
         Command::Request {
             host_id,
             request_id,
@@ -199,7 +229,11 @@ async fn handle(core: &Rc<Core>, command: Command) {
         } => requests::gui_operation(core, host_id, request_id, run),
         Command::Cancel { request_id } => requests::cancel(core, &request_id),
         Command::Notify { host_id, message } => requests::notify(core, host_id, message),
-        Command::TerminalInput { host_id, subscription_id, data } => requests::terminal_input(core, host_id, subscription_id, data),
+        Command::TerminalInput {
+            host_id,
+            subscription_id,
+            data,
+        } => requests::terminal_input(core, host_id, subscription_id, data),
         Command::ConnectHost { config } => hosts::connect_host(core, config).await,
         Command::DisconnectHost { host_id } => hosts::disconnect_host(core, &host_id).await,
         Command::RemoveHost { host_id } => hosts::remove_host(core, &host_id).await,
@@ -221,9 +255,7 @@ async fn handle(core: &Rc<Core>, command: Command) {
         }
         Command::SetAppVisible { visible } => hosts::set_app_visible(core, visible),
         Command::ProbeHost { request_id, config } => hosts::probe_host(core, request_id, config),
-        Command::SaveState { key, value, ack } => {
-            store::save_state(core, key, value, ack).await
-        }
+        Command::SaveState { key, value, ack } => store::save_state(core, key, value, ack).await,
         Command::Shutdown => {}
     }
 }

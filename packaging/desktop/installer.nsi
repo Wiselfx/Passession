@@ -49,7 +49,8 @@ Function PaseoCheckOwnedFile
     FileClose $1
     Return
   unrelated:
-    MessageBox MB_OK|MB_ICONSTOP "The selected folder contains a file not owned by Passession:$\r$\n$0$\r$\nChoose another installation folder. No package files have been written."
+    MessageBox MB_OK|MB_ICONSTOP "The selected folder contains a file not owned by Passession:$\r$\n$0$\r$\nChoose another installation folder. No package files have been written." /SD IDOK
+    SetErrorLevel 2
     Abort
 FunctionEnd
 
@@ -104,8 +105,11 @@ Section "Passession" SEC_MAIN
   SetShellVarContext current
   !insertmacro PaseoCheckOwnedFiles
   Call PaseoRemovePreviousFiles
+  ClearErrors
   SetOutPath "$INSTDIR"
+  IfErrors install_failed
   File /r "${SOURCE}\*"
+  IfErrors install_failed
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   File /oname=.paseo-sessions-owned-files "${INVENTORY_MANIFEST}"
   WriteRegStr HKCU "Software\Paseo Sessions" "InstallDir" "$INSTDIR"
@@ -121,11 +125,21 @@ Section "Passession" SEC_MAIN
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\sh.paseo.sessions.desktop" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\sh.paseo.sessions.desktop" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\sh.paseo.sessions.desktop" "NoRepair" 1
+  IfErrors install_failed
   ; Shortcuts created under the pre-rename product name.
   Delete "$SMPROGRAMS\Paseo Sessions.lnk"
   Delete "$DESKTOP\Paseo Sessions.lnk"
+  ClearErrors
   CreateShortCut "$SMPROGRAMS\Passession.lnk" "$INSTDIR\paseo_sessions.exe"
   CreateShortCut "$DESKTOP\Passession.lnk" "$INSTDIR\paseo_sessions.exe"
+  IfErrors install_failed
+  SetErrorLevel 0
+  Goto install_done
+  install_failed:
+    SetErrorLevel 2
+    MessageBox MB_OK|MB_ICONSTOP "Application files could not be installed. Close Passession and retry the installer. Your daemon data has not been removed." /SD IDOK
+    Abort
+  install_done:
 SectionEnd
 
 Section "Uninstall"

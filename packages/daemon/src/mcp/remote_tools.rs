@@ -217,7 +217,6 @@ fn entries(mut payload: Value) -> Result<Vec<Value>> {
     }
 }
 
-
 async fn execute_remote(
     app: &Arc<AppState>,
     client: &HostClient,
@@ -480,4 +479,3 @@ async fn create_agent(
     required(&summary, "agentId")?;
     Ok(summary)
 }
-

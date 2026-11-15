@@ -3,8 +3,8 @@
 
 use super::json::*;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// stream.ts mergeAgentToolCallStatus: failure is sticky, a completed call is
@@ -17,7 +17,11 @@ pub fn merge_tool_call_status(existing: &str, incoming: &str) -> &'static str {
         return "canceled";
     }
     if incoming == "canceled" {
-        return if existing == "completed" { "completed" } else { "canceled" };
+        return if existing == "completed" {
+            "completed"
+        } else {
+            "canceled"
+        };
     }
     if existing == "completed" || incoming == "completed" {
         return "completed";
@@ -138,7 +142,6 @@ fn tool_identity(call_id: &Value, turn_id: &Value) -> String {
     }
 }
 
-
 /// types/stream.ts reduceTimelineEvent as a resumable left fold over the
 /// stored rows: live rows only ever append, so a streamed chunk folds into the
 /// projection without refolding the whole history.
@@ -192,7 +195,10 @@ fn grow(previous: &Value, row: &Value, item: Value) -> Value {
     }
     next.insert(
         "sourceSeqRanges".into(),
-        join_ranges(get(previous, "sourceSeqRanges"), get(row, "sourceSeqRanges")),
+        join_ranges(
+            get(previous, "sourceSeqRanges"),
+            get(row, "sourceSeqRanges"),
+        ),
     );
     Value::Object(next)
 }
@@ -200,11 +206,18 @@ fn grow(previous: &Value, row: &Value, item: Value) -> Value {
 /// Keeps published snapshots immutable, but appends subsequent chunks in a
 /// GUI batch without copying the already accumulated text again.
 fn append_text(previous: &mut Rc<Value>, row: &Value, chunk: &str) {
-    let entry = Rc::make_mut(previous).as_object_mut().expect("projected row");
-    let item = entry.get_mut("item").and_then(Value::as_object_mut).expect("text item");
+    let entry = Rc::make_mut(previous)
+        .as_object_mut()
+        .expect("projected row");
+    let item = entry
+        .get_mut("item")
+        .and_then(Value::as_object_mut)
+        .expect("text item");
     match item.get_mut("text") {
         Some(Value::String(text)) => text.push_str(chunk),
-        _ => { item.insert("text".into(), Value::String(chunk.to_owned())); }
+        _ => {
+            item.insert("text".into(), Value::String(chunk.to_owned()));
+        }
     }
     entry.insert("seqEnd".into(), get(row, "seqEnd").clone());
     if !get(row, "timestamp").is_null() {
@@ -217,7 +230,10 @@ fn append_text(previous: &mut Rc<Value>, row: &Value, chunk: &str) {
     if !ranges.is_array() {
         *ranges = json!([]);
     }
-    append_ranges(ranges.as_array_mut().expect("range array"), get(row, "sourceSeqRanges"));
+    append_ranges(
+        ranges.as_array_mut().expect("range array"),
+        get(row, "sourceSeqRanges"),
+    );
 }
 
 fn with_item(row: &Value, item: Value) -> Value {
@@ -286,7 +302,10 @@ impl TimelineFold {
             "user_message" => {
                 // stream.ts produceUserMessage "existing": the daemon echoes a
                 // prompt without its images/attachments; the sending composer kept them.
-                if let Some(local) = super::composer_bridge::sent_attachments(agent_id, str_of(get(item, "clientMessageId"))) {
+                if let Some(local) = super::composer_bridge::sent_attachments(
+                    agent_id,
+                    str_of(get(item, "clientMessageId")),
+                ) {
                     let mut m = map(item).clone();
                     if list(get(item, "images")).is_empty() {
                         m.insert("images".into(), get(&local, "images").clone());
@@ -298,7 +317,11 @@ impl TimelineFold {
                 }
                 let id = {
                     let client = str_of(get(item, "clientMessageId"));
-                    if client.is_empty() { str_of(get(item, "messageId")) } else { client }
+                    if client.is_empty() {
+                        str_of(get(item, "messageId"))
+                    } else {
+                        client
+                    }
                 }
                 .to_owned();
                 if !id.is_empty() {
@@ -313,7 +336,8 @@ impl TimelineFold {
                             merged_item.insert("images".into(), get(shown, "images").clone());
                         }
                         if !get(shown, "attachments").is_null() {
-                            merged_item.insert("attachments".into(), get(shown, "attachments").clone());
+                            merged_item
+                                .insert("attachments".into(), get(shown, "attachments").clone());
                         }
                         let mut merged = map(row).clone();
                         merged.insert("item".into(), Value::Object(merged_item));
@@ -388,7 +412,10 @@ impl TimelineFold {
             }
             _ => {}
         }
-        self.entries.push(Rc::new(with_item(row, next_item.unwrap_or_else(|| item.clone()))));
+        self.entries.push(Rc::new(with_item(
+            row,
+            next_item.unwrap_or_else(|| item.clone()),
+        )));
     }
 }
 
@@ -432,10 +459,13 @@ mod streaming_fold_tests {
         assert_eq!(grown["seqStart"], 1);
         assert_eq!(grown["seqEnd"], 5);
         assert_eq!(grown["timestamp"], "2026-11-07T00:00:05Z");
-        assert_eq!(grown["sourceSeqRanges"], json!([
-            {"startSeq": 1, "endSeq": 1},
-            {"startSeq": 3, "endSeq": 5}
-        ]));
+        assert_eq!(
+            grown["sourceSeqRanges"],
+            json!([
+                {"startSeq": 1, "endSeq": 1},
+                {"startSeq": 3, "endSeq": 5}
+            ])
+        );
     }
 
     #[test]
@@ -444,8 +474,13 @@ mod streaming_fold_tests {
         fold.add("agent", &chunk(1, "first", "one"));
         fold.add("agent", &chunk(2, "second", "two"));
         fold.add("agent", &chunk(3, " continued", "two"));
-        assert_eq!(fold.entries.iter().map(|row| row["item"]["text"].as_str().unwrap()).collect::<Vec<_>>(),
-            vec!["first", "second continued"]);
+        assert_eq!(
+            fold.entries
+                .iter()
+                .map(|row| row["item"]["text"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["first", "second continued"]
+        );
         assert_eq!(fold.entries[0]["seqEnd"], 1);
         assert_eq!(fold.entries[1]["seqStart"], 2);
         assert_eq!(fold.entries[1]["seqEnd"], 3);

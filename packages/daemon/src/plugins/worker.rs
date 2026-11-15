@@ -1,10 +1,7 @@
-use crate::{
-    state::AppState,
-    transport::OutboundFrame,
-};
-use paseo_client::process::{CommandSpec, ManagedProcess};
+use crate::{state::AppState, transport::OutboundFrame};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use paseo_client::process::{CommandSpec, ManagedProcess};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -50,7 +47,9 @@ impl PluginWorker {
             cwd: Some(directory.to_owned()),
             env,
             clear_env: true,
-        }).await.with_context(|| format!("Could not launch native plugin {id}"))?;
+        })
+        .await
+        .with_context(|| format!("Could not launch native plugin {id}"))?;
         let worker = Arc::new(Self {
             id: id.to_owned(),
             process,
@@ -126,7 +125,7 @@ impl PluginWorker {
                 }
             }
         });
-        if let Err(error) = worker.send(json!({"type":"initialize","pluginId":id,"appVersion":env!("CARGO_PKG_VERSION"),"pluginDirectory":directory,"settingsDirectory":settings})).await {
+        if let Err(error) = worker.send(json!({"type":"initialize","pluginId":id,"appVersion":crate::VERSION,"pluginDirectory":directory,"settingsDirectory":settings})).await {
             let _ = worker.shutdown().await;
             return Err(error);
         }
@@ -271,12 +270,25 @@ pub async fn validate(
 ) -> Result<()> {
     let entry = super::manifest::native_entry(directory).await?;
     let mut args = entry.args;
-    args.extend(["--validate".into(), directory.to_string_lossy().into_owned(), env!("CARGO_PKG_VERSION").into()]);
-    let result = paseo_client::process::run(CommandSpec {
-        program: entry.executable.to_string_lossy().into_owned(),
-        args,
-        cwd: Some(directory.to_owned()), env, clear_env: true,
-    }, 1024 * 1024, Duration::from_secs(120), cancel).await.context("Native plugin validation failed")?;
+    args.extend([
+        "--validate".into(),
+        directory.to_string_lossy().into_owned(),
+        crate::VERSION.into(),
+    ]);
+    let result = paseo_client::process::run(
+        CommandSpec {
+            program: entry.executable.to_string_lossy().into_owned(),
+            args,
+            cwd: Some(directory.to_owned()),
+            env,
+            clear_env: true,
+        },
+        1024 * 1024,
+        Duration::from_secs(120),
+        cancel,
+    )
+    .await
+    .context("Native plugin validation failed")?;
     if result.status != 0 {
         bail!("Native plugin validation failed: {}", result.stderr);
     }
@@ -285,7 +297,8 @@ pub async fn validate(
 }
 
 fn validate_report(stdout: &[u8], manifest: &Value) -> Result<()> {
-    let report: Value = serde_json::from_slice(stdout).context("Native plugin --validate must return one JSON validation report")?;
+    let report: Value = serde_json::from_slice(stdout)
+        .context("Native plugin --validate must return one JSON validation report")?;
     if report["valid"] != true || report["plugin"]["id"] != manifest["id"] {
         bail!("Native plugin validation report must confirm valid:true and the manifest plugin.id");
     }
@@ -489,7 +502,8 @@ fn validate_ready(message: &Value) -> Result<()> {
     {
         for field in ["id", "label"] {
             if provider[field]
-                .as_str().is_none_or(|value| value.is_empty())
+                .as_str()
+                .is_none_or(|value| value.is_empty())
             {
                 bail!("Invalid plugin provider {field}");
             }
@@ -510,9 +524,10 @@ fn validate_ready(message: &Value) -> Result<()> {
                     && args
                         .iter()
                         .all(|arg| arg.as_str().is_some_and(|arg| !arg.is_empty()))
-            }) {
-                bail!("Invalid plugin provider command");
-            }
+            })
+        {
+            bail!("Invalid plugin provider command");
+        }
     }
     if let Some(sources) = message.get("usageSources") {
         for source in sources
@@ -520,9 +535,7 @@ fn validate_ready(message: &Value) -> Result<()> {
             .context("Invalid plugin usage metadata")?
         {
             for field in ["id", "label"] {
-                if source[field]
-                    .as_str().is_none_or(|value| value.is_empty())
-                {
+                if source[field].as_str().is_none_or(|value| value.is_empty()) {
                     bail!("Invalid plugin usage {field}");
                 }
             }

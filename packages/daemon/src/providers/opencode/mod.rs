@@ -133,7 +133,13 @@ impl OpenCodeProvider {
                     runtime,
                     self.runtime.clone(),
                     self.spec.clone(),
-                    SessionLaunch { info, config, context, options, sink },
+                    SessionLaunch {
+                        info,
+                        config,
+                        context,
+                        options,
+                        sink,
+                    },
                 )
                 .await
             }
@@ -142,7 +148,13 @@ impl OpenCodeProvider {
                     runtime,
                     self.runtime.clone(),
                     self.spec.clone(),
-                    SessionLaunch { info, config, context, options, sink },
+                    SessionLaunch {
+                        info,
+                        config,
+                        context,
+                        options,
+                        sink,
+                    },
                 )
                 .await
             }
@@ -668,21 +680,22 @@ impl AgentProvider for OpenCodeProvider {
                 .as_slice();
             if info["revert"]["partID"].is_null()
                 && let Some(revert) = info["revert"]["messageID"].as_str()
-                    && let Some(index) = messages
-                        .iter()
-                        .position(|message| message["info"]["id"] == revert)
-                    {
-                        messages = &messages[..index];
-                    }
+                && let Some(index) = messages
+                    .iter()
+                    .position(|message| message["info"]["id"] == revert)
+            {
+                messages = &messages[..index];
+            }
             if !config["modeId"].is_string()
                 && let Some(agent) = messages.iter().find_map(|message| {
                     message["info"]["agent"]
                         .as_str()
                         .filter(|s| !s.trim().is_empty())
-                }) {
-                    config["modeId"] = json!(agent);
-                    stored_config["modeId"] = json!(agent);
-                }
+                })
+            {
+                config["modeId"] = json!(agent);
+                stored_config["modeId"] = json!(agent);
+            }
             if !config["model"].is_string() {
                 for message in messages {
                     let info = &message["info"];
@@ -814,7 +827,9 @@ impl AgentProvider for OpenCodeProvider {
         ))
     }
 
-    fn supports_native_archive(&self) -> bool { true }
+    fn supports_native_archive(&self) -> bool {
+        true
+    }
     async fn archive_native_session(&self, persistence: &Value) -> Result<()> {
         self.set_archived(persistence, chrono::Utc::now().timestamp_millis())
             .await

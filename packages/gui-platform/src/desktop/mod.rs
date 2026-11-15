@@ -2,15 +2,17 @@
 //! notifications, tray and native window lifetime (original desktop_host.dart).
 //! One process owns everything; Makepad windows are logical windows of the shell.
 
+pub(crate) mod app_update;
+pub mod component_store;
 pub(crate) mod daemon_service;
 pub(crate) mod editors;
 pub(crate) mod geometry;
 pub(crate) mod native;
+#[cfg(any(target_os = "macos", windows))]
+pub(crate) mod native_tray;
 pub(crate) mod settings;
 pub(crate) mod single_instance;
 pub(crate) mod updater;
-#[cfg(any(target_os = "macos", windows))]
-pub(crate) mod native_tray;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
@@ -27,7 +29,7 @@ pub(crate) use self::windows as os;
 #[cfg(windows)]
 pub(crate) mod windows_util;
 
-pub use crate::facade::desktop::{available, invoke, local_daemon, LocalDaemon};
+pub use crate::facade::desktop::{LocalDaemon, available, invoke, local_daemon};
 
 use crate::{
     action::*,
@@ -37,19 +39,19 @@ use crate::{
 use daemon_service::{DaemonRuntime, DaemonService, DaemonSettings};
 use makepad_widgets::{Cx, Event};
 use paseo_gui_core::CoreEvent;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use settings::DesktopSettings;
 use std::{
     collections::VecDeque,
     io::Write as _,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
-use tokio::sync::{oneshot, OnceCell};
+use tokio::sync::{OnceCell, oneshot};
 
 /// A later launch's request, forwarded by the single-instance channel.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -131,6 +133,7 @@ pub(crate) struct DesktopShared {
     /// not reported a listen address or failed yet.
     daemon_starting: AtomicBool,
     updater: updater::Updater,
+    app_updates: OnceCell<Arc<app_update::Bridge>>,
     pub geometry: geometry::GeometryStore,
     quit: Mutex<QuitState>,
     routes: Mutex<Routes>,
@@ -172,6 +175,7 @@ impl DesktopShared {
             daemon_failure: Mutex::new(None),
             daemon_starting: AtomicBool::new(false),
             updater: updater::Updater::new(config.app_version.clone()),
+            app_updates: OnceCell::new(),
             geometry: geometry::GeometryStore::load(),
             quit: Mutex::new(QuitState::default()),
             routes: Mutex::new(Routes::default()),
@@ -235,7 +239,11 @@ impl DesktopShared {
         let line = format!("{} {message}\n", chrono::Local::now().to_rfc3339());
         let mut log = self.log.lock().unwrap();
         if log.is_none() {
-            *log = std::fs::OpenOptions::new().create(true).append(true).open(&self.log_path).ok();
+            *log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.log_path)
+                .ok();
         }
         if let Some(file) = log.as_mut() {
             let _ = file.write_all(line.as_bytes());
@@ -244,7 +252,9 @@ impl DesktopShared {
 
     pub fn report(&self, message: &str) {
         self.log(message);
-        post_event(PlatformEvent::HostError { message: message.to_owned() });
+        post_event(PlatformEvent::HostError {
+            message: message.to_owned(),
+        });
     }
 
     /// The built-in daemon as onboarding shows it: (starting, last start failure, listening).
@@ -260,7 +270,9 @@ impl DesktopShared {
         self.daemon_starting.store(true, Ordering::SeqCst);
         self.local_daemon_listening.store(false, Ordering::SeqCst);
         *self.daemon_failure.lock().unwrap() = None;
-        post_event(PlatformEvent::LocalDaemonStatus { status: json!({"status": "starting"}) });
+        post_event(PlatformEvent::LocalDaemonStatus {
+            status: json!({"status": "starting"}),
+        });
     }
 
     fn start_failed(&self, message: &str) {
@@ -286,10 +298,11 @@ impl DesktopShared {
             .map_err(|e| PlatformError::native(e.to_string()))?
             .map_err(|e| PlatformError::new("RUNTIME_MISSING", e.to_string()))?;
         let settings = self.settings().await?;
-        let read: Arc<dyn Fn() -> DaemonSettings + Send + Sync> = Arc::new(move || DaemonSettings {
-            managed: settings.managed(),
-            keep_running_after_quit: settings.keep_running(),
-        });
+        let read: Arc<dyn Fn() -> DaemonSettings + Send + Sync> =
+            Arc::new(move || DaemonSettings {
+                managed: settings.managed(),
+                keep_running_after_quit: settings.keep_running(),
+            });
         Ok(Arc::new(DaemonService::new(
             runtime,
             Some(self.app_version.clone()).filter(|v| !v.is_empty()),
@@ -300,7 +313,12 @@ impl DesktopShared {
     /// Original `_registerLocalHost`: a starting daemon is announced as soon as it
     /// reports a listen address (waiting at most 60 s for that address).
     async fn register_local_host(&self, status: Value) {
-        let listen = |status: &Value| status.get("listen").and_then(Value::as_str).is_some_and(|l| !l.is_empty());
+        let listen = |status: &Value| {
+            status
+                .get("listen")
+                .and_then(Value::as_str)
+                .is_some_and(|l| !l.is_empty())
+        };
         let mut current = status;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         while current.get("status").and_then(Value::as_str) == Some("starting")
@@ -327,7 +345,8 @@ impl DesktopShared {
         let state = current.get("status").and_then(Value::as_str);
         self.daemon_starting.store(false, Ordering::SeqCst);
         let listening = matches!(state, Some("running" | "starting")) && listen(&current);
-        self.local_daemon_listening.store(listening, Ordering::SeqCst);
+        self.local_daemon_listening
+            .store(listening, Ordering::SeqCst);
         if self.quitting() {
             return;
         }
@@ -342,15 +361,31 @@ impl DesktopShared {
 
 fn daemon_start_error(status: &Value) -> Option<&str> {
     match status.get("status").and_then(Value::as_str) {
-        Some("errored") => Some(status.get("error").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("Daemon status failed.")),
-        Some("starting") if status.get("listen").and_then(Value::as_str).is_none_or(str::is_empty) => {
+        Some("errored") => Some(
+            status
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Daemon status failed."),
+        ),
+        Some("starting")
+            if status
+                .get("listen")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty) =>
+        {
             Some("The built-in daemon did not report a listen address within 60 seconds.")
         }
         _ => None,
     }
 }
 
-pub(crate) fn start(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState, config: &PlatformConfig) {
+pub(crate) fn start(
+    cx: &mut Cx,
+    shared: &Arc<Shared>,
+    state: &mut PlatformState,
+    config: &PlatformConfig,
+) {
     let _ = cx;
     state.desktop.windows = os::NativeWindows::new();
     // Lifecycle bridge first: the tray (close-to-tray) is created only once it
@@ -364,11 +399,27 @@ pub(crate) fn start(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState
     // otherwise one project path (positional absolute directory or --open-project).
     let args: Vec<String> = config.argv.iter().skip(1).cloned().collect();
     if let Some((server_id, agent_id)) = deep_link::agent_deep_link_from_argv(&args) {
-        shared.desktop.route(PlatformEvent::Route(PlatformRoute::Agent { server_id, agent_id }));
+        shared
+            .desktop
+            .route(PlatformEvent::Route(PlatformRoute::Agent {
+                server_id,
+                agent_id,
+            }));
     } else if let Some(path) = deep_link::open_project_path_from_argv(&args) {
-        shared.desktop.route(PlatformEvent::Route(PlatformRoute::Project { path: path.display().to_string(), server_id: None }));
+        shared
+            .desktop
+            .route(PlatformEvent::Route(PlatformRoute::Project {
+                path: path.display().to_string(),
+                server_id: None,
+            }));
     }
 
+    let update_shared = shared.clone();
+    shared.spawn(async move {
+        if let Err(error) = app_update::start(update_shared.clone()).await {
+            update_shared.desktop.report(&error.message);
+        }
+    });
     // The daemon helper: waiting for a still-starting daemon never holds the window.
     let task_shared = shared.clone();
     shared.desktop.start_pending();
@@ -389,18 +440,29 @@ pub(crate) fn start(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState
     });
 }
 
-pub(crate) fn handle_event(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState, event: &Event) {
+pub(crate) fn handle_event(
+    cx: &mut Cx,
+    shared: &Arc<Shared>,
+    state: &mut PlatformState,
+    event: &Event,
+) {
     let signals = std::mem::take(&mut *SIGNALS.lock().unwrap());
     for signal in signals {
         handle_signal(cx, shared, state, signal);
     }
     if let Event::Signal = event
-        && let Some(tray) = state.desktop.tray.as_mut() {
-            tray.poll();
-        }
+        && let Some(tray) = state.desktop.tray.as_mut()
+    {
+        tray.poll();
+    }
 }
 
-fn handle_signal(_cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState, signal: NativeSignal) {
+fn handle_signal(
+    _cx: &mut Cx,
+    shared: &Arc<Shared>,
+    state: &mut PlatformState,
+    signal: NativeSignal,
+) {
     let desktop = &shared.desktop;
     match signal {
         NativeSignal::Activation(activation) => activate(shared, state, activation),
@@ -474,10 +536,16 @@ fn activate(shared: &Arc<Shared>, state: &mut PlatformState, activation: Activat
     if let Some(url) = activation.url {
         if let Some((server_id, agent_id)) = deep_link::parse_agent_deep_link(&url) {
             show_preferred(state);
-            desktop.route(PlatformEvent::Route(PlatformRoute::Agent { server_id, agent_id }));
+            desktop.route(PlatformEvent::Route(PlatformRoute::Agent {
+                server_id,
+                agent_id,
+            }));
         }
     } else if let Some(path) = activation.project_path {
-        let route = PlatformRoute::Project { path, server_id: None };
+        let route = PlatformRoute::Project {
+            path,
+            server_id: None,
+        };
         if activation.initial {
             desktop.route(PlatformEvent::Route(route));
         } else {
@@ -513,17 +581,24 @@ pub(crate) fn request_quit(shared: &Arc<Shared>, reason: QuitReason, force: bool
         if force {
             quit.quitting = true;
             if let Some(pending) = quit.pending.take()
-                && let Some(waiter) = pending.waiter {
-                    let _ = waiter.send(false);
-                }
+                && let Some(waiter) = pending.waiter
+            {
+                let _ = waiter.send(false);
+            }
         } else {
-            quit.pending = Some(PendingQuit { token, reason, waiter: None });
+            quit.pending = Some(PendingQuit {
+                token,
+                reason,
+                waiter: None,
+            });
         }
         token
     };
     if force {
         let shared = shared.clone();
-        shared.clone().spawn(async move { finish_quit(&shared, reason).await });
+        shared
+            .clone()
+            .spawn(async move { finish_quit(&shared, reason).await });
     } else {
         post_event(PlatformEvent::QuitRequested { token, reason });
     }
@@ -571,11 +646,28 @@ async fn guarded_consent(shared: &Arc<Shared>, reason: QuitReason) -> bool {
         }
         quit.next_token += 1;
         let token = quit.next_token;
-        quit.pending = Some(PendingQuit { token, reason, waiter: Some(tx) });
+        quit.pending = Some(PendingQuit {
+            token,
+            reason,
+            waiter: Some(tx),
+        });
         token
     };
     post_event(PlatformEvent::QuitRequested { token, reason });
-    rx.await.unwrap_or(false)
+    match tokio::time::timeout(Duration::from_secs(10), rx).await {
+        Ok(result) => result.unwrap_or(false),
+        Err(_) => {
+            let mut quit = shared.desktop.quit.lock().unwrap();
+            if quit
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.token == token)
+            {
+                quit.pending = None;
+            }
+            false
+        }
+    }
 }
 
 /// Original `_prepareQuit` after consent: stop only the owned daemon (unless
@@ -589,7 +681,7 @@ async fn prepare_quit(shared: &Arc<Shared>, reason: QuitReason) {
     desktop.quit.lock().unwrap().quitting = true;
     let daemon = desktop.daemon.lock().await.clone();
     if let Some(daemon) = daemon {
-        let keep = if reason == QuitReason::AppUpdate {
+        let keep = if matches!(reason, QuitReason::AppUpdate | QuitReason::RemoteAppUpdate) {
             false
         } else {
             match desktop.settings().await {
@@ -598,7 +690,10 @@ async fn prepare_quit(shared: &Arc<Shared>, reason: QuitReason) {
             }
         };
         if let Err(error) = daemon.close(Some(keep)).await {
-            desktop.log(&format!("Daemon stop failed during quit: {}", error.message));
+            desktop.log(&format!(
+                "Daemon stop failed during quit: {}",
+                error.message
+            ));
         }
     }
     desktop.quit.lock().unwrap().prepared = true;
@@ -652,23 +747,33 @@ pub(crate) fn invoke_command(shared: &Arc<Shared>, command: String, args: Value,
     });
 }
 
-async fn invoke_inner(shared: &Arc<Shared>, command: &str, args: &Value) -> Result<Value, PlatformError> {
+async fn invoke_inner(
+    shared: &Arc<Shared>,
+    command: &str,
+    args: &Value,
+) -> Result<Value, PlatformError> {
     let desktop = &shared.desktop;
     match command {
         "desktop_settings_get" => Ok(Value::Object(desktop.settings().await?.value())),
         "desktop_settings_update" => {
             let settings = desktop.settings().await?;
             let was_managed = settings.managed();
-            let patch = args.get("patch").and_then(Value::as_object).cloned().unwrap_or_default();
+            let patch = args
+                .get("patch")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             let patch_settings = settings.clone();
             let result = tokio::task::spawn_blocking(move || patch_settings.patch(&patch))
                 .await
                 .map_err(|e| PlatformError::native(e.to_string()))??;
-            if was_managed && !settings.managed()
-                && let Some(daemon) = desktop.daemon.lock().await.clone() {
-                    let status = daemon.stop("settings", None, None).await?;
-                    desktop.register_local_host(status).await;
-                }
+            if was_managed
+                && !settings.managed()
+                && let Some(daemon) = desktop.daemon.lock().await.clone()
+            {
+                let status = daemon.stop("settings", None, None).await?;
+                desktop.register_local_host(status).await;
+            }
             if !was_managed && settings.managed() {
                 desktop.start_pending();
                 match async { desktop.daemon().await?.start().await }.await {
@@ -692,7 +797,13 @@ async fn invoke_inner(shared: &Arc<Shared>, command: &str, args: &Value) -> Resu
         "desktop_update_diagnostics" => Ok(desktop.updater.diagnostics().await),
         "check_app_update" => {
             let channel = channel(shared, args).await;
-            Ok(desktop.updater.check(&channel, args.get("intent").and_then(Value::as_str) == Some("manual")).await)
+            Ok(desktop
+                .updater
+                .check(
+                    &channel,
+                    args.get("intent").and_then(Value::as_str) == Some("manual"),
+                )
+                .await)
         }
         "install_app_update" => install_update(shared, args).await,
         _ => {
@@ -729,56 +840,8 @@ async fn channel(shared: &Arc<Shared>, args: &Value) -> String {
     }
 }
 
-async fn install_update(shared: &Arc<Shared>, args: &Value) -> Result<Value, PlatformError> {
-    let desktop = &shared.desktop;
-    let channel = channel(shared, args).await;
-    let consent_shared = shared.clone();
-    let result = desktop
-        .updater
-        .install(&channel, || async move {
-            if !guarded_consent(&consent_shared, QuitReason::AppUpdate).await {
-                return Err(PlatformError::new("cancelled", "Quit cancelled by an open document."));
-            }
-            prepare_quit(&consent_shared, QuitReason::AppUpdate).await;
-            Ok(())
-        })
-        .await;
-    let launched = result.get("installerLaunched") == Some(&Value::Bool(true)) || result.get("installed") == Some(&Value::Bool(true));
-    let prepared = desktop.quit.lock().unwrap().prepared;
-    if launched {
-        let task_shared = shared.clone();
-        shared.spawn(async move { finish_quit(&task_shared, QuitReason::AppUpdate).await });
-    } else if prepared {
-        recover_failed_update(shared).await;
-    } else {
-        // Consent refused or nothing installed: the app keeps running normally.
-        desktop.quit.lock().unwrap().quitting = false;
-    }
-    Ok(result)
-}
-
-/// Original `_recoverFailedUpdate`: cancel quit, start a new helper session and
-/// re-announce the local daemon.
-async fn recover_failed_update(shared: &Arc<Shared>) {
-    let desktop = &shared.desktop;
-    {
-        let mut quit = desktop.quit.lock().unwrap();
-        quit.quitting = false;
-        quit.prepared = false;
-    }
-    post_event(PlatformEvent::QuitCancelled);
-    *desktop.daemon.lock().await = None;
-    desktop.start_pending();
-    let result = async {
-        let daemon = desktop.daemon().await?;
-        daemon.initialize().await?;
-        daemon.status().await
-    }
-    .await;
-    match result {
-        Ok(status) => desktop.register_local_host(status).await,
-        Err(error) => desktop.start_failed(&error.message),
-    }
+async fn install_update(shared: &Arc<Shared>, _args: &Value) -> Result<Value, PlatformError> {
+    app_update::install_local(shared).await
 }
 
 fn runtime_info(shared: &Arc<Shared>) -> Value {
@@ -839,12 +902,16 @@ pub(crate) fn notify(shared: &Arc<Shared>, request: crate::NotificationRequest, 
         let desktop = &task_shared.desktop;
         let mut keys = desktop.notifications.lock().await;
         if let Some(key) = &request.event_key
-            && keys.contains(key) {
-                done.ok(PlatformValue::None);
-                return;
-            }
+            && keys.contains(key)
+        {
+            done.ok(PlatformValue::None);
+            return;
+        }
         if desktop.quit.lock().unwrap().prepared {
-            done.fail(PlatformError::new("shutting_down", "The application is shutting down."));
+            done.fail(PlatformError::new(
+                "shutting_down",
+                "The application is shutting down.",
+            ));
             return;
         }
         let sound = match request.sound {
@@ -879,13 +946,23 @@ pub(crate) fn notify(shared: &Arc<Shared>, request: crate::NotificationRequest, 
 }
 
 /// Click payload → route event (adds the notification/action ids like the original).
-pub(crate) fn notification_clicked(payload: &str, notification_id: Option<i64>, action_id: Option<String>) {
+pub(crate) fn notification_clicked(
+    payload: &str,
+    notification_id: Option<i64>,
+    action_id: Option<String>,
+) {
     let mut data = match serde_json::from_str::<Value>(payload) {
         Ok(Value::Object(map)) => map,
         _ => Map::new(),
     };
-    data.insert("notificationId".into(), notification_id.map(Value::from).unwrap_or(Value::Null));
-    data.insert("actionId".into(), action_id.map(Value::from).unwrap_or(Value::Null));
+    data.insert(
+        "notificationId".into(),
+        notification_id.map(Value::from).unwrap_or(Value::Null),
+    );
+    data.insert(
+        "actionId".into(),
+        action_id.map(Value::from).unwrap_or(Value::Null),
+    );
     deliver(NativeSignal::NotificationClick(data));
 }
 
@@ -895,10 +972,16 @@ mod tests {
 
     #[test]
     fn daemon_start_reports_status_errors_and_missing_listen_timeout() {
-        assert_eq!(daemon_start_error(&json!({"status": "errored", "error": "permission denied"})), Some("permission denied"));
+        assert_eq!(
+            daemon_start_error(&json!({"status": "errored", "error": "permission denied"})),
+            Some("permission denied")
+        );
         assert!(daemon_start_error(&json!({"status": "starting", "listen": null})).is_some());
         assert!(daemon_start_error(&json!({"status": "starting", "listen": ""})).is_some());
-        assert_eq!(daemon_start_error(&json!({"status": "starting", "listen": "127.0.0.1:6768"})), None);
+        assert_eq!(
+            daemon_start_error(&json!({"status": "starting", "listen": "127.0.0.1:6768"})),
+            None
+        );
         assert_eq!(daemon_start_error(&json!({"status": "stopped"})), None);
     }
 }

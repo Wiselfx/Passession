@@ -2,12 +2,12 @@
 
 use super::token_waiter;
 use crate::{
+    NotificationRequest,
     action::*,
-    apple::{self, imp, ns_string, rust_string, user_notifications, Id},
-    mobile::{deliver, MobileSignal},
+    apple::{self, Id, imp, ns_string, rust_string, user_notifications},
+    mobile::{MobileSignal, deliver},
     paths::AppPaths,
     platform::{Capabilities, Completion, PickFilesOptions, PlatformState, Shared},
-    NotificationRequest,
 };
 use block2::RcBlock;
 use makepad_widgets::{Cx, Event, VirtualKeyboardEvent};
@@ -54,8 +54,20 @@ unsafe impl objc2::encode::Encode for Rect {
     const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
         "CGRect",
         &[
-            objc2::encode::Encoding::Struct("CGPoint", &[objc2::encode::Encoding::Double, objc2::encode::Encoding::Double]),
-            objc2::encode::Encoding::Struct("CGSize", &[objc2::encode::Encoding::Double, objc2::encode::Encoding::Double]),
+            objc2::encode::Encoding::Struct(
+                "CGPoint",
+                &[
+                    objc2::encode::Encoding::Double,
+                    objc2::encode::Encoding::Double,
+                ],
+            ),
+            objc2::encode::Encoding::Struct(
+                "CGSize",
+                &[
+                    objc2::encode::Encoding::Double,
+                    objc2::encode::Encoding::Double,
+                ],
+            ),
         ],
     );
 }
@@ -63,7 +75,11 @@ unsafe impl objc2::encode::Encode for Rect {
 pub(crate) fn os_app_paths() -> AppPaths {
     // path_provider iOS: Library/Application Support, Library/Caches, NSTemporaryDirectory.
     unsafe extern "C" {
-        fn NSSearchPathForDirectoriesInDomains(directory: usize, domains: usize, expand: Bool) -> Id;
+        fn NSSearchPathForDirectoriesInDomains(
+            directory: usize,
+            domains: usize,
+            expand: Bool,
+        ) -> Id;
         fn NSTemporaryDirectory() -> Id;
     }
     let directory = |kind: usize| -> PathBuf {
@@ -73,8 +89,14 @@ pub(crate) fn os_app_paths() -> AppPaths {
             PathBuf::from(rust_string(first).unwrap_or_default())
         }
     };
-    let temp = unsafe { rust_string(NSTemporaryDirectory()) }.map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    AppPaths { support_dir: directory(14), cache_dir: directory(13), temp_dir: temp }
+    let temp = unsafe { rust_string(NSTemporaryDirectory()) }
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    AppPaths {
+        support_dir: directory(14),
+        cache_dir: directory(13),
+        temp_dir: temp,
+    }
 }
 
 pub(crate) fn prepare_process(_cx: &mut Cx) -> anyhow::Result<()> {
@@ -108,7 +130,9 @@ pub(crate) fn start_services(_cx: &mut Cx, _shared: &Arc<Shared>, _state: &mut P
         // AVAudioSessionInterruptionTypeBegan (1): nothing queued may resume.
         let interrupted = RcBlock::new(|note: Id| {
             let info: Id = msg_send![note, userInfo];
-            let kind = apple::to_json(info).get("AVAudioSessionInterruptionTypeKey").and_then(Value::as_u64);
+            let kind = apple::to_json(info)
+                .get("AVAudioSessionInterruptionTypeKey")
+                .and_then(Value::as_u64);
             if kind == Some(1) {
                 deliver(MobileSignal::AudioInterrupted);
             }
@@ -116,7 +140,10 @@ pub(crate) fn start_services(_cx: &mut Cx, _shared: &Arc<Shared>, _state: &mut P
         let token2: Id = msg_send![center, addObserverForName: ns_string("AVAudioSessionInterruptionNotification"), object: std::ptr::null_mut::<AnyObject>(), queue: queue, usingBlock: &*interrupted];
         let _: Id = msg_send![token, retain];
         let _: Id = msg_send![token2, retain];
-        OBSERVERS.lock().unwrap().extend([token as usize, token2 as usize]);
+        OBSERVERS
+            .lock()
+            .unwrap()
+            .extend([token as usize, token2 as usize]);
     }
     publish_insets(None);
 }
@@ -144,6 +171,9 @@ fn root_controller() -> Id {
     }
     unsafe {
         let mut controller: Id = msg_send![window, rootViewController];
+        if controller.is_null() {
+            return controller;
+        }
         loop {
             let presented: Id = msg_send![controller, presentedViewController];
             if presented.is_null() {
@@ -163,7 +193,11 @@ fn publish_insets(keyboard: Option<(f64, bool)>) {
         *KEYBOARD.lock().unwrap() = value;
     }
     let window = key_window();
-    let insets: EdgeInsets = if window.is_null() { EdgeInsets::default() } else { unsafe { msg_send![window, safeAreaInsets] } };
+    let insets: EdgeInsets = if window.is_null() {
+        EdgeInsets::default()
+    } else {
+        unsafe { msg_send![window, safeAreaInsets] }
+    };
     let (keyboard, visible) = *KEYBOARD.lock().unwrap();
     deliver(MobileSignal::Insets(SafeInsets {
         top: insets.top,
@@ -175,21 +209,29 @@ fn publish_insets(keyboard: Option<(f64, bool)>) {
     }));
 }
 
-pub(crate) fn handle_event(_cx: &mut Cx, _shared: &Arc<Shared>, _state: &mut PlatformState, event: &Event) {
+pub(crate) fn handle_event(
+    _cx: &mut Cx,
+    _shared: &Arc<Shared>,
+    _state: &mut PlatformState,
+    event: &Event,
+) {
     match event {
-        Event::VirtualKeyboard(VirtualKeyboardEvent::DidShow { height, .. } | VirtualKeyboardEvent::WillShow { height, .. }) => {
-            publish_insets(Some((*height, true)))
-        }
-        Event::VirtualKeyboard(VirtualKeyboardEvent::DidHide { .. } | VirtualKeyboardEvent::WillHide { .. }) => {
-            publish_insets(Some((0.0, false)))
-        }
+        Event::VirtualKeyboard(
+            VirtualKeyboardEvent::DidShow { height, .. }
+            | VirtualKeyboardEvent::WillShow { height, .. },
+        ) => publish_insets(Some((*height, true))),
+        Event::VirtualKeyboard(
+            VirtualKeyboardEvent::DidHide { .. } | VirtualKeyboardEvent::WillHide { .. },
+        ) => publish_insets(Some((0.0, false))),
         Event::WindowGeomChange(_) => publish_insets(None),
         _ => {}
     }
 }
 
 pub(crate) fn report_error(_shared: &Arc<Shared>, message: &str) {
-    post_event(PlatformEvent::HostError { message: message.to_owned() });
+    post_event(PlatformEvent::HostError {
+        message: message.to_owned(),
+    });
 }
 
 /// iOS has no system Back; navigation stays inside the app.
@@ -254,16 +296,22 @@ pub(crate) fn open_path(_shared: &Arc<Shared>, path: PathBuf, done: Completion) 
         let controller: Id = msg_send![class!(UIDocumentInteractionController), interactionControllerWithURL: apple::file_url(&path)];
         let root = root_controller();
         if root.is_null() {
-            done.fail(PlatformError::native("No window is available to present the document."));
+            done.fail(PlatformError::native(
+                "No window is available to present the document.",
+            ));
             return;
         }
         let view: Id = msg_send![root, view];
         let bounds: Rect = msg_send![view, bounds];
-        let presented: bool = msg_send![controller, presentOpenInMenuFromRect: bounds, inView: view, animated: true];
+        let presented: bool =
+            msg_send![controller, presentOpenInMenuFromRect: bounds, inView: view, animated: true];
         if presented {
             // The controller must outlive its menu.
             let _: Id = msg_send![controller, retain];
-            DOCUMENT_CONTROLLERS.lock().unwrap().push(controller as usize);
+            DOCUMENT_CONTROLLERS
+                .lock()
+                .unwrap()
+                .push(controller as usize);
             done.ok(PlatformValue::None);
         } else {
             done.fail(PlatformError::native("No application can open this file."));
@@ -272,7 +320,9 @@ pub(crate) fn open_path(_shared: &Arc<Shared>, path: PathBuf, done: Completion) 
 }
 
 pub(crate) fn reveal_path(_shared: &Arc<Shared>, _path: PathBuf, done: Completion) {
-    done.fail(PlatformError::unsupported("iOS has no file manager reveal; use share or open."));
+    done.fail(PlatformError::unsupported(
+        "iOS has no file manager reveal; use share or open.",
+    ));
 }
 
 // ----- document picker -----
@@ -280,7 +330,9 @@ pub(crate) fn reveal_path(_shared: &Arc<Shared>, _path: PathBuf, done: Completio
 static PICKER: Mutex<Option<(Completion, usize)>> = Mutex::new(None);
 
 fn finish_picker(urls: Id) {
-    let Some((done, delegate)) = PICKER.lock().unwrap().take() else { return };
+    let Some((done, delegate)) = PICKER.lock().unwrap().take() else {
+        return;
+    };
     let mut files = Vec::new();
     let mut failure = None;
     if !urls.is_null() {
@@ -288,10 +340,17 @@ fn finish_picker(urls: Id) {
             let count: usize = msg_send![urls, count];
             for i in 0..count {
                 let url: Id = msg_send![urls, objectAtIndex: i];
-                let Some(source) = rust_string(msg_send![url, path]).map(PathBuf::from) else { continue };
-                let name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+                let Some(source) = rust_string(msg_send![url, path]).map(PathBuf::from) else {
+                    continue;
+                };
+                let name = source
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file".into());
                 // Import mode copies into the app's inbox; keep a private staging copy.
-                match crate::paths::transfer_staging_file(&name).and_then(|target| std::fs::copy(&source, &target).map(|size| (target, size))) {
+                match crate::paths::transfer_staging_file(&name)
+                    .and_then(|target| std::fs::copy(&source, &target).map(|size| (target, size)))
+                {
                     Ok((target, size)) => files.push(PickedFile {
                         mime_type: crate::paths::mime_for_name(&name),
                         path: target,
@@ -323,21 +382,31 @@ extern "C" fn picker_cancelled(_this: &AnyObject, _sel: Sel, _picker: Id) {
 
 pub(crate) fn pick_files(_shared: &Arc<Shared>, options: PickFilesOptions, done: Completion) {
     apple::on_main_queue(move || unsafe {
-        if PICKER.lock().unwrap().is_some() {
+        if PICKER.lock().unwrap().is_some() || SAVE_PICKER.lock().unwrap().is_some() {
             done.fail(PlatformError::native("A file picker is already open."));
             return;
         }
         let root = root_controller();
         if root.is_null() {
-            done.fail(PlatformError::native("No window is available to present the file picker."));
+            done.fail(PlatformError::native(
+                "No window is available to present the file picker.",
+            ));
             return;
         }
         let class = apple::define_class(
             c"PaseoDocumentPickerDelegate",
             class!(NSObject),
             &[
-                (c"documentPicker:didPickDocumentsAtURLs:", imp!(picked), "v@:@@"),
-                (c"documentPickerWasCancelled:", imp!(picker_cancelled), "v@:@"),
+                (
+                    c"documentPicker:didPickDocumentsAtURLs:",
+                    imp!(picked),
+                    "v@:@@",
+                ),
+                (
+                    c"documentPickerWasCancelled:",
+                    imp!(picker_cancelled),
+                    "v@:@",
+                ),
             ],
         );
         let delegate: Id = msg_send![class, new];
@@ -354,19 +423,203 @@ pub(crate) fn pick_files(_shared: &Arc<Shared>, options: PickFilesOptions, done:
 }
 
 pub(crate) fn pick_directory(_shared: &Arc<Shared>, _title: Option<String>, done: Completion) {
-    done.fail(PlatformError::unsupported("Mobile clients browse folders on the selected host."));
+    done.fail(PlatformError::unsupported(
+        "Mobile clients browse folders on the selected host.",
+    ));
 }
 
 pub(crate) fn save_location(_shared: &Arc<Shared>, _suggested_name: String, done: Completion) {
-    done.fail(PlatformError::unsupported("Mobile clients save through the share sheet."));
+    done.fail(PlatformError::unsupported(
+        "Mobile clients save through the share sheet.",
+    ));
+}
+
+struct SavePicker {
+    done: Completion,
+    delegate: usize,
+    controller: usize,
+    // The caller owns cleanup; keep the source associated with this request
+    // until UIKit reports the completed export or cancellation.
+    _source: PathBuf,
+}
+
+static SAVE_PICKER: Mutex<Option<SavePicker>> = Mutex::new(None);
+
+fn finish_save_picker(controller: Id, result: Result<PlatformValue, PlatformError>) {
+    let pending = {
+        let mut pending = SAVE_PICKER.lock().unwrap();
+        if pending.as_ref().map(|request| request.controller) != Some(controller as usize) {
+            return;
+        }
+        pending.take().unwrap()
+    };
+    unsafe {
+        let _: () = msg_send![controller, setDelegate: std::ptr::null_mut::<AnyObject>()];
+        let presentation: Id = msg_send![controller, presentationController];
+        if !presentation.is_null() {
+            let _: () = msg_send![presentation, setDelegate: std::ptr::null_mut::<AnyObject>()];
+        }
+    }
+    // UIKit may still be executing the delegate method. Release both owned
+    // objects on the next main-queue turn, after the callback has returned.
+    let delegate = pending.delegate;
+    let controller = pending.controller;
+    apple::on_main_queue(move || unsafe {
+        let _: () = msg_send![controller as Id, release];
+        let _: () = msg_send![delegate as Id, release];
+    });
+    pending.done.finish(result);
+}
+
+extern "C" fn saved_document(_this: &AnyObject, _sel: Sel, picker: Id, urls: Id) {
+    let count: usize = if urls.is_null() {
+        0
+    } else {
+        unsafe { msg_send![urls, count] }
+    };
+    // Export-as-copy invokes this only after the document provider has saved
+    // the copy. Presenting the controller is not a successful save.
+    finish_save_picker(
+        picker,
+        if count == 1 {
+            Ok(PlatformValue::Bool(true))
+        } else {
+            Err(PlatformError::native(
+                "The document provider did not return a saved document.",
+            ))
+        },
+    );
+}
+
+extern "C" fn save_picker_cancelled(_this: &AnyObject, _sel: Sel, picker: Id) {
+    finish_save_picker(picker, Ok(PlatformValue::Bool(false)));
+}
+
+extern "C" fn save_picker_dismissed(_this: &AnyObject, _sel: Sel, presentation: Id) {
+    let picker: Id = unsafe { msg_send![presentation, presentedViewController] };
+    finish_save_picker(picker, Ok(PlatformValue::Bool(false)));
+}
+
+/// Export a private generated file through Files, retaining it until the result.
+/// UIKit derives the content type and suggested name from the source filename.
+pub(crate) fn save_file(
+    _shared: &Arc<Shared>,
+    path: PathBuf,
+    _mime_type: String,
+    _name: String,
+    done: Completion,
+) {
+    match std::fs::File::open(&path).and_then(|file| file.metadata()) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            done.fail(PlatformError::invalid("The export source is not a file."));
+            return;
+        }
+        Err(error) => {
+            done.fail(PlatformError::io(&error));
+            return;
+        }
+    }
+    apple::on_main_queue(move || unsafe {
+        if PICKER.lock().unwrap().is_some() || SAVE_PICKER.lock().unwrap().is_some() {
+            done.fail(PlatformError::native("A file picker is already open."));
+            return;
+        }
+        let root = root_controller();
+        if root.is_null() {
+            done.fail(PlatformError::native(
+                "No window is available to present the save picker.",
+            ));
+            return;
+        }
+        let view: Id = msg_send![root, view];
+        let window: Id = msg_send![view, window];
+        let dismissing: bool = msg_send![root, isBeingDismissed];
+        let presenting: bool = msg_send![root, isBeingPresented];
+        if window.is_null() || dismissing || presenting {
+            done.fail(PlatformError::native(
+                "The current window cannot present the save picker.",
+            ));
+            return;
+        }
+        let supported: bool = msg_send![class!(UIDocumentPickerViewController),
+            instancesRespondToSelector: Sel::register(c"initForExportingURLs:asCopy:")];
+        if !supported {
+            done.fail(PlatformError::unsupported(
+                "Saving documents requires iOS 14 or later.",
+            ));
+            return;
+        }
+        let urls: Id = msg_send![class!(NSArray), arrayWithObject: apple::file_url(&path)];
+        let picker: Id = msg_send![class!(UIDocumentPickerViewController), alloc];
+        let picker: Id = msg_send![picker, initForExportingURLs: urls, asCopy: true];
+        if picker.is_null() {
+            done.fail(PlatformError::native(
+                "The save picker could not be created.",
+            ));
+            return;
+        }
+        let class = apple::define_class(
+            c"PaseoSaveDocumentPickerDelegate",
+            class!(NSObject),
+            &[
+                (
+                    c"documentPicker:didPickDocumentsAtURLs:",
+                    imp!(saved_document),
+                    "v@:@@",
+                ),
+                (
+                    c"documentPickerWasCancelled:",
+                    imp!(save_picker_cancelled),
+                    "v@:@",
+                ),
+                (
+                    c"presentationControllerDidDismiss:",
+                    imp!(save_picker_dismissed),
+                    "v@:@",
+                ),
+            ],
+        );
+        let delegate: Id = msg_send![class, new];
+        let _: () = msg_send![picker, setDelegate: delegate];
+        *SAVE_PICKER.lock().unwrap() = Some(SavePicker {
+            done,
+            delegate: delegate as usize,
+            controller: picker as usize,
+            _source: path,
+        });
+        let _: () = msg_send![root, presentViewController: picker, animated: true, completion: std::ptr::null_mut::<AnyObject>()];
+        let presenter: Id = msg_send![picker, presentingViewController];
+        if presenter.is_null() {
+            finish_save_picker(
+                picker,
+                Err(PlatformError::native(
+                    "The save picker could not be presented.",
+                )),
+            );
+            return;
+        }
+        let presentation: Id = msg_send![picker, presentationController];
+        if !presentation.is_null() {
+            let _: () = msg_send![presentation, setDelegate: delegate];
+        }
+    });
 }
 
 /// share_plus iOS: UIActivityViewController (popover anchored on iPad).
-pub(crate) fn share_file(_shared: &Arc<Shared>, path: PathBuf, _mime_type: String, _name: String, done: Completion) {
+pub(crate) fn share_file(
+    _shared: &Arc<Shared>,
+    path: PathBuf,
+    _mime_type: String,
+    _name: String,
+    done: Completion,
+) {
     apple::on_main_queue(move || unsafe {
         let root = root_controller();
         if root.is_null() {
-            done.fail(PlatformError::native("No window is available to present the share sheet."));
+            done.fail(PlatformError::native(
+                "No window is available to present the share sheet.",
+            ));
             return;
         }
         let items: Id = msg_send![class!(NSArray), arrayWithObject: apple::file_url(&path)];
@@ -402,7 +655,12 @@ pub(crate) fn read_clipboard(_shared: &Arc<Shared>, images_only: bool, done: Com
     apple::on_main_queue(move || unsafe {
         let board = pasteboard();
         let mut bytes = Vec::new();
-        for kind in ["public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"] {
+        for kind in [
+            "public.png",
+            "public.jpeg",
+            "com.compuserve.gif",
+            "org.webmproject.webp",
+        ] {
             let data: Id = msg_send![board, dataForPasteboardType: ns_string(kind)];
             if !data.is_null() {
                 bytes = apple::data_bytes(data);
@@ -418,28 +676,44 @@ pub(crate) fn read_clipboard(_shared: &Arc<Shared>, images_only: bool, done: Com
         }
         if let Some(mime) = crate::image::sniff_image_mime(&bytes) {
             done.ok(PlatformValue::Clipboard(ClipboardContent {
-                images: vec![ClipboardImage { bytes: Arc::new(bytes), mime_type: mime.to_owned() }],
+                images: vec![ClipboardImage {
+                    bytes: Arc::new(bytes),
+                    mime_type: mime.to_owned(),
+                }],
                 text: None,
             }));
             return;
         }
         if images_only {
-            done.fail(PlatformError::new("no_image", "No image in the current clipboard."));
+            done.fail(PlatformError::new(
+                "no_image",
+                "No image in the current clipboard.",
+            ));
             return;
         }
         let text: Id = msg_send![board, string];
-        done.ok(PlatformValue::Clipboard(ClipboardContent { images: Vec::new(), text: rust_string(text) }));
+        done.ok(PlatformValue::Clipboard(ClipboardContent {
+            images: Vec::new(),
+            text: rust_string(text),
+        }));
     });
 }
 
-pub(crate) fn copy_image(_shared: &Arc<Shared>, bytes: Vec<u8>, mime_type: String, done: Completion) {
+pub(crate) fn copy_image(
+    _shared: &Arc<Shared>,
+    bytes: Vec<u8>,
+    mime_type: String,
+    done: Completion,
+) {
     let kind = match crate::image::sniff_image_mime(&bytes) {
         Some("image/png") => "public.png",
         Some("image/jpeg") => "public.jpeg",
         Some("image/gif") => "com.compuserve.gif",
         Some("image/webp") => "org.webmproject.webp",
         _ => {
-            done.fail(PlatformError::invalid(format!("Unsupported clipboard image type {mime_type}.")));
+            done.fail(PlatformError::invalid(format!(
+                "Unsupported clipboard image type {mime_type}."
+            )));
             return;
         }
     };
@@ -452,7 +726,10 @@ pub(crate) fn copy_image(_shared: &Arc<Shared>, bytes: Vec<u8>, mime_type: Strin
 // ----- notifications / badge / permissions -----
 
 pub(crate) fn notify(_shared: &Arc<Shared>, request: NotificationRequest, done: Completion) {
-    let identity = request.event_key.clone().unwrap_or_else(|| request.id.to_string());
+    let identity = request
+        .event_key
+        .clone()
+        .unwrap_or_else(|| request.id.to_string());
     let payload = serde_json::json!({"id": identity, "data": request.data}).to_string();
     user_notifications::add(
         &request.id.to_string(),
@@ -465,11 +742,15 @@ pub(crate) fn notify(_shared: &Arc<Shared>, request: NotificationRequest, done: 
 }
 
 pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    user_notifications::request_authorization(move |result| done.finish(result.map(PlatformValue::Permission)));
+    user_notifications::request_authorization(move |result| {
+        done.finish(result.map(PlatformValue::Permission))
+    });
 }
 
 pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Completion) {
-    user_notifications::authorization_status(move |state| done.ok(PlatformValue::Permission(state)));
+    user_notifications::authorization_status(move |state| {
+        done.ok(PlatformValue::Permission(state))
+    });
 }
 
 pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completion) {
@@ -487,7 +768,8 @@ pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completio
                     }
                 }
             });
-            let _: () = msg_send![center, setBadgeCount: count as isize, withCompletionHandler: &*block];
+            let _: () =
+                msg_send![center, setBadgeCount: count as isize, withCompletionHandler: &*block];
         } else {
             let app: Id = msg_send![class!(UIApplication), sharedApplication];
             let _: () = msg_send![app, setApplicationIconBadgeNumber: count as isize];
@@ -497,14 +779,18 @@ pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completio
 }
 
 pub(crate) fn idle_milliseconds(_shared: &Arc<Shared>, done: Completion) {
-    done.fail(PlatformError::new("idle_unsupported", "Mobile clients report app activity only."));
+    done.fail(PlatformError::new(
+        "idle_unsupported",
+        "Mobile clients report app activity only.",
+    ));
 }
 
 /// AVCaptureDevice video authorization (mobile_scanner/permission_handler).
 pub(crate) fn camera_permission(_shared: &Arc<Shared>, request: bool, done: Completion) {
     unsafe {
         let media = ns_string("vide"); // AVMediaTypeVideo
-        let status: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: media];
+        let status: isize =
+            msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: media];
         let state = match status {
             3 => PermissionState::Granted,
             1 | 2 => PermissionState::Denied,
@@ -517,7 +803,11 @@ pub(crate) fn camera_permission(_shared: &Arc<Shared>, request: bool, done: Comp
         let done = Mutex::new(Some(done));
         let block = RcBlock::new(move |granted: Bool| {
             if let Some(done) = done.lock().unwrap().take() {
-                done.ok(PlatformValue::Permission(if granted.as_bool() { PermissionState::Granted } else { PermissionState::Denied }));
+                done.ok(PlatformValue::Permission(if granted.as_bool() {
+                    PermissionState::Granted
+                } else {
+                    PermissionState::Denied
+                }));
             }
         });
         let _: () = msg_send![class!(AVCaptureDevice), requestAccessForMediaType: media, completionHandler: &*block];
@@ -555,7 +845,9 @@ pub(crate) async fn push_provisioned() -> bool {
     push_environment().is_ok()
 }
 
-pub(crate) async fn notification_permission(request: bool) -> Result<PermissionState, PlatformError> {
+pub(crate) async fn notification_permission(
+    request: bool,
+) -> Result<PermissionState, PlatformError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     if request {
         user_notifications::request_authorization(move |result| {
@@ -566,7 +858,11 @@ pub(crate) async fn notification_permission(request: bool) -> Result<PermissionS
             let _ = tx.send(Ok(state));
         });
     }
-    rx.await.unwrap_or_else(|_| Err(PlatformError::native("Notification authorization was dropped.")))
+    rx.await.unwrap_or_else(|_| {
+        Err(PlatformError::native(
+            "Notification authorization was dropped.",
+        ))
+    })
 }
 
 /// The APNs device token (hex), from `registerForRemoteNotifications`.
@@ -578,7 +874,9 @@ pub(crate) async fn device_push_token() -> Result<String, PlatformError> {
     });
     match tokio::time::timeout(Duration::from_secs(30), waiter).await {
         Ok(Ok(result)) => result,
-        _ => Err(PlatformError::native("The operating system has not issued a push token.")),
+        _ => Err(PlatformError::native(
+            "The operating system has not issued a push token.",
+        )),
     }
 }
 
@@ -587,21 +885,35 @@ pub(crate) async fn device_push_token() -> Result<String, PlatformError> {
 pub(crate) fn push_environment() -> Result<String, PlatformError> {
     let path = unsafe {
         let bundle: Id = msg_send![class!(NSBundle), mainBundle];
-        rust_string(msg_send![bundle, pathForResource: ns_string("embedded"), ofType: ns_string("mobileprovision")])
+        rust_string(
+            msg_send![bundle, pathForResource: ns_string("embedded"), ofType: ns_string("mobileprovision")],
+        )
     };
-    let Some(path) = path else { return Ok("production".into()) };
+    let Some(path) = path else {
+        return Ok("production".into());
+    };
     let profile = std::fs::read(&path)?;
-    let start = find(&profile, b"<?xml").ok_or_else(|| PlatformError::native("Cannot decode the app signing profile."))?;
-    let end = find(&profile[start..], b"</plist>").map(|e| start + e + b"</plist>".len()).ok_or_else(|| PlatformError::native("Cannot decode the app signing profile."))?;
+    let start = find(&profile, b"<?xml")
+        .ok_or_else(|| PlatformError::native("Cannot decode the app signing profile."))?;
+    let end = find(&profile[start..], b"</plist>")
+        .map(|e| start + e + b"</plist>".len())
+        .ok_or_else(|| PlatformError::native("Cannot decode the app signing profile."))?;
     let plist = unsafe {
         let data = apple::ns_data(&profile[start..end]);
         let mut error: Id = std::ptr::null_mut();
         let object: Id = msg_send![class!(NSPropertyListSerialization), propertyListWithData: data, options: 0usize, format: std::ptr::null_mut::<usize>(), error: &mut error];
         apple::to_json(object)
     };
-    match plist.get("Entitlements").and_then(|e| e.get("aps-environment")).and_then(Value::as_str) {
+    match plist
+        .get("Entitlements")
+        .and_then(|e| e.get("aps-environment"))
+        .and_then(Value::as_str)
+    {
         Some(environment @ ("development" | "production")) => Ok(environment.to_owned()),
-        _ => Err(PlatformError::new("push_unavailable", "Push Notifications capability is missing from the signing profile.")),
+        _ => Err(PlatformError::new(
+            "push_unavailable",
+            "Push Notifications capability is missing from the signing profile.",
+        )),
     }
 }
 

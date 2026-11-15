@@ -1,12 +1,15 @@
 //! Project scripts for a session's existing directory. The legacy setup route stays
 //! readable without exposing worktree lifecycle actions.
 use makepad_widgets::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::host::{self, Connection};
 use super::i18n::{l, t};
-use super::kit::{clicked_in, set_alert, set_optional, WaButtonWidgetExt, WaButtonWidgetRefExt, WaRepeatWidgetExt, WaRepeatWidgetRefExt};
-use super::rpc::{array_of, payload, require_success, str_of, Pending};
+use super::kit::{
+    WaButtonWidgetExt, WaButtonWidgetRefExt, WaRepeatWidgetExt, WaRepeatWidgetRefExt, clicked_in,
+    set_alert, set_optional,
+};
+use super::rpc::{Pending, array_of, payload, require_success, str_of};
 use super::scripts;
 use crate::common::UiContext;
 use paseo_gui_core::CoreEvent;
@@ -101,7 +104,6 @@ pub struct WaSetupView {
     pending: Pending<Req>,
 }
 
-
 impl WaSetupView {
     /// The content root as a handle (the deref `View` is not `Clone`).
     fn root(&self) -> WidgetRef {
@@ -130,9 +132,14 @@ impl WaSetupView {
     }
 
     fn load_scripts(&mut self, ctx: &UiContext) {
-        self.pending.send(&ctx.core, &self.host_id, "workspace.script.list.request", json!({ "workspaceId": self.workspace_id }), Req::Scripts);
+        self.pending.send(
+            &ctx.core,
+            &self.host_id,
+            "workspace.script.list.request",
+            json!({ "workspaceId": self.workspace_id }),
+            Req::Scripts,
+        );
     }
-
 
     fn handle_core(&mut self, cx: &mut Cx, ctx: &mut UiContext) {
         if self.host_id.is_empty() {
@@ -147,7 +154,10 @@ impl WaSetupView {
         self.last_status = status;
         let mut changed = false;
         for event in &ctx.events {
-            if let CoreEvent::HostEvent { host_id, event } = event && *host_id == self.host_id && str_of(event, "type") == "script_status_update" {
+            if let CoreEvent::HostEvent { host_id, event } = event
+                && *host_id == self.host_id
+                && str_of(event, "type") == "script_status_update"
+            {
                 let body = payload(event);
                 if str_of(body, "workspaceId") == self.workspace_id {
                     self.scripts = array_of(body, "scripts").to_vec();
@@ -179,28 +189,45 @@ impl WaSetupView {
         }
     }
 
-
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions, ctx: &mut UiContext) {
         if self.view.wa_button(id!(load_retry)).clicked(actions) && !self.loading {
             self.load(ctx);
             self.view.redraw(cx);
         }
         let scripts_list = self.view.wa_repeat(id!(scripts));
-        if let Some(index) = clicked_in(&scripts_list, id!(toggle), actions) && let Some(script) = self.scripts.get(index).cloned() && !self.busy {
+        if let Some(index) = clicked_in(&scripts_list, id!(toggle), actions)
+            && let Some(script) = self.scripts.get(index).cloned()
+            && !self.busy
+        {
             self.busy = true;
             self.error = None;
-            scripts::toggle(&mut self.pending, &ctx.core, &self.host_id, &self.workspace_id, &script, Req::Script);
+            scripts::toggle(
+                &mut self.pending,
+                &ctx.core,
+                &self.host_id,
+                &self.workspace_id,
+                &script,
+                Req::Script,
+            );
             self.view.redraw(cx);
         }
-        if let Some(index) = clicked_in(&scripts_list, id!(view_log), actions) && let Some(effect) = self.scripts.get(index).and_then(|s| scripts::log_tab(&self.host_id, &self.workspace_id, &self.cwd, s)) {
+        if let Some(index) = clicked_in(&scripts_list, id!(view_log), actions)
+            && let Some(effect) = self
+                .scripts
+                .get(index)
+                .and_then(|s| scripts::log_tab(&self.host_id, &self.workspace_id, &self.cwd, s))
+        {
             ctx.effects.push(effect);
         }
-        if let Some(index) = clicked_in(&scripts_list, id!(open_service), actions) && let Some(script) = self.scripts.get(index) && let Err(error) = scripts::open_service(&mut ctx.effects, scripts::service_url(script)) {
+        if let Some(index) = clicked_in(&scripts_list, id!(open_service), actions)
+            && let Some(script) = self.scripts.get(index)
+            && let Err(error) =
+                scripts::open_service(&mut ctx.effects, scripts::service_url(script))
+        {
             self.error = Some(error);
             self.view.redraw(cx);
         }
     }
-
 
     fn present(&mut self, cx: &mut Cx) {
         let view = self.root();
@@ -213,11 +240,18 @@ impl WaSetupView {
             retry.set_enabled(cx, !self.loading);
         }
         let empty = view.widget(id!(empty));
-        empty.set_visible(cx, !self.loading && self.error.is_none() && self.scripts.is_empty());
-        empty.widget(id!(text)).set_text(cx, l("No scripts configured."));
+        empty.set_visible(
+            cx,
+            !self.loading && self.error.is_none() && self.scripts.is_empty(),
+        );
+        empty
+            .widget(id!(text))
+            .set_text(cx, l("No scripts configured."));
         let section = view.widget(id!(scripts_section));
         section.set_visible(cx, !self.scripts.is_empty());
-        section.widget(id!(title)).set_text(cx, &t("workspace.scripts.title"));
+        section
+            .widget(id!(title))
+            .set_text(cx, &t("workspace.scripts.title"));
         let scripts_list = view.wa_repeat(id!(scripts));
         scripts_list.set_count(cx, self.scripts.len());
         let compact = crate::common::is_compact_layout(cx);
@@ -226,21 +260,36 @@ impl WaSetupView {
             // Keep script metadata above the actions on narrow panes; long localized
             // action labels can wrap without consuming the hint's available width.
             if compact {
-                row.apply_over(cx, live! {
-                    flow: Down, align: { y: 0.0 }
-                    controls = { width: Fill, flow: RightWrap }
-                });
+                row.apply_over(
+                    cx,
+                    live! {
+                        flow: Down, align: { y: 0.0 }
+                        controls = { width: Fill, flow: RightWrap }
+                    },
+                );
             } else {
-                row.apply_over(cx, live! {
-                    flow: Right, align: { y: 0.5 }
-                    controls = { width: Fit, flow: Right }
-                });
+                row.apply_over(
+                    cx,
+                    live! {
+                        flow: Right, align: { y: 0.5 }
+                        controls = { width: Fit, flow: Right }
+                    },
+                );
             }
-            row.widget(id!(body.label)).set_text(cx, str_of(script, "scriptName"));
-            set_optional(cx, &row.widget(id!(body.hint)), &scripts::script_hint(script));
+            row.widget(id!(body.label))
+                .set_text(cx, str_of(script, "scriptName"));
+            set_optional(
+                cx,
+                &row.widget(id!(body.hint)),
+                &scripts::script_hint(script),
+            );
             let toggle = row.wa_button(id!(toggle));
             let running = scripts::is_running(script);
-            let label = if running { t("workspace.scripts.actions.stop") } else { t("workspace.scripts.actions.run") };
+            let label = if running {
+                t("workspace.scripts.actions.stop")
+            } else {
+                t("workspace.scripts.actions.run")
+            };
             toggle.set_text(cx, &label);
             toggle.set_icon(cx, if running { "square" } else { "play" });
             toggle.set_enabled(cx, !self.busy);
@@ -260,7 +309,9 @@ impl Widget for WaSetupView {
             self.handle_core(cx, ctx);
         }
         self.view.handle_event(cx, event, scope);
-        if let Event::Actions(actions) = event && let Some(ctx) = scope.data.get_mut::<UiContext>() {
+        if let Event::Actions(actions) = event
+            && let Some(ctx) = scope.data.get_mut::<UiContext>()
+        {
             self.handle_actions(cx, actions, ctx);
         }
     }
@@ -270,4 +321,3 @@ impl Widget for WaSetupView {
         self.view.draw_walk(cx, scope, walk)
     }
 }
-

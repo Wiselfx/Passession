@@ -2,12 +2,12 @@
 //! scripts menu (Flutter `setup_panel.dart` `_scriptRow` and `shell.dart` `_scriptsMenu`):
 //! start/stop, the read-only log of a script's terminal and its service URL.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::common::{PanelTarget, TabPlacement, UiEffect};
 
 use super::i18n::{l, ta};
-use super::rpc::{str_of, Pending};
+use super::rpc::{Pending, str_of};
 
 /// `proxyUrl`, else `publicProxyUrl`, else `localProxyUrl`.
 pub fn service_url(script: &Value) -> &str {
@@ -44,7 +44,14 @@ pub fn script_hint(script: &Value) -> String {
 }
 
 /// Starts a stopped script or stops a running one (`workspace.script.start|stop`).
-pub fn toggle<K>(pending: &mut Pending<K>, core: &paseo_gui_core::CoreHandle, host_id: &str, workspace_id: &str, script: &Value, key: K) {
+pub fn toggle<K>(
+    pending: &mut Pending<K>,
+    core: &paseo_gui_core::CoreHandle,
+    host_id: &str,
+    workspace_id: &str,
+    script: &Value,
+    key: K,
+) {
     let verb = if is_running(script) { "stop" } else { "start" };
     pending.send(
         core,
@@ -57,10 +64,14 @@ pub fn toggle<K>(pending: &mut Pending<K>, core: &paseo_gui_core::CoreHandle, ho
 
 /// Opens a service URL in the system browser. Only http(s) URLs are allowed.
 pub fn open_service(effects: &mut Vec<UiEffect>, url: &str) -> Result<(), String> {
-    let scheme = url.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase());
+    let scheme = url
+        .split_once(':')
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
     match scheme.as_deref() {
         Some("http") | Some("https") if url.contains("://") => {
-            effects.push(UiEffect::OpenExternal { url: url.to_owned() });
+            effects.push(UiEffect::OpenExternal {
+                url: url.to_owned(),
+            });
             Ok(())
         }
         _ => Err(l("Could not open service URL in the system browser.").to_owned()),
@@ -77,7 +88,10 @@ pub fn log_tab(host_id: &str, workspace_id: &str, cwd: &str, script: &Value) -> 
     let target = PanelTarget::new("execution_log", host_id, workspace_id, cwd)
         .with_id(terminal_id)
         .with_title(str_of(script, "scriptName"));
-    Some(UiEffect::OpenTab { target, placement: TabPlacement::Main })
+    Some(UiEffect::OpenTab {
+        target,
+        placement: TabPlacement::Main,
+    })
 }
 
 #[cfg(test)]

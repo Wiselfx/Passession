@@ -1,5 +1,7 @@
 use super::{duration, error, pretty, set_path};
-use crate::cli::{Context, flag, option, output::Output, parse_duration, positional, string, switch};
+use crate::cli::{
+    Context, flag, option, output::Output, parse_duration, positional, string, switch,
+};
 use crate::{
     client::ConnectOptions,
     daemon_admin::{
@@ -8,11 +10,14 @@ use crate::{
     },
     daemon_control::{self as control, DaemonInstance, StartOptions, StopOptions},
 };
-use paseo_client::{ClientError, DaemonClient, DaemonTarget};
 use anyhow::{Context as _, Result, bail, ensure};
 use clap::{ArgMatches, Command};
+use paseo_client::{ClientError, DaemonClient, DaemonTarget};
 use serde_json::{Value, json};
-use std::{path::{Path, PathBuf}, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio_util::sync::CancellationToken;
 
 const REMOVED_FLAGS: &[(&str, &str, bool)] = &[
@@ -310,10 +315,9 @@ async fn reload(client: &DaemonClient) -> Result<Value> {
 fn target_selector(target: &DaemonTarget) -> Result<String> {
     Ok(match target {
         DaemonTarget::Instance { home } => format!("--home {}", serde_json::to_string(home)?),
-        DaemonTarget::Endpoint { .. } => format!(
-            "--host {}",
-            serde_json::to_string(&target.description())?
-        ),
+        DaemonTarget::Endpoint { .. } => {
+            format!("--host {}", serde_json::to_string(&target.description())?)
+        }
     })
 }
 
@@ -357,14 +361,18 @@ async fn update(m: &ArgMatches, ctx: &Context) -> Result<Output> {
         })?;
         let id = admin::update_operation_id(raw)?;
         let operation = match (action, &ctx.target) {
-            ("status", DaemonTarget::Instance { home }) => update_operation::status(home, &id).await?,
+            ("status", DaemonTarget::Instance { home }) => {
+                update_operation::status(home, &id).await?
+            }
             ("status", DaemonTarget::Endpoint { .. }) => remote_status(ctx, &id).await?,
             (_, DaemonTarget::Instance { home }) => {
                 match update_operation::wait(home, &id, &ctx.cancel).await {
                     Err(_) if ctx.cancel.is_cancelled() => {
                         return Err(error(
                             "UPDATE_OBSERVER_CANCELLED",
-                            format!("Stopped observing update operation {id}; the update itself continues."),
+                            format!(
+                                "Stopped observing update operation {id}; the update itself continues."
+                            ),
                         ));
                     }
                     observed => observed?,
@@ -441,6 +449,7 @@ async fn update(m: &ArgMatches, ctx: &Context) -> Result<Output> {
             let request = SubmitRequest {
                 operation_id: operation_id.clone(),
                 source,
+                expected_release: None,
                 resume,
                 idle_timeout_ms,
                 force_running,
@@ -459,8 +468,13 @@ async fn update(m: &ArgMatches, ctx: &Context) -> Result<Output> {
 fn resume_agent_id(raw: &str) -> Result<String> {
     let id = raw.trim();
     ensure!(
-        !id.is_empty() && id.len() <= 256 && !id.chars().any(|c| c.is_whitespace() || c.is_control()),
-        error("INVALID_RESUME_AGENT", "--resume-agent must name one existing Paseo agent ID.")
+        !id.is_empty()
+            && id.len() <= 256
+            && !id.chars().any(|c| c.is_whitespace() || c.is_control()),
+        error(
+            "INVALID_RESUME_AGENT",
+            "--resume-agent must name one existing Paseo agent ID."
+        )
     );
     Ok(id.to_owned())
 }
@@ -479,11 +493,17 @@ async fn continuation_text(path: &Path) -> Result<String> {
         return Err(invalid("not a regular file".into()));
     }
     if metadata.len() > MAX_CONTINUATION_BYTES {
-        return Err(invalid(format!("larger than {MAX_CONTINUATION_BYTES} bytes")));
+        return Err(invalid(format!(
+            "larger than {MAX_CONTINUATION_BYTES} bytes"
+        )));
     }
-    let bytes = tokio::fs::read(path).await.map_err(|e| invalid(e.to_string()))?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| invalid(e.to_string()))?;
     if bytes.len() as u64 > MAX_CONTINUATION_BYTES {
-        return Err(invalid(format!("larger than {MAX_CONTINUATION_BYTES} bytes")));
+        return Err(invalid(format!(
+            "larger than {MAX_CONTINUATION_BYTES} bytes"
+        )));
     }
     let text = String::from_utf8(bytes).map_err(|_| invalid("not UTF-8 text".into()))?;
     if text.trim().is_empty() {
@@ -558,7 +578,11 @@ async fn remote_submit(
         };
         sent = true;
         let result = client
-            .request(message.clone(), "daemon.update.submit.response", REMOTE_REQUEST_TIMEOUT)
+            .request(
+                message.clone(),
+                "daemon.update.submit.response",
+                REMOTE_REQUEST_TIMEOUT,
+            )
             .await;
         client.close().await;
         match result {
@@ -617,11 +641,18 @@ async fn remote_wait(ctx: &Context, operation_id: &str) -> Result<Value> {
 }
 /// `wait` succeeds only for a committed replacement; session resume is reported separately.
 fn wait_exit_code(operation: &Value) -> i32 {
-    if operation["phase"] == "committed" { 0 } else { 1 }
+    if operation["phase"] == "committed" {
+        0
+    } else {
+        1
+    }
 }
 fn runtime_text(runtime: &Value) -> Option<String> {
     let runtime = runtime.as_object()?;
-    let version = runtime.get("version").and_then(Value::as_str).unwrap_or("unknown");
+    let version = runtime
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     let digest = runtime
         .get("executableSha256")
         .and_then(Value::as_str)
@@ -640,10 +671,16 @@ pub(crate) fn update_text(operation: &Value) -> String {
     let mut lines = vec![format!("Operation: {id}"), format!("Phase: {phase}")];
     lines.push(
         match phase {
-            "committed" => "Update committed: the replacement daemon passed readiness and identity checks.",
+            "committed" => {
+                "Update committed: the replacement daemon passed readiness and identity checks."
+            }
             "rolled_back" => "Update rolled back: the previous runtime was restored.",
-            "failed" => "Update failed; the original runtime, candidate and diagnostics are preserved.",
-            _ if operation["accepted"] == true => "Update accepted; its executor completes it independently of this command.",
+            "failed" => {
+                "Update failed; the original runtime, candidate and diagnostics are preserved."
+            }
+            _ if operation["accepted"] == true => {
+                "Update accepted; its executor completes it independently of this command."
+            }
             _ => "Update not yet accepted.",
         }
         .to_owned(),
@@ -662,11 +699,20 @@ pub(crate) fn update_text(operation: &Value) -> String {
         rollback => lines.push(format!("Rollback: {rollback}")),
     }
     if let Some(continuation) = operation["continuation"].as_object() {
-        let state = continuation.get("state").and_then(Value::as_str).unwrap_or("unknown");
+        let state = continuation
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
         let mut line = format!(
             "Session resume: {state} (agent {}, message {})",
-            continuation.get("agentId").and_then(Value::as_str).unwrap_or("unknown"),
-            continuation.get("messageId").and_then(Value::as_str).unwrap_or("unknown")
+            continuation
+                .get("agentId")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            continuation
+                .get("messageId")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         );
         if let Some(error) = continuation.get("error").and_then(Value::as_str) {
             line.push_str(&format!(": {error}"));
@@ -758,6 +804,8 @@ pub(crate) async fn observe_status(
             Ok(status) => {
                 for (key, source) in [
                     ("daemonVersion", "version"),
+                    ("sourceSha", "sourceSha"),
+                    ("componentIdentity", "componentIdentity"),
                     ("workerPid", "pid"),
                     ("daemonExecutable", "nodePath"),
                     ("providers", "providers"),
@@ -955,19 +1003,18 @@ async fn configuration(action: &str, m: &ArgMatches, ctx: &Context) -> Result<Ou
     let running = control::read_daemon_instance(&home)
         .await?
         .is_some_and(|i| i.listen.is_some());
-    if running
-        && let Ok(client) = ctx.connect().await {
-            let result = reload(&client).await;
-            client.close().await;
-            let mut result = result.map_err(|e| {
-                error(
-                    "CONFIG_SAVED_RELOAD_FAILED",
-                    format!("Saved; reload failed: {e}"),
-                )
-            })?;
-            result["action"] = json!("saved");
-            return Ok(pretty(result)?.quiet_text("configuration"));
-        }
+    if running && let Ok(client) = ctx.connect().await {
+        let result = reload(&client).await;
+        client.close().await;
+        let mut result = result.map_err(|e| {
+            error(
+                "CONFIG_SAVED_RELOAD_FAILED",
+                format!("Saved; reload failed: {e}"),
+            )
+        })?;
+        result["action"] = json!("saved");
+        return Ok(pretty(result)?.quiet_text("configuration"));
+    }
     Ok(pretty(json!({"action":"saved","applied":false,"message":"Saved; not applied to a running daemon","nextCommand":format!("paseo daemon {} --home {}",if running{"reload"}else{"start"},serde_json::to_string(&home)?)}))?.quiet_text("configuration"))
 }
 fn secret(key: &str) -> bool {
@@ -1004,14 +1051,15 @@ pub async fn pairing(
     cancel: &CancellationToken,
 ) -> Result<Value> {
     if let DaemonTarget::Instance { home } = target
-        && control::read_daemon_instance(home).await?.is_none() {
-            if enable {
-                let mut config = crate::config::read_persisted(home, true).await?;
-                set_path(&mut config, "daemon.relay.enabled", Some(json!(true)))?;
-                crate::config::save_persisted(home, &config).await?;
-            }
-            return pairing_result(crate::transport::offline_pairing_offer(home).await?);
+        && control::read_daemon_instance(home).await?.is_none()
+    {
+        if enable {
+            let mut config = crate::config::read_persisted(home, true).await?;
+            set_path(&mut config, "daemon.relay.enabled", Some(json!(true)))?;
+            crate::config::save_persisted(home, &config).await?;
         }
+        return pairing_result(crate::transport::offline_pairing_offer(home).await?);
+    }
     let mut options = ConnectOptions::new(target.clone());
     options.timeout = Duration::from_millis(1500);
     let client = crate::client::connect(options, cancel.child_token()).await?;
@@ -1241,7 +1289,10 @@ mod tests {
         Ok(update.clone())
     }
     fn code(failure: &anyhow::Error) -> &str {
-        failure.downcast_ref::<ClientError>().map(|e| e.code.as_str()).unwrap_or("")
+        failure
+            .downcast_ref::<ClientError>()
+            .map(|e| e.code.as_str())
+            .unwrap_or("")
     }
     const ID: &str = "0f8b6c5e-2a71-4c5b-9a43-7f2a1d0c9e11";
     #[test]
@@ -1269,20 +1320,34 @@ mod tests {
         };
         for args in [
             vec!["--from", "/opt/runtime"],
-            vec!["--resume-agent", "agent", "--continuation-file", "/tmp/c.txt"],
+            vec![
+                "--resume-agent",
+                "agent",
+                "--continuation-file",
+                "/tmp/c.txt",
+            ],
         ] {
-            let failure = update(&update_matches(&args).unwrap(), &ctx).await.err().unwrap();
+            let failure = update(&update_matches(&args).unwrap(), &ctx)
+                .await
+                .err()
+                .unwrap();
             assert_eq!(code(&failure), "LOCAL_HOME_REQUIRED", "{args:?}");
         }
-        let failure = update(&update_matches(&["status", ID, "--from", "/opt/runtime"]).unwrap(), &ctx)
-            .await
-            .err()
-            .unwrap();
+        let failure = update(
+            &update_matches(&["status", ID, "--from", "/opt/runtime"]).unwrap(),
+            &ctx,
+        )
+        .await
+        .err()
+        .unwrap();
         assert_eq!(code(&failure), "UPDATE_OPTION_CONFLICT");
-        let failure = update(&update_matches(&["--operation-id", "latest"]).unwrap(), &ctx)
-            .await
-            .err()
-            .unwrap();
+        let failure = update(
+            &update_matches(&["--operation-id", "latest"]).unwrap(),
+            &ctx,
+        )
+        .await
+        .err()
+        .unwrap();
         assert_eq!(code(&failure), "INVALID_OPERATION_ID");
     }
     #[tokio::test]
@@ -1290,10 +1355,20 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("continuation.txt");
         std::fs::write(&file, "Continue the release.\n").unwrap();
-        assert_eq!(continuation_text(&file).await.unwrap(), "Continue the release.\n");
-        for content in [" \n".as_bytes().to_vec(), vec![0xff, 0xfe], vec![b'a'; MAX_CONTINUATION_BYTES as usize + 1]] {
+        assert_eq!(
+            continuation_text(&file).await.unwrap(),
+            "Continue the release.\n"
+        );
+        for content in [
+            " \n".as_bytes().to_vec(),
+            vec![0xff, 0xfe],
+            vec![b'a'; MAX_CONTINUATION_BYTES as usize + 1],
+        ] {
             std::fs::write(&file, content).unwrap();
-            assert_eq!(code(&continuation_text(&file).await.unwrap_err()), "INVALID_CONTINUATION_FILE");
+            assert_eq!(
+                code(&continuation_text(&file).await.unwrap_err()),
+                "INVALID_CONTINUATION_FILE"
+            );
         }
         assert_eq!(
             code(&continuation_text(directory.path()).await.unwrap_err()),
@@ -1306,10 +1381,17 @@ mod tests {
         assert_eq!(wait_exit_code(&committed), 0);
         let text = update_text(&committed);
         assert!(text.contains("Update committed"), "{text}");
-        assert!(text.contains("1.2.0 sha256:abcdef012345 (local build)"), "{text}");
-        assert!(text.contains("Session resume: unknown (agent agent, message message)"), "{text}");
+        assert!(
+            text.contains("1.2.0 sha256:abcdef012345 (local build)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Session resume: unknown (agent agent, message message)"),
+            "{text}"
+        );
         assert!(text.contains("does not change the update result"), "{text}");
-        let accepted = json!({"operationId":ID,"phase":"draining","terminal":false,"accepted":true});
+        let accepted =
+            json!({"operationId":ID,"phase":"draining","terminal":false,"accepted":true});
         assert!(!update_text(&accepted).contains("committed"));
         for phase in ["rolled_back", "failed"] {
             let ended = json!({"operationId":ID,"phase":phase,"terminal":true,"accepted":true,"error":"readiness failed"});

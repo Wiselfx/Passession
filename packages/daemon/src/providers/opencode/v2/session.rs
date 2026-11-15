@@ -91,7 +91,13 @@ impl Session {
         launch: super::super::SessionLaunch,
         shared: &super::V2Session,
     ) -> Self {
-        let super::super::SessionLaunch { info, config, context, options, sink } = launch;
+        let super::super::SessionLaunch {
+            info,
+            config,
+            context,
+            options,
+            sink,
+        } = launch;
         let cancel = shared.cancel.clone();
         let (event_sender, events) = mpsc::channel(256);
         let (settle_sender, settled) = mpsc::unbounded_channel();
@@ -659,9 +665,13 @@ impl Session {
         self.snapshots.insert(child.to_owned(), history);
         let settled = self.settle_sender.clone();
         let child = child.to_owned();
-        family::on_outcome(request.replay.clone(), self.cancel.clone(), move |applied| async move {
-            let _ = settled.send((child, applied));
-        });
+        family::on_outcome(
+            request.replay.clone(),
+            self.cancel.clone(),
+            move |applied| async move {
+                let _ = settled.send((child, applied));
+            },
+        );
         Ok(())
     }
     /// An applied snapshot becomes the child's live timeline; either way its
@@ -681,9 +691,10 @@ impl Session {
             }
         }
         if self.children.contains_key(child)
-            && let Err(error) = self.collect_child(child).await {
-                tracing::warn!(%error,"OpenCode held child collection failed");
-            }
+            && let Err(error) = self.collect_child(child).await
+        {
+            tracing::warn!(%error,"OpenCode held child collection failed");
+        }
     }
     /// Emits only the transcript this child's live timeline has not emitted yet.
     async fn collect_body(&mut self, id: &str) -> Result<()> {
@@ -764,9 +775,9 @@ impl Session {
                     && let Some(event) = self
                         .timeline
                         .delta(data, if text { "text" } else { "reasoning" })?
-                    {
-                        self.emit_timeline(event).await?;
-                    }
+                {
+                    self.emit_timeline(event).await?;
+                }
                 return Ok(());
             }
             "session.step.ended" => {
@@ -916,10 +927,11 @@ impl Session {
         self.reconcile().await?;
         if kind == "session.execution.succeeded"
             && let Some(validator) = self.turn.as_ref().and_then(|t| t.output.as_ref())
-                && let Err(error) = assert_output(validator, &self.history) {
-                    self.fail(error.to_string()).await?;
-                    return Ok(());
-                }
+            && let Err(error) = assert_output(validator, &self.history)
+        {
+            self.fail(error.to_string()).await?;
+            return Ok(());
+        }
         let Some(turn) = self.turn.take() else {
             return Ok(());
         };
@@ -1009,11 +1021,11 @@ impl Session {
         if !matches!(
             &operation,
             Operation::Steer(..) | Operation::Interrupt | Operation::Rewind(..)
-        )
-            && let Err(error) = self.ensure_runtime().await {
-                let _ = reply.send(Err(error));
-                return false;
-            }
+        ) && let Err(error) = self.ensure_runtime().await
+        {
+            let _ = reply.send(Err(error));
+            return false;
+        }
         match operation {
             Operation::Start(prompt, options) => {
                 if let Some(error) = &self.stop_error {
@@ -1157,9 +1169,10 @@ impl Session {
             Operation::Permission(id, response) => {
                 self.respond(&id, response).await?;
                 if self.turn.as_ref().is_some_and(|t| t.denied)
-                    && let Err(error) = self.reconcile_turn().await {
-                        tracing::warn!(%error,"OpenCode denied request reconciliation failed");
-                    }
+                    && let Err(error) = self.reconcile_turn().await
+                {
+                    tracing::warn!(%error,"OpenCode denied request reconciliation failed");
+                }
                 Ok(Value::Null)
             }
             Operation::Commands => Ok(Value::Array(

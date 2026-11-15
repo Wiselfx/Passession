@@ -16,9 +16,9 @@ use crate::{
     transport::RequestContext,
 };
 use anyhow::{Context, Result, anyhow, bail};
+pub(crate) use lifecycle::WORKSPACE_CREATE_FIELDS;
 use managed::ManagedSources;
 pub(crate) use managed::split_source_reference;
-pub(crate) use lifecycle::WORKSPACE_CREATE_FIELDS;
 pub use provider::StaleProviderSessionError;
 use serde_json::{Value, json};
 use std::{
@@ -153,17 +153,18 @@ impl PluginService {
             }
         }
         if next["pluginsEnabled"] == true
-            && let Some(sources) = sources {
-                for (id, source) in sources {
-                    if source["enabled"] == false || self.loaded.read().unwrap().contains_key(id) {
-                        continue;
-                    }
-                    if let Err(error) = self.start_plugin(id, source).await {
-                        self.record_failure(id, error.to_string());
-                    }
-                    self.changed(id).await;
+            && let Some(sources) = sources
+        {
+            for (id, source) in sources {
+                if source["enabled"] == false || self.loaded.read().unwrap().contains_key(id) {
+                    continue;
                 }
+                if let Err(error) = self.start_plugin(id, source).await {
+                    self.record_failure(id, error.to_string());
+                }
+                self.changed(id).await;
             }
+        }
         Ok(())
     }
     async fn start_plugin(&self, id: &str, source: &Value) -> Result<()> {
@@ -299,14 +300,15 @@ impl PluginService {
     async fn stop_plugin(&self, id: &str) -> Result<()> {
         let loaded = self.loaded.write().unwrap().remove(id);
         if let Some(loaded) = loaded
-            && let Some(worker) = loaded.worker {
-                let result = worker.shutdown().await;
-                let diagnostics = worker.logs();
-                if !diagnostics.is_empty() {
-                    self.append_log(id, "stderr", &diagnostics);
-                }
-                result?;
+            && let Some(worker) = loaded.worker
+        {
+            let result = worker.shutdown().await;
+            let diagnostics = worker.logs();
+            if !diagnostics.is_empty() {
+                self.append_log(id, "stderr", &diagnostics);
             }
+            result?;
+        }
         self.changed(id).await;
         Ok(())
     }
@@ -503,9 +505,10 @@ impl PluginService {
                     }
                 }
                 if let Some(managed) = self.managed.get()
-                    && let Ok(installation) = managed.describe(id, path).await {
-                        item["installation"] = installation;
-                    }
+                    && let Ok(installation) = managed.describe(id, path).await
+                {
+                    item["installation"] = installation;
+                }
                 if item["installation"]["identity"]["kind"] == "git" {
                     item["source"] = json!("git");
                     item["remote"] = item["installation"]["identity"]["remote"].clone();

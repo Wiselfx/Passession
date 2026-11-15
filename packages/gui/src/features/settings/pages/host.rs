@@ -1,6 +1,5 @@
-//! Host pages from `settings_screen.dart` and the restart/update cards of
-//! `daemon_settings.dart`: overview (status badges, appearance, local daemon,
-//! host configuration, update, danger zone), projects, connections and pairing.
+//! Host settings: overview, projects, connections, and the explicit Version
+//! page. Durable updates use the daemon's persisted operation executor.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -10,7 +9,10 @@ use serde_json::{Value, json};
 use super::View;
 use super::app::{Pick, select_ctl_lead};
 use crate::common::{Route, UiEffect};
-use crate::features::settings::host::{self, HostView, Status, active_connection_label, config_with, connection_badge, connection_label};
+use crate::features::settings::host::{
+    self, HostView, Status, active_connection_label, config_with, connection_badge,
+    connection_label,
+};
 use crate::features::settings::i18n::{t, ta};
 use crate::features::settings::json::{get, str_of};
 use crate::features::settings::model::daemon_update::{self as du, Outcome};
@@ -19,7 +21,9 @@ use crate::features::settings::platform::{self, DESKTOP, MOBILE};
 use crate::features::settings::rpc::{Env, ReqError, handler};
 use crate::features::settings::state::{Settings, SheetKind};
 use crate::features::settings::ui::draw::{Font, Icon};
-use crate::features::settings::ui::kit::{BSize, Ctl, Lead, Ui, Variant, button, icon_button, row};
+use crate::features::settings::ui::kit::{
+    BSize, Ctl, Lead, Ui, Variant, button, icon_button, row, switch,
+};
 use crate::features::settings::ui::theme::{IDENTITY_COLORS, identity_fill};
 
 // ------------------------------------------------------------ no host / pairing
@@ -28,7 +32,10 @@ pub fn draw_no_host(ui: &mut Ui) {
     ui.section_title(&t("settings.groups.host"), None, None);
     ui.card_begin();
     let add = handler(|_, env| env.ctx.effects.push(UiEffect::OpenHostDialog));
-    ui.row(row(t("settings.host.notFound")).control(button("nohost.add", t("settings.addHost"), Some(add)).ctl()));
+    ui.row(
+        row(t("settings.host.notFound"))
+            .control(button("nohost.add", t("settings.addHost"), Some(add)).ctl()),
+    );
     ui.card_end();
     ui.gap(24.0);
 }
@@ -38,11 +45,19 @@ fn draw_pair_device(ui: &mut Ui, host: &HostView) {
     ui.section_title(&t("settings.host.pairDevices.title"), None, None);
     ui.card_begin();
     let id = host.server_id.clone();
-    let pair = handler(move |_, env| env.ctx.effects.push(UiEffect::OpenHostPairing { host_id: id.clone() }));
+    let pair = handler(move |_, env| {
+        env.ctx.effects.push(UiEffect::OpenHostPairing {
+            host_id: id.clone(),
+        })
+    });
     ui.row(
         row(t("settings.host.pairDevices.rowTitle"))
             .hint(t("settings.host.pairDevices.rowHint"))
-            .control(button("pair.open", t("settingsNative.showQrCode"), Some(pair)).icon(Icon::Smartphone).ctl()),
+            .control(
+                button("pair.open", t("settingsNative.showQrCode"), Some(pair))
+                    .icon(Icon::Smartphone)
+                    .ctl(),
+            ),
     );
     ui.card_end();
     ui.gap(24.0);
@@ -56,22 +71,54 @@ pub fn draw_projects(ui: &mut Ui, _s: &Settings, host: &HostView) {
     if host.projects.is_empty() {
         let (x, y, w) = (ui.x, ui.y, ui.w);
         if host.loading_projects {
-            ui.draw_ctl(Ctl::Spinner(36.0), makepad_widgets::dvec2(x + (w - 36.0) / 2.0, y + 24.0));
+            ui.draw_ctl(
+                Ctl::Spinner(36.0),
+                makepad_widgets::dvec2(x + (w - 36.0) / 2.0, y + 24.0),
+            );
             ui.y += 84.0;
         } else {
-            let text = host.project_error.clone().or_else(|| host.error.clone()).unwrap_or_else(|| t("sidebar.project.empty.title"));
+            let text = host
+                .project_error
+                .clone()
+                .or_else(|| host.error.clone())
+                .unwrap_or_else(|| t("sidebar.project.empty.title"));
             let size = ui.measure(Font::Regular, 14.0, &text, Some(w - 48.0));
-            ui.text(Font::Regular, 14.0, pal.muted, makepad_widgets::dvec2(x + (w - size.x) / 2.0, y + 24.0), Some(w - 48.0), &text);
+            ui.text(
+                Font::Regular,
+                14.0,
+                pal.muted,
+                makepad_widgets::dvec2(x + (w - size.x) / 2.0, y + 24.0),
+                Some(w - 48.0),
+                &text,
+            );
             ui.y += size.y + 48.0;
         }
         return;
     }
     if let Some(error) = host.project_error.clone().or_else(|| host.error.clone()) {
-        let text = ta("settings.projectList.hostLoadFailed", &[("hostName", &host.label), ("message", &error)]);
+        let text = ta(
+            "settings.projectList.hostLoadFailed",
+            &[("hostName", &host.label), ("message", &error)],
+        );
         let size = ui.measure(Font::Regular, 12.0, &text, Some(ui.w - 24.0));
         let (x, y, w) = (ui.x, ui.y, ui.w);
-        ui.rect(makepad_widgets::Rect { pos: makepad_widgets::dvec2(x, y), size: makepad_widgets::dvec2(w, size.y + 24.0) }, pal.transparent, Some(pal.border), 8.0);
-        ui.text(Font::Regular, 12.0, pal.field_error, makepad_widgets::dvec2(x + 12.0, y + 12.0), Some(w - 24.0), &text);
+        ui.rect(
+            makepad_widgets::Rect {
+                pos: makepad_widgets::dvec2(x, y),
+                size: makepad_widgets::dvec2(w, size.y + 24.0),
+            },
+            pal.transparent,
+            Some(pal.border),
+            8.0,
+        );
+        ui.text(
+            Font::Regular,
+            12.0,
+            pal.field_error,
+            makepad_widgets::dvec2(x + 12.0, y + 12.0),
+            Some(w - 24.0),
+            &text,
+        );
         ui.y += size.y + 24.0 + 12.0;
     }
     ui.card_begin();
@@ -85,7 +132,10 @@ pub fn draw_projects(ui: &mut Ui, _s: &Settings, host: &HostView) {
             .control(Ctl::Glyph(Icon::ChevronRight, 14.0, pal.muted))
             .inline();
         if !root.is_empty() {
-            r = r.tap(format!("projects.{i}"), handler(move |s, _| s.project_root = Some(root.clone())));
+            r = r.tap(
+                format!("projects.{i}"),
+                handler(move |s, _| s.project_root = Some(root.clone())),
+            );
         }
         ui.row(r);
     }
@@ -98,12 +148,42 @@ pub fn draw_projects(ui: &mut Ui, _s: &Settings, host: &HostView) {
 fn status_badge(host: &HostView, pal: &crate::features::settings::ui::theme::Palette) -> Ctl {
     let dark = pal.dark;
     let (tone, dot, key) = match host.status {
-        Status::Connected => (Some(pal.success), if dark { crate::features::settings::ui::theme::rgb(0x35c264) } else { crate::features::settings::ui::theme::rgb(0x299f51) }, "Online"),
-        Status::Connecting => (Some(pal.warning), if dark { crate::features::settings::ui::theme::rgb(0xdb932e) } else { crate::features::settings::ui::theme::rgb(0xb37824) }, "Connecting"),
-        Status::Error => (Some(pal.danger), if dark { crate::features::settings::ui::theme::rgb(0xf7796d) } else { crate::features::settings::ui::theme::rgb(0xf12e2f) }, "Error"),
+        Status::Connected => (
+            Some(pal.success),
+            if dark {
+                crate::features::settings::ui::theme::rgb(0x35c264)
+            } else {
+                crate::features::settings::ui::theme::rgb(0x299f51)
+            },
+            "Online",
+        ),
+        Status::Connecting => (
+            Some(pal.warning),
+            if dark {
+                crate::features::settings::ui::theme::rgb(0xdb932e)
+            } else {
+                crate::features::settings::ui::theme::rgb(0xb37824)
+            },
+            "Connecting",
+        ),
+        Status::Error => (
+            Some(pal.danger),
+            if dark {
+                crate::features::settings::ui::theme::rgb(0xf7796d)
+            } else {
+                crate::features::settings::ui::theme::rgb(0xf12e2f)
+            },
+            "Error",
+        ),
         Status::Disconnected => (None, pal.muted, "Offline"),
     };
-    Ctl::Badge { label: status_label(key), tone, xs: false, dot: Some(dot), icon: None }
+    Ctl::Badge {
+        label: status_label(key),
+        tone,
+        xs: false,
+        dot: Some(dot),
+        icon: None,
+    }
 }
 
 /// Original `formatConnectionStatus` labels.
@@ -117,7 +197,10 @@ fn status_label(english: &str) -> String {
     t(key)
 }
 
-pub fn status_color(host: &HostView, pal: &crate::features::settings::ui::theme::Palette) -> makepad_widgets::Vec4 {
+pub fn status_color(
+    host: &HostView,
+    pal: &crate::features::settings::ui::theme::Palette,
+) -> makepad_widgets::Vec4 {
     match host.status {
         Status::Connected => pal.success,
         Status::Connecting => pal.warning,
@@ -126,7 +209,12 @@ pub fn status_color(host: &HostView, pal: &crate::features::settings::ui::theme:
 }
 
 pub fn draw_connection_error(ui: &mut Ui, host: &HostView) {
-    if let Some(message) = host.error.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+    if let Some(message) = host
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
         ui.alert(false, message, None, None);
         ui.gap(24.0);
     }
@@ -135,9 +223,18 @@ pub fn draw_connection_error(ui: &mut Ui, host: &HostView) {
 fn rename(s: &mut Settings, host: &HostView) {
     let config = host.config.clone();
     let host_id = host.server_id.clone();
-    let fields = vec![SettingField::text("label", t("settings.host.daemon.rename.placeholder"), str_of(&config, "label"))];
+    let fields = vec![SettingField::text(
+        "label",
+        t("settings.host.daemon.rename.placeholder"),
+        str_of(&config, "label"),
+    )];
     let save: FormSave = Rc::new(move |s, env, sheet, values| {
-        let label = values.get("label").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let label = values
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !label.is_empty() && label != str_of(&config, "label") {
             host::update_host_config(&env.ctx.core, config_with(&config, Some(&label), None));
             s.host_busy.insert(host_id.clone(), true);
@@ -149,16 +246,32 @@ fn rename(s: &mut Settings, host: &HostView) {
     s.push_sheet(sheet, SheetKind::Form(form), 480.0);
 }
 
-pub fn draw_overview_page(ui: &mut Ui, s: &Settings, v: &View, host: &HostView) {
+pub fn draw_overview_page(ui: &mut Ui, s: &Settings, _v: &View, host: &HostView) {
     let pal = ui.pal;
     let mut badges = vec![status_badge(host, &pal)];
     if let Some((remote, label)) = connection_badge(host) {
-        badges.push(Ctl::Badge { label, tone: None, xs: false, dot: None, icon: Some(if remote { Icon::Globe } else { Icon::Monitor }) });
+        badges.push(Ctl::Badge {
+            label,
+            tone: None,
+            xs: false,
+            dot: None,
+            icon: Some(if remote { Icon::Globe } else { Icon::Monitor }),
+        });
     }
     let version = host.version();
     if !version.is_empty() {
-        let shown = if version.starts_with('v') { version } else { format!("v{version}") };
-        badges.push(Ctl::Badge { label: shown, tone: None, xs: false, dot: None, icon: None });
+        let shown = if version.starts_with('v') {
+            version
+        } else {
+            format!("v{version}")
+        };
+        badges.push(Ctl::Badge {
+            label: shown,
+            tone: None,
+            xs: false,
+            dot: None,
+            icon: None,
+        });
     }
     ui.wrap(badges, 4.0, 4.0);
     ui.gap(24.0);
@@ -171,28 +284,72 @@ pub fn draw_overview_page(ui: &mut Ui, s: &Settings, v: &View, host: &HostView) 
     let rename_act = handler(move |s, _| rename(s, &rename_host));
     let name_ctl = Ctl::Row(
         vec![
-            Ctl::Label { text: host.label.clone(), color: pal.muted, size: 14.0, font: Font::Regular, max_w: 220.0 },
-            Ctl::IconButton { key: format!("host.{}.rename", host.server_id), icon: Icon::Pencil, act: Some(rename_act), destructive: false, size: 24.0, tip: None },
+            Ctl::Label {
+                text: host.label.clone(),
+                color: pal.muted,
+                size: 14.0,
+                font: Font::Regular,
+                max_w: 220.0,
+            },
+            Ctl::IconButton {
+                key: format!("host.{}.rename", host.server_id),
+                icon: Icon::Pencil,
+                act: Some(rename_act),
+                destructive: false,
+                size: 24.0,
+                tip: None,
+            },
         ],
         8.0,
     );
-    ui.row(row(t("settings.host.appearance.name.label")).inline().control(name_ctl));
+    ui.row(
+        row(t("settings.host.appearance.name.label"))
+            .inline()
+            .control(name_ctl),
+    );
     let current = str_of(&host.config, "color");
-    let current = if IDENTITY_COLORS.contains(&current) { current.to_string() } else { "none".into() };
-    let mut options = vec![("none".to_string(), t("settings.host.appearance.color.options.none"))];
+    let current = if IDENTITY_COLORS.contains(&current) {
+        current.to_string()
+    } else {
+        "none".into()
+    };
+    let mut options = vec![(
+        "none".to_string(),
+        t("settings.host.appearance.color.options.none"),
+    )];
     let mut leads = vec![("none".to_string(), Lead::Swatch(None), false)];
     for name in IDENTITY_COLORS {
-        options.push((name.to_string(), t(&format!("settings.host.appearance.color.options.{name}"))));
+        options.push((
+            name.to_string(),
+            t(&format!("settings.host.appearance.color.options.{name}")),
+        ));
         leads.push((name.to_string(), Lead::Swatch(identity_fill(name)), false));
     }
     let config = host.config.clone();
     let pick: Pick = Rc::new(move |_, env, picked| {
-        let next = config_with(&config, None, Some(if picked == "none" { None } else { Some(picked.as_str()) }));
+        let next = config_with(
+            &config,
+            None,
+            Some(if picked == "none" {
+                None
+            } else {
+                Some(picked.as_str())
+            }),
+        );
         if next != config {
             host::update_host_config(&env.ctx.core, next);
         }
     });
-    let color = select_ctl_lead(&format!("host.{}.color", host.server_id), t("settings.host.appearance.color.label"), &current, options, leads, 200.0, true, pick);
+    let color = select_ctl_lead(
+        &format!("host.{}.color", host.server_id),
+        t("settings.host.appearance.color.label"),
+        &current,
+        options,
+        leads,
+        200.0,
+        true,
+        pick,
+    );
     ui.row(row(t("settings.host.appearance.color.label")).control(color));
     ui.card_end();
     ui.gap(24.0);
@@ -201,9 +358,6 @@ pub fn draw_overview_page(ui: &mut Ui, s: &Settings, v: &View, host: &HostView) 
         super::system::draw_local_daemon(ui, s);
     }
     super::daemon::draw_host_config(ui, s, host);
-    if !host.local {
-        draw_update_card(ui, s, v, host);
-    }
     draw_danger_zone(ui, s, host);
 }
 
@@ -224,12 +378,28 @@ pub fn draw_connections_page(ui: &mut Ui, s: &Settings, _v: &View, host: &HostVi
         let mut controls = Vec::new();
         if !is_active {
             let chosen = connection.clone();
-            let use_it = handler(move |_, env| host::update_host_config(&env.ctx.core, chosen.clone()));
-            controls.push(button(format!("{key}.use"), t("settingsNative.useConnection"), Some(use_it)).variant(Variant::Ghost).ctl());
+            let use_it =
+                handler(move |_, env| host::update_host_config(&env.ctx.core, chosen.clone()));
+            controls.push(
+                button(
+                    format!("{key}.use"),
+                    t("settingsNative.useConnection"),
+                    Some(use_it),
+                )
+                .variant(Variant::Ghost)
+                .ctl(),
+            );
         }
         let edited = connection.clone();
-        let edit = handler(move |_, env| env.ctx.effects.push(UiEffect::OpenHostConnectionDialog { connection: edited.clone() }));
-        controls.push(icon_button(format!("{key}.edit"), Icon::Pencil, Some(edit)).tipped(t("settingsNative.editConnection")));
+        let edit = handler(move |_, env| {
+            env.ctx.effects.push(UiEffect::OpenHostConnectionDialog {
+                connection: edited.clone(),
+            })
+        });
+        controls.push(
+            icon_button(format!("{key}.edit"), Icon::Pencil, Some(edit))
+                .tipped(t("settingsNative.editConnection")),
+        );
         let remove = if last {
             // The last connection removes the whole host: say so (`remove.*`).
             remove_host_handler(host)
@@ -237,24 +407,48 @@ pub fn draw_connections_page(ui: &mut Ui, s: &Settings, _v: &View, host: &HostVi
             handler(move |s, _| {
                 let server = server.clone();
                 let connection_id = connection_id.clone();
-                let go = handler(move |_, env| host::remove_connection(&env.ctx.core, &server, &connection_id));
+                let go = handler(move |_, env| {
+                    host::remove_connection(&env.ctx.core, &server, &connection_id)
+                });
                 s.confirm(
                     t("settings.host.connections.removeTitle"),
-                    ta("settings.host.connections.removeMessage", &[("name", &label)]),
+                    ta(
+                        "settings.host.connections.removeMessage",
+                        &[("name", &label)],
+                    ),
                     t("settings.host.connections.removeAction"),
                     true,
                     go,
                 );
             })
         };
-        controls.push(button(format!("{key}.remove"), t("settings.host.connections.removeAction"), Some(remove)).variant(Variant::Ghost).danger_text().ctl());
+        controls.push(
+            button(
+                format!("{key}.remove"),
+                t("settings.host.connections.removeAction"),
+                Some(remove),
+            )
+            .variant(Variant::Ghost)
+            .danger_text()
+            .ctl(),
+        );
         let hint = is_active.then(|| t("settingsNative.activeConnection"));
-        ui.row(row(connection_label(connection)).one_line().hint_opt(hint).inline().control(Ctl::Row(controls, 4.0)));
+        ui.row(
+            row(connection_label(connection))
+                .one_line()
+                .hint_opt(hint)
+                .inline()
+                .control(Ctl::Row(controls, 4.0)),
+        );
     }
     if host.connections.is_empty() {
         ui.row(row(t("settingsNative.noConnections")).one_line());
     }
-    let (seed_label, seed_server, seed_color) = (host.label.clone(), host.server_id.clone(), host.config.get("color").cloned().unwrap_or(Value::Null));
+    let (seed_label, seed_server, seed_color) = (
+        host.label.clone(),
+        host.server_id.clone(),
+        host.config.get("color").cloned().unwrap_or(Value::Null),
+    );
     let add = handler(move |_, env| {
         // Shell `ConnectionsSheet` seed: a fresh connection id expecting this server.
         let connection = json!({
@@ -264,9 +458,23 @@ pub fn draw_connections_page(ui: &mut Ui, s: &Settings, _v: &View, host: &HostVi
             "expectedServerId": seed_server,
             "color": seed_color,
         });
-        env.ctx.effects.push(UiEffect::OpenHostConnectionDialog { connection });
+        env.ctx
+            .effects
+            .push(UiEffect::OpenHostConnectionDialog { connection });
     });
-    ui.row(row(t("settingsNative.addConnection")).hint(t("settingsNative.addConnectionHint")).control(button(format!("conn.{}.add", host.server_id), t("settingsNative.addConnection"), Some(add)).icon(Icon::Plus).ctl()));
+    ui.row(
+        row(t("settingsNative.addConnection"))
+            .hint(t("settingsNative.addConnectionHint"))
+            .control(
+                button(
+                    format!("conn.{}.add", host.server_id),
+                    t("settingsNative.addConnection"),
+                    Some(add),
+                )
+                .icon(Icon::Plus)
+                .ctl(),
+            ),
+    );
     ui.card_end();
     ui.gap(24.0);
     if !MOBILE {
@@ -294,11 +502,20 @@ fn remove_host_handler(host: &HostView) -> crate::features::settings::rpc::Handl
             let id = id.clone();
             let finish = move |s: &mut Settings, env: &mut Env| {
                 // Flutter `removeHost`: the shell runs the host's tab close guards first.
-                env.ctx.effects.push(UiEffect::RemoveHost { host_id: id.clone() });
+                env.ctx.effects.push(UiEffect::RemoveHost {
+                    host_id: id.clone(),
+                });
                 s.host = None;
-                s.section = if env.ctx.compact { None } else { Some("general".into()) };
+                s.section = if env.ctx.compact {
+                    None
+                } else {
+                    Some("general".into())
+                };
                 let section = s.section.clone().unwrap_or_default();
-                env.navigate(Route::Settings { host_id: None, page: section });
+                env.navigate(Route::Settings {
+                    host_id: None,
+                    page: section,
+                });
             };
             if local && DESKTOP {
                 super::system::disable_builtin_then(s, env, finish);
@@ -307,9 +524,20 @@ fn remove_host_handler(host: &HostView) -> crate::features::settings::rpc::Handl
             }
         });
         let (title, message, action) = if local {
-            (t("settings.host.daemon.remove.localConfirmTitle"), t("settings.host.daemon.remove.localConfirmMessage"), t("settings.host.daemon.remove.localTitle"))
+            (
+                t("settings.host.daemon.remove.localConfirmTitle"),
+                t("settings.host.daemon.remove.localConfirmMessage"),
+                t("settings.host.daemon.remove.localTitle"),
+            )
         } else {
-            (t("settings.host.daemon.remove.title"), ta("settings.host.daemon.remove.confirmMessage", &[("name", &label)]), t("settings.host.daemon.remove.title"))
+            (
+                t("settings.host.daemon.remove.title"),
+                ta(
+                    "settings.host.daemon.remove.confirmMessage",
+                    &[("name", &label)],
+                ),
+                t("settings.host.daemon.remove.title"),
+            )
         };
         s.confirm(title, message, action, true, go);
     })
@@ -321,12 +549,27 @@ fn draw_danger_zone(ui: &mut Ui, s: &Settings, host: &HostView) {
     ui.gap(12.0);
     ui.card_begin();
     let (title, hint) = if host.local {
-        ("settings.host.daemon.remove.localTitle", "settings.host.daemon.remove.localHint")
+        (
+            "settings.host.daemon.remove.localTitle",
+            "settings.host.daemon.remove.localHint",
+        )
     } else {
-        ("settings.host.daemon.remove.title", "settings.host.daemon.remove.hint")
+        (
+            "settings.host.daemon.remove.title",
+            "settings.host.daemon.remove.hint",
+        )
     };
     let remove = remove_host_handler(host);
-    ui.row(row(t(title)).hint(t(hint)).control(button(format!("host.{}.remove", host.server_id), t("settings.host.connections.removeAction"), Some(remove)).ctl()));
+    ui.row(
+        row(t(title)).hint(t(hint)).control(
+            button(
+                format!("host.{}.remove", host.server_id),
+                t("settings.host.connections.removeAction"),
+                Some(remove),
+            )
+            .ctl(),
+        ),
+    );
     ui.card_end();
     ui.gap(24.0);
 }
@@ -334,12 +577,24 @@ fn draw_danger_zone(ui: &mut Ui, s: &Settings, host: &HostView) {
 // ------------------------------------------------------------ restart
 
 /// Original `readSelectedWorker`: worker status, refusing another daemon.
-fn read_worker(s: &mut Settings, env: &mut Env, server_id: &str, then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static) {
+fn read_worker(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: &str,
+    then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
+) {
     let id = server_id.to_string();
-    s.request(env, server_id, "daemon.get_status.request", json!({}), "daemon.get_status.response", move |s, env, result| {
-        let result = result.and_then(|status| identity_checked(env, &id).map(|_| status));
-        then(s, env, result);
-    });
+    s.request(
+        env,
+        server_id,
+        "daemon.get_status.request",
+        json!({}),
+        "daemon.get_status.response",
+        move |s, env, result| {
+            let result = result.and_then(|status| identity_checked(env, &id).map(|_| status));
+            then(s, env, result);
+        },
+    );
 }
 
 /// The host still reports the same daemon identity (`Daemon identity changed`).
@@ -347,7 +602,11 @@ fn identity_checked(env: &Env, server_id: &str) -> Result<(), ReqError> {
     match env.host(server_id) {
         Some(host) if host.reported_server_id() == server_id => Ok(()),
         Some(_) => Err(ReqError::msg(t("settingsNative.identityChanged"))),
-        None => Err(ReqError { code: "DAEMON_NOT_CONNECTED".into(), message: t("settingsNative.identityChanged"), outcome_unknown: false }),
+        None => Err(ReqError {
+            code: "DAEMON_NOT_CONNECTED".into(),
+            message: t("settingsNative.identityChanged"),
+            outcome_unknown: false,
+        }),
     }
 }
 
@@ -356,16 +615,29 @@ type Observer = Rc<dyn Fn(&mut Settings, &mut Env, Result<Value, ReqError>)>;
 
 /// Original `observeReplacement`: poll every 250 ms (10 min) until a worker
 /// with a new PID answers; offline polls retry.
-fn observe_replacement(s: &mut Settings, env: &mut Env, server_id: String, previous: Value, deadline: Instant, then: Observer) {
+fn observe_replacement(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: String,
+    previous: Value,
+    deadline: Instant,
+    then: Observer,
+) {
     if Instant::now() >= deadline {
-        then(s, env, Err(ReqError::msg(t("settingsNative.replacementUnconfirmed"))));
+        then(
+            s,
+            env,
+            Err(ReqError::msg(t("settingsNative.replacementUnconfirmed"))),
+        );
         return;
     }
     let id = server_id.clone();
     read_worker(s, env, &server_id, move |s, env, result| match result {
         Ok(current) if current.get("pid") != previous.get("pid") => then(s, env, Ok(current)),
         Err(error) if !error.is_reconnect() => then(s, env, Err(error)),
-        _ => s.after(env, 0.25, move |s, env| observe_replacement(s, env, id, previous, deadline, then)),
+        _ => s.after(env, 0.25, move |s, env| {
+            observe_replacement(s, env, id, previous, deadline, then)
+        }),
     });
 }
 
@@ -387,26 +659,46 @@ pub(super) fn restart(s: &mut Settings, env: &mut Env, server_id: String) {
             }
         };
         let id2 = id.clone();
-        s.request(env, &id, "restart_server_request", json!({"reason": format!("settings_daemon_restart_{id}")}), "status", move |s, env, result| {
-            let acknowledged = match result {
-                Ok(_) => true,
-                Err(error) if error.is_reconnect() => false,
-                Err(error) => {
-                    s.restarting.remove(&id2);
-                    env.error(&error);
-                    return;
-                }
-            };
-            let done_id = id2.clone();
-            let done: Observer = Rc::new(move |s, env, result| {
-                s.restarting.remove(&done_id);
-                if let Err(error) = result {
-                    let message = ta("settingsNative.restartAcknowledged", &[("acknowledged", &acknowledged.to_string()), ("error", &error.text())]);
-                    env.toast(message, true);
-                }
-            });
-            observe_replacement(s, env, id2, previous, Instant::now() + Duration::from_secs(600), done);
-        });
+        s.request(
+            env,
+            &id,
+            "restart_server_request",
+            json!({"reason": format!("settings_daemon_restart_{id}")}),
+            "status",
+            move |s, env, result| {
+                let acknowledged = match result {
+                    Ok(_) => true,
+                    Err(error) if error.is_reconnect() => false,
+                    Err(error) => {
+                        s.restarting.remove(&id2);
+                        env.error(&error);
+                        return;
+                    }
+                };
+                let done_id = id2.clone();
+                let done: Observer = Rc::new(move |s, env, result| {
+                    s.restarting.remove(&done_id);
+                    if let Err(error) = result {
+                        let message = ta(
+                            "settingsNative.restartAcknowledged",
+                            &[
+                                ("acknowledged", &acknowledged.to_string()),
+                                ("error", &error.text()),
+                            ],
+                        );
+                        env.toast(message, true);
+                    }
+                });
+                observe_replacement(
+                    s,
+                    env,
+                    id2,
+                    previous,
+                    Instant::now() + Duration::from_secs(600),
+                    done,
+                );
+            },
+        );
     });
 }
 
@@ -419,12 +711,27 @@ fn draw_restart_card(ui: &mut Ui, s: &Settings, host: &HostView) {
         handler(move |s, _| {
             let id = id.clone();
             let go = handler(move |s, env| restart(s, env, id.clone()));
-            s.confirm(ta("settings.host.daemon.restart.confirmTitle", &[("name", &label)]), rt("confirmMessage"), rt("confirm"), true, go);
+            s.confirm(
+                ta(
+                    "settings.host.daemon.restart.confirmTitle",
+                    &[("name", &label)],
+                ),
+                rt("confirmMessage"),
+                rt("confirm"),
+                true,
+                go,
+            );
         })
     });
     ui.card_begin();
     let label = rt(if restarting { "restarting" } else { "confirm" });
-    ui.row(row(rt("title")).hint(rt("hint")).control(button(format!("host.{}.restart", host.server_id), label, act).icon(Icon::RotateCw).ctl()));
+    ui.row(
+        row(rt("title")).hint(rt("hint")).control(
+            button(format!("host.{}.restart", host.server_id), label, act)
+                .icon(Icon::RotateCw)
+                .ctl(),
+        ),
+    );
     ui.card_end();
 }
 
@@ -452,6 +759,17 @@ pub struct UpdateCard {
     pub resumed: bool,
     /// Legacy `daemon.update.request` id whose progress events are shown.
     pub legacy_request: Option<String>,
+    pub operation_id: Option<String>,
+    pub submit_request: Option<Value>,
+    pub check: Option<Value>,
+    pub selected_components: Vec<String>,
+    pub checking: bool,
+    pub checked: bool,
+    pub check_generation: u64,
+    pub check_error: String,
+    pub force_running: bool,
+    pub app_update: bool,
+    pub action_required: bool,
 }
 
 fn ut(key: &str) -> String {
@@ -477,54 +795,235 @@ fn fail(s: &mut Settings, server_id: &str, title: String, message: String) {
 /// Resumes observing an operation this app submitted before a reconnect,
 /// rebuilt view or restart. It never submits a new update.
 pub fn ensure_update_card(s: &mut Settings, env: &mut Env, host: &HostView) {
-    if host.local || host.server_id.is_empty() {
+    if host.server_id.is_empty() {
         return;
     }
     let c = card(s, &host.server_id);
     if c.resumed || c.state != UpdatePhase::Idle {
         return;
     }
+    if c.operation_id.is_none() {
+        c.operation_id = host::stored_update_operation(&env.ctx.state, &host.server_id);
+        c.submit_request = host::stored_update_request(&env.ctx.state, &host.server_id);
+        c.app_update = c
+            .submit_request
+            .as_ref()
+            .is_some_and(|v| v["targetKind"] == "app");
+        c.selected_components = c
+            .submit_request
+            .as_ref()
+            .and_then(|request| request["selectedComponents"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|id| id.as_str().map(String::from))
+            .collect();
+        c.force_running = c
+            .submit_request
+            .as_ref()
+            .is_some_and(|request| request["forceRunning"] == true);
+    }
+    if !host.connected() {
+        return;
+    }
     c.resumed = true;
-    if let Some(operation) = host::stored_update_operation(&env.ctx.state, &host.server_id) {
+    if let Some(operation) = c.operation_id.clone() {
         durable_update(s, env, host.server_id.clone(), operation, true);
     }
 }
 
-/// Status/submit request against the host's current connection with the
-/// Flutter 30 s deadline and the identity check.
-fn update_request(s: &mut Settings, env: &mut Env, server_id: &str, kind: &str, fields: Value, response: &str, then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static) {
-    let id = server_id.to_string();
-    s.request_timeout(env, server_id, kind, fields, response, Some(Duration::from_secs(30)), move |s, env, result| {
-        let result = result.and_then(|value| identity_checked(env, &id).map(|_| value));
-        then(s, env, result);
-    });
+pub fn reset_version_check(s: &mut Settings, server_id: &str) {
+    if let Some(c) = s.update_cards.get_mut(server_id) {
+        c.check_generation = c.check_generation.wrapping_add(1);
+        c.checking = false;
+        c.checked = false;
+        c.check = None;
+    }
 }
 
-fn durable_update(s: &mut Settings, env: &mut Env, server_id: String, operation_id: String, resumed: bool) {
+pub fn ensure_version_page(s: &mut Settings, env: &mut Env, host: &HostView) {
+    ensure_update_card(s, env, host);
+    let c = card(s, &host.server_id);
+    if host.connected() && !c.checked && !c.checking {
+        check_version(s, env, host.server_id.clone());
+    }
+}
+
+fn check_version(s: &mut Settings, env: &mut Env, server_id: String) {
+    let Some(host) = env.host(&server_id).filter(HostView::connected) else {
+        return;
+    };
+    let c = card(s, &server_id);
+    if c.checking {
+        return;
+    }
+    c.checked = true;
+    c.check_error.clear();
+    c.check = None;
+    c.checking = true;
+    c.check_generation = c.check_generation.wrapping_add(1);
+    let generation = c.check_generation;
+    let id = server_id.clone();
+    if !du::supports_check(&host.server_info) {
+        read_worker(s, env, &server_id, move |s, _, result| {
+            let c = card(s, &id);
+            if c.check_generation != generation {
+                return;
+            }
+            c.checking = false;
+            match result {
+                Ok(worker) => c.check = Some(json!({"current": worker})),
+                Err(error) => c.check_error = error.text(),
+            }
+        });
+        return;
+    }
+    update_request(
+        s,
+        env,
+        &server_id,
+        "daemon.update.check.request",
+        json!({}),
+        "daemon.update.check.response",
+        move |s, _, result| {
+            let c = card(s, &id);
+            if c.check_generation != generation {
+                return;
+            }
+            c.checking = false;
+            match result {
+                Ok(value) if str_of(&value, "serverId") == id => {
+                    if c.operation_id.is_none() {
+                        c.selected_components = du::changed_components(&value);
+                    }
+                    c.check = Some(value);
+                }
+                Ok(_) => c.check_error = t("settingsNative.identityChanged"),
+                Err(error) => c.check_error = error.text(),
+            }
+        },
+    );
+}
+
+/// Status/submit request against the host's current connection with the
+/// Flutter 30 s deadline and the identity check.
+fn update_request(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: &str,
+    kind: &str,
+    fields: Value,
+    response: &str,
+    then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
+) {
+    if let Err(error) = identity_checked(env, server_id) {
+        then(s, env, Err(error));
+        return;
+    }
+    let id = server_id.to_string();
+    s.request_timeout(
+        env,
+        server_id,
+        kind,
+        fields,
+        response,
+        Some(Duration::from_secs(30)),
+        move |s, env, result| {
+            let result = result.and_then(|value| identity_checked(env, &id).map(|_| value));
+            then(s, env, result);
+        },
+    );
+}
+
+fn durable_update(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: String,
+    operation_id: String,
+    resumed: bool,
+) {
     {
         let c = card(s, &server_id);
         c.state = UpdatePhase::Updating;
         c.durable = true;
+        c.operation_id = Some(operation_id.clone());
         c.phase = ut("phaseStarting");
+        c.action_required = false;
     }
     if resumed {
-        observe(s, env, server_id, operation_id, Instant::now() + Duration::from_secs(30 * 60), None);
-        return;
-    }
-    // Persisted before sending: an unacknowledged submit stays observable.
-    let key = format!("prefs:{}", host::update_operation_key(&server_id));
-    s.save_flushed(env, &key, Value::String(operation_id.clone()), move |s, env, saved| {
-        if let Err(error) = saved {
-            fail(s, &server_id, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error.text())]));
+        if card(s, &server_id).submit_request.is_some() {
+            // This exact request was flushed before its first submission.
+            // Idempotent resubmission also recovers a crash before that send.
+            submit(
+                s,
+                env,
+                server_id,
+                operation_id,
+                Instant::now() + Duration::from_secs(120),
+            );
             return;
         }
-        submit(s, env, server_id, operation_id, Instant::now() + Duration::from_secs(120));
+        observe(
+            s,
+            env,
+            server_id,
+            operation_id,
+            Instant::now() + Duration::from_secs(30 * 60),
+            None,
+        );
+        return;
+    }
+    // Persist the complete approval before sending; never recreate a request
+    // from its ID after a reconnect.
+    let Some(record) = card(s, &server_id).submit_request.clone() else {
+        fail(
+            s,
+            &server_id,
+            ut("requestFailedTitle"),
+            ut("approvalMissing"),
+        );
+        return;
+    };
+    let key = format!("prefs:{}", host::update_operation_key(&server_id));
+    s.save_flushed(env, &key, record, move |s, env, saved| {
+        if let Err(error) = saved {
+            card(s, &server_id).operation_id = None;
+            card(s, &server_id).submit_request = None;
+            fail(
+                s,
+                &server_id,
+                ut("requestFailedTitle"),
+                uta("requestFailedMessage", &[("error", &error.text())]),
+            );
+            return;
+        }
+        submit(
+            s,
+            env,
+            server_id,
+            operation_id,
+            Instant::now() + Duration::from_secs(120),
+        );
     });
 }
 
 /// Original `submitDaemonUpdate`: while the outcome is unknown the SAME
 /// operation id is resubmitted (the daemon returns the admitted operation).
-fn submit(s: &mut Settings, env: &mut Env, server_id: String, operation_id: String, deadline: Instant) {
+fn submit(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: String,
+    operation_id: String,
+    deadline: Instant,
+) {
+    let Some(fields) = card(s, &server_id).submit_request.clone() else {
+        fail(
+            s,
+            &server_id,
+            ut("requestFailedTitle"),
+            ut("approvalMissing"),
+        );
+        return;
+    };
     let sid = server_id.clone();
     let oid = operation_id.clone();
     update_request(
@@ -532,10 +1031,19 @@ fn submit(s: &mut Settings, env: &mut Env, server_id: String, operation_id: Stri
         env,
         &server_id,
         "daemon.update.submit.request",
-        json!({"operationId": operation_id, "source": "release"}),
+        fields,
         "daemon.update.submit.response",
-        move |s, env, result| match result.and_then(|r| du::operation_of(&r, &oid).map_err(ReqError::msg)) {
-            Ok(_) => observe(s, env, sid, oid, Instant::now() + Duration::from_secs(30 * 60), None),
+        move |s, env, result| match result
+            .and_then(|r| du::operation_of(&r, &oid, &sid).map_err(ReqError::msg))
+        {
+            Ok(_) => observe(
+                s,
+                env,
+                sid,
+                oid,
+                Instant::now() + Duration::from_secs(30 * 60),
+                None,
+            ),
             Err(error) if error.is_reconnect() && Instant::now() < deadline => {
                 s.after(env, 1.0, move |s, env| submit(s, env, sid, oid, deadline));
             }
@@ -544,24 +1052,53 @@ fn submit(s: &mut Settings, env: &mut Env, server_id: String, operation_id: Stri
     );
 }
 
-/// An unknown outcome keeps the persisted id; a definitive rejection leaves
-/// nothing to observe.
-fn settle_error(s: &mut Settings, env: &mut Env, server_id: &str, operation_id: &str, error: ReqError) {
+/// Keep the retry identity even on an observation error: transport errors do
+/// not prove that admission or the detached executor failed.
+fn settle_error(
+    s: &mut Settings,
+    _env: &mut Env,
+    server_id: &str,
+    operation_id: &str,
+    error: ReqError,
+) {
     if error.is_reconnect() {
-        fail(s, server_id, ut("stillRunningTitle"), uta("stillRunningMessage", &[("id", operation_id)]));
+        fail(
+            s,
+            server_id,
+            ut("stillRunningTitle"),
+            uta("stillRunningMessage", &[("id", operation_id)]),
+        );
     } else {
-        host::clear_update_operation(&env.ctx.core, server_id);
-        fail(s, server_id, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error.text())]));
+        fail(
+            s,
+            server_id,
+            ut("requestFailedTitle"),
+            uta("requestFailedMessage", &[("error", &error.text())]),
+        );
     }
 }
 
 /// Original `observeDaemonUpdate`: poll status every second until terminal
 /// and any session resume has left `pending`; connection loss only pauses.
-fn observe(s: &mut Settings, env: &mut Env, server_id: String, operation_id: String, deadline: Instant, last: Option<Value>) {
+fn observe(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: String,
+    operation_id: String,
+    deadline: Instant,
+    last: Option<Value>,
+) {
     if Instant::now() >= deadline {
         match last {
-            Some(last) if last.get("terminal").and_then(Value::as_bool) == Some(true) => finish(s, env, &server_id, &operation_id, last),
-            _ => fail(s, &server_id, ut("stillRunningTitle"), uta("stillRunningMessage", &[("id", &operation_id)])),
+            Some(last) if last.get("terminal").and_then(Value::as_bool) == Some(true) => {
+                finish(s, env, &server_id, &operation_id, last)
+            }
+            _ => fail(
+                s,
+                &server_id,
+                ut("stillRunningTitle"),
+                uta("stillRunningMessage", &[("id", &operation_id)]),
+            ),
         }
         return;
     }
@@ -574,55 +1111,220 @@ fn observe(s: &mut Settings, env: &mut Env, server_id: String, operation_id: Str
         "daemon.update.status.request",
         json!({"operationId": operation_id}),
         "daemon.update.status.response",
-        move |s, env, result| match result.and_then(|r| du::operation_of(&r, &oid).map_err(ReqError::msg)) {
+        move |s, env, result| match result
+            .and_then(|r| du::operation_of(&r, &oid, &sid).map_err(ReqError::msg))
+        {
             Ok(operation) => {
-                card(s, &sid).phase = ut(du::phase_key(str_of(&operation, "phase")));
-                if operation.get("terminal").and_then(Value::as_bool) == Some(true) && du::unconfirmed_continuation(&operation).as_deref() != Some("pending") {
+                let c = card(s, &sid);
+                c.phase = ut(du::phase_key(str_of(&operation, "phase")));
+                c.app_update = operation["targetKind"] == "app";
+                c.action_required = operation["actionRequired"] == "osAuthorization"
+                    || operation["phase"] == "waitingForAuthorization";
+                if operation.get("terminal").and_then(Value::as_bool) == Some(true)
+                    && du::unconfirmed_continuation(&operation).as_deref() != Some("pending")
+                {
                     finish(s, env, &sid, &oid, operation);
                 } else {
-                    s.after(env, 1.0, move |s, env| observe(s, env, sid, oid, deadline, Some(operation)));
+                    s.after(env, 1.0, move |s, env| {
+                        observe(s, env, sid, oid, deadline, Some(operation))
+                    });
                 }
             }
-            Err(error) if error.is_reconnect() => s.after(env, 1.0, move |s, env| observe(s, env, sid, oid, deadline, last)),
+            Err(error)
+                if error.code == "UPDATE_OPERATION_NOT_FOUND"
+                    && card(s, &sid).submit_request.is_some() =>
+            {
+                submit(s, env, sid, oid, Instant::now() + Duration::from_secs(120));
+            }
+            Err(error) if error.is_reconnect() => s.after(env, 1.0, move |s, env| {
+                observe(s, env, sid, oid, deadline, last)
+            }),
             Err(error) => settle_error(s, env, &sid, &oid, error),
         },
     );
 }
 
 fn finish(s: &mut Settings, env: &mut Env, server_id: &str, operation_id: &str, operation: Value) {
-    // An unsettled session resume stays inspectable: reopening re-reads status.
+    if du::outcome(&operation) == Outcome::Committed {
+        let sid = server_id.to_string();
+        let oid = operation_id.to_string();
+        card(s, server_id).phase = ut("phaseVerifying");
+        confirm_committed(
+            s,
+            env,
+            sid,
+            oid,
+            operation,
+            Instant::now() + Duration::from_secs(120),
+        );
+        return;
+    }
+    complete_operation(s, env, server_id, operation_id, operation);
+}
+
+fn confirm_committed(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: String,
+    operation_id: String,
+    operation: Value,
+    deadline: Instant,
+) {
+    let sid = server_id.clone();
+    let desktop = operation["targetKind"] == "app";
+    let then = move |s: &mut Settings, env: &mut Env, worker: Result<Value, ReqError>| {
+        let approved =
+            du::committed_release_matches(&operation, card(s, &sid).submit_request.as_ref());
+        let confirmed = approved
+            && worker
+                .as_ref()
+                .is_ok_and(|worker| du::committed_worker_matches(&operation, worker, &sid));
+        if confirmed {
+            complete_operation(s, env, &sid, &operation_id, operation);
+        } else if Instant::now() < deadline
+            && worker.as_ref().err().is_none_or(ReqError::is_reconnect)
+        {
+            s.after(env, 1.0, move |s, env| {
+                confirm_committed(s, env, sid, operation_id, operation, deadline)
+            });
+        } else {
+            fail(
+                s,
+                &sid,
+                ut("unableToReconnectTitle"),
+                ut("versionUnconfirmed"),
+            );
+        }
+    };
+    if desktop {
+        update_request(
+            s,
+            env,
+            &server_id,
+            "daemon.update.check.request",
+            json!({}),
+            "daemon.update.check.response",
+            then,
+        );
+    } else {
+        read_worker(s, env, &server_id, then);
+    }
+}
+
+fn complete_operation(
+    s: &mut Settings,
+    env: &mut Env,
+    server_id: &str,
+    operation_id: &str,
+    operation: Value,
+) {
     if !du::retain_operation(&operation) {
         host::clear_update_operation(&env.ctx.core, server_id);
+        let c = card(s, server_id);
+        c.operation_id = None;
+        c.submit_request = None;
     }
     let error = str_of(&operation, "error").to_string();
     match du::outcome(&operation) {
         Outcome::Committed => {
             let resume = du::unconfirmed_continuation(&operation);
-            let requested = operation.get("continuation").map(Value::is_object).unwrap_or(false);
+            let requested = operation
+                .get("continuation")
+                .map(Value::is_object)
+                .unwrap_or(false);
             let note = match (requested, resume) {
-                (false, _) => ut("committedMessage"),
+                (false, _) => ut(if operation["targetKind"] == "app" {
+                    "appCommittedMessage"
+                } else {
+                    "committedMessage"
+                }),
                 (true, None) => ut("continuationAccepted"),
-                (true, Some(state)) if du::retain_operation(&operation) => uta("continuationRetained", &[("state", &state)]),
+                (true, Some(state)) if du::retain_operation(&operation) => {
+                    uta("continuationRetained", &[("state", &state)])
+                }
                 (true, Some(state)) => uta("continuationUnconfirmed", &[("state", &state)]),
             };
             let c = card(s, server_id);
             c.state = UpdatePhase::Complete;
             c.worker_version = str_of(get(&operation, "candidate"), "version").to_string();
             c.complete_note = note;
+            reset_version_check(s, server_id);
         }
-        Outcome::RolledBack => fail(s, server_id, ut("rolledBackTitle"), uta("rolledBackMessage", &[("id", operation_id), ("error", &error)])),
-        Outcome::Failed | Outcome::Running => fail(s, server_id, ut("requestFailedTitle"), uta("operationFailedMessage", &[("id", operation_id), ("error", &error)])),
+        Outcome::RolledBack => fail(
+            s,
+            server_id,
+            ut("rolledBackTitle"),
+            uta(
+                if operation["targetKind"] == "app" {
+                    "appRolledBackMessage"
+                } else {
+                    "rolledBackMessage"
+                },
+                &[("id", operation_id), ("error", &error)],
+            ),
+        ),
+        Outcome::Failed | Outcome::Running => fail(
+            s,
+            server_id,
+            ut("requestFailedTitle"),
+            uta(
+                "operationFailedMessage",
+                &[("id", operation_id), ("error", &error)],
+            ),
+        ),
     }
 }
 
 fn start_update(s: &mut Settings, env: &mut Env, server_id: String) {
-    let Some(host) = env.host(&server_id) else { return };
+    let Some(host) = env.host(&server_id) else {
+        return;
+    };
     if !host.connected() {
         fail(s, &server_id, ut("offlineTitle"), ut("offlineMessage"));
         return;
     }
+    if card(s, &server_id).state == UpdatePhase::Updating {
+        return;
+    }
+    if let Some(operation) = card(s, &server_id).operation_id.clone() {
+        durable_update(s, env, server_id, operation, true);
+        return;
+    }
     if du::supports_durable(&host.server_info) {
-        durable_update(s, env, server_id, du::new_operation_id(), false);
+        let c = card(s, &server_id);
+        let expected = c.check.as_ref().and_then(|v| v.get("latest")).cloned();
+        if du::supports_check(&host.server_info)
+            && !c
+                .check
+                .as_ref()
+                .is_some_and(|v| du::can_update_host(&host.server_info, v))
+        {
+            return;
+        }
+        let operation = du::new_operation_id();
+        c.app_update = du::target_kind(&host.server_info) == "app";
+        if c.app_update
+            && (c.selected_components.is_empty()
+                || !c
+                    .check
+                    .as_ref()
+                    .is_some_and(|check| du::selection_valid(check, &c.selected_components)))
+        {
+            return;
+        }
+        let force = c.force_running
+            && (!c.app_update || du::restart_group(&c.selected_components) != "none");
+        let mut request = json!({"operationId": operation, "source": "release",
+            "targetKind": du::target_kind(&host.server_info),
+            "expectedRelease": expected, "forceRunning": force, "idleTimeoutMs": 300_000});
+        if c.app_update {
+            request["selectedComponents"] = json!(c.selected_components);
+        }
+        c.submit_request = Some(request);
+        durable_update(s, env, server_id, operation, false);
+        return;
+    }
+    if host.server_info["desktopManaged"] == true || !card(s, &server_id).force_running {
         return;
     }
     legacy_update(s, env, server_id);
@@ -631,7 +1333,10 @@ fn start_update(s: &mut Settings, env: &mut Env, server_id: String) {
 /// Pre-durable daemons: `daemon.update.request` with progress events, then
 /// the replacement worker's version is confirmed.
 fn legacy_update(s: &mut Settings, env: &mut Env, server_id: String) {
-    let micros = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros()).unwrap_or(0);
+    let micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros())
+        .unwrap_or(0);
     let request_id = format!("settings_daemon_update_{server_id}_{micros}");
     {
         let c = card(s, &server_id);
@@ -644,45 +1349,110 @@ fn legacy_update(s: &mut Settings, env: &mut Env, server_id: String) {
     read_worker(s, env, &server_id, move |s, env, previous| {
         let previous = match previous {
             Ok(previous) => previous,
-            Err(error) => return fail(s, &sid, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error.text())])),
+            Err(error) => {
+                return fail(
+                    s,
+                    &sid,
+                    ut("requestFailedTitle"),
+                    uta("requestFailedMessage", &[("error", &error.text())]),
+                );
+            }
         };
         let sid2 = sid.clone();
         let message = json!({"type": "daemon.update.request", "requestId": request_id});
-        s.request_streamed(env, &sid, message, "daemon.update.response", Some(Duration::from_secs(600)), move |s, env, installed| {
-            let installed = match installed {
-                Ok(installed) if installed.get("success").and_then(Value::as_bool) == Some(true) => installed,
-                Ok(installed) => {
-                    let error = crate::features::settings::json::str_or(&installed, "error", &t("settingsNative.packageFailed")).to_string();
-                    return fail(s, &sid2, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error)]));
-                }
-                Err(error) => return fail(s, &sid2, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error.text())])),
-            };
-            let new_version = str_of(&installed, "newVersion").to_string();
-            let sid3 = sid2.clone();
-            let done: Observer = Rc::new(move |s, env, worker| {
-                let failure = |s: &mut Settings, detail: String| {
-                    let error = ta("settingsNative.packageUnconfirmed", &[("error", &detail)]);
-                    fail(s, &sid3, ut("requestFailedTitle"), uta("requestFailedMessage", &[("error", &error)]));
+        s.request_streamed(
+            env,
+            &sid,
+            message,
+            "daemon.update.response",
+            Some(Duration::from_secs(600)),
+            move |s, env, installed| {
+                let installed = match installed {
+                    Ok(installed)
+                        if installed.get("success").and_then(Value::as_bool) == Some(true) =>
+                    {
+                        installed
+                    }
+                    Ok(installed) => {
+                        let error = crate::features::settings::json::str_or(
+                            &installed,
+                            "error",
+                            &t("settingsNative.packageFailed"),
+                        )
+                        .to_string();
+                        return fail(
+                            s,
+                            &sid2,
+                            ut("requestFailedTitle"),
+                            uta("requestFailedMessage", &[("error", &error)]),
+                        );
+                    }
+                    Err(error) => {
+                        return fail(
+                            s,
+                            &sid2,
+                            ut("requestFailedTitle"),
+                            uta("requestFailedMessage", &[("error", &error.text())]),
+                        );
+                    }
                 };
-                match worker {
-                    Err(error) => failure(s, error.text()),
-                    Ok(worker) => {
-                        let reported = env.host(&sid3).map(|h| h.version()).unwrap_or_default();
-                        let version = if reported.is_empty() { str_of(&worker, "version").to_string() } else { reported };
-                        if version.is_empty() || new_version.is_empty() || version != new_version {
-                            let expected = if new_version.is_empty() { t("settingsNative.unknownVersion") } else { new_version.clone() };
-                            failure(s, ta("settingsNative.versionMismatch", &[("expected", &expected), ("observed", &version)]));
-                        } else {
-                            let c = card(s, &sid3);
-                            c.state = UpdatePhase::Complete;
-                            c.worker_version = version;
-                            c.legacy_request = None;
+                let new_version = str_of(&installed, "newVersion").to_string();
+                let sid3 = sid2.clone();
+                let done: Observer = Rc::new(move |s, env, worker| {
+                    let failure = |s: &mut Settings, detail: String| {
+                        let error = ta("settingsNative.packageUnconfirmed", &[("error", &detail)]);
+                        fail(
+                            s,
+                            &sid3,
+                            ut("requestFailedTitle"),
+                            uta("requestFailedMessage", &[("error", &error)]),
+                        );
+                    };
+                    match worker {
+                        Err(error) => failure(s, error.text()),
+                        Ok(worker) => {
+                            let reported = env.host(&sid3).map(|h| h.version()).unwrap_or_default();
+                            let version = if reported.is_empty() {
+                                str_of(&worker, "version").to_string()
+                            } else {
+                                reported
+                            };
+                            if version.is_empty()
+                                || new_version.is_empty()
+                                || version != new_version
+                            {
+                                let expected = if new_version.is_empty() {
+                                    t("settingsNative.unknownVersion")
+                                } else {
+                                    new_version.clone()
+                                };
+                                failure(
+                                    s,
+                                    ta(
+                                        "settingsNative.versionMismatch",
+                                        &[("expected", &expected), ("observed", &version)],
+                                    ),
+                                );
+                            } else {
+                                let c = card(s, &sid3);
+                                c.state = UpdatePhase::Complete;
+                                c.worker_version = version;
+                                c.legacy_request = None;
+                                reset_version_check(s, &sid3);
+                            }
                         }
                     }
-                }
-            });
-            observe_replacement(s, env, sid2, previous, Instant::now() + Duration::from_secs(600), done);
-        });
+                });
+                observe_replacement(
+                    s,
+                    env,
+                    sid2,
+                    previous,
+                    Instant::now() + Duration::from_secs(600),
+                    done,
+                );
+            },
+        );
     });
 }
 
@@ -692,7 +1462,9 @@ pub fn on_host_event(s: &mut Settings, host_id: &str, event: &Value) {
         return;
     }
     let payload = get(event, "payload");
-    let Some(c) = s.update_cards.get_mut(host_id) else { return };
+    let Some(c) = s.update_cards.get_mut(host_id) else {
+        return;
+    };
     if c.legacy_request.as_deref() != Some(str_of(payload, "requestId")) {
         return;
     }
@@ -706,53 +1478,465 @@ pub fn on_host_event(s: &mut Settings, host_id: &str, event: &Value) {
     c.phase = ut(key);
 }
 
-fn draw_update_card(ui: &mut Ui, s: &Settings, _v: &View, host: &HostView) {
+fn component_name(id: &str) -> String {
+    ut(match id {
+        "app" => "componentApp",
+        "daemon" => "componentDaemon",
+        "tailnet" => "componentTailnet",
+        "update-helper" => "componentHelper",
+        _ => "componentUnknown",
+    })
+}
+
+fn restart_hint(group: &str) -> String {
+    ut(match group {
+        "none" => "restartNone",
+        "daemon" => "restartDaemon",
+        _ => "restartGui",
+    })
+}
+
+fn component_identity(identity: &Value) -> String {
+    let version = str_of(identity, "version");
+    if version.is_empty() {
+        return t("settingsNative.unknownVersion");
+    }
+    uta(
+        "componentIdentity",
+        &[
+            ("version", version),
+            ("source", str_of(identity, "sourceSha")),
+        ],
+    )
+}
+
+fn draw_component_plan(ui: &mut Ui, host: &HostView, c: &UpdateCard, check: &Value) {
+    let available = check["availableComponents"].as_array();
+    let editable = host.connected()
+        && c.operation_id.is_none()
+        && c.state != UpdatePhase::Updating
+        && du::can_update_host(&host.server_info, check);
+    ui.card_begin();
+    for (index, id) in du::COMPONENT_IDS.into_iter().enumerate() {
+        if index > 0 {
+            ui.card_row_separator();
+        }
+        let current = &check["components"][id];
+        let change = available.and_then(|entries| entries.iter().find(|entry| entry["id"] == id));
+        let mut hint = uta(
+            "componentCurrent",
+            &[("identity", &component_identity(current))],
+        );
+        if let Some(change) = change {
+            hint.push_str(&format!(
+                "\n{}",
+                uta(
+                    "componentAvailable",
+                    &[
+                        ("identity", &component_identity(&change["target"])),
+                        (
+                            "bytes",
+                            &change["downloadSize"].as_u64().unwrap_or(0).to_string()
+                        ),
+                    ]
+                )
+            ));
+            if change["current"] == change["target"] {
+                hint.push_str(&format!("\n{}", ut("componentCohort")));
+            }
+        } else {
+            hint.push_str(&format!("\n{}", ut("componentRetained")));
+        }
+        let requires = change
+            .map(|entry| &entry["requires"])
+            .unwrap_or(&check["componentRequirements"][id]);
+        if let Some(requires) = requires.as_object().filter(|requires| !requires.is_empty()) {
+            let dependencies = requires
+                .iter()
+                .map(|(dependency, abi)| format!("{} · ABI {}", component_name(dependency), abi))
+                .collect::<Vec<_>>()
+                .join(", ");
+            hint.push_str(&format!(
+                "\n{}",
+                uta("componentRequires", &[("components", &dependencies)])
+            ));
+        }
+        let mut component = row(component_name(id)).hint(hint);
+        if change.is_some() {
+            let server_id = host.server_id.clone();
+            let toggle = editable.then(|| {
+                handler(move |s, _| {
+                    let selected = &mut card(s, &server_id).selected_components;
+                    if selected.iter().any(|selected| selected == id) {
+                        selected.retain(|selected| selected != id);
+                    } else {
+                        selected.push(id.into());
+                        selected.sort_unstable();
+                    }
+                })
+            });
+            component = component.control(switch(
+                format!("host.{}.component.{id}", host.server_id),
+                c.selected_components.iter().any(|selected| selected == id),
+                toggle,
+            ));
+        }
+        ui.row(component);
+    }
+    for group in check["atomicGroups"].as_array().into_iter().flatten() {
+        let names = group
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(component_name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        ui.card_row_separator();
+        ui.row(row(ut("atomicGroup")).hint(names));
+    }
+    let bytes = du::download_bytes(check, &c.selected_components);
+    ui.card_row_separator();
+    ui.row(row(ut("componentPlan")).hint(uta(
+        "componentDownload",
+        &[
+            ("count", &c.selected_components.len().to_string()),
+            ("bytes", &bytes.to_string()),
+        ],
+    )));
+    ui.card_row_separator();
+    ui.row(row(ut("restartGroup")).hint(restart_hint(du::restart_group(&c.selected_components))));
+    if !du::selection_valid(check, &c.selected_components) {
+        ui.card_row_separator();
+        inset_alert(
+            ui,
+            false,
+            &ut("selectionInvalidTitle"),
+            &ut("selectionInvalid"),
+        );
+    }
+    ui.card_end();
+    ui.gap(24.0);
+}
+
+/// Host-owned release information, never inferred from the GUI's version.
+pub fn draw_version_page(ui: &mut Ui, s: &Settings, host: &HostView) {
     let empty = UpdateCard::default();
     let c = s.update_cards.get(&host.server_id).unwrap_or(&empty);
-    let desktop_managed = host.server_info.get("desktopManaged").and_then(Value::as_bool) == Some(true);
-    let self_update = host.feature("daemonSelfUpdate");
-    let app = platform::app_version().and_then(|v| du::normalize_version(&v));
-    let daemon = du::normalize_version(&host.version());
-    let mismatch = matches!((&app, &daemon), (Some(a), Some(d)) if a != d);
-    let maintenance = host.maintenance_operation.clone();
-    if !(mismatch && (self_update || desktop_managed)) && c.state == UpdatePhase::Idle {
-        if let Some(operation) = maintenance {
-            // Another client's durable update is pausing new work on this host.
-            ui.card_begin();
-            let hint = ta("settings.host.daemon.update.stillRunningMessage", &[("id", &operation)]);
-            ui.row(row(t("settingsNative.maintenance")).hint(hint).leading(Ctl::Spinner(14.0)));
-            ui.card_end();
-            ui.gap(24.0);
-        }
-        return;
-    }
+    let checked = c.check.as_ref();
     let updating = c.state == UpdatePhase::Updating;
+    let pending = c.operation_id.is_some();
+    let durable = du::supports_durable(&host.server_info);
+    let check_supported = du::supports_check(&host.server_info);
+    let desktop_managed = host.server_info["desktopManaged"] == true;
+    let app_update = desktop_managed || c.app_update;
+    let component_update = desktop_managed && du::supports_app(&host.server_info);
+    let restart = du::restart_group(&c.selected_components);
+    let selection_ready = !component_update
+        || (!c.selected_components.is_empty()
+            && checked.is_some_and(|check| du::selection_valid(check, &c.selected_components)));
+    let supported = if check_supported {
+        checked.is_some_and(|v| du::can_update_host(&host.server_info, v))
+    } else {
+        !desktop_managed && (durable || host.feature("daemonSelfUpdate"))
+    };
+    let id = host.server_id.clone();
+    let refresh = (host.connected() && !c.checking && !updating)
+        .then(|| handler(move |s, env| check_version(s, env, id.clone())));
+    ui.section_title(&t("settings.hostSections.version"), None, None);
+    ui.card_begin();
+    let current = if app_update && !checked.is_some_and(|v| v["targetKind"] == "app") {
+        String::new()
+    } else {
+        checked
+            .and_then(|v| v["current"]["version"].as_str())
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| {
+                if app_update {
+                    String::new()
+                } else {
+                    host.version()
+                }
+            })
+    };
+    ui.row(
+        row(ut(if app_update {
+            "currentAppVersion"
+        } else {
+            "currentVersion"
+        }))
+        .hint(if current.is_empty() {
+            t("settingsNative.unknownVersion")
+        } else {
+            current
+        }),
+    );
+    ui.card_row_separator();
+    let latest = checked
+        .and_then(|v| v["latest"]["version"].as_str())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            ut(if c.checking {
+                "checking"
+            } else if desktop_managed && !du::supports_app(&host.server_info) {
+                "appUpgradePrerequisite"
+            } else if !check_supported {
+                "legacyCheckUnavailable"
+            } else {
+                "notChecked"
+            })
+        });
+    ui.row(
+        row(ut(if app_update {
+            "latestAppVersion"
+        } else {
+            "latestVersion"
+        }))
+        .hint(latest)
+        .control(
+            button(
+                format!("host.{}.checkVersion", host.server_id),
+                ut("check"),
+                refresh,
+            )
+            .loading(c.checking)
+            .ctl(),
+        ),
+    );
+    if !host.connected() {
+        ui.card_row_separator();
+        inset_alert(ui, false, &ut("offlineTitle"), &ut("offlineMessage"));
+    }
+    let check_error = if !c.check_error.is_empty() {
+        c.check_error.as_str()
+    } else {
+        checked.map(|v| str_of(v, "checkError")).unwrap_or("")
+    };
+    if !check_error.is_empty() {
+        ui.card_row_separator();
+        inset_alert(ui, false, &ut("checkFailed"), check_error);
+    }
+    let support_error = checked.map(|v| str_of(v, "supportError")).unwrap_or("");
+    if desktop_managed && !du::supports_app(&host.server_info) {
+        ui.card_row_separator();
+        inset_alert(
+            ui,
+            false,
+            &ut("unsupportedTitle"),
+            &ut("appUpgradePrerequisite"),
+        );
+    } else if !support_error.is_empty() {
+        ui.card_row_separator();
+        inset_alert(ui, false, &ut("unsupportedTitle"), support_error);
+    } else if desktop_managed && checked.is_some_and(|v| v["owner"]["kind"] != "desktopApp") {
+        ui.card_row_separator();
+        inset_alert(
+            ui,
+            false,
+            &ut("unsupportedTitle"),
+            &ut("appOwnerUnavailable"),
+        );
+    } else if !check_supported && !supported {
+        ui.card_row_separator();
+        inset_alert(ui, false, &ut("unsupportedTitle"), &ut("unsupportedLegacy"));
+    } else if checked.is_some_and(|v| v["latest"].is_object() && v["updateAvailable"] == false) {
+        ui.card_row_separator();
+        ui.row(row(ut(if app_update {
+            "appUpToDate"
+        } else {
+            "upToDate"
+        })));
+    }
+    ui.card_end();
+    ui.gap(24.0);
+    if component_update && let Some(check) = checked.filter(|check| check["components"].is_object())
+    {
+        draw_component_plan(ui, host, c, check);
+    }
+    if let Some(operation) = &host.maintenance_operation {
+        ui.card_begin();
+        ui.row(
+            row(t("settingsNative.maintenance"))
+                .hint(uta("stillRunningMessage", &[("id", operation)])),
+        );
+        ui.card_end();
+        ui.gap(12.0);
+    }
+    let busy_elsewhere = host
+        .maintenance_operation
+        .as_ref()
+        .is_some_and(|id| c.operation_id.as_ref() != Some(id));
+    let id = host.server_id.clone();
+    let toggle = (!updating && !pending && supported && (!component_update || restart != "none"))
+        .then(|| {
+            handler(move |s, _| {
+                let c = card(s, &id);
+                c.force_running = !c.force_running;
+            })
+        });
+    ui.card_begin();
+    ui.row(
+        row(ut("interruptRunning"))
+            .hint(if component_update {
+                restart_hint(restart)
+            } else {
+                ut(if durable {
+                    "waitPolicy"
+                } else {
+                    "legacyPolicy"
+                })
+            })
+            .control(switch(
+                format!("host.{}.forceUpdate", host.server_id),
+                c.force_running && (!component_update || restart != "none"),
+                toggle,
+            )),
+    );
+    ui.card_row_separator();
     let id = host.server_id.clone();
     let label = host.label.clone();
-    let act = (!desktop_managed && !updating && host.connected()).then(|| {
-        handler(move |s, _| {
-            let id = id.clone();
-            let go = handler(move |s, env| start_update(s, env, id.clone()));
-            s.confirm(uta("confirmTitle", &[("name", &label)]), ut("confirmMessage"), ut("confirm"), false, go);
-        })
-    });
-    ui.card_begin();
-    let button_label = if updating { c.phase.clone() } else { ut("confirm") };
-    let hint = ut(if desktop_managed { "desktopManagedHint" } else { "hint" });
-    ui.row(row(ut("title")).hint(hint).control(button(format!("host.{}.update", host.server_id), button_label, act).icon(Icon::ArrowUpToLine).size(BSize::Sm).loading(updating).ctl()));
+    let target = checked.and_then(|v| v.get("latest")).cloned();
+    let approved_kind = du::target_kind(&host.server_info);
+    let selected = c.selected_components.clone();
+    let force = c.force_running;
+    let act = (host.connected()
+        && !updating
+        && !busy_elsewhere
+        && (pending || (supported && selection_ready && (durable || force))))
+        .then(|| {
+            handler(move |s, env| {
+                if pending {
+                    start_update(s, env, id.clone());
+                    return;
+                }
+                let id = id.clone();
+                let approved_target = target.clone();
+                let approved_components = selected.clone();
+                let go = handler(move |s, env| {
+                    if env
+                        .host(&id)
+                        .is_none_or(|h| du::target_kind(&h.server_info) != approved_kind)
+                    {
+                        return;
+                    }
+                    // Approval belongs to exactly the version/policy shown, even if
+                    // a check or connection event occurred while the sheet was open.
+                    let c = card(s, &id);
+                    if c.check.as_ref().and_then(|v| v.get("latest")).cloned() != approved_target
+                        || c.force_running != force
+                        || c.selected_components != approved_components
+                    {
+                        return;
+                    }
+                    start_update(s, env, id.clone());
+                });
+                let mut message = if component_update {
+                    format!(
+                        "{}\n{}\n{}",
+                        restart_hint(restart),
+                        uta(
+                            "selectedComponents",
+                            &[(
+                                "components",
+                                &selected
+                                    .iter()
+                                    .map(|id| component_name(id))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )]
+                        ),
+                        ut(if force && restart != "none" {
+                            "componentConfirmInterrupt"
+                        } else {
+                            "componentConfirm"
+                        })
+                    )
+                } else {
+                    ut(if force {
+                        "confirmInterrupt"
+                    } else {
+                        "confirmMessage"
+                    })
+                };
+                if let Some(version) = target.as_ref().and_then(|v| v["version"].as_str()) {
+                    message = format!(
+                        "{}\n{}",
+                        uta(
+                            if app_update {
+                                "approvedAppVersion"
+                            } else {
+                                "approvedVersion"
+                            },
+                            &[("version", version)]
+                        ),
+                        message
+                    );
+                }
+                s.confirm(
+                    uta("confirmTitle", &[("name", &label)]),
+                    message,
+                    ut("confirm"),
+                    force,
+                    go,
+                );
+            })
+        });
+    let button_label = if updating {
+        c.phase.clone()
+    } else if pending {
+        ut("resumeObservation")
+    } else {
+        ut("confirm")
+    };
+    ui.row(
+        row(ut(if app_update { "appTitle" } else { "title" }))
+            .hint(ut(if app_update { "appHint" } else { "hint" }))
+            .control(
+                button(format!("host.{}.update", host.server_id), button_label, act)
+                    .icon(Icon::ArrowUpToLine)
+                    .size(BSize::Sm)
+                    .loading(updating)
+                    .ctl(),
+            ),
+    );
+    if let Some(operation) = &c.operation_id {
+        ui.card_row_separator();
+        ui.row(row(ut("operation")).hint(operation.clone()));
+    }
+    if c.action_required {
+        ui.card_row_separator();
+        inset_alert(
+            ui,
+            false,
+            &ut("phaseWaitingForAuthorization"),
+            &ut("authorizationHint"),
+        );
+    }
     match c.state {
         UpdatePhase::Complete => {
             ui.card_row_separator();
-            let (title, description) = if c.durable {
-                (uta("committedTitle", &[("version", &c.worker_version)]), c.complete_note.clone())
-            } else {
-                (ta("desktop.daemon.lifecycle.workerUpdated", &[("version", &c.worker_version)]), t("desktop.daemon.lifecycle.supervisorRefresh"))
-            };
-            inset_alert(ui, true, &title, &description);
+            inset_alert(
+                ui,
+                true,
+                &uta(
+                    if c.app_update {
+                        "appCommittedTitle"
+                    } else {
+                        "committedTitle"
+                    },
+                    &[("version", &c.worker_version)],
+                ),
+                &if c.durable {
+                    c.complete_note.clone()
+                } else {
+                    ut("committedMessage")
+                },
+            );
         }
         UpdatePhase::Failed => {
             ui.card_row_separator();
-            inset_alert(ui, false, &c.failure_title.clone(), &c.failure_message.clone());
+            inset_alert(ui, false, &c.failure_title, &c.failure_message);
         }
         _ => {}
     }

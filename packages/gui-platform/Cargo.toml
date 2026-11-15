@@ -14,10 +14,12 @@ path = "src/lib.rs"
 [dependencies]
 makepad-widgets = "=1.0.0"
 paseo-gui-core = { path = "../gui-core" }
+paseo-tailnet = { path = "../tailnet" }
 anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 futures-util = "0.3"
+getrandom = "0.2"
 percent-encoding = "2"
 png = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
@@ -25,14 +27,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm", "adpcm", "ogg", "vorbis", "flac"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "io-util", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "io-util", "process", "net"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
 
 # Desktop: Linux, macOS and Windows. Nothing here is compiled for Android or iOS.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 arboard = { version = "3.7", default-features = false, features = ["image-data"] }
 rfd = "0.17"
+paseo-protocol = { path = "../protocol" }
+flate2 = "1"
+tar = "0.4"
+zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -41,15 +48,20 @@ libc = "0.2"
 ksni = { version = "0.3", default-features = false, features = ["tokio"] }
 libloading = "0.8"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+# The blocking Secret Service adapter uses its own async-io executor, not the
+# application's Tokio worker threads; DH encrypts secrets on the session bus.
+keyring = { version = "3.6.3", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon = { version = "0.26", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 windows-collections = "0.2"
 # COM implementation macros expand absolute windows_core paths.
 windows-core = "0.61"
@@ -91,5 +103,5 @@ rqrr = "0.10"
 jni = "0.21"
 makepad-android-state = "0.1"
 
-[target.'cfg(windows)'.dev-dependencies]
+[dev-dependencies]
 tempfile = "3"

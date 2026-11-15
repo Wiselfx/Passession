@@ -16,7 +16,8 @@ fn native_lock_excludes_node_compatible_writer_before_any_worker_start() {
         std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(home.path().join("paseo.pid")).is_err()
+            .open(home.path().join("paseo.pid"))
+            .is_err()
     );
     assert!(lock::PidLock::acquire(home.path(), false).is_err());
     lock.publish(Some("127.0.0.1:4242".into()), Some("server".into()))
@@ -195,11 +196,25 @@ fn stopping_announcement_carries_intent_and_stays_legacy_compatible() {
 fn explicit_worker_stop_ends_supervision_without_recovery() {
     use supervisor::{ExitAction, WorkerExit, exit_action};
     let stop = Some(WorkerExit::Stop);
-    assert_eq!(exit_action(false, stop, true, Some(0), false), ExitAction::Exit(0));
-    assert_eq!(exit_action(false, stop, true, Some(1), false), ExitAction::Exit(1));
-    assert_eq!(exit_action(false, stop, false, None, true), ExitAction::Exit(1));
+    assert_eq!(
+        exit_action(false, stop, true, Some(0), false),
+        ExitAction::Exit(0)
+    );
+    assert_eq!(
+        exit_action(false, stop, true, Some(1), false),
+        ExitAction::Exit(1)
+    );
+    assert_eq!(
+        exit_action(false, stop, false, None, true),
+        ExitAction::Exit(1)
+    );
     // Supervisor-initiated stop wins over any worker announcement.
-    for announced in [stop, Some(WorkerExit::Restart), Some(WorkerExit::Failure), None] {
+    for announced in [
+        stop,
+        Some(WorkerExit::Restart),
+        Some(WorkerExit::Failure),
+        None,
+    ] {
         for ready in [false, true] {
             assert_eq!(
                 exit_action(true, announced, ready, Some(1), false),
@@ -233,17 +248,34 @@ fn initialization_failure_takes_update_rollback_path() {
 fn ready_worker_fatal_error_restarts_instead_of_stopping() {
     use supervisor::{ExitAction, WorkerExit, exit_action};
     let failure = Some(WorkerExit::Failure);
-    for (code, terminated) in [(Some(1), false), (None, false), (None, true), (Some(0), false)] {
+    for (code, terminated) in [
+        (Some(1), false),
+        (None, false),
+        (None, true),
+        (Some(0), false),
+    ] {
         assert_eq!(
             exit_action(false, failure, true, code, terminated),
             ExitAction::Restart
         );
     }
     // Unannounced ready exits keep the prior crash policy.
-    assert_eq!(exit_action(false, None, true, Some(1), false), ExitAction::Restart);
-    assert_eq!(exit_action(false, None, true, Some(75), false), ExitAction::Restart);
-    assert_eq!(exit_action(false, None, true, Some(0), false), ExitAction::Exit(0));
-    assert_eq!(exit_action(false, None, true, None, true), ExitAction::Exit(1));
+    assert_eq!(
+        exit_action(false, None, true, Some(1), false),
+        ExitAction::Restart
+    );
+    assert_eq!(
+        exit_action(false, None, true, Some(75), false),
+        ExitAction::Restart
+    );
+    assert_eq!(
+        exit_action(false, None, true, Some(0), false),
+        ExitAction::Exit(0)
+    );
+    assert_eq!(
+        exit_action(false, None, true, None, true),
+        ExitAction::Exit(1)
+    );
 }
 
 #[tokio::test]
@@ -259,12 +291,41 @@ async fn managed_entries_reject_unknown_arguments_before_any_effect() {
         ("__supervisor", vec!["--home", home, "--standalone"]),
     ] {
         let args: Vec<String> = args.into_iter().map(String::from).collect();
-        assert!(run_internal(command, &args).await.is_err(), "{command} {args:?}");
+        assert!(
+            run_internal(command, &args).await.is_err(),
+            "{command} {args:?}"
+        );
     }
     assert!(!directory.path().join("native-installation.json").exists());
     assert!(!directory.path().join("paseo.pid").exists());
-    assert_eq!(
-        managed::probe_report()["version"],
-        env!("CARGO_PKG_VERSION")
-    );
+    assert_eq!(managed::probe_report()["version"], crate::VERSION);
+}
+
+#[cfg(windows)]
+#[test]
+fn desktop_paths_share_unprefixed_windows_protocol_representation() {
+    use std::path::Path;
+    for (native, wire) in [
+        (
+            r"\\?\C:\Users\owner\Passession",
+            r"C:\Users\owner\Passession",
+        ),
+        (
+            r"\\?\UNC\server\share\Passession",
+            r"\\server\share\Passession",
+        ),
+        (r"C:\Users\owner\Passession", r"C:\Users\owner\Passession"),
+    ] {
+        assert_eq!(
+            managed::desktop_protocol_path(Path::new(native)).as_ref(),
+            Path::new(wire)
+        );
+    }
+    // Representation normalization must not resolve traversal or device paths.
+    for untouched in [r"C:\owner\..\other", r"\\.\PhysicalDrive0"] {
+        assert_eq!(
+            managed::desktop_protocol_path(Path::new(untouched)).as_ref(),
+            Path::new(untouched)
+        );
+    }
 }

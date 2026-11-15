@@ -53,7 +53,10 @@ mod tests {
 
     #[test]
     fn scrollback_preference_clamps() {
-        assert_eq!(scrollback_preference(&serde_json::json!({"executionLogLines": 5})), 100);
+        assert_eq!(
+            scrollback_preference(&serde_json::json!({"executionLogLines": 5})),
+            100
+        );
         assert_eq!(scrollback_preference(&serde_json::json!({})), 10_000);
     }
 

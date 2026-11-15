@@ -8,7 +8,8 @@ pub(crate) mod engine;
 use base64::Engine as _;
 
 /// Shared PCM cue from the original native voice runtime (16 kHz, mono, PCM16 LE).
-pub const THINKING_TONE_PCM16_16K: &[u8] = include_bytes!("../../assets/thinking_tone_16k_mono.pcm");
+pub const THINKING_TONE_PCM16_16K: &[u8] =
+    include_bytes!("../../assets/thinking_tone_16k_mono.pcm");
 pub const THINKING_TONE_MIME: &str = "audio/pcm;rate=16000;bits=16";
 
 /// The engine's output rate. Makepad 1.0.0 opens every output device at 48 kHz.
@@ -41,7 +42,9 @@ pub struct AudioOutputChunk {
 
 /// Original `buildAudioPlaybackSource`: the group's chunks in index order,
 /// concatenated into one source typed by the first chunk's format.
-pub fn build_audio_playback_source(chunks: &[AudioOutputChunk]) -> anyhow::Result<(Vec<u8>, String)> {
+pub fn build_audio_playback_source(
+    chunks: &[AudioOutputChunk],
+) -> anyhow::Result<(Vec<u8>, String)> {
     let mut ordered: Vec<&AudioOutputChunk> = chunks.iter().collect();
     ordered.sort_by_key(|chunk| chunk.chunk_index);
     let mut bytes = Vec::new();
@@ -67,7 +70,10 @@ pub fn parse_pcm_sample_rate(mime_type: &str) -> Option<u32> {
 /// Original `audio/pcm` `resamplePcm16`: linear interpolation of
 /// little-endian PCM16 between sample rates.
 pub fn resample_pcm16(pcm: &[u8], from_rate: u32, to_rate: u32) -> Vec<u8> {
-    let samples: Vec<i16> = pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    let samples: Vec<i16> = pcm
+        .chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .collect();
     resample_i16(&samples, from_rate, to_rate)
         .into_iter()
         .flat_map(i16::to_le_bytes)
@@ -87,13 +93,20 @@ fn resample_i16(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
             let fraction = position - index as f64;
             let a = samples[index.min(samples.len() - 1)] as f64;
             let b = samples[(index + 1).min(samples.len() - 1)] as f64;
-            (a + (b - a) * fraction).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16
+            (a + (b - a) * fraction)
+                .round()
+                .clamp(i16::MIN as f64, i16::MAX as f64) as i16
         })
         .collect()
 }
 
 /// Linear resampling of interleaved f32 frames.
-pub(crate) fn resample_interleaved(samples: &[f32], channels: usize, from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample_interleaved(
+    samples: &[f32],
+    channels: usize,
+    from_rate: u32,
+    to_rate: u32,
+) -> Vec<f32> {
     if from_rate == to_rate || samples.is_empty() || channels == 0 {
         return samples.to_vec();
     }
@@ -132,7 +145,10 @@ pub(crate) fn decode_source(bytes: &[u8], mime_type: &str) -> anyhow::Result<Dec
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
             .collect();
         anyhow::ensure!(!mono.is_empty(), "The audio source is empty.");
-        return Ok(DecodedAudio { samples: resample_interleaved(&mono, 1, rate, OUTPUT_RATE), channels: 1 });
+        return Ok(DecodedAudio {
+            samples: resample_interleaved(&mono, 1, rate, OUTPUT_RATE),
+            channels: 1,
+        });
     }
     decode::decode_encoded(bytes, &lower)
 }
@@ -143,16 +159,25 @@ mod tests {
 
     #[test]
     fn mime_and_rate_rules_match_original() {
-        assert_eq!(audio_output_mime_type("pcm"), "audio/pcm;rate=24000;bits=16");
+        assert_eq!(
+            audio_output_mime_type("pcm"),
+            "audio/pcm;rate=24000;bits=16"
+        );
         assert_eq!(audio_output_mime_type("mp3"), "audio/mpeg");
         assert_eq!(audio_output_mime_type("wav"), "audio/wav");
-        assert_eq!(parse_pcm_sample_rate("audio/pcm;rate=16000;bits=16"), Some(16000));
+        assert_eq!(
+            parse_pcm_sample_rate("audio/pcm;rate=16000;bits=16"),
+            Some(16000)
+        );
         assert_eq!(parse_pcm_sample_rate("audio/pcm"), None);
     }
 
     #[test]
     fn resampling_keeps_endpoints_and_length() {
-        let pcm: Vec<u8> = [0i16, 1000, 2000, 3000].iter().flat_map(|s| s.to_le_bytes()).collect();
+        let pcm: Vec<u8> = [0i16, 1000, 2000, 3000]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
         let out = resample_pcm16(&pcm, 24_000, 16_000);
         assert_eq!(out.len() / 2, 2);
         assert_eq!(i16::from_le_bytes([out[0], out[1]]), 0);
@@ -161,8 +186,16 @@ mod tests {
     #[test]
     fn chunks_play_in_index_order() {
         let chunks = [
-            AudioOutputChunk { chunk_index: 1, audio: "Ag==".into(), format: "pcm".into() },
-            AudioOutputChunk { chunk_index: 0, audio: "AQ==".into(), format: "pcm".into() },
+            AudioOutputChunk {
+                chunk_index: 1,
+                audio: "Ag==".into(),
+                format: "pcm".into(),
+            },
+            AudioOutputChunk {
+                chunk_index: 0,
+                audio: "AQ==".into(),
+                format: "pcm".into(),
+            },
         ];
         let (bytes, mime) = build_audio_playback_source(&chunks).unwrap();
         assert_eq!(bytes, vec![1, 2]);

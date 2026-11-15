@@ -33,10 +33,7 @@ pub(super) fn same_records(
             (Some(before), Some(after))
                 if before.entry["provider"] == after.entry["provider"]
                     && before.content_hash == after.content_hash
-                    && before.entry.get("fetchedAt") == after.entry.get("fetchedAt") =>
-            {
-                
-            }
+                    && before.entry.get("fetchedAt") == after.entry.get("fetchedAt") => {}
             _ => return false,
         }
     }

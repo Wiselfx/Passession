@@ -1,7 +1,7 @@
 use super::{Context, flag, multiple, option, output::Output, positional, string, strings};
-use paseo_client::{ClientError, DaemonClient};
 use anyhow::{Result, anyhow};
 use clap::{ArgMatches, Command};
+use paseo_client::{ClientError, DaemonClient};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 mod launch;
@@ -354,19 +354,20 @@ pub async fn execute(path: &[&str], m: &ArgMatches, context: &Context) -> Result
     };
     launch::check_noninteractive(command, m)?;
     if command == "open"
-        && let Some(server) = string(m, "server").map(str::trim).filter(|s| !s.is_empty()) {
-            let id = required(m, "id")?;
-            super::open_agent_desktop(server, id).await?;
-            return Ok(Some(
-                Output::new(json!({"agentId":id,"serverId":server,"status":"opened"}))
-                    .id("agentId")
-                    .columns(&[
-                        ("AGENT ID", "agentId"),
-                        ("SERVER ID", "serverId"),
-                        ("STATUS", "status"),
-                    ]),
-            ));
-        }
+        && let Some(server) = string(m, "server").map(str::trim).filter(|s| !s.is_empty())
+    {
+        let id = required(m, "id")?;
+        super::open_agent_desktop(server, id).await?;
+        return Ok(Some(
+            Output::new(json!({"agentId":id,"serverId":server,"status":"opened"}))
+                .id("agentId")
+                .columns(&[
+                    ("AGENT ID", "agentId"),
+                    ("SERVER ID", "serverId"),
+                    ("STATUS", "status"),
+                ]),
+        ));
+    }
     let client = context.connect().await?;
     let result = execute_connected(command, m, context, &client).await;
     client.close().await;
@@ -521,12 +522,12 @@ async fn execute_connected(
             if matches!(status, "idle" | "timeout")
                 && let Ok(items) =
                     stream::history(client, context, id, Duration::from_secs(2)).await
-                {
-                    let transcript = stream::transcript(&items, Some(5))?;
-                    if !transcript.is_empty() && transcript != "No activity to display." {
-                        message.push_str(&format!("\nLast 5 activity items:\n{transcript}"));
-                    }
+            {
+                let transcript = stream::transcript(&items, Some(5))?;
+                if !transcript.is_empty() && transcript != "No activity to display." {
+                    message.push_str(&format!("\nLast 5 activity items:\n{transcript}"));
                 }
+            }
             Ok(message_output(
                 json!({"agentId":id,"status":status,"message":message}),
             ))

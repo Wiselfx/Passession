@@ -31,7 +31,11 @@ pub struct HtmlPreview {
 }
 
 fn portable(windows: bool, value: &str) -> String {
-    if windows { value.replace('\\', "/") } else { value.to_owned() }
+    if windows {
+        value.replace('\\', "/")
+    } else {
+        value.to_owned()
+    }
 }
 
 /// POSIX `normalize` over `/`-separated paths.
@@ -41,11 +45,19 @@ fn normalize(path: &str) -> String {
 
 fn is_within(parent: &str, child: &str) -> bool {
     let parent = parent.trim_end_matches('/');
-    child.len() > parent.len() && child.starts_with(parent) && child.as_bytes()[parent.len()] == b'/'
+    child.len() > parent.len()
+        && child.starts_with(parent)
+        && child.as_bytes()[parent.len()] == b'/'
 }
 
 impl HtmlPreview {
-    pub fn start(core: CoreHandle, host_id: &str, cwd: &str, path: &str, content: String) -> HtmlPreview {
+    pub fn start(
+        core: CoreHandle,
+        host_id: &str,
+        cwd: &str,
+        path: &str,
+        content: String,
+    ) -> HtmlPreview {
         let ready = ToUIReceiver::default();
         let errors = ToUIReceiver::default();
         let preview = HtmlPreview {
@@ -61,7 +73,11 @@ impl HtmlPreview {
         let root = normalize(&portable(windows, cwd));
         let absolute = normalize(&portable(windows, &remote_absolute(cwd, path)));
         // Out-of-workspace files are confined to their own directory.
-        let asset_root = if is_within(&root, &absolute) { root } else { Style::Posix.dirname(&absolute) };
+        let asset_root = if is_within(&root, &absolute) {
+            root
+        } else {
+            Style::Posix.dirname(&absolute)
+        };
         let relative = Style::Posix.relative(&absolute, &asset_root);
         let token = uuid::Uuid::new_v4().to_string();
         let ready_sender = preview.ready.sender();
@@ -154,7 +170,10 @@ impl HtmlPreview {
         if let Some(port) = self.port {
             // Wake the blocking accept so the thread sees `closed`.
             std::thread::spawn(move || {
-                let _ = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(1));
+                let _ = TcpStream::connect_timeout(
+                    &([127, 0, 0, 1], port).into(),
+                    Duration::from_secs(1),
+                );
             });
         }
     }
@@ -181,13 +200,18 @@ struct Request {
 
 fn encode_path(path: &str) -> String {
     path.split('/')
-        .map(|segment| percent_encoding::utf8_percent_encode(segment, percent_encoding::NON_ALPHANUMERIC).to_string())
+        .map(|segment| {
+            percent_encoding::utf8_percent_encode(segment, percent_encoding::NON_ALPHANUMERIC)
+                .to_string()
+        })
         .collect::<Vec<_>>()
         .join("/")
 }
 
 fn decode_path(path: &str) -> String {
-    percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned()
+    percent_encoding::percent_decode_str(path)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 impl Request {
@@ -236,36 +260,56 @@ impl Request {
             return;
         }
         let requested_relative = decode_path(&target_path[self.prefix.len()..]);
-        let requested = normalize(&format!("{}/{}", self.asset_root, portable(self.windows, &requested_relative)));
+        let requested = normalize(&format!(
+            "{}/{}",
+            self.asset_root,
+            portable(self.windows, &requested_relative)
+        ));
         if requested != self.asset_root && !is_within(&self.asset_root, &requested) {
             Self::respond(&mut stream, "403 Forbidden", None, b"", head);
             return;
         }
         if requested == self.absolute {
             let body = self.content.lock().unwrap().clone();
-            Self::respond(&mut stream, "200 OK", Some("text/html; charset=utf-8"), body.as_bytes(), head);
+            Self::respond(
+                &mut stream,
+                "200 OK",
+                Some("text/html; charset=utf-8"),
+                body.as_bytes(),
+                head,
+            );
             return;
         }
         // A workspace asset read through the host's current connection.
         let (sender, receiver) = mpsc::channel();
-        let path = if self.windows { requested.replace('/', "\\") } else { requested.clone() };
+        let path = if self.windows {
+            requested.replace('/', "\\")
+        } else {
+            requested.clone()
+        };
         let cwd = self.cwd.clone();
-        self.core.operation(&self.host_id, move |client| async move {
-            let options = paseo_client::RequestOptions { timeout: Duration::from_secs(60), ..Default::default() };
-            let result = client
-                .read_file(&cwd, &path, super::service::PREVIEW_MAX_BYTES, options)
-                .await
-                .map(|file| (file.metadata.mime, file.bytes.to_vec()))
-                .map_err(|error| error.to_string());
-            let failed = result.as_ref().err().cloned();
-            let _ = sender.send(result);
-            match failed {
-                Some(error) => Err(anyhow::anyhow!(error)),
-                None => Ok(serde_json::Value::Null),
-            }
-        });
+        self.core
+            .operation(&self.host_id, move |client| async move {
+                let options = paseo_client::RequestOptions {
+                    timeout: Duration::from_secs(60),
+                    ..Default::default()
+                };
+                let result = client
+                    .read_file(&cwd, &path, super::service::PREVIEW_MAX_BYTES, options)
+                    .await
+                    .map(|file| (file.metadata.mime, file.bytes.to_vec()))
+                    .map_err(|error| error.to_string());
+                let failed = result.as_ref().err().cloned();
+                let _ = sender.send(result);
+                match failed {
+                    Some(error) => Err(anyhow::anyhow!(error)),
+                    None => Ok(serde_json::Value::Null),
+                }
+            });
         match receiver.recv_timeout(Duration::from_secs(90)) {
-            Ok(Ok((mime, bytes))) => Self::respond(&mut stream, "200 OK", Some(&mime), &bytes, head),
+            Ok(Ok((mime, bytes))) => {
+                Self::respond(&mut stream, "200 OK", Some(&mime), &bytes, head)
+            }
             Ok(Err(error)) => {
                 if !self.closed.load(Ordering::SeqCst) {
                     let _ = self.errors.send(error);

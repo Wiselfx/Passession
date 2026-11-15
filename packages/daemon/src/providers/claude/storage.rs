@@ -245,9 +245,10 @@ async fn sidechain_index(path: &Path) -> Result<SidechainIndex> {
                         &["spawnDepth"],
                     )
                 })
-                    && value.as_object().is_some_and(|object| !object.is_empty()) {
-                        index.meta.insert(agent_id.to_owned(), value);
-                    }
+                && value.as_object().is_some_and(|object| !object.is_empty())
+            {
+                index.meta.insert(agent_id.to_owned(), value);
+            }
         }
     }
     Ok(index)
@@ -270,7 +271,10 @@ async fn visit_sidechains(
         let Some(agent_id) = entry.get("agentId").and_then(Value::as_str) else {
             return;
         };
-        let index = match subagents.iter().position(|child| child.agent_id == agent_id) {
+        let index = match subagents
+            .iter()
+            .position(|child| child.agent_id == agent_id)
+        {
             Some(index) => index,
             None => {
                 subagents.push(ReplaySubagent {
@@ -303,7 +307,11 @@ pub async fn read_history(path: &Path) -> Result<ReplayHistory> {
         visit_sidechains(file, &mut history.subagents, &mut index.meta, None).await?;
     }
     for (agent_id, file) in index.files {
-        if history.subagents.iter().any(|child| child.agent_id == agent_id) {
+        if history
+            .subagents
+            .iter()
+            .any(|child| child.agent_id == agent_id)
+        {
             // A body split between the transcript and its own file stays whole.
             visit_sidechains(&file, &mut history.subagents, &mut index.meta, None).await?;
         } else {
@@ -375,7 +383,9 @@ pub fn keep_finished_messages(entries: &mut Vec<Value>) -> (HashSet<String>, boo
     let before = entries.len();
     entries.retain(|entry| {
         entry["type"] != "assistant"
-            || entry["message"]["id"].as_str().is_some_and(|id| finished.contains(id))
+            || entry["message"]["id"]
+                .as_str()
+                .is_some_and(|id| finished.contains(id))
     });
     let dropped = entries.len() != before;
     (finished, dropped)
@@ -398,8 +408,7 @@ pub async fn read_workflow(path: &Path, run_id: &str) -> Result<(Value, Vec<Valu
         .unwrap_or_default();
     for file in files {
         complete &= visit_records(&file, |entry| {
-            if entry.get("type").and_then(Value::as_str) != Some("user")
-                || has_tool_result(&entry)
+            if entry.get("type").and_then(Value::as_str) != Some("user") || has_tool_result(&entry)
             {
                 entries.push(entry);
             }
@@ -776,9 +785,10 @@ pub async fn renamed_title(
     let result = visit_records(&path, |entry| {
         if !truthy(entry.get("isSidechain"))
             && entry.get("type").and_then(Value::as_str) == Some("custom-title")
-            && let Some(value) = trimmed(entry.get("customTitle")) {
-                title = Some(value.to_owned());
-            }
+            && let Some(value) = trimmed(entry.get("customTitle"))
+        {
+            title = Some(value.to_owned());
+        }
     })
     .await;
     match result {
@@ -910,9 +920,10 @@ pub async fn fork_session(
     }
     let up_to_message_id = up_to_message_id.filter(|id| !id.is_empty());
     if let Some(id) = up_to_message_id
-        && !valid_sdk_uuid(id) {
-            bail!("Invalid upToMessageId: {id}");
-        }
+        && !valid_sdk_uuid(id)
+    {
+        bail!("Invalid upToMessageId: {id}");
+    }
     let directory = transcript_path
         .parent()
         .ok_or_else(|| anyhow!("Claude transcript has no project directory"))?;
@@ -1128,9 +1139,17 @@ mod tests {
         for (agent, meta) in [
             ("A", json!({"agentType":"reviewer","toolUseId":"toolu_1"})),
             ("B", json!({"agentType":"scout","toolUseId":"toolu_2"})),
-            ("C", json!({"agentType":"digger","toolUseId":"toolu_3","spawnDepth":2})),
+            (
+                "C",
+                json!({"agentType":"digger","toolUseId":"toolu_3","spawnDepth":2}),
+            ),
         ] {
-            fs::write(sidechains.join(format!("agent-{agent}.meta.json")), meta.to_string()).await.unwrap();
+            fs::write(
+                sidechains.join(format!("agent-{agent}.meta.json")),
+                meta.to_string(),
+            )
+            .await
+            .unwrap();
         }
         fs::write(sidechains.join("agent-A.jsonl"), lines(&[
             json!({"type":"user","isSidechain":true,"agentId":"A","uuid":"c1","timestamp":"2026-01-01T00:00:03Z",
@@ -1147,31 +1166,62 @@ mod tests {
     }
 
     fn children(events: &[Value]) -> Vec<&Value> {
-        events.iter().filter(|e| e["type"] == "provider_subagent").map(|e| &e["event"]).collect()
+        events
+            .iter()
+            .filter(|e| e["type"] == "provider_subagent")
+            .map(|e| &e["event"])
+            .collect()
     }
 
     #[tokio::test]
     async fn parent_history_announces_file_backed_agents_without_reading_them() {
         let (_directory, path) = family().await;
         let history = read_history(&path).await.unwrap();
-        assert!(history.subagents.iter().all(|child| child.entries.is_empty() && child.file.is_some()));
+        assert!(
+            history
+                .subagents
+                .iter()
+                .all(|child| child.entries.is_empty() && child.file.is_some())
+        );
         let events = projection::project_history("claude", &history);
         let announced = children(&events);
-        assert!(announced.iter().all(|e| e["type"] == "upsert"), "{announced:?}");
-        let ids: Vec<_> = announced.iter().map(|e| e["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, ["toolu_1", "toolu_1", "toolu_2"], "declare A, A finished, declare B");
+        assert!(
+            announced.iter().all(|e| e["type"] == "upsert"),
+            "{announced:?}"
+        );
+        let ids: Vec<_> = announced
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            ["toolu_1", "toolu_1", "toolu_2"],
+            "declare A, A finished, declare B"
+        );
         assert_eq!(announced[0]["source"]["agentId"], "A");
         assert_eq!(announced[0]["title"], "reviewer");
         assert_eq!(announced[0]["description"], "Review code");
-        assert_eq!(announced[0]["timestamp"], "2026-01-01T00:00:01.000Z", "spawn time, not read from the body");
-        assert_eq!(*announced[1], json!({"type":"upsert","id":"toolu_1","status":"completed"}));
+        assert_eq!(
+            announced[0]["timestamp"], "2026-01-01T00:00:01.000Z",
+            "spawn time, not read from the body"
+        );
+        assert_eq!(
+            *announced[1],
+            json!({"type":"upsert","id":"toolu_1","status":"completed"})
+        );
         assert_eq!(announced[2]["source"]["agentId"], "B");
         // B's parent holds no result for it and its metadata has no status, so
         // nothing short of its body is authoritative: the recorded status stays.
         assert!(announced[2].get("status").is_none(), "{:?}", announced[2]);
-        assert!(!events.iter().any(|e| e.to_string().contains("sibling text")));
         assert!(
-            events.iter().any(|e| e["type"] == "timeline" && e["item"]["callId"] == "toolu_1"),
+            !events
+                .iter()
+                .any(|e| e.to_string().contains("sibling text"))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e["type"] == "timeline" && e["item"]["callId"] == "toolu_1"),
             "the parent's own Task card still replays"
         );
     }
@@ -1187,10 +1237,21 @@ mod tests {
             .clone();
         let (body, others, complete) = read_subagent(&path, "A").await.unwrap();
         assert!(complete);
-        let opened = projection::project_subagent("claude", "toolu_1", &source, &body, &others, complete);
-        assert!(opened.iter().all(|e| e["type"] == "provider_subagent"), "no parent row is replayed");
-        let rows: Vec<_> = children(&opened).into_iter().filter(|e| e["type"] == "timeline").collect();
-        assert!(rows.iter().all(|row| row["id"] == "toolu_1" && row["historyComplete"] == true), "{rows:?}");
+        let opened =
+            projection::project_subagent("claude", "toolu_1", &source, &body, &others, complete);
+        assert!(
+            opened.iter().all(|e| e["type"] == "provider_subagent"),
+            "no parent row is replayed"
+        );
+        let rows: Vec<_> = children(&opened)
+            .into_iter()
+            .filter(|e| e["type"] == "timeline")
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|row| row["id"] == "toolu_1" && row["historyComplete"] == true),
+            "{rows:?}"
+        );
         let texts: Vec<_> = rows
             .iter()
             .filter(|row| row["item"]["type"] == "assistant_message")
@@ -1202,12 +1263,20 @@ mod tests {
             .filter(|row| row["item"]["type"] == "tool_call")
             .map(|row| row["item"]["callId"].as_str().unwrap())
             .collect();
-        assert_eq!(tools, ["toolu_3"], "its own spawn card, nothing of the parent's");
-        assert!(!opened.iter().any(|e| ["go", "grandchild text", "sibling text"]
-            .iter()
-            .any(|text| e["event"]["item"]["text"] == *text)));
+        assert_eq!(
+            tools,
+            ["toolu_3"],
+            "its own spawn card, nothing of the parent's"
+        );
+        assert!(!opened.iter().any(|e| {
+            ["go", "grandchild text", "sibling text"]
+                .iter()
+                .any(|text| e["event"]["item"]["text"] == *text)
+        }));
         assert!(
-            children(&opened).iter().any(|e| e["type"] == "upsert" && e["id"] == "toolu_1" && e["status"] == "completed"),
+            children(&opened).iter().any(|e| e["type"] == "upsert"
+                && e["id"] == "toolu_1"
+                && e["status"] == "completed"),
             "the body's finished turn refreshes the status"
         );
         let nested = children(&opened)
@@ -1216,22 +1285,48 @@ mod tests {
             .expect("the opened agent's own child is announced");
         assert_eq!(nested["parentSubagentId"], "toolu_1");
         assert_eq!(nested["source"]["agentId"], "C");
-        assert!(!children(&opened).iter().any(|e| e["id"] == "toolu_2"), "siblings stay untouched");
-        assert!(!opened.iter().chain(&events).any(|e| e.to_string().contains("sibling text")));
+        assert!(
+            !children(&opened).iter().any(|e| e["id"] == "toolu_2"),
+            "siblings stay untouched"
+        );
+        assert!(
+            !opened
+                .iter()
+                .chain(&events)
+                .any(|e| e.to_string().contains("sibling text"))
+        );
         // Opening B, whose parent recorded no outcome, takes its status from its body.
-        let b = children(&events).into_iter().find(|e| e["id"] == "toolu_2").unwrap()["source"].clone();
+        let b = children(&events)
+            .into_iter()
+            .find(|e| e["id"] == "toolu_2")
+            .unwrap()["source"]
+            .clone();
         let (body, others, complete) = read_subagent(&path, "B").await.unwrap();
-        let opened = projection::project_subagent("claude", "toolu_2", &b, &body, &others, complete);
+        let opened =
+            projection::project_subagent("claude", "toolu_2", &b, &body, &others, complete);
         let texts: Vec<_> = children(&opened)
             .into_iter()
             .filter(|e| e["type"] == "timeline" && e["item"]["type"] == "assistant_message")
             .map(|e| e["item"]["text"].as_str().unwrap())
             .collect();
         assert_eq!(texts, ["sibling text"]);
-        assert!(children(&opened).iter().any(|e| e["id"] == "toolu_2" && e["status"] == "completed"));
-        fs::remove_file(path.with_extension("").join("subagents").join("agent-A.jsonl")).await.unwrap();
+        assert!(
+            children(&opened)
+                .iter()
+                .any(|e| e["id"] == "toolu_2" && e["status"] == "completed")
+        );
+        fs::remove_file(
+            path.with_extension("")
+                .join("subagents")
+                .join("agent-A.jsonl"),
+        )
+        .await
+        .unwrap();
         let missing = read_subagent(&path, "A").await;
-        assert!(missing.is_err(), "a missing body is an error, never an empty replay");
+        assert!(
+            missing.is_err(),
+            "a missing body is an error, never an empty replay"
+        );
         assert!(read_subagent(&path, "unknown").await.is_err());
     }
 
@@ -1253,7 +1348,10 @@ mod tests {
         let (finished, dropped) = keep_finished_messages(&mut entries);
         assert!(dropped);
         assert_eq!(finished, HashSet::from(["m1".to_owned()]));
-        let kept: Vec<_> = entries.iter().map(|e| e["uuid"].as_str().unwrap()).collect();
+        let kept: Vec<_> = entries
+            .iter()
+            .map(|e| e["uuid"].as_str().unwrap())
+            .collect();
         assert_eq!(kept, ["u1", "r1", "r2", "u2"]);
     }
 
@@ -1263,16 +1361,15 @@ mod tests {
             ChildRowHold, EventSink, HistoryCoverage, ReplayOutcome, SubagentHistoryRequest,
             SubagentReplay, subagent_row,
         };
-        let row = |item: Value| {
-            json!({"type":"provider_subagent","provider":"claude","event":{"type":"timeline","id":"toolu_1","item":item}})
-        };
+        let row = |item: Value| json!({"type":"provider_subagent","provider":"claude","event":{"type":"timeline","id":"toolu_1","item":item}});
         let pending = json!({"type":"tool_call","callId":"t1","name":"Bash","status":"running","detail":{"type":"shell","command":"ls"}});
         let completed = json!({"type":"tool_call","callId":"t1","name":"Bash","status":"completed","detail":{"type":"shell","command":"ls","output":"a"}});
         let failed = json!({"type":"tool_call","callId":"t2","name":"Bash","status":"failed","error":{"message":"boom"}});
         let finished_text = json!({"type":"assistant_message","text":"done.","messageId":"m1"});
         let finished_chunk = json!({"type":"assistant_message","text":".","messageId":"m1"});
         let streaming = json!({"type":"assistant_message","text":" more","messageId":"m2"});
-        let (sink, mut published) = EventSink::channel(64, tokio_util::sync::CancellationToken::new());
+        let (sink, mut published) =
+            EventSink::channel(64, tokio_util::sync::CancellationToken::new());
         let hold = std::sync::Arc::new(ChildRowHold::default());
         let (decide, decision) = tokio::sync::watch::channel(None);
         let request = SubagentHistoryRequest {
@@ -1284,8 +1381,20 @@ mod tests {
             replay: SubagentReplay::new("k".into(), decision),
         };
         let snapshot = vec![
-            subagent_row("claude", "toolu_1", pending.clone(), None, HistoryCoverage::Unverified),
-            subagent_row("claude", "toolu_1", finished_text, None, HistoryCoverage::Unverified),
+            subagent_row(
+                "claude",
+                "toolu_1",
+                pending.clone(),
+                None,
+                HistoryCoverage::Unverified,
+            ),
+            subagent_row(
+                "claude",
+                "toolu_1",
+                finished_text,
+                None,
+                HistoryCoverage::Unverified,
+            ),
         ];
         let (reading, read_started) = tokio::sync::oneshot::channel::<()>();
         let (finish, read_finished) = tokio::sync::oneshot::channel::<()>();

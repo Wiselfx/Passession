@@ -258,9 +258,11 @@ async fn children(path: &Path, cancel: &CancellationToken) -> Result<Arc<Vec<Raw
     if !cfg!(windows) {
         let listings = shared().listings.lock().unwrap();
         if let Some(cached) = listings.values.get(path)
-            && cached.expires > Instant::now() && cached.stamp == stamp {
-                return Ok(cached.entries.clone());
-            }
+            && cached.expires > Instant::now()
+            && cached.stamp == stamp
+        {
+            return Ok(cached.entries.clone());
+        }
     }
     let entries = match filesystem(Operation::ReadDir, path, cancel).await? {
         Some(value) => match value.as_ref() {
@@ -308,14 +310,15 @@ async fn git_ignored(root: &Path, cancel: &CancellationToken) -> Result<Arc<Hash
                 let mut paths = HashSet::new();
                 if let Ok(Ok(output)) =
                     tokio::time::timeout(Duration::from_secs(10), command.output()).await
-                    && output.status.success() {
-                        for path in String::from_utf8_lossy(&output.stdout)
-                            .split('\0')
-                            .filter(|p| !p.is_empty())
-                        {
-                            paths.insert(normalize(&worker_root.join(path.trim_end_matches('/'))));
-                        }
+                    && output.status.success()
+                {
+                    for path in String::from_utf8_lossy(&output.stdout)
+                        .split('\0')
+                        .filter(|p| !p.is_empty())
+                    {
+                        paths.insert(normalize(&worker_root.join(path.trim_end_matches('/'))));
                     }
+                }
                 Arc::new(paths)
             });
             let paths = async move { task.await.unwrap_or_else(|_| Arc::new(HashSet::new())) }
@@ -907,9 +910,10 @@ async fn search(input: &Input) -> Result<Vec<Value>> {
         None
     };
     if input.limit == 1
-        && let Some(entry) = exact.as_ref() {
-            return Ok(vec![input.format(entry)]);
-        }
+        && let Some(entry) = exact.as_ref()
+    {
+        return Ok(vec![input.format(entry)]);
+    }
     let mut start = (input.root.clone(), input.root.clone());
     let mut browse =
         (input.plan.path_query && input.plan.normalized.is_empty()) || input.plan.browse_exact;
@@ -917,33 +921,34 @@ async fn search(input: &Input) -> Result<Vec<Value>> {
         let visible = normalize(&input.root.join(&input.plan.parent));
         if let Some(resolved) = canonical(&visible, &input.cancel).await?
             && inside(&input.root, &resolved)
-                && kind(&resolved, &input.cancel).await? == Some(Kind::Directory)
-            {
-                browse = input.excluded(&resolved);
-                start = (resolved, visible);
-            }
+            && kind(&resolved, &input.cancel).await? == Some(Kind::Directory)
+        {
+            browse = input.excluded(&resolved);
+            start = (resolved, visible);
+        }
     }
     let mut ranked = Vec::new();
     if browse {
         let visible = normalize(&input.root.join(&input.plan.parent));
         if let Some(parent) = canonical(&visible, &input.cancel).await?
-            && inside(&input.root, &parent) && !input.git_ignored(&parent) {
-                let allow_excluded = input.excluded(&parent);
-                for raw in children(&parent, &input.cancel).await?.iter() {
-                    let Some(entry) =
-                        resolve_child(&parent, &visible, raw, 1, &input.cancel).await?
-                    else {
-                        continue;
-                    };
-                    if !input.discover(&entry, allow_excluded) {
-                        continue;
-                    }
-                    let rank = rank(&entry, input);
-                    if suggestible(&entry, input, rank) {
-                        ranked.push((rank, entry));
-                    }
+            && inside(&input.root, &parent)
+            && !input.git_ignored(&parent)
+        {
+            let allow_excluded = input.excluded(&parent);
+            for raw in children(&parent, &input.cancel).await?.iter() {
+                let Some(entry) = resolve_child(&parent, &visible, raw, 1, &input.cancel).await?
+                else {
+                    continue;
+                };
+                if !input.discover(&entry, allow_excluded) {
+                    continue;
+                }
+                let rank = rank(&entry, input);
+                if suggestible(&entry, input, rank) {
+                    ranked.push((rank, entry));
                 }
             }
+        }
     } else {
         let mut visited = HashSet::from([start.0.clone()]);
         let mut walk = RoundRobin::new(start.0, start.1, 1);
@@ -1011,63 +1016,65 @@ pub async fn suggest(
     let configured = absolute(&configured)?;
     let mut entries = Vec::new();
     if let Some(root) = canonical(&configured, &cancel).await?
-        && kind(&root, &cancel).await? == Some(Kind::Directory) {
-            let ignored = if workspace {
-                git_ignored(&root, &cancel).await?
+        && kind(&root, &cancel).await? == Some(Kind::Directory)
+    {
+        let ignored = if workspace {
+            git_ignored(&root, &cancel).await?
+        } else {
+            Arc::new(HashSet::new())
+        };
+        let excluded = if !workspace && cfg!(target_os = "macos") {
+            canonical(&user_home.join("Library"), &cancel).await?
+        } else {
+            None
+        };
+        let include_files = request
+            .get("includeFiles")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let include_directories = request
+            .get("includeDirectories")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if (include_files || include_directories)
+            && let Some(plan) = parse_query(
+                request.get("query").and_then(Value::as_str).unwrap_or(""),
+                &root,
+                &configured,
+                workspace,
+            )
+        {
+            let query = if plan.path_query {
+                &plan.normalized
             } else {
-                Arc::new(HashSet::new())
-            };
-            let excluded = if !workspace && cfg!(target_os = "macos") {
-                canonical(&user_home.join("Library"), &cancel).await?
-            } else {
-                None
-            };
-            let include_files = request
-                .get("includeFiles")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let include_directories = request
-                .get("includeDirectories")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            if (include_files || include_directories)
-                && let Some(plan) = parse_query(
-                    request.get("query").and_then(Value::as_str).unwrap_or(""),
-                    &root,
-                    &configured,
-                    workspace,
-                ) {
-                    let query = if plan.path_query {
-                        &plan.normalized
-                    } else {
-                        &plan.term
-                    }
-                    .to_lowercase()
-                    .encode_utf16()
-                    .collect();
-                    let limit = request
-                        .get("limit")
-                        .and_then(Value::as_f64)
-                        .filter(|n| n.is_finite())
-                        .unwrap_or(30.0)
-                        .trunc()
-                        .clamp(1.0, 100.0) as usize;
-                    entries = search(&Input {
-                        root,
-                        workspace,
-                        plan,
-                        query,
-                        include_files,
-                        include_directories,
-                        suffix: request.get("matchMode").and_then(Value::as_str) == Some("suffix"),
-                        limit,
-                        ignored,
-                        excluded,
-                        cancel,
-                    })
-                    .await?;
-                }
+                &plan.term
+            }
+            .to_lowercase()
+            .encode_utf16()
+            .collect();
+            let limit = request
+                .get("limit")
+                .and_then(Value::as_f64)
+                .filter(|n| n.is_finite())
+                .unwrap_or(30.0)
+                .trunc()
+                .clamp(1.0, 100.0) as usize;
+            entries = search(&Input {
+                root,
+                workspace,
+                plan,
+                query,
+                include_files,
+                include_directories,
+                suffix: request.get("matchMode").and_then(Value::as_str) == Some("suffix"),
+                limit,
+                ignored,
+                excluded,
+                cancel,
+            })
+            .await?;
         }
+    }
     let directories: Vec<_> = entries
         .iter()
         .filter(|v| v["kind"] == "directory")

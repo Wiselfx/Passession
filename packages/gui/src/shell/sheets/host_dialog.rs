@@ -15,7 +15,9 @@ use crate::common::paint::{Font, rect};
 use crate::common::{error_message, json as j, tr, tr_args};
 use crate::shell::hosts;
 use crate::shell::sheets::qr_code;
-use crate::shell::sheets::{Field, FieldEvent, ShellOp, Sheet, SheetFlow, SheetOps, SheetStyle, draw_widget, spinner};
+use crate::shell::sheets::{
+    Field, FieldEvent, Sheet, SheetFlow, SheetOps, SheetStyle, ShellOp, draw_widget, spinner,
+};
 use crate::shell::ui::{Ui, Variant};
 use crate::shell::{PaseoShell, platform, response_message};
 use crate::theme::{ControlSize, MOBILE, argb, with_alpha};
@@ -23,12 +25,22 @@ use crate::theme::{ControlSize, MOBILE, argb, with_alpha};
 /// Original `showHostConnectionFlow`. Without a `method`, `config` or `link` it opens the
 /// method picker (a form's Cancel returns to it); with a `method` (`direct`, `ssh`, `link`,
 /// `scan`) the welcome screen opens that form directly and Cancel just closes it.
-pub fn open_flow(shell: &mut PaseoShell, cx: &mut Cx, method: Option<&str>, config: Option<Value>, link: Option<String>) {
+pub fn open_flow(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    method: Option<&str>,
+    config: Option<Value>,
+    link: Option<String>,
+) {
     let sheet: Box<dyn Sheet> = if config.is_some() || link.is_some() || method.is_some() {
         if method == Some("scan") && config.is_none() && link.is_none() {
             Box::new(ScanSheet::new())
         } else {
-            let initial = if link.is_some() { "link" } else { method.unwrap_or("direct") };
+            let initial = if link.is_some() {
+                "link"
+            } else {
+                method.unwrap_or("direct")
+            };
             Box::new(ConnectionSheet::new(config, link, initial, false))
         }
     } else {
@@ -45,16 +57,38 @@ fn is_auth_failure(message: &str) -> bool {
         || lower.contains("unauthorized")
         || lower.contains("unauthorised")
         || lower.contains("authentication required")
-        || lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| word == "401")
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| word == "401")
 }
 
 /// The pairing-link / relay / QR failure copy key for a raw core error.
 fn link_failure_key(raw: &str) -> &'static str {
     let lower = raw.to_lowercase();
     let any = |words: &[&str]| words.iter().any(|w| lower.contains(w));
-    if any(&["expired", "invalid offer", "offer is invalid", "invalid pairing", "malformed", "decode", "base64", "unsupported offer", "parse"]) {
+    if any(&[
+        "expired",
+        "invalid offer",
+        "offer is invalid",
+        "invalid pairing",
+        "malformed",
+        "decode",
+        "base64",
+        "unsupported offer",
+        "parse",
+    ]) {
         "pairing.link.errors.offerInvalid"
-    } else if any(&["timed out", "timeout", "unreachable", "offline", "relay", "refused", "closed", "no route", "not connected"]) {
+    } else if any(&[
+        "timed out",
+        "timeout",
+        "unreachable",
+        "offline",
+        "relay",
+        "refused",
+        "closed",
+        "no route",
+        "not connected",
+    ]) {
         "pairing.link.errors.relayUnreachable"
     } else {
         "pairing.link.errors.unableToPair"
@@ -69,9 +103,21 @@ fn link_failure_detail(raw: &str) -> String {
 fn ssh_failure_key(raw: &str) -> Option<&'static str> {
     let lower = raw.to_lowercase();
     let any = |words: &[&str]| words.iter().any(|w| lower.contains(w));
-    if any(&["host key", "known_hosts", "known hosts", "hostkey", "remote host identification"]) {
+    if any(&[
+        "host key",
+        "known_hosts",
+        "known hosts",
+        "hostkey",
+        "remote host identification",
+    ]) {
         Some("pairing.remoteSsh.errors.hostKey")
-    } else if any(&["permission denied", "authentication", "publickey", "auth fail", "no supported authentication"]) {
+    } else if any(&[
+        "permission denied",
+        "authentication",
+        "publickey",
+        "auth fail",
+        "no supported authentication",
+    ]) {
         Some("pairing.remoteSsh.errors.auth")
     } else {
         None
@@ -91,7 +137,10 @@ fn with_details(message: &str, raw: &str) -> String {
     if raw.is_empty() || raw == message {
         message.to_string()
     } else {
-        format!("{message}\n{}", tr_args("pairing.direct.errors.details", &[("detail", raw)]))
+        format!(
+            "{message}\n{}",
+            tr_args("pairing.direct.errors.details", &[("detail", raw)])
+        )
     }
 }
 
@@ -100,17 +149,31 @@ fn with_details(message: &str, raw: &str) -> String {
 fn key_fingerprint(key: &str) -> String {
     let normalized: String = key.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let group = |value: &str| -> String {
-        value.chars().collect::<Vec<_>>().chunks(4).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(" ")
+        value
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(4)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ")
     };
     if normalized.len() <= 16 {
         return group(&normalized);
     }
-    format!("{} … {}", group(&normalized[..8]), group(&normalized[normalized.len() - 8..]))
+    format!(
+        "{} … {}",
+        group(&normalized[..8]),
+        group(&normalized[normalized.len() - 8..])
+    )
 }
 
 /// Original `HostConfirmation.confirmLink`: `None` when a saved host of that server already has
 /// this relay connection (endpoint, TLS and daemon key); otherwise the confirmation sheet.
-fn host_confirmation(state: &Value, info: &HostConfigInfo, reply_to: Option<u64>) -> Option<HostConfirmSheet> {
+fn host_confirmation(
+    state: &Value,
+    info: &HostConfigInfo,
+    reply_to: Option<u64>,
+) -> Option<HostConfirmSheet> {
     let server_id = info.expected_server_id.clone().unwrap_or_default();
     let saved = hosts::host(state, &server_id);
     let same_relay = |connection: &Value| {
@@ -129,7 +192,11 @@ fn host_confirmation(state: &Value, info: &HostConfigInfo, reply_to: Option<u64>
     Some(HostConfirmSheet {
         server_id,
         fingerprint: key_fingerprint(info.daemon_public_key.as_deref().unwrap_or("")),
-        relay: format!("{}:{}", info.host, info.port.map(|p| p.to_string()).unwrap_or_default()),
+        relay: format!(
+            "{}:{}",
+            info.host,
+            info.port.map(|p| p.to_string()).unwrap_or_default()
+        ),
         changed: saved.is_some(),
         reply_to,
         answered: false,
@@ -144,8 +211,20 @@ fn field_h(ui: &Ui) -> f64 {
 }
 
 /// Muted label (medium for direct/link, normal for SSH) above an input; returns its height.
-fn field_label(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, text: &str, medium: bool) -> f64 {
-    let spec = ui.spec(if medium { Font::Medium } else { Font::Regular }, 14.0, ui.p.muted);
+fn field_label(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    w: f64,
+    text: &str,
+    medium: bool,
+) -> f64 {
+    let spec = ui.spec(
+        if medium { Font::Medium } else { Font::Regular },
+        14.0,
+        ui.p.muted,
+    );
     let h = ui.painter.paragraph_height(cx, w, spec, text);
     ui.painter.paragraph(cx, dvec2(x, y), w, spec, text);
     h + 8.0
@@ -153,7 +232,16 @@ fn field_label(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, text: &str, m
 
 /// Destructive selectable error copy; returns its height.
 #[allow(clippy::too_many_arguments)]
-fn error_text(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, text: &str, size: f64, color: Vec4) -> f64 {
+fn error_text(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    w: f64,
+    text: &str,
+    size: f64,
+    color: Vec4,
+) -> f64 {
     let spec = ui.spec(Font::Regular, size, color);
     let h = ui.painter.paragraph_height(cx, w, spec, text);
     ui.painter.paragraph(cx, dvec2(x, y), w, spec, text);
@@ -162,12 +250,31 @@ fn error_text(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, text: &str, si
 
 /// Chevron + medium label disclosure row (`_toggle`); returns its height.
 #[allow(clippy::too_many_arguments)]
-fn toggle_row(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, id: &str, open: bool, label: &str, enabled: bool) -> f64 {
+fn toggle_row(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    id: &str,
+    open: bool,
+    label: &str,
+    enabled: bool,
+) -> f64 {
     let p = ui.p;
     let spec = ui.spec(Font::Medium, 14.0, p.foreground);
     let w = ui.measure(cx, spec, label) + 24.0;
     let r = rect(x, y, w, 28.0);
-    ui.icon(cx, rect(x, y + 6.0, 16.0, 16.0), if open { "chevron-down" } else { "chevron-right" }, 16.0, p.muted);
+    ui.icon(
+        cx,
+        rect(x, y + 6.0, 16.0, 16.0),
+        if open {
+            "chevron-down"
+        } else {
+            "chevron-right"
+        },
+        16.0,
+        p.muted,
+    );
     ui.text(cx, rect(x + 24.0, y, w - 24.0, 28.0), spec, label);
     if enabled {
         ui.hit(r, id.to_string());
@@ -176,11 +283,41 @@ fn toggle_row(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, id: &str, open: bool, 
 }
 
 /// Original password visibility toggle: surface2 square, muted 18px eye glyph.
-fn eye_button(ui: &mut Ui, cx: &mut Cx2d, r: Rect, id: &str, visible: bool, tooltip: &str, enabled: bool) {
+fn eye_button(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    r: Rect,
+    id: &str,
+    visible: bool,
+    tooltip: &str,
+    enabled: bool,
+) {
     let p = ui.p;
-    let border = if ui.is_hover(id) || ui.is_pressed(id) { p.border_accent } else { p.border };
-    ui.painter.outline(cx, r, p.surface2, border, 1.0, if ui.compact { 8.0 } else { 6.0 });
-    ui.icon(cx, rect(r.pos.x + (r.size.x - 18.0) * 0.5, r.pos.y + (r.size.y - 18.0) * 0.5, 18.0, 18.0), if visible { "eye-off" } else { "eye" }, 18.0, p.muted);
+    let border = if ui.is_hover(id) || ui.is_pressed(id) {
+        p.border_accent
+    } else {
+        p.border
+    };
+    ui.painter.outline(
+        cx,
+        r,
+        p.surface2,
+        border,
+        1.0,
+        if ui.compact { 8.0 } else { 6.0 },
+    );
+    ui.icon(
+        cx,
+        rect(
+            r.pos.x + (r.size.x - 18.0) * 0.5,
+            r.pos.y + (r.size.y - 18.0) * 0.5,
+            18.0,
+            18.0,
+        ),
+        if visible { "eye-off" } else { "eye" },
+        18.0,
+        p.muted,
+    );
     if enabled {
         ui.hit_tip(r, id, tooltip);
     }
@@ -188,11 +325,46 @@ fn eye_button(ui: &mut Ui, cx: &mut Cx2d, r: Rect, id: &str, visible: bool, tool
 
 /// Two expanded buttons 12 apart (Cancel / primary action); returns the height.
 #[allow(clippy::too_many_arguments)]
-fn button_pair(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, cancel: &str, primary: &str, icon: Option<&str>, primary_variant: Variant, enabled: bool, gap: f64, size: ControlSize) -> f64 {
-    let h = if size == ControlSize::Sm { 32.0 } else { BUTTON_H };
+fn button_pair(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    w: f64,
+    cancel: &str,
+    primary: &str,
+    icon: Option<&str>,
+    primary_variant: Variant,
+    enabled: bool,
+    gap: f64,
+    size: ControlSize,
+) -> f64 {
+    let h = if size == ControlSize::Sm {
+        32.0
+    } else {
+        BUTTON_H
+    };
     let bw = (w - gap) * 0.5;
-    ui.button(cx, rect(x, y, bw, h), "cancel", cancel, None, Variant::Secondary, size, enabled);
-    ui.button(cx, rect(x + bw + gap, y, bw, h), "primary", primary, icon, primary_variant, size, enabled);
+    ui.button(
+        cx,
+        rect(x, y, bw, h),
+        "cancel",
+        cancel,
+        None,
+        Variant::Secondary,
+        size,
+        enabled,
+    );
+    ui.button(
+        cx,
+        rect(x + bw + gap, y, bw, h),
+        "primary",
+        primary,
+        icon,
+        primary_variant,
+        size,
+        enabled,
+    );
     h
 }
 
@@ -205,14 +377,34 @@ struct MethodSheet;
 
 impl MethodSheet {
     fn options() -> Vec<(&'static str, &'static str, String, String)> {
-        let mut options = vec![("direct", "link-2", tr("pairing.connectionMethods.direct.title"), tr("pairing.connectionMethods.direct.description"))];
+        let mut options = vec![(
+            "direct",
+            "link-2",
+            tr("pairing.connectionMethods.direct.title"),
+            tr("pairing.connectionMethods.direct.description"),
+        )];
         if !MOBILE {
-            options.push(("ssh", "terminal", tr("pairing.connectionMethods.remoteSsh.title"), tr("pairing.connectionMethods.remoteSsh.description")));
+            options.push((
+                "ssh",
+                "terminal",
+                tr("pairing.connectionMethods.remoteSsh.title"),
+                tr("pairing.connectionMethods.remoteSsh.description"),
+            ));
         }
         if MOBILE && paseo_gui_platform::platform().is_some_and(|h| h.capabilities().qr_scan) {
-            options.push(("scan", "qr-code", tr("pairing.connectionMethods.scanQr.title"), tr("pairing.connectionMethods.scanQr.description")));
+            options.push((
+                "scan",
+                "qr-code",
+                tr("pairing.connectionMethods.scanQr.title"),
+                tr("pairing.connectionMethods.scanQr.description"),
+            ));
         }
-        options.push(("link", "clipboard-paste", tr("pairing.connectionMethods.pasteLink.title"), tr("pairing.connectionMethods.pasteLink.description")));
+        options.push((
+            "link",
+            "clipboard-paste",
+            tr("pairing.connectionMethods.pasteLink.title"),
+            tr("pairing.connectionMethods.pasteLink.description"),
+        ));
         options
     }
 }
@@ -222,7 +414,16 @@ impl Sheet for MethodSheet {
         tr("pairing.connectionMethods.title")
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, _scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        _scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
@@ -239,11 +440,31 @@ impl Sheet for MethodSheet {
             let r = rect(x, y, w, h);
             let hit = format!("method:{id}");
             let pressed = ui.is_pressed(&hit);
-            ui.painter.outline(cx, r, if pressed { p.surface3 } else { p.surface2 }, p.border, 1.0, 12.0);
-            ui.icon(cx, rect(x + 16.0, y + (h - 18.0) * 0.5, 18.0, 18.0), icon, 18.0, p.foreground);
+            ui.painter.outline(
+                cx,
+                r,
+                if pressed { p.surface3 } else { p.surface2 },
+                p.border,
+                1.0,
+                12.0,
+            );
+            ui.icon(
+                cx,
+                rect(x + 16.0, y + (h - 18.0) * 0.5, 18.0, 18.0),
+                icon,
+                18.0,
+                p.foreground,
+            );
             let tx = x + 16.0 + 18.0 + 16.0;
-            ui.painter.paragraph(cx, dvec2(tx, y + 16.0), tw, title_spec, &title);
-            ui.painter.paragraph(cx, dvec2(tx, y + 16.0 + th + 4.0), tw, desc_spec, &description);
+            ui.painter
+                .paragraph(cx, dvec2(tx, y + 16.0), tw, title_spec, &title);
+            ui.painter.paragraph(
+                cx,
+                dvec2(tx, y + 16.0 + th + 4.0),
+                tw,
+                desc_spec,
+                &description,
+            );
             if interactive {
                 ui.hit(r, hit);
             }
@@ -255,7 +476,9 @@ impl Sheet for MethodSheet {
     fn click(&mut self, _cx: &mut Cx, id: &str, _ops: &mut SheetOps) -> SheetFlow {
         match id.strip_prefix("method:") {
             Some("scan") => SheetFlow::Replace(Box::new(ScanSheet::new())),
-            Some(method) => SheetFlow::Replace(Box::new(ConnectionSheet::new(None, None, method, true))),
+            Some(method) => {
+                SheetFlow::Replace(Box::new(ConnectionSheet::new(None, None, method, true)))
+            }
             None => SheetFlow::Stay,
         }
     }
@@ -281,7 +504,11 @@ impl HostConfirmSheet {
             return;
         }
         if let Some(sheet) = self.reply_to {
-            ops.shell.push(ShellOp::Deliver { sheet, tag: "confirm".into(), value: Value::Bool(approved) });
+            ops.shell.push(ShellOp::Deliver {
+                sheet,
+                tag: "confirm".into(),
+                value: Value::Bool(approved),
+            });
         }
     }
 }
@@ -291,41 +518,87 @@ impl Sheet for HostConfirmSheet {
         tr("pairing.hostConfirmation.title")
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, _scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        _scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
-        let description = tr(if self.changed { "pairing.hostConfirmation.descriptionChanged" } else { "pairing.hostConfirmation.description" });
+        let description = tr(if self.changed {
+            "pairing.hostConfirmation.descriptionChanged"
+        } else {
+            "pairing.hostConfirmation.description"
+        });
         let spec = ui.spec(Font::Regular, 14.0, p.muted);
         let h = ui.painter.paragraph_height(cx, w, spec, &description);
         ui.painter.paragraph(cx, dvec2(x, y), w, spec, &description);
         y += h + 16.0;
         let rows = [
-            (tr("pairing.hostConfirmation.hostLabel"), self.server_id.clone()),
-            (tr("pairing.hostConfirmation.fingerprintLabel"), self.fingerprint.clone()),
-            (tr("pairing.hostConfirmation.relayLabel"), self.relay.clone()),
+            (
+                tr("pairing.hostConfirmation.hostLabel"),
+                self.server_id.clone(),
+            ),
+            (
+                tr("pairing.hostConfirmation.fingerprintLabel"),
+                self.fingerprint.clone(),
+            ),
+            (
+                tr("pairing.hostConfirmation.relayLabel"),
+                self.relay.clone(),
+            ),
         ];
         let label_spec = ui.spec(Font::Regular, 14.0, p.foreground);
         let value_spec = ui.spec(Font::Regular, 12.0, p.muted);
         let heights: Vec<f64> = rows
             .iter()
             .map(|(label, value)| {
-                16.0 + ui.painter.paragraph_height(cx, w - 44.0, label_spec, label) + 4.0 + ui.painter.paragraph_height(cx, w - 44.0, value_spec, value) + 16.0
+                16.0 + ui.painter.paragraph_height(cx, w - 44.0, label_spec, label)
+                    + 4.0
+                    + ui.painter.paragraph_height(cx, w - 44.0, value_spec, value)
+                    + 16.0
             })
             .collect();
         let total: f64 = heights.iter().sum();
-        ui.painter.outline(cx, rect(x, y, w, total), p.surface1, p.border, 1.0, 8.0);
+        ui.painter
+            .outline(cx, rect(x, y, w, total), p.surface1, p.border, 1.0, 8.0);
         for (i, ((label, value), h)) in rows.iter().zip(&heights).enumerate() {
             if i > 0 {
                 ui.painter.hline(cx, x, y, w, p.border);
             }
             let lh = ui.painter.paragraph_height(cx, w - 44.0, label_spec, label);
-            ui.painter.paragraph(cx, dvec2(x + 16.0, y + 16.0), w - 44.0, label_spec, label);
-            ui.painter.paragraph(cx, dvec2(x + 16.0, y + 16.0 + lh + 4.0), w - 44.0, value_spec, value);
+            ui.painter
+                .paragraph(cx, dvec2(x + 16.0, y + 16.0), w - 44.0, label_spec, label);
+            ui.painter.paragraph(
+                cx,
+                dvec2(x + 16.0, y + 16.0 + lh + 4.0),
+                w - 44.0,
+                value_spec,
+                value,
+            );
             y += h;
         }
         y += 16.0 + 16.0;
-        y += button_pair(ui, cx, x, y, w, &tr("common.actions.cancel"), &tr("pairing.hostConfirmation.connect"), None, Variant::Primary, interactive, 8.0, ControlSize::Sm);
+        y += button_pair(
+            ui,
+            cx,
+            x,
+            y,
+            w,
+            &tr("common.actions.cancel"),
+            &tr("pairing.hostConfirmation.connect"),
+            None,
+            Variant::Primary,
+            interactive,
+            8.0,
+            ControlSize::Sm,
+        );
         y - start
     }
 
@@ -378,6 +651,7 @@ pub struct ConnectionSheet {
     direct_host: Field,
     direct_port: Field,
     use_tls: bool,
+    embedded_tailnet: bool,
     show_password: bool,
     advanced: bool,
     details: bool,
@@ -395,17 +669,43 @@ pub struct ConnectionSheet {
 }
 
 impl ConnectionSheet {
-    pub fn new(config: Option<Value>, link: Option<String>, method: &str, from_picker: bool) -> Self {
+    pub fn new(
+        config: Option<Value>,
+        link: Option<String>,
+        method: &str,
+        from_picker: bool,
+    ) -> Self {
         Self::with(config, link, method, from_picker, false, false, None)
     }
 
     /// The pairing-link form after a scanned link was refused for a missing password.
     fn password_prompt(link: String, connection_id: String) -> Self {
-        Self::with(None, Some(link), "link", false, true, true, Some(connection_id))
+        Self::with(
+            None,
+            Some(link),
+            "link",
+            false,
+            true,
+            true,
+            Some(connection_id),
+        )
     }
 
-    fn with(config: Option<Value>, link: Option<String>, method: &str, from_picker: bool, needs_password: bool, pre_approved: bool, connection_id: Option<String>) -> Self {
-        let text = |key: &str| config.as_ref().map(|c| j::text(c, key).to_string()).unwrap_or_default();
+    fn with(
+        config: Option<Value>,
+        link: Option<String>,
+        method: &str,
+        from_picker: bool,
+        needs_password: bool,
+        pre_approved: bool,
+        connection_id: Option<String>,
+    ) -> Self {
+        let text = |key: &str| {
+            config
+                .as_ref()
+                .map(|c| j::text(c, key).to_string())
+                .unwrap_or_default()
+        };
         let editing = !text("endpoint").is_empty();
         let id = config
             .as_ref()
@@ -413,7 +713,11 @@ impl ConnectionSheet {
             .filter(|id| !id.is_empty())
             .or(connection_id)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let method = if link.is_some() { "link".to_string() } else { method.to_string() };
+        let method = if link.is_some() {
+            "link".to_string()
+        } else {
+            method.to_string()
+        };
         let endpoint = link.clone().unwrap_or_else(|| text("endpoint"));
         let optional = tr("pairing.direct.fields.optional");
         let password_hint = match method.as_str() {
@@ -422,7 +726,11 @@ impl ConnectionSheet {
             _ => optional.clone(),
         };
         let focus = |field: Field, focused: bool| if focused { field.autofocus() } else { field };
-        let endpoint_hint = if method == "link" { "https://app.paseo.sh/#offer=..." } else { "tcp://localhost:6767?ssl=true" };
+        let endpoint_hint = if method == "link" {
+            "https://app.paseo.sh/#offer=..."
+        } else {
+            "tcp://localhost:6767?ssl=true"
+        };
         Self {
             id,
             method: method.clone(),
@@ -437,13 +745,15 @@ impl ConnectionSheet {
             direct_host: focus(Field::new("", "localhost"), method == "direct" && !editing),
             direct_port: Field::new("6767", "6767"),
             use_tls: false,
+            embedded_tailnet: text("networkMode") == "tailnet",
             show_password: false,
             advanced: editing,
             details: config.is_some(),
             busy: false,
             saved: false,
             error: None,
-            approved_pairing: (pre_approved && link.is_some()).then(|| format!("{}\n", link.as_deref().unwrap_or("").trim())),
+            approved_pairing: (pre_approved && link.is_some())
+                .then(|| format!("{}\n", link.as_deref().unwrap_or("").trim())),
             needs_password,
             password_link: link.as_deref().unwrap_or("").trim().to_string(),
             candidate: None,
@@ -464,9 +774,28 @@ impl ConnectionSheet {
 
     fn direct_uri(&self) -> String {
         let host = self.direct_host.text().trim().to_string();
-        let host = if host.contains(':') && !host.starts_with('[') { format!("[{host}]") } else { host };
-        let port = self.direct_port.text().trim().parse::<u16>().unwrap_or(6767);
-        format!("tcp://{host}:{port}{}", if self.use_tls { "?ssl=true" } else { "" })
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host
+        };
+        let port = self
+            .direct_port
+            .text()
+            .trim()
+            .parse::<u16>()
+            .unwrap_or(6767);
+        if self.embedded_tailnet {
+            format!(
+                "{}://{host}:{port}",
+                if self.use_tls { "wss" } else { "ws" }
+            )
+        } else {
+            format!(
+                "tcp://{host}:{port}{}",
+                if self.use_tls { "?ssl=true" } else { "" }
+            )
+        }
     }
 
     /// Original `prepareDirectConnection` / `parseSshTransportUri` / pairing-link checks.
@@ -477,11 +806,20 @@ impl ConnectionSheet {
                 if raw.is_empty() {
                     return Err(tr("pairing.remoteSsh.errors.targetRequired"));
                 }
-                let text = if raw.contains("://") { raw } else { format!("ssh://{raw}") };
+                let text = if raw.contains("://") {
+                    raw
+                } else {
+                    format!("ssh://{raw}")
+                };
                 let invalid = || tr("pairing.remoteSsh.errors.invalidTarget");
                 let uri = url::Url::parse(&text).map_err(|_| invalid())?;
                 let host = uri.host_str().unwrap_or("");
-                if uri.scheme() != "ssh" || host.is_empty() || host.starts_with('-') || uri.fragment().is_some() || uri.query_pairs().any(|(key, _)| key != "daemonPort") {
+                if uri.scheme() != "ssh"
+                    || host.is_empty()
+                    || host.starts_with('-')
+                    || uri.fragment().is_some()
+                    || uri.query_pairs().any(|(key, _)| key != "daemonPort")
+                {
                     return Err(invalid());
                 }
                 Ok(uri.to_string())
@@ -491,7 +829,10 @@ impl ConnectionSheet {
                 if link.is_empty() {
                     return Err(tr("pairing.link.errors.required"));
                 }
-                if !link.contains("#offer=") && !link.starts_with("relay://") && !link.contains("#connect=") {
+                if !link.contains("#offer=")
+                    && !link.starts_with("relay://")
+                    && !link.contains("#connect=")
+                {
                     return Err(tr("pairing.link.errors.missingOffer"));
                 }
                 Ok(link)
@@ -522,19 +863,35 @@ impl ConnectionSheet {
         }
         if !self.advanced {
             let port = self.direct_port.text().trim().parse::<u32>().ok();
-            let valid = !self.direct_host.text().trim().is_empty() && port.is_some_and(|p| (1..=65535).contains(&p));
-            let uri = if valid { self.direct_uri() } else { String::new() };
+            let valid = !self.direct_host.text().trim().is_empty()
+                && port.is_some_and(|p| (1..=65535).contains(&p));
+            let uri = if valid {
+                self.direct_uri()
+            } else {
+                String::new()
+            };
             self.endpoint.set_text(cx, &uri);
         } else {
             let input = self.endpoint.text().trim().to_string();
-            let text = if input.contains("://") { input } else { format!("tcp://{input}") };
+            let text = if input.contains("://") {
+                input
+            } else {
+                format!("tcp://{input}")
+            };
             if let Ok(uri) = url::Url::parse(&text)
                 && matches!(uri.scheme(), "tcp" | "ws" | "wss")
                 && uri.host_str().is_some_and(|h| !h.is_empty())
             {
-                self.direct_host.set_text(cx, uri.host_str().unwrap_or("").trim_matches(|c| c == '[' || c == ']'));
-                self.direct_port.set_text(cx, &uri.port().unwrap_or(6767).to_string());
-                self.use_tls = uri.scheme() == "wss" || uri.query_pairs().any(|(k, v)| k == "ssl" && v == "true");
+                self.direct_host.set_text(
+                    cx,
+                    uri.host_str()
+                        .unwrap_or("")
+                        .trim_matches(|c| c == '[' || c == ']'),
+                );
+                self.direct_port
+                    .set_text(cx, &uri.port().unwrap_or(6767).to_string());
+                self.use_tls = uri.scheme() == "wss"
+                    || uri.query_pairs().any(|(k, v)| k == "ssl" && v == "true");
                 if let Some((_, password)) = uri.query_pairs().find(|(k, _)| k == "password") {
                     self.password.set_text(cx, &password);
                 }
@@ -545,11 +902,17 @@ impl ConnectionSheet {
     }
 
     fn without_password(endpoint: &str) -> String {
-        let Ok(mut uri) = url::Url::parse(endpoint) else { return endpoint.to_string() };
+        let Ok(mut uri) = url::Url::parse(endpoint) else {
+            return endpoint.to_string();
+        };
         if !uri.query_pairs().any(|(k, _)| k == "password") {
             return endpoint.to_string();
         }
-        let rest: Vec<(String, String)> = uri.query_pairs().filter(|(k, _)| k != "password").map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        let rest: Vec<(String, String)> = uri
+            .query_pairs()
+            .filter(|(k, _)| k != "password")
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
         if rest.is_empty() {
             uri.set_query(None);
         } else {
@@ -566,15 +929,40 @@ impl ConnectionSheet {
         }
         let key = if lower.contains("timed out") {
             "pairing.direct.errors.timedOut"
-        } else if lower.contains("econnrefused") || lower.contains("connection refused") || lower.contains("err_connection_refused") {
+        } else if lower.contains("econnrefused")
+            || lower.contains("connection refused")
+            || lower.contains("err_connection_refused")
+        {
             "pairing.direct.errors.refused"
-        } else if lower.contains("unable to resolve host") || lower.contains("enotfound") || lower.contains("failed host lookup") || lower.contains("failed to lookup address") {
+        } else if lower.contains("unable to resolve host")
+            || lower.contains("enotfound")
+            || lower.contains("failed host lookup")
+            || lower.contains("failed to lookup address")
+        {
             "pairing.direct.errors.hostNotFound"
-        } else if ["certificate", "certpathvalidator", "trust anchor", "handshake", "tls", "ssl"].iter().any(|w| lower.contains(w)) {
+        } else if [
+            "certificate",
+            "certpathvalidator",
+            "trust anchor",
+            "handshake",
+            "tls",
+            "ssl",
+        ]
+        .iter()
+        .any(|w| lower.contains(w))
+        {
             "pairing.direct.errors.tlsError"
         } else if lower.contains("not found") {
             "pairing.direct.errors.hostNotFound"
-        } else if ["ehostunreach", "host is unreachable", "no route to host", "network is unreachable"].iter().any(|w| lower.contains(w)) {
+        } else if [
+            "ehostunreach",
+            "host is unreachable",
+            "no route to host",
+            "network is unreachable",
+        ]
+        .iter()
+        .any(|w| lower.contains(w))
+        {
             "pairing.direct.errors.hostUnreachable"
         } else {
             "pairing.direct.errors.unableToConnect"
@@ -588,9 +976,20 @@ impl ConnectionSheet {
         let raw = raw.trim();
         match self.method.as_str() {
             "ssh" => {
-                let target = self.ssh_target.text().trim().trim_start_matches("ssh://").to_string();
+                let target = self
+                    .ssh_target
+                    .text()
+                    .trim()
+                    .trim_start_matches("ssh://")
+                    .to_string();
                 let detail = ssh_failure_detail(raw, &target);
-                with_details(&tr_args("pairing.remoteSsh.errors.failedToConnect", &[("detail", &detail)]), raw)
+                with_details(
+                    &tr_args(
+                        "pairing.remoteSsh.errors.failedToConnect",
+                        &[("detail", &detail)],
+                    ),
+                    raw,
+                )
             }
             "link" => with_details(&link_failure_detail(raw), raw),
             _ if relay => {
@@ -601,10 +1000,16 @@ impl ConnectionSheet {
                 }
             }
             _ => {
-                let title = tr_args("pairing.direct.errors.failedToConnect", &[("endpoint", &Self::without_password(endpoint))]);
+                let title = tr_args(
+                    "pairing.direct.errors.failedToConnect",
+                    &[("endpoint", &Self::without_password(endpoint))],
+                );
                 let detail = Self::direct_failure_detail(raw);
                 if !raw.is_empty() && raw != detail {
-                    format!("{title}\n{detail}\n{}", tr_args("pairing.direct.errors.details", &[("detail", raw)]))
+                    format!(
+                        "{title}\n{detail}\n{}",
+                        tr_args("pairing.direct.errors.details", &[("detail", raw)])
+                    )
                 } else {
                     format!("{title}\n{detail}")
                 }
@@ -623,26 +1028,70 @@ impl ConnectionSheet {
                 return SheetFlow::Stay;
             }
         };
+        if self.embedded_tailnet {
+            let supported = self.method == "direct"
+                && url::Url::parse(&endpoint).is_ok_and(|url| {
+                    matches!(url.scheme(), "ws" | "wss") && url.host_str().is_some()
+                });
+            if !supported {
+                self.error = Some(tr("tailnet.hostUnsupported"));
+                return SheetFlow::Stay;
+            }
+            if self.state["tailnet"]["enabled"].as_bool() != Some(true)
+                || j::text(&self.state["tailnet"], "backendState") != "Running"
+            {
+                self.error = Some(tr("tailnet.hostNotReady"));
+                return SheetFlow::Stay;
+            }
+        }
         let color = self.color.text().trim().to_string();
-        let valid_color = color.is_empty() || (color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit()));
+        let valid_color = color.is_empty()
+            || (color.len() == 7
+                && color.starts_with('#')
+                && color[1..].chars().all(|c| c.is_ascii_hexdigit()));
         if !valid_color {
             self.error = Some(tr("pairing.hostDetails.invalidColor"));
             return SheetFlow::Stay;
         }
         self.error = None;
-        let original_endpoint = self.original.as_ref().map(|c| j::text(c, "endpoint").to_string());
+        let original_endpoint = self
+            .original
+            .as_ref()
+            .map(|c| j::text(c, "endpoint").to_string());
         let mut config = Map::new();
         config.insert("id".into(), Value::from(self.id.clone()));
-        config.insert("label".into(), Value::from(self.label.text().trim().to_string()));
+        config.insert(
+            "label".into(),
+            Value::from(self.label.text().trim().to_string()),
+        );
         config.insert("endpoint".into(), Value::from(endpoint.clone()));
+        config.insert(
+            "networkMode".into(),
+            Value::from(if self.embedded_tailnet {
+                "tailnet"
+            } else {
+                "normal"
+            }),
+        );
         let password = self.password.text();
         if !password.is_empty() {
             config.insert("password".into(), Value::from(password));
         }
-        if original_endpoint.as_deref() == Some(endpoint.as_str()) {
-            // A local daemon's credential stays with its unchanged endpoint.
+        if !self.embedded_tailnet
+            && self
+                .original
+                .as_ref()
+                .is_none_or(|c| j::text(c, "networkMode") != "tailnet")
+            && original_endpoint.as_deref() == Some(endpoint.as_str())
+        {
+            // Local credentials must never cross into the embedded node's network authority.
             for key in ["localCredential", "localCredentialPath"] {
-                if let Some(value) = self.original.as_ref().and_then(|c| c.get(key)).filter(|v| !v.is_null()) {
+                if let Some(value) = self
+                    .original
+                    .as_ref()
+                    .and_then(|c| c.get(key))
+                    .filter(|v| !v.is_null())
+                {
                     config.insert(key.into(), value.clone());
                 }
             }
@@ -686,7 +1135,16 @@ impl ConnectionSheet {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn form_body(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn form_body(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
@@ -695,7 +1153,15 @@ impl ConnectionSheet {
         let error_color = p.danger;
         match self.method.as_str() {
             "ssh" => {
-                y += field_label(ui, cx, x, y, w, &tr("pairing.remoteSsh.fields.target"), false);
+                y += field_label(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    &tr("pairing.remoteSsh.fields.target"),
+                    false,
+                );
                 self.ssh_target.set_read_only(cx, self.busy);
                 self.ssh_target.draw(cx, scope, rect(x, y, w, fh));
                 y += fh;
@@ -703,12 +1169,31 @@ impl ConnectionSheet {
                     y += 8.0 + error_text(ui, cx, x, y + 8.0, w, &error, 12.0, argb(0xfffca5a5));
                 }
                 y += 16.0;
-                y += field_label(ui, cx, x, y, w, &tr("pairing.remoteSsh.fields.password"), false);
+                y += field_label(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    &tr("pairing.remoteSsh.fields.password"),
+                    false,
+                );
                 self.password.set_read_only(cx, self.busy);
                 self.password.set_password(cx, !self.show_password);
                 self.password.draw(cx, scope, rect(x, y, w - fh - 8.0, fh));
-                let tip = tr(&format!("pairing.remoteSsh.passwordVisibility.{}", if self.show_password { "hide" } else { "show" }));
-                eye_button(ui, cx, rect(x + w - fh, y, fh, fh), "eye", self.show_password, &tip, enabled);
+                let tip = tr(&format!(
+                    "pairing.remoteSsh.passwordVisibility.{}",
+                    if self.show_password { "hide" } else { "show" }
+                ));
+                eye_button(
+                    ui,
+                    cx,
+                    rect(x + w - fh, y, fh, fh),
+                    "eye",
+                    self.show_password,
+                    &tip,
+                    enabled,
+                );
                 y += fh;
             }
             "link" => {
@@ -720,25 +1205,84 @@ impl ConnectionSheet {
                 }
                 if self.needs_password {
                     y += 16.0;
-                    let probe = json!({ "id": "", "label": "", "endpoint": self.endpoint.text().trim() });
-                    let host = inspect_host_config(&probe).ok().and_then(|i| i.expected_server_id).unwrap_or_else(|| "host".to_string());
-                    y += field_label(ui, cx, x, y, w, &tr_args("pairing.hostPassword.title", &[("host", &host)]), true);
+                    let probe =
+                        json!({ "id": "", "label": "", "endpoint": self.endpoint.text().trim() });
+                    let host = inspect_host_config(&probe)
+                        .ok()
+                        .and_then(|i| i.expected_server_id)
+                        .unwrap_or_else(|| "host".to_string());
+                    y += field_label(
+                        ui,
+                        cx,
+                        x,
+                        y,
+                        w,
+                        &tr_args("pairing.hostPassword.title", &[("host", &host)]),
+                        true,
+                    );
                     self.password.set_password(cx, true);
                     self.password.draw(cx, scope, rect(x, y, w, fh));
                     y += fh;
                 }
             }
             _ => {
+                y += field_label(ui, cx, x, y, w, &tr("tailnet.hostMode"), true);
+                for (id, key, selected) in [
+                    ("network.normal", "tailnet.normal", !self.embedded_tailnet),
+                    ("network.tailnet", "tailnet.embedded", self.embedded_tailnet),
+                ] {
+                    ui.button(
+                        cx,
+                        rect(x, y, w, BUTTON_H),
+                        id,
+                        &tr(key),
+                        selected.then_some("check"),
+                        if selected {
+                            Variant::Primary
+                        } else {
+                            Variant::Outline
+                        },
+                        ControlSize::Md,
+                        enabled,
+                    );
+                    y += BUTTON_H + 8.0;
+                }
+                let hint = tr(if self.embedded_tailnet {
+                    "tailnet.hostHint"
+                } else {
+                    "tailnet.normalHint"
+                });
+                let spec = ui.spec(Font::Regular, 12.0, p.muted);
+                let h = ui.painter.paragraph_height(cx, w, spec, &hint);
+                ui.painter.paragraph(cx, dvec2(x, y), w, spec, &hint);
+                y += h + 16.0;
                 if !self.advanced || !self.editing {
                     let port_w = 112.0;
                     let host_w = w - port_w - 12.0;
-                    let lh = field_label(ui, cx, x, y, host_w, &tr("pairing.direct.fields.host"), true);
-                    field_label(ui, cx, x + host_w + 12.0, y, port_w, &tr("pairing.direct.fields.port"), true);
+                    let lh = field_label(
+                        ui,
+                        cx,
+                        x,
+                        y,
+                        host_w,
+                        &tr("pairing.direct.fields.host"),
+                        true,
+                    );
+                    field_label(
+                        ui,
+                        cx,
+                        x + host_w + 12.0,
+                        y,
+                        port_w,
+                        &tr("pairing.direct.fields.port"),
+                        true,
+                    );
                     y += lh;
                     self.direct_host.set_read_only(cx, self.busy);
                     self.direct_port.set_read_only(cx, self.busy);
                     self.direct_host.draw(cx, scope, rect(x, y, host_w, fh));
-                    self.direct_port.draw(cx, scope, rect(x + host_w + 12.0, y, port_w, fh));
+                    self.direct_port
+                        .draw(cx, scope, rect(x + host_w + 12.0, y, port_w, fh));
                     if std::mem::take(&mut self.focus_port) {
                         self.direct_port.focus(cx);
                     }
@@ -748,9 +1292,26 @@ impl ConnectionSheet {
                     let spec = ui.spec(Font::Medium, 14.0, p.muted);
                     let lw = ui.measure(cx, spec, &label);
                     let box_r = rect(x, y, 22.0, 22.0);
-                    ui.painter.outline(cx, box_r, if self.use_tls { p.accent } else { Vec4::default() }, if self.use_tls { p.accent } else { p.border }, 1.0, 2.0);
+                    ui.painter.outline(
+                        cx,
+                        box_r,
+                        if self.use_tls {
+                            p.accent
+                        } else {
+                            Vec4::default()
+                        },
+                        if self.use_tls { p.accent } else { p.border },
+                        1.0,
+                        2.0,
+                    );
                     if self.use_tls {
-                        ui.icon(cx, rect(x + 4.0, y + 4.0, 14.0, 14.0), "check", 14.0, p.on_tertiary);
+                        ui.icon(
+                            cx,
+                            rect(x + 4.0, y + 4.0, 14.0, 14.0),
+                            "check",
+                            14.0,
+                            p.on_tertiary,
+                        );
                     }
                     ui.text(cx, rect(x + 34.0, y, lw, 22.0), spec, &label);
                     if enabled {
@@ -762,8 +1323,19 @@ impl ConnectionSheet {
                 self.password.set_read_only(cx, self.busy);
                 self.password.set_password(cx, !self.show_password);
                 self.password.draw(cx, scope, rect(x, y, w - fh - 8.0, fh));
-                let tip = tr(&format!("pairing.direct.passwordVisibility.{}", if self.show_password { "hide" } else { "show" }));
-                eye_button(ui, cx, rect(x + w - fh, y, fh, fh), "eye", self.show_password, &tip, enabled);
+                let tip = tr(&format!(
+                    "pairing.direct.passwordVisibility.{}",
+                    if self.show_password { "hide" } else { "show" }
+                ));
+                eye_button(
+                    ui,
+                    cx,
+                    rect(x + w - fh, y, fh, fh),
+                    "eye",
+                    self.show_password,
+                    &tip,
+                    enabled,
+                );
                 y += fh + 16.0;
                 let label = tr("pairing.direct.advanced.label");
                 y += toggle_row(ui, cx, x, y, "advanced", self.advanced, &label, enabled);
@@ -780,10 +1352,27 @@ impl ConnectionSheet {
         }
         if self.editing {
             y += 16.0;
-            y += toggle_row(ui, cx, x, y, "details", self.details, &tr("pairing.hostDetails.title"), interactive);
+            y += toggle_row(
+                ui,
+                cx,
+                x,
+                y,
+                "details",
+                self.details,
+                &tr("pairing.hostDetails.title"),
+                interactive,
+            );
             if self.details {
-                let labels = [tr("pairing.hostDetails.name"), tr("pairing.hostDetails.expectedServerId"), tr("pairing.hostDetails.badgeColor")];
-                for (label, field) in [(&labels[0], &mut self.label), (&labels[1], &mut self.identity), (&labels[2], &mut self.color)] {
+                let labels = [
+                    tr("pairing.hostDetails.name"),
+                    tr("pairing.hostDetails.expectedServerId"),
+                    tr("pairing.hostDetails.badgeColor"),
+                ];
+                for (label, field) in [
+                    (&labels[0], &mut self.label),
+                    (&labels[1], &mut self.identity),
+                    (&labels[2], &mut self.color),
+                ] {
                     y += 8.0;
                     y += field_label(ui, cx, x, y, w, label, true);
                     field.set_read_only(cx, self.busy);
@@ -798,19 +1387,36 @@ impl ConnectionSheet {
 
 impl Sheet for ConnectionSheet {
     fn title(&self) -> String {
-        if self.editing { tr("pairing.hostDetails.editConnection") } else { tr(&format!("{}.title", self.scope())) }
+        if self.editing {
+            tr("pairing.hostDetails.editConnection")
+        } else {
+            tr(&format!("{}.title", self.scope()))
+        }
     }
 
     fn sync(&mut self, _shell: &PaseoShell, state: &Value) {
         self.state = Arc::new(state.clone());
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
         let helper = tr(&format!("{}.helper", self.scope()));
-        let spec = ui.spec(Font::Regular, if self.method == "ssh" { 12.0 } else { 14.0 }, p.muted);
+        let spec = ui.spec(
+            Font::Regular,
+            if self.method == "ssh" { 12.0 } else { 14.0 },
+            p.muted,
+        );
         let h = ui.painter.paragraph_height(cx, w, spec, &helper);
         ui.painter.paragraph(cx, dvec2(x, y), w, spec, &helper);
         y += h + 16.0;
@@ -818,18 +1424,43 @@ impl Sheet for ConnectionSheet {
         y += 16.0 + 8.0;
         let scope_key = self.scope();
         let primary = if self.method == "link" {
-            tr(if self.busy { "pairing.link.actions.pairing" } else { "pairing.link.actions.pair" })
+            tr(if self.busy {
+                "pairing.link.actions.pairing"
+            } else {
+                "pairing.link.actions.pair"
+            })
         } else {
-            tr(&format!("{scope_key}.actions.{}", if self.busy { "connecting" } else { "connect" }))
+            tr(&format!(
+                "{scope_key}.actions.{}",
+                if self.busy { "connecting" } else { "connect" }
+            ))
         };
         let icon = match self.method.as_str() {
             "ssh" => "terminal",
             "link" => "link",
             _ => "link-2",
         };
-        y += button_pair(ui, cx, x, y, w, &tr(&format!("{scope_key}.actions.cancel")), &primary, Some(icon), Variant::Primary, interactive && !self.busy, 12.0, ControlSize::Md);
+        y += button_pair(
+            ui,
+            cx,
+            x,
+            y,
+            w,
+            &tr(&format!("{scope_key}.actions.cancel")),
+            &primary,
+            Some(icon),
+            Variant::Primary,
+            interactive && !self.busy,
+            12.0,
+            ControlSize::Md,
+        );
         if self.busy {
-            spinner(ui, cx, rect(x + w - 24.0, y - BUTTON_H + 12.0, 16.0, 16.0), p.on_tertiary);
+            spinner(
+                ui,
+                cx,
+                rect(x + w - 24.0, y - BUTTON_H + 12.0, 16.0, 16.0),
+                p.on_tertiary,
+            );
         }
         y - start
     }
@@ -841,9 +1472,21 @@ impl Sheet for ConnectionSheet {
         match id {
             "primary" => return self.save(ops),
             "cancel" => {
-                return if self.from_picker { SheetFlow::Replace(Box::new(MethodSheet)) } else { SheetFlow::Close };
+                return if self.from_picker {
+                    SheetFlow::Replace(Box::new(MethodSheet))
+                } else {
+                    SheetFlow::Close
+                };
             }
             "tls" => self.use_tls = !self.use_tls,
+            "network.normal" => {
+                self.embedded_tailnet = false;
+                self.error = None;
+            }
+            "network.tailnet" => {
+                self.embedded_tailnet = true;
+                self.error = None;
+            }
             "eye" => self.show_password = !self.show_password,
             "advanced" => self.toggle_advanced(cx),
             "details" => self.details = !self.details,
@@ -880,7 +1523,11 @@ impl Sheet for ConnectionSheet {
                     }
                 }
                 ("host", FieldEvent::Returned(_)) => self.focus_port = true,
-                ("endpoint", FieldEvent::Returned(_)) if self.method == "direct" && !self.editing => self.pending = Pending::ToggleAdvanced,
+                ("endpoint", FieldEvent::Returned(_))
+                    if self.method == "direct" && !self.editing =>
+                {
+                    self.pending = Pending::ToggleAdvanced
+                }
                 ("label" | "identity" | "color", FieldEvent::Returned(_)) => {}
                 (_, FieldEvent::Returned(_)) => self.pending = Pending::Save,
                 _ => {}
@@ -900,13 +1547,22 @@ impl Sheet for ConnectionSheet {
         }
     }
 
-    fn on_deliver(&mut self, _cx: &mut Cx, tag: &str, value: &Value, ops: &mut SheetOps) -> SheetFlow {
+    fn on_deliver(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        value: &Value,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         if tag != "confirm" {
             return SheetFlow::Stay;
         }
         if value.as_bool() == Some(true) {
             if let Some((config, endpoint, _)) = &self.candidate {
-                self.approved_pairing = Some(format!("{endpoint}\n{}", j::text(config, "expectedServerId")));
+                self.approved_pairing = Some(format!(
+                    "{endpoint}\n{}",
+                    j::text(config, "expectedServerId")
+                ));
             }
             self.probe(ops);
         } else {
@@ -916,12 +1572,20 @@ impl Sheet for ConnectionSheet {
         SheetFlow::Stay
     }
 
-    fn on_response(&mut self, _cx: &mut Cx, tag: &str, result: &Result<Value, CoreError>, ops: &mut SheetOps) -> SheetFlow {
+    fn on_response(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        result: &Result<Value, CoreError>,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         if tag != "probe" {
             return SheetFlow::Stay;
         }
         self.busy = false;
-        let Some((config, endpoint, relay)) = self.candidate.take() else { return SheetFlow::Stay };
+        let Some((config, endpoint, relay)) = self.candidate.take() else {
+            return SheetFlow::Stay;
+        };
         match result {
             Ok(_) => {
                 // `updateHost` for a saved connection id, else `addHost`; the core decides.
@@ -954,9 +1618,23 @@ enum AlertKind {
 /// Transparent with a 1px border at half the accent alpha, 16 radius, 16/12 padding, a 14px
 /// glyph 12px before muted text; an optional action button 8px below, indented under the text.
 #[allow(clippy::too_many_arguments)]
-fn alert(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, kind: AlertKind, text: &str, action: Option<(&str, &str, &str)>, interactive: bool) -> f64 {
+fn alert(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    w: f64,
+    kind: AlertKind,
+    text: &str,
+    action: Option<(&str, &str, &str)>,
+    interactive: bool,
+) -> f64 {
     let p = ui.p;
-    let accent = if kind == AlertKind::Warning { p.warning } else { p.danger };
+    let accent = if kind == AlertKind::Warning {
+        p.warning
+    } else {
+        p.danger
+    };
     let spec = ui.spec(Font::Regular, 14.0, p.muted);
     let tx = x + 16.0 + 14.0 + 12.0;
     let tw = w - (tx - x) - 16.0;
@@ -965,13 +1643,45 @@ fn alert(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, kind: AlertKind, te
     if action.is_some() {
         h += 2.0 + 8.0 + 32.0;
     }
-    ui.painter.outline(cx, rect(x, y, w, h), Vec4::default(), with_alpha(accent, 0.5), 1.0, 16.0);
-    let icon = if kind == AlertKind::Warning { "triangle-alert" } else { "circle-x" };
-    ui.icon(cx, rect(x + 16.0, y + 12.0 + (th.min(20.0) - 14.0).max(0.0) * 0.5, 14.0, 14.0), icon, 14.0, accent);
-    ui.painter.paragraph(cx, dvec2(tx, y + 12.0), tw, spec, text);
+    ui.painter.outline(
+        cx,
+        rect(x, y, w, h),
+        Vec4::default(),
+        with_alpha(accent, 0.5),
+        1.0,
+        16.0,
+    );
+    let icon = if kind == AlertKind::Warning {
+        "triangle-alert"
+    } else {
+        "circle-x"
+    };
+    ui.icon(
+        cx,
+        rect(
+            x + 16.0,
+            y + 12.0 + (th.min(20.0) - 14.0).max(0.0) * 0.5,
+            14.0,
+            14.0,
+        ),
+        icon,
+        14.0,
+        accent,
+    );
+    ui.painter
+        .paragraph(cx, dvec2(tx, y + 12.0), tw, spec, text);
     if let Some((id, label, glyph)) = action {
         let bw = ui.button_width(cx, label, Some(glyph), ControlSize::Sm);
-        ui.button(cx, rect(tx, y + 12.0 + th + 2.0 + 8.0, bw, 32.0), id, label, Some(glyph), Variant::Outline, ControlSize::Sm, interactive);
+        ui.button(
+            cx,
+            rect(tx, y + 12.0 + th + 2.0 + 8.0, bw, 32.0),
+            id,
+            label,
+            Some(glyph),
+            Variant::Outline,
+            ControlSize::Sm,
+            interactive,
+        );
     }
     h
 }
@@ -1026,7 +1736,12 @@ impl PairingSheet {
         }
         self.pending = true;
         self.error = None;
-        ops.request(&self.host_id, json!({ "type": "daemon.get_pairing_offer.request" }), "daemon.get_pairing_offer.response", "offer");
+        ops.request(
+            &self.host_id,
+            json!({ "type": "daemon.get_pairing_offer.request" }),
+            "daemon.get_pairing_offer.response",
+            "offer",
+        );
     }
 
     fn supports(&self, feature: &str) -> bool {
@@ -1037,17 +1752,33 @@ impl PairingSheet {
         let spec = ui.spec(Font::Regular, 14.0, ui.p.muted);
         let h = ui.painter.paragraph_height(cx, w, spec, text);
         let tw = ui.painter.measure(cx, spec, text).x.min(w);
-        ui.painter.paragraph(cx, dvec2(x + (w - tw) * 0.5, y + 24.0), tw, spec, text);
+        ui.painter
+            .paragraph(cx, dvec2(x + (w - tw) * 0.5, y + 24.0), tw, spec, text);
         h + 48.0
     }
 
-    fn consent(&mut self, cx: &mut Cx2d, ui: &mut Ui, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn consent(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
         let circle = rect(x, y, 48.0, 48.0);
-        ui.painter.outline(cx, circle, p.surface2, p.border, 1.0, 24.0);
-        ui.icon(cx, rect(x + 14.0, y + 14.0, 20.0, 20.0), "shield-check", 20.0, p.accent_bright);
+        ui.painter
+            .outline(cx, circle, p.surface2, p.border, 1.0, 24.0);
+        ui.icon(
+            cx,
+            rect(x + 14.0, y + 14.0, 20.0, 20.0),
+            "shield-check",
+            20.0,
+            p.accent_bright,
+        );
         y += 48.0 + 4.0 + 8.0;
         let title = tr("pairing.device.enableTitle");
         let spec = ui.spec(Font::Medium, 14.0, p.foreground);
@@ -1063,9 +1794,19 @@ impl PairingSheet {
         let spec = ui.spec(Font::Regular, 12.0, p.muted);
         let dw = ui.measure(cx, spec, &docs);
         ui.text(cx, rect(x, y, dw, 16.0), spec, &docs);
-        ui.icon(cx, rect(x + dw + 4.0, y + 2.0, 12.0, 12.0), "arrow-up-right", 12.0, p.muted);
+        ui.icon(
+            cx,
+            rect(x + dw + 4.0, y + 2.0, 12.0, 12.0),
+            "arrow-up-right",
+            12.0,
+            p.muted,
+        );
         if interactive {
-            ui.hit_tip(rect(x, y, dw + 16.0, 16.0), "docs", &tr("pairing.device.relayDocsAccessibility"));
+            ui.hit_tip(
+                rect(x, y, dw + 16.0, 16.0),
+                "docs",
+                &tr("pairing.device.relayDocsAccessibility"),
+            );
         }
         y += 16.0 + 16.0;
         if let Some(error) = self.enable_error.clone() {
@@ -1073,7 +1814,17 @@ impl PairingSheet {
         }
         let can_configure = self.supports("daemonStatusRpc") && self.supports("relayConfig");
         if !can_configure {
-            y += alert(ui, cx, x, y, w, AlertKind::Warning, &tr("pairing.device.updateRequired"), None, interactive) + 16.0;
+            y += alert(
+                ui,
+                cx,
+                x,
+                y,
+                w,
+                AlertKind::Warning,
+                &tr("pairing.device.updateRequired"),
+                None,
+                interactive,
+            ) + 16.0;
         }
         let not_now = tr("pairing.device.notNow");
         if can_configure {
@@ -1084,12 +1835,39 @@ impl PairingSheet {
             } else {
                 "pairing.device.enableRelay"
             });
-            button_pair(ui, cx, x, y, w, &not_now, &label, None, Variant::Primary, interactive && !self.enabling, 12.0, ControlSize::Md);
+            button_pair(
+                ui,
+                cx,
+                x,
+                y,
+                w,
+                &not_now,
+                &label,
+                None,
+                Variant::Primary,
+                interactive && !self.enabling,
+                12.0,
+                ControlSize::Md,
+            );
             if self.enabling {
-                spinner(ui, cx, rect(x + w - 28.0, y + 12.0, 16.0, 16.0), p.on_tertiary);
+                spinner(
+                    ui,
+                    cx,
+                    rect(x + w - 28.0, y + 12.0, 16.0, 16.0),
+                    p.on_tertiary,
+                );
             }
         } else {
-            ui.button(cx, rect(x, y, w, BUTTON_H), "cancel", &not_now, None, Variant::Secondary, ControlSize::Md, interactive);
+            ui.button(
+                cx,
+                rect(x, y, w, BUTTON_H),
+                "cancel",
+                &not_now,
+                None,
+                Variant::Secondary,
+                ControlSize::Md,
+                interactive,
+            );
         }
         y += BUTTON_H + 16.0;
         ui.painter.hline(cx, x, y, w, p.border);
@@ -1098,13 +1876,23 @@ impl PairingSheet {
         let hint = tr("pairing.device.directConnectionHint");
         let spec = ui.spec(Font::Regular, 12.0, p.muted);
         let h = ui.painter.paragraph_height(cx, w - 22.0, spec, &hint);
-        ui.painter.paragraph(cx, dvec2(x + 22.0, y), w - 22.0, spec, &hint);
+        ui.painter
+            .paragraph(cx, dvec2(x + 22.0, y), w - 22.0, spec, &hint);
         y += h;
         y - start
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn offer_view(&mut self, cx: &mut Cx2d, ui: &mut Ui, x: f64, y: f64, w: f64, url: &str, interactive: bool) -> f64 {
+    fn offer_view(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        x: f64,
+        y: f64,
+        w: f64,
+        url: &str,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
@@ -1112,13 +1900,20 @@ impl PairingSheet {
         let spec = ui.spec(Font::Regular, 14.0, p.muted);
         let h = ui.painter.paragraph_height(cx, w, spec, &hint);
         let tw = ui.painter.measure(cx, spec, &hint).x.min(w);
-        ui.painter.paragraph(cx, dvec2(x + (w - tw) * 0.5, y), tw, spec, &hint);
+        ui.painter
+            .paragraph(cx, dvec2(x + (w - tw) * 0.5, y), tw, spec, &hint);
         y += h + 16.0;
         // White tile, 12 padding, 12 radius, at most 304 square.
         let side = w.min(304.0);
         let tile = rect(x + (w - side) * 0.5, y, side, side);
-        ui.painter.outline(cx, tile, argb(0xffffffff), p.border, 1.0, 12.0);
-        let inner = rect(tile.pos.x + 12.0, tile.pos.y + 12.0, side - 24.0, side - 24.0);
+        ui.painter
+            .outline(cx, tile, argb(0xffffffff), p.border, 1.0, 12.0);
+        let inner = rect(
+            tile.pos.x + 12.0,
+            tile.pos.y + 12.0,
+            side - 24.0,
+            side - 24.0,
+        );
         match &self.qr {
             Some(Ok(modules)) => {
                 // One-module quiet zone (`margin: 1`).
@@ -1138,7 +1933,12 @@ impl PairingSheet {
                         while mx < row.len() && row[mx] {
                             mx += 1;
                         }
-                        let r = rect(origin.x + run_start as f64 * cell, origin.y + my as f64 * cell, (mx - run_start) as f64 * cell + 0.5, cell + 0.5);
+                        let r = rect(
+                            origin.x + run_start as f64 * cell,
+                            origin.y + my as f64 * cell,
+                            (mx - run_start) as f64 * cell + 0.5,
+                            cell + 0.5,
+                        );
                         ui.fill(cx, r, black, 0.0);
                     }
                 }
@@ -1148,28 +1948,64 @@ impl PairingSheet {
                 let spec = ui.spec(Font::Regular, 12.0, p.muted);
                 ui.text_centered(cx, inner, spec, &text);
             }
-            None => spinner(ui, cx, rect(inner.pos.x + inner.size.x * 0.5 - 10.0, inner.pos.y + inner.size.y * 0.5 - 10.0, 20.0, 20.0), p.muted),
+            None => spinner(
+                ui,
+                cx,
+                rect(
+                    inner.pos.x + inner.size.x * 0.5 - 10.0,
+                    inner.pos.y + inner.size.y * 0.5 - 10.0,
+                    20.0,
+                    20.0,
+                ),
+                p.muted,
+            ),
         }
         y += side + 16.0;
         // Link box + copy button.
-        let copied = self.copied_at.is_some_and(|t| cx.seconds_since_app_start() - t < 2.0);
+        let copied = self
+            .copied_at
+            .is_some_and(|t| cx.seconds_since_app_start() - t < 2.0);
         if copied {
             crate::shell::sheets::SPINNING.with(|s| s.set(true));
         } else {
             self.copied_at = None;
         }
-        let label = tr(if copied { "pairing.device.copied" } else { "pairing.device.copy" });
+        let label = tr(if copied {
+            "pairing.device.copied"
+        } else {
+            "pairing.device.copy"
+        });
         let icon = if copied { "check" } else { "copy" };
         let bw = ui.button_width(cx, &label, Some(icon), ControlSize::Sm);
         let box_w = w - bw - 8.0;
         let link_box = rect(x, y, box_w, 34.0);
-        ui.painter.outline(cx, link_box, p.surface2, p.border, 1.0, 8.0);
+        ui.painter
+            .outline(cx, link_box, p.surface2, p.border, 1.0, 8.0);
         let spec = ui.spec(Font::Mono, 12.0, p.muted);
         let fitted = ui.painter.fit(cx, spec, url, box_w - 24.0);
         ui.text(cx, rect(x + 12.0, y, box_w - 24.0, 34.0), spec, &fitted);
-        ui.button(cx, rect(x + box_w + 8.0, y + 1.0, bw, 32.0), "copy", &label, Some(icon), Variant::Outline, ControlSize::Sm, interactive);
+        ui.button(
+            cx,
+            rect(x + box_w + 8.0, y + 1.0, bw, 32.0),
+            "copy",
+            &label,
+            Some(icon),
+            Variant::Outline,
+            ControlSize::Sm,
+            interactive,
+        );
         y += 34.0 + 16.0;
-        y += alert(ui, cx, x, y, w, AlertKind::Warning, &tr("pairing.device.securityWarning"), None, interactive);
+        y += alert(
+            ui,
+            cx,
+            x,
+            y,
+            w,
+            AlertKind::Warning,
+            &tr("pairing.device.securityWarning"),
+            None,
+            interactive,
+        );
         y - start
     }
 }
@@ -1188,21 +2024,58 @@ impl Sheet for PairingSheet {
         let status = host.map_or(hosts::Status::Disconnected, |h| h.status());
         self.features = host.map(|h| h.features().clone()).unwrap_or(Value::Null);
         // The original query runs once the host is online.
-        if status == hosts::Status::Connected && self.status != status && self.offer.is_none() && self.error.is_none() && !self.pending {
+        if status == hosts::Status::Connected
+            && self.status != status
+            && self.offer.is_none()
+            && self.error.is_none()
+            && !self.pending
+        {
             self.reload = true;
         }
         self.status = status;
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, _scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
-        if matches!(self.status, hosts::Status::Disconnected | hosts::Status::Error) {
-            return alert(ui, cx, x, y, w, AlertKind::Error, &tr("workspace.terminal.hostDisconnected"), Some(("retry", &tr("pairing.device.retry"), "rotate-cw")), interactive);
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        _scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
+        if matches!(
+            self.status,
+            hosts::Status::Disconnected | hosts::Status::Error
+        ) {
+            return alert(
+                ui,
+                cx,
+                x,
+                y,
+                w,
+                AlertKind::Error,
+                &tr("workspace.terminal.hostDisconnected"),
+                Some(("retry", &tr("pairing.device.retry"), "rotate-cw")),
+                interactive,
+            );
         }
         if self.pending {
             return Self::state_line(ui, cx, x, y, w, &tr("pairing.device.loadingOffer"));
         }
         if let Some(error) = self.error.clone() {
-            return alert(ui, cx, x, y, w, AlertKind::Error, &error, Some(("retry", &tr("pairing.device.retry"), "rotate-cw")), interactive);
+            return alert(
+                ui,
+                cx,
+                x,
+                y,
+                w,
+                AlertKind::Error,
+                &error,
+                Some(("retry", &tr("pairing.device.retry"), "rotate-cw")),
+                interactive,
+            );
         }
         let offer = self.offer.clone();
         match offer {
@@ -1261,7 +2134,13 @@ impl Sheet for PairingSheet {
         SheetFlow::Stay
     }
 
-    fn on_response(&mut self, _cx: &mut Cx, tag: &str, result: &Result<Value, CoreError>, ops: &mut SheetOps) -> SheetFlow {
+    fn on_response(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        result: &Result<Value, CoreError>,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         let failure = response_message(result);
         match tag {
             "offer" => {
@@ -1325,7 +2204,15 @@ impl Default for ScanSheet {
 
 impl ScanSheet {
     pub fn new() -> Self {
-        Self { view: None, status: ScanStatus::Scanning, error: None, scanned: None, candidate: None, state: Arc::new(Value::Null), body_height: 0.0 }
+        Self {
+            view: None,
+            status: ScanStatus::Scanning,
+            error: None,
+            scanned: None,
+            candidate: None,
+            state: Arc::new(Value::Null),
+            body_height: 0.0,
+        }
     }
 
     fn pair(&mut self, link: String, ops: &mut SheetOps) -> SheetFlow {
@@ -1336,11 +2223,25 @@ impl ScanSheet {
             .flat_map(|h| h.connections().iter())
             .find(|c| j::text(c, "endpoint").trim() == link)
             .cloned();
-        let text = |key: &str| existing.as_ref().map(|c| c.get(key).cloned().unwrap_or(Value::Null)).unwrap_or(Value::Null);
-        let id = existing.as_ref().map(|c| j::text(c, "id").to_string()).filter(|id| !id.is_empty()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let text = |key: &str| {
+            existing
+                .as_ref()
+                .map(|c| c.get(key).cloned().unwrap_or(Value::Null))
+                .unwrap_or(Value::Null)
+        };
+        let id = existing
+            .as_ref()
+            .map(|c| j::text(c, "id").to_string())
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let mut config = Map::new();
         config.insert("id".into(), Value::from(id));
-        config.insert("label".into(), existing.as_ref().map_or(Value::from(""), |c| Value::from(j::text(c, "label"))));
+        config.insert(
+            "label".into(),
+            existing
+                .as_ref()
+                .map_or(Value::from(""), |c| Value::from(j::text(c, "label"))),
+        );
         config.insert("endpoint".into(), Value::from(link.clone()));
         for key in ["password", "expectedServerId", "color"] {
             let value = text(key);
@@ -1390,22 +2291,51 @@ impl ScanSheet {
     /// Within `avail` (the full-screen body height, 0 when unknown) the body text is clipped
     /// first so the action stays reachable.
     #[allow(clippy::too_many_arguments)]
-    fn card(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, avail: f64, title: &str, body: &str, action: &str, interactive: bool) -> f64 {
+    fn card(
+        ui: &mut Ui,
+        cx: &mut Cx2d,
+        x: f64,
+        y: f64,
+        w: f64,
+        avail: f64,
+        title: &str,
+        body: &str,
+        action: &str,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let title_spec = ui.spec(Font::Medium, 14.0, p.foreground);
         let body_spec = ui.spec(Font::Regular, 14.0, p.muted);
         let th = ui.painter.paragraph_height(cx, w - 48.0, title_spec, title);
         let chrome = 24.0 + 24.0 + th + 16.0 + 16.0 + 44.0 + 24.0;
         let bh = ui.painter.paragraph_height(cx, w - 48.0, body_spec, body);
-        let bh = if avail > 0.0 { bh.min((avail - chrome).max(0.0)) } else { bh };
+        let bh = if avail > 0.0 {
+            bh.min((avail - chrome).max(0.0))
+        } else {
+            bh
+        };
         let action_spec = ui.spec(Font::Medium, 14.0, argb(0xffffffff));
         let aw = ui.measure(cx, action_spec, action) + 48.0;
         let h = 24.0 + th + 16.0 + bh + 16.0 + 44.0 + 24.0;
         let top = y + 24.0;
         ui.fill(cx, rect(x, top, w, h), p.surface2, 12.0);
-        ui.painter.paragraph(cx, dvec2(x + 24.0, top + 24.0), w - 48.0, title_spec, title);
-        cx.begin_turtle(Walk::abs_rect(rect(x + 24.0, top + 24.0 + th + 16.0, w - 48.0, bh)), Layout { clip_x: true, clip_y: true, ..Layout::default() });
-        ui.painter.paragraph(cx, dvec2(x + 24.0, top + 24.0 + th + 16.0), w - 48.0, body_spec, body);
+        ui.painter
+            .paragraph(cx, dvec2(x + 24.0, top + 24.0), w - 48.0, title_spec, title);
+        cx.begin_turtle(
+            Walk::abs_rect(rect(x + 24.0, top + 24.0 + th + 16.0, w - 48.0, bh)),
+            Layout {
+                clip_x: true,
+                clip_y: true,
+                ..Layout::default()
+            },
+        );
+        ui.painter.paragraph(
+            cx,
+            dvec2(x + 24.0, top + 24.0 + th + 16.0),
+            w - 48.0,
+            body_spec,
+            body,
+        );
         cx.end_turtle();
         let button = rect(x + 24.0, top + 24.0 + th + 16.0 + bh + 16.0, aw, 44.0);
         ui.fill(cx, button, argb(0xff3b82f6), 8.0);
@@ -1435,24 +2365,70 @@ impl Sheet for ScanSheet {
         self.body_height = height;
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let view = self.view(cx);
         let state = view.as_qr_scan_view().state();
         match state {
             QrScanState::Unavailable => {
-                return Self::card(ui, cx, x, y, w, self.body_height, &tr("pairing.scan.webUnavailableTitle"), &tr("pairing.scan.webUnavailableBody"), &tr("pairing.scan.backToSettings"), interactive);
+                return Self::card(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    self.body_height,
+                    &tr("pairing.scan.webUnavailableTitle"),
+                    &tr("pairing.scan.webUnavailableBody"),
+                    &tr("pairing.scan.backToSettings"),
+                    interactive,
+                );
             }
             QrScanState::PermissionDenied => {
-                return Self::card(ui, cx, x, y, w, self.body_height, &tr("pairing.scan.cameraPermissionTitle"), &tr("pairing.scan.cameraPermissionBody"), &tr("pairing.scan.grantPermission"), interactive);
+                return Self::card(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    self.body_height,
+                    &tr("pairing.scan.cameraPermissionTitle"),
+                    &tr("pairing.scan.cameraPermissionBody"),
+                    &tr("pairing.scan.grantPermission"),
+                    interactive,
+                );
             }
             QrScanState::Failed(error) => {
-                return Self::card(ui, cx, x, y, w, self.body_height, &tr("pairing.scan.errorTitle"), &error, &tr("common.actions.retry"), interactive);
+                return Self::card(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    self.body_height,
+                    &tr("pairing.scan.errorTitle"),
+                    &error,
+                    &tr("common.actions.retry"),
+                    interactive,
+                );
             }
             _ => {}
         }
         // Camera (`Expanded`): surface2 with 12 radius, the 260px frame of four 36px accent corners.
-        let h = if self.body_height > 0.0 { self.body_height } else { (w * 1.2).clamp(320.0, 520.0) };
+        let h = if self.body_height > 0.0 {
+            self.body_height
+        } else {
+            (w * 1.2).clamp(320.0, 520.0)
+        };
         let area = rect(x, y, w, h);
         ui.fill(cx, area, p.surface2, 12.0);
         draw_widget(cx, scope, &view, area);
@@ -1461,8 +2437,13 @@ impl Sheet for ScanSheet {
         // body the frame shrinks (down to 96px), then the error text is clipped, so the button
         // always stays inside the body.
         const MIN_SIDE: f64 = 96.0;
-        let error = self.error.clone().filter(|_| self.status == ScanStatus::Stopped);
-        let eh = error.as_ref().map_or(0.0, |error| ui.painter.paragraph_height(cx, w - 32.0, helper, error));
+        let error = self
+            .error
+            .clone()
+            .filter(|_| self.status == ScanStatus::Stopped);
+        let eh = error.as_ref().map_or(0.0, |error| {
+            ui.painter.paragraph_height(cx, w - 32.0, helper, error)
+        });
         let below = |eh: f64| match self.status {
             ScanStatus::Scanning => 0.0,
             ScanStatus::Stopped => 24.0 + if error.is_some() { eh + 24.0 } else { 0.0 } + BUTTON_H,
@@ -1473,28 +2454,70 @@ impl Sheet for ScanSheet {
         let content_h = side + below(eh);
         let fy = y + ((h - content_h) * 0.5).max(0.0);
         let frame = rect(x + (w - side) * 0.5, fy, side, side);
-        let (l, t, r, b) = (frame.pos.x, frame.pos.y, frame.pos.x + side, frame.pos.y + side);
-        for (cxp, cyp, dx, dy) in [(l, t, 1.0, 1.0), (r, t, -1.0, 1.0), (l, b, 1.0, -1.0), (r, b, -1.0, -1.0)] {
+        let (l, t, r, b) = (
+            frame.pos.x,
+            frame.pos.y,
+            frame.pos.x + side,
+            frame.pos.y + side,
+        );
+        for (cxp, cyp, dx, dy) in [
+            (l, t, 1.0, 1.0),
+            (r, t, -1.0, 1.0),
+            (l, b, 1.0, -1.0),
+            (r, b, -1.0, -1.0),
+        ] {
             let hx = if dx > 0.0 { cxp } else { cxp - 36.0 };
             let vy = if dy > 0.0 { cyp } else { cyp - 36.0 };
-            ui.fill(cx, rect(hx, if dy > 0.0 { cyp } else { cyp - 4.0 }, 36.0, 4.0), p.accent, 2.0);
-            ui.fill(cx, rect(if dx > 0.0 { cxp } else { cxp - 4.0 }, vy, 4.0, 36.0), p.accent, 2.0);
+            ui.fill(
+                cx,
+                rect(hx, if dy > 0.0 { cyp } else { cyp - 4.0 }, 36.0, 4.0),
+                p.accent,
+                2.0,
+            );
+            ui.fill(
+                cx,
+                rect(if dx > 0.0 { cxp } else { cxp - 4.0 }, vy, 4.0, 36.0),
+                p.accent,
+                2.0,
+            );
         }
         let mut ty = frame.pos.y + side + 24.0;
         if self.status == ScanStatus::Pairing {
-            ui.text_centered(cx, rect(x, ty, w, 20.0), helper, &tr("pairing.scan.pairing"));
+            ui.text_centered(
+                cx,
+                rect(x, ty, w, 20.0),
+                helper,
+                &tr("pairing.scan.pairing"),
+            );
         }
         if self.status == ScanStatus::Stopped {
             if let Some(error) = error {
                 let ew = ui.painter.measure(cx, helper, &error).x.min(w - 32.0);
-                cx.begin_turtle(Walk::abs_rect(rect(x, ty, w, eh)), Layout { clip_x: true, clip_y: true, ..Layout::default() });
-                ui.painter.paragraph(cx, dvec2(x + (w - ew) * 0.5, ty), ew, helper, &error);
+                cx.begin_turtle(
+                    Walk::abs_rect(rect(x, ty, w, eh)),
+                    Layout {
+                        clip_x: true,
+                        clip_y: true,
+                        ..Layout::default()
+                    },
+                );
+                ui.painter
+                    .paragraph(cx, dvec2(x + (w - ew) * 0.5, ty), ew, helper, &error);
                 cx.end_turtle();
                 ty += eh + 24.0;
             }
             let label = tr("pairing.connectionMethods.scanQr.title");
             let bw = ui.button_width(cx, &label, None, ControlSize::Md);
-            ui.button(cx, rect(x + (w - bw) * 0.5, ty, bw, BUTTON_H), "again", &label, None, Variant::Secondary, ControlSize::Md, interactive);
+            ui.button(
+                cx,
+                rect(x + (w - bw) * 0.5, ty, bw, BUTTON_H),
+                "again",
+                &label,
+                None,
+                Variant::Secondary,
+                ControlSize::Md,
+                interactive,
+            );
         }
         h
     }
@@ -1503,7 +2526,9 @@ impl Sheet for ScanSheet {
         let view = self.view.clone();
         match id {
             "card" => {
-                let Some(view) = view else { return SheetFlow::Stay };
+                let Some(view) = view else {
+                    return SheetFlow::Stay;
+                };
                 match view.as_qr_scan_view().state() {
                     QrScanState::Unavailable => return SheetFlow::Close,
                     _ => view.as_qr_scan_view().resume_scanning(cx),
@@ -1544,7 +2569,13 @@ impl Sheet for ScanSheet {
         }
     }
 
-    fn on_deliver(&mut self, _cx: &mut Cx, tag: &str, value: &Value, ops: &mut SheetOps) -> SheetFlow {
+    fn on_deliver(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        value: &Value,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         if tag == "confirm" {
             if value.as_bool() == Some(true) {
                 self.probe(ops);
@@ -1555,11 +2586,19 @@ impl Sheet for ScanSheet {
         SheetFlow::Stay
     }
 
-    fn on_response(&mut self, cx: &mut Cx, tag: &str, result: &Result<Value, CoreError>, ops: &mut SheetOps) -> SheetFlow {
+    fn on_response(
+        &mut self,
+        cx: &mut Cx,
+        tag: &str,
+        result: &Result<Value, CoreError>,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         if tag != "probe" {
             return SheetFlow::Stay;
         }
-        let Some((config, link)) = self.candidate.take() else { return SheetFlow::Stay };
+        let Some((config, link)) = self.candidate.take() else {
+            return SheetFlow::Stay;
+        };
         match result {
             Ok(_) => {
                 ops.core.connect_host(config);
@@ -1574,7 +2613,10 @@ impl Sheet for ScanSheet {
                     if let Some(view) = &self.view {
                         view.as_qr_scan_view().stop(cx);
                     }
-                    return SheetFlow::Replace(Box::new(ConnectionSheet::password_prompt(link, j::text(&config, "id").to_string())));
+                    return SheetFlow::Replace(Box::new(ConnectionSheet::password_prompt(
+                        link,
+                        j::text(&config, "id").to_string(),
+                    )));
                 }
                 self.failed(with_details(&link_failure_detail(&message), message.trim()))
             }
@@ -1594,16 +2636,55 @@ mod tests {
 
     #[test]
     fn link_failures_map_to_actions() {
-        assert_eq!(link_failure_key("Pairing offer expired"), "pairing.link.errors.offerInvalid");
-        assert_eq!(link_failure_key("failed to decode offer"), "pairing.link.errors.offerInvalid");
-        assert_eq!(link_failure_key("Relay connection timed out"), "pairing.link.errors.relayUnreachable");
-        assert_eq!(link_failure_key("something odd"), "pairing.link.errors.unableToPair");
+        assert_eq!(
+            link_failure_key("Pairing offer expired"),
+            "pairing.link.errors.offerInvalid"
+        );
+        assert_eq!(
+            link_failure_key("failed to decode offer"),
+            "pairing.link.errors.offerInvalid"
+        );
+        assert_eq!(
+            link_failure_key("Relay connection timed out"),
+            "pairing.link.errors.relayUnreachable"
+        );
+        assert_eq!(
+            link_failure_key("something odd"),
+            "pairing.link.errors.unableToPair"
+        );
     }
 
     #[test]
     fn ssh_failures_point_at_ssh() {
-        assert_eq!(ssh_failure_key("Permission denied (publickey)."), Some("pairing.remoteSsh.errors.auth"));
-        assert_eq!(ssh_failure_key("Host key verification failed."), Some("pairing.remoteSsh.errors.hostKey"));
+        assert_eq!(
+            ssh_failure_key("Permission denied (publickey)."),
+            Some("pairing.remoteSsh.errors.auth")
+        );
+        assert_eq!(
+            ssh_failure_key("Host key verification failed."),
+            Some("pairing.remoteSsh.errors.hostKey")
+        );
         assert_eq!(ssh_failure_key("connection reset"), None);
+    }
+
+    #[test]
+    fn existing_hosts_default_to_normal_and_tailnet_is_explicit() {
+        let normal = super::ConnectionSheet::new(
+            Some(serde_json::json!({"id": "host", "endpoint": "ws://host:6767"})),
+            None,
+            "direct",
+            false,
+        );
+        assert!(!normal.embedded_tailnet);
+        let embedded = super::ConnectionSheet::new(
+            Some(
+                serde_json::json!({"id": "host", "endpoint": "ws://host:6767", "networkMode": "tailnet"}),
+            ),
+            None,
+            "direct",
+            false,
+        );
+        assert!(embedded.embedded_tailnet);
+        assert_eq!(embedded.resolve_endpoint().unwrap(), "ws://host:6767");
     }
 }

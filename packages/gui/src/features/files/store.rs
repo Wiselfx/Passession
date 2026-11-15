@@ -74,9 +74,22 @@ enum Pending {
     Read(u64, u64, u64),
     Confirm(u64, u64),
     Write(u64, u64),
-    List { owner: String, path: String, generation: u64 },
-    Entry { owner: String, cwd: String, action: EntryAction },
-    Asset { owner: String, key: String, ticket: u64, active: bool },
+    List {
+        owner: String,
+        path: String,
+        generation: u64,
+    },
+    Entry {
+        owner: String,
+        cwd: String,
+        action: EntryAction,
+    },
+    Asset {
+        owner: String,
+        key: String,
+        ticket: u64,
+        active: bool,
+    },
     Transfer(u64),
 }
 
@@ -85,9 +98,23 @@ enum PlatformPending {
     SaveLocation(u64),
     /// Open/share of a finished download; the transfer card is already gone.
     TransferFinish,
-    Clipboard { owner: String },
-    DaemonStatus { owner: String, cwd: String, path: String, line: usize, column: usize },
-    EditorTargets { owner: String, cwd: String, path: String, line: usize, column: usize },
+    Clipboard {
+        owner: String,
+    },
+    DaemonStatus {
+        owner: String,
+        cwd: String,
+        path: String,
+        line: usize,
+        column: usize,
+    },
+    EditorTargets {
+        owner: String,
+        cwd: String,
+        path: String,
+        line: usize,
+        column: usize,
+    },
     Other,
 }
 
@@ -97,7 +124,13 @@ pub enum OwnerEvent {
     /// Clipboard text for an editor paste.
     Clipboard(String),
     /// `Open with` targets for the local editor menu.
-    EditorTargets { targets: Vec<(String, String)>, cwd: String, path: String, line: usize, column: usize },
+    EditorTargets {
+        targets: Vec<(String, String)>,
+        cwd: String,
+        path: String,
+        line: usize,
+        column: usize,
+    },
 }
 
 /// A markdown/HTML asset read for display.
@@ -136,8 +169,12 @@ pub struct Store {
 /// is open.
 pub fn close_requested(owner: &str) -> CloseCheck {
     with(|s| {
-        let Some(id) = s.owners.get(owner).copied() else { return CloseCheck::Clean };
-        let Some(entry) = s.sessions.get_mut(&id) else { return CloseCheck::Clean };
+        let Some(id) = s.owners.get(owner).copied() else {
+            return CloseCheck::Clean;
+        };
+        let Some(entry) = s.sessions.get_mut(&id) else {
+            return CloseCheck::Clean;
+        };
         if !entry.session.modified() {
             return CloseCheck::Clean;
         }
@@ -165,10 +202,11 @@ pub fn close_cancelled(owner: &str) {
 pub fn close_confirmed(owner: &str) {
     with(|s| {
         if let Some(id) = s.owners.remove(owner)
-            && let Some(entry) = s.sessions.get_mut(&id) {
-                entry.hold = None;
-                entry.session.dispose();
-            }
+            && let Some(entry) = s.sessions.get_mut(&id)
+        {
+            entry.hold = None;
+            entry.session.dispose();
+        }
         s.epoch += 1;
     });
     SignalToUI::set_ui_signal();
@@ -179,12 +217,13 @@ pub fn close_confirmed(owner: &str) {
 pub fn release(owner: &str) {
     with(|s| {
         if let Some(id) = s.owners.remove(owner)
-            && let Some(entry) = s.sessions.get_mut(&id) {
-                if let Some(hold) = entry.hold.take() {
-                    entry.session.handle.resume_writes(hold);
-                }
-                entry.session.release(&Value::Null);
+            && let Some(entry) = s.sessions.get_mut(&id)
+        {
+            if let Some(hold) = entry.hold.take() {
+                entry.session.handle.resume_writes(hold);
             }
+            entry.session.release(&Value::Null);
+        }
         s.explorers.remove(owner);
         // Reopening a picker reuses its owner and restarts its state generation.
         // Old replies must not populate that new browser (possibly on another host).
@@ -195,7 +234,11 @@ pub fn release(owner: &str) {
         // Keep binary requests until completion so their stashed payload is drained,
         // but never publish an old asset into a newly mounted owner.
         for pending in s.pending.values_mut() {
-            if let Pending::Asset { owner: pending_owner, active, .. } = pending
+            if let Pending::Asset {
+                owner: pending_owner,
+                active,
+                ..
+            } = pending
                 && pending_owner == owner
             {
                 *active = false;
@@ -215,7 +258,10 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
 }
 
 fn associations(ui: &UiContext) -> Value {
-    ui.preferences().get("filePanelAssociations").cloned().unwrap_or(Value::Null)
+    ui.preferences()
+        .get("filePanelAssociations")
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn asset_key(owner: &str, path: &str) -> String {
@@ -232,12 +278,23 @@ impl Store {
 
     /// The session of `owner` for exactly this identity, opening (and releasing the previous
     /// identity's) as needed.
-    pub fn mount(&mut self, ui: &mut UiContext, owner: &str, host_id: &str, cwd: &str, path: &str) -> u64 {
+    pub fn mount(
+        &mut self,
+        ui: &mut UiContext,
+        owner: &str,
+        host_id: &str,
+        cwd: &str,
+        path: &str,
+    ) -> u64 {
         if let Some(id) = self.owners.get(owner).copied() {
             if let Some(old) = self.sessions.get(&id)
-                && old.session.host_id == host_id && old.session.cwd == cwd && old.session.path == path && !old.session.released {
-                    return id;
-                }
+                && old.session.host_id == host_id
+                && old.session.cwd == cwd
+                && old.session.path == path
+                && !old.session.released
+            {
+                return id;
+            }
             if let Some(old) = self.sessions.get_mut(&id) {
                 if let Some(hold) = old.hold.take() {
                     old.session.handle.resume_writes(hold);
@@ -269,7 +326,9 @@ impl Store {
     }
 
     pub fn session(&self, owner: &str) -> Option<&FileSession> {
-        self.session_id(owner).and_then(|id| self.sessions.get(&id)).map(|entry| &entry.session)
+        self.session_id(owner)
+            .and_then(|id| self.sessions.get(&id))
+            .map(|entry| &entry.session)
     }
 
     pub fn session_mut(&mut self, owner: &str) -> Option<&mut FileSession> {
@@ -280,13 +339,14 @@ impl Store {
     /// Observation follows visibility and app foreground (Flutter `_syncObserving`).
     pub fn set_observing(&mut self, cx: &mut Cx, ui: &mut UiContext, owner: &str, observing: bool) {
         if let Some(id) = self.session_id(owner)
-            && let Some(entry) = self.sessions.get_mut(&id) {
-                entry.observing = observing;
-                if !observing {
-                    entry.deferred_observe = None;
-                }
-                entry.session.handle.set_observing(observing);
+            && let Some(entry) = self.sessions.get_mut(&id)
+        {
+            entry.observing = observing;
+            if !observing {
+                entry.deferred_observe = None;
             }
+            entry.session.handle.set_observing(observing);
+        }
         self.pump(cx, ui);
     }
 
@@ -298,9 +358,10 @@ impl Store {
         }
         let host = self.session(owner).map(|s| s.host_id.clone());
         if let Some(host) = host
-            && !host::connected(&ui.state, &host) {
-                ui.core.refresh_host(&host);
-            }
+            && !host::connected(&ui.state, &host)
+        {
+            ui.core.refresh_host(&host);
+        }
         self.pump(cx, ui);
     }
 
@@ -329,12 +390,22 @@ impl Store {
 
     fn classify(&mut self, ui: &UiContext, id: u64, generation: u64, value: Value) {
         let version = FileVersion::from_json(value.get("initial").unwrap_or(&value));
-        let Some(entry) = self.sessions.get_mut(&id) else { return };
+        let Some(entry) = self.sessions.get_mut(&id) else {
+            return;
+        };
         if version.is_ready() && version.kind().is_none() {
             // COMPAT(fileVersionKind): the first read's kind stands for later versions.
             let f = &entry.session;
-            let (request, ticket) = service::read(&ui.core, &self.stash, &f.host_id, &f.cwd, &f.path, service::unbounded_read());
-            self.pending.insert(request, Pending::Classify(id, generation, ticket));
+            let (request, ticket) = service::read(
+                &ui.core,
+                &self.stash,
+                &f.host_id,
+                &f.cwd,
+                &f.path,
+                service::unbounded_read(),
+            );
+            self.pending
+                .insert(request, Pending::Classify(id, generation, ticket));
         } else {
             let version = entry.session.handle.classify(version);
             entry.session.handle.on_observed(generation, Ok(version));
@@ -342,16 +413,27 @@ impl Store {
     }
 
     fn issue_observe(&mut self, ui: &UiContext, id: u64, generation: u64) {
-        let Some(entry) = self.sessions.get(&id) else { return };
+        let Some(entry) = self.sessions.get(&id) else {
+            return;
+        };
         let f = &entry.session;
         if host::feature(ui, &f.host_id, "workspaceFileEditing") {
             let request = service::observe_file(&ui.core, &f.host_id, &f.cwd, &f.path);
             self.observations.insert(request.clone(), (id, generation));
-            self.pending.insert(request, Pending::Observe(id, generation));
+            self.pending
+                .insert(request, Pending::Observe(id, generation));
         } else {
             // COMPAT(workspaceFileEditing): the host cannot observe; its read is the stat.
-            let (request, ticket) = service::read(&ui.core, &self.stash, &f.host_id, &f.cwd, &f.path, service::unbounded_read());
-            self.pending.insert(request, Pending::Classify(id, generation, ticket));
+            let (request, ticket) = service::read(
+                &ui.core,
+                &self.stash,
+                &f.host_id,
+                &f.cwd,
+                &f.path,
+                service::unbounded_read(),
+            );
+            self.pending
+                .insert(request, Pending::Classify(id, generation, ticket));
         }
     }
 
@@ -362,7 +444,9 @@ impl Store {
             let mut issued = false;
             let ids: Vec<u64> = self.sessions.keys().copied().collect();
             for id in ids {
-                let Some(entry) = self.sessions.get_mut(&id) else { continue };
+                let Some(entry) = self.sessions.get_mut(&id) else {
+                    continue;
+                };
                 entry.session.pump(&associations);
                 match std::mem::take(&mut entry.session.autosave) {
                     AutosaveRequest::Schedule => {
@@ -379,10 +463,17 @@ impl Store {
                 let dirty = owned && entry.session.modified();
                 if dirty != entry.guard {
                     entry.guard = dirty;
-                    ui.effects.push(UiEffect::SetCloseGuard { owner: entry.owner.clone(), dirty });
+                    ui.effects.push(UiEffect::SetCloseGuard {
+                        owner: entry.owner.clone(),
+                        dirty,
+                    });
                 }
                 let commands = std::mem::take(&mut entry.session.handle.cmds);
-                let (host_id, cwd, path) = (entry.session.host_id.clone(), entry.session.cwd.clone(), entry.session.path.clone());
+                let (host_id, cwd, path) = (
+                    entry.session.host_id.clone(),
+                    entry.session.cwd.clone(),
+                    entry.session.path.clone(),
+                );
                 for command in commands {
                     issued = true;
                     match command {
@@ -410,37 +501,78 @@ impl Store {
                             }
                         }
                         HandleCmd::Read { job } => {
-                            let (r, ticket) = service::read(&ui.core, &self.stash, &host_id, &cwd, &path, service::unbounded_read());
+                            let (r, ticket) = service::read(
+                                &ui.core,
+                                &self.stash,
+                                &host_id,
+                                &cwd,
+                                &path,
+                                service::unbounded_read(),
+                            );
                             self.pending.insert(r, Pending::Read(id, job, ticket));
                         }
                         HandleCmd::ConfirmRead => {
-                            let (r, ticket) = service::read(&ui.core, &self.stash, &host_id, &cwd, &path, service::unbounded_read());
+                            let (r, ticket) = service::read(
+                                &ui.core,
+                                &self.stash,
+                                &host_id,
+                                &cwd,
+                                &path,
+                                service::unbounded_read(),
+                            );
                             self.pending.insert(r, Pending::Confirm(id, ticket));
                         }
-                        HandleCmd::Write { job, content, expected } => {
+                        HandleCmd::Write {
+                            job,
+                            content,
+                            expected,
+                        } => {
                             if !host::feature(ui, &host_id, "workspaceFileEditing") {
                                 // COMPAT(workspaceFileEditing): the host cannot write files.
                                 if let Some(entry) = self.sessions.get_mut(&id) {
-                                    entry.session.handle.on_write(job, Err(l("Update the host to edit files.").to_owned()));
+                                    entry.session.handle.on_write(
+                                        job,
+                                        Err(l("Update the host to edit files.").to_owned()),
+                                    );
                                 }
                                 continue;
                             }
-                            let r = service::write(&ui.core, &host_id, &cwd, &path, content, &expected.modified_at, expected.revision.as_deref());
+                            let r = service::write(
+                                &ui.core,
+                                &host_id,
+                                &cwd,
+                                &path,
+                                content,
+                                &expected.modified_at,
+                                expected.revision.as_deref(),
+                            );
                             self.pending.insert(r, Pending::Write(id, job));
                         }
                     }
                 }
             }
             // Released sessions whose writes settled go away (their guard clears).
-            let finished: Vec<u64> = self.sessions.iter().filter(|(_, e)| e.session.finished()).map(|(id, _)| *id).collect();
+            let finished: Vec<u64> = self
+                .sessions
+                .iter()
+                .filter(|(_, e)| e.session.finished())
+                .map(|(id, _)| *id)
+                .collect();
             for id in finished {
                 if let Some(entry) = self.sessions.remove(&id) {
                     cx.stop_timer(entry.timer);
                     if entry.guard {
-                        ui.effects.push(UiEffect::SetCloseGuard { owner: entry.owner.clone(), dirty: false });
+                        ui.effects.push(UiEffect::SetCloseGuard {
+                            owner: entry.owner.clone(),
+                            dirty: false,
+                        });
                     }
-                    let requests: Vec<String> =
-                        self.observations.iter().filter(|(_, pair)| pair.0 == id).map(|(r, _)| r.clone()).collect();
+                    let requests: Vec<String> = self
+                        .observations
+                        .iter()
+                        .filter(|(_, pair)| pair.0 == id)
+                        .map(|(r, _)| r.clone())
+                        .collect();
                     for request in requests {
                         ui.core.cancel_request(&request);
                         self.observations.remove(&request);
@@ -502,23 +634,43 @@ impl Store {
         let mut issued = false;
         let owners: Vec<String> = self.explorers.keys().cloned().collect();
         for owner in owners {
-            let Some(state) = self.explorers.get_mut(&owner) else { continue };
+            let Some(state) = self.explorers.get_mut(&owner) else {
+                continue;
+            };
             let cmds = std::mem::take(&mut state.cmds);
             let cwd = state.cwd().to_owned();
             for cmd in cmds {
                 issued = true;
                 match cmd {
                     ExplorerCmd::List { path, generation } => {
-                        let Some(host_id) = explorer_host(&owner, ui) else { continue };
+                        let Some(host_id) = explorer_host(&owner, ui) else {
+                            continue;
+                        };
                         let request = service::list_directory(&ui.core, &host_id, &cwd, &path);
-                        self.pending.insert(request, Pending::List { owner: owner.clone(), path, generation });
+                        self.pending.insert(
+                            request,
+                            Pending::List {
+                                owner: owner.clone(),
+                                path,
+                                generation,
+                            },
+                        );
                     }
-                    ExplorerCmd::SavePreference { key, value } => host::set_preference(ui, key, value),
-                    ExplorerCmd::SaveExpanded { workspace_key, paths } => {
+                    ExplorerCmd::SavePreference { key, value } => {
+                        host::set_preference(ui, key, value)
+                    }
+                    ExplorerCmd::SaveExpanded {
+                        workspace_key,
+                        paths,
+                    } => {
                         // The shell applies preference writes after this dispatch; the keys this
                         // client wrote stay authoritative over a not-yet-updated state copy.
                         self.expanded_written.insert(workspace_key, json!(paths));
-                        let mut all = ui.preference("expandedPathsByWorkspace").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
+                        let mut all = ui
+                            .preference("expandedPathsByWorkspace")
+                            .cloned()
+                            .filter(Value::is_object)
+                            .unwrap_or_else(|| json!({}));
                         for (key, value) in &self.expanded_written {
                             all[key.as_str()] = value.clone();
                         }
@@ -531,7 +683,15 @@ impl Store {
     }
 
     /// One `fs.entry.<action>.request`; the explorer is busy until it answers.
-    pub fn entry_request(&mut self, ui: &mut UiContext, owner: &str, host_id: &str, cwd: &str, action: EntryAction, fields: Value) {
+    pub fn entry_request(
+        &mut self,
+        ui: &mut UiContext,
+        owner: &str,
+        host_id: &str,
+        cwd: &str,
+        action: EntryAction,
+        fields: Value,
+    ) {
         let name = match &action {
             EntryAction::Create { .. } => "create",
             EntryAction::Rename { .. } => "rename",
@@ -539,18 +699,44 @@ impl Store {
             EntryAction::Duplicate { .. } => "duplicate",
         };
         let request = service::entry_request(&ui.core, host_id, cwd, name, fields);
-        self.pending.insert(request, Pending::Entry { owner: owner.to_owned(), cwd: cwd.to_owned(), action });
+        self.pending.insert(
+            request,
+            Pending::Entry {
+                owner: owner.to_owned(),
+                cwd: cwd.to_owned(),
+                action,
+            },
+        );
         self.busy.insert(owner.to_owned());
         self.bump();
     }
 
-    fn on_entry(&mut self, ui: &mut UiContext, owner: &str, cwd: &str, action: EntryAction, result: Result<Value, String>) {
+    fn on_entry(
+        &mut self,
+        ui: &mut UiContext,
+        owner: &str,
+        cwd: &str,
+        action: EntryAction,
+        result: Result<Value, String>,
+    ) {
         self.busy.remove(owner);
         let (failed_key, action_name) = match &action {
-            EntryAction::Create { .. } => ("workspace.fileExplorer.errors.createFailed", "fs.entry.create.request"),
-            EntryAction::Rename { .. } => ("workspace.fileExplorer.errors.renameFailed", "fs.entry.rename.request"),
-            EntryAction::Delete { .. } => ("workspace.fileExplorer.errors.deleteFailed", "fs.entry.delete.request"),
-            EntryAction::Duplicate { .. } => ("workspace.fileExplorer.errors.duplicateFailed", "fs.entry.duplicate.request"),
+            EntryAction::Create { .. } => (
+                "workspace.fileExplorer.errors.createFailed",
+                "fs.entry.create.request",
+            ),
+            EntryAction::Rename { .. } => (
+                "workspace.fileExplorer.errors.renameFailed",
+                "fs.entry.rename.request",
+            ),
+            EntryAction::Delete { .. } => (
+                "workspace.fileExplorer.errors.deleteFailed",
+                "fs.entry.delete.request",
+            ),
+            EntryAction::Duplicate { .. } => (
+                "workspace.fileExplorer.errors.duplicateFailed",
+                "fs.entry.duplicate.request",
+            ),
         };
         let payload = match result {
             Ok(payload) => payload,
@@ -572,19 +758,31 @@ impl Store {
         // The action ran in `cwd`; follow-ups only while the explorer still shows it.
         let host_id = explorer_host(owner, ui);
         let workspace_id = explorer_workspace(owner, ui);
-        let Some(state) = self.explorers.get_mut(owner).filter(|state| state.cwd() == cwd) else { return };
+        let Some(state) = self
+            .explorers
+            .get_mut(owner)
+            .filter(|state| state.cwd() == cwd)
+        else {
+            return;
+        };
         match action {
             EntryAction::Create { parent, kind } => {
                 state.reload(&parent);
                 let path = payload.get("path").and_then(Value::as_str).unwrap_or("");
-                if kind == "file" && !path.is_empty()
-                    && let (Some(host_id), Some(workspace_id)) = (host_id, workspace_id) {
-                        let beside = open_beside_preference(ui);
-                        host::open_file(ui, &host_id, &workspace_id, path, beside);
-                    }
+                if kind == "file"
+                    && !path.is_empty()
+                    && let (Some(host_id), Some(workspace_id)) = (host_id, workspace_id)
+                {
+                    let beside = open_beside_preference(ui);
+                    host::open_file(ui, &host_id, &workspace_id, path, beside);
+                }
             }
             EntryAction::Rename { entry, parent } => {
-                let renamed = payload.get("renamedPath").and_then(Value::as_str).unwrap_or("").to_owned();
+                let renamed = payload
+                    .get("renamedPath")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
                 if renamed.is_empty() {
                     host::toast(ui, t(failed_key), true);
                     return;
@@ -612,7 +810,14 @@ impl Store {
     // Assets (Markdown images, HTML preview assets are read by the preview server itself)
 
     /// A remote asset for display, read once per owner and path through the host connection.
-    pub fn asset(&mut self, ui: &UiContext, owner: &str, host_id: &str, cwd: &str, path: &str) -> Asset {
+    pub fn asset(
+        &mut self,
+        ui: &UiContext,
+        owner: &str,
+        host_id: &str,
+        cwd: &str,
+        path: &str,
+    ) -> Asset {
         let key = asset_key(owner, path);
         if let Some(asset) = self.assets.get(&key) {
             return asset.clone();
@@ -620,8 +825,23 @@ impl Store {
         if !host::connected(&ui.state, host_id) {
             return Asset::Loading;
         }
-        let (request, ticket) = service::read(&ui.core, &self.stash, host_id, cwd, path, service::PREVIEW_MAX_BYTES);
-        self.pending.insert(request, Pending::Asset { owner: owner.to_owned(), key: key.clone(), ticket, active: true });
+        let (request, ticket) = service::read(
+            &ui.core,
+            &self.stash,
+            host_id,
+            cwd,
+            path,
+            service::PREVIEW_MAX_BYTES,
+        );
+        self.pending.insert(
+            request,
+            Pending::Asset {
+                owner: owner.to_owned(),
+                key: key.clone(),
+                ticket,
+                active: true,
+            },
+        );
         self.assets.insert(key, Asset::Loading);
         Asset::Loading
     }
@@ -633,7 +853,8 @@ impl Store {
 
     /// The connection changed: failed reads of an owner's assets are read again.
     fn forget_failed_assets(&mut self) {
-        self.assets.retain(|_, asset| !matches!(asset, Asset::Failed(_)));
+        self.assets
+            .retain(|_, asset| !matches!(asset, Asset::Failed(_)));
     }
 
     // -----------------------------------------------------------------------------------------
@@ -653,7 +874,16 @@ impl Store {
         current_bytes: Option<Arc<Vec<u8>>>,
     ) {
         self.next += 1;
-        let mut transfer = Transfer::new(self.next, owner, host_id, cwd, path, mode, mime, current_bytes);
+        let mut transfer = Transfer::new(
+            self.next,
+            owner,
+            host_id,
+            cwd,
+            path,
+            mode,
+            mime,
+            current_bytes,
+        );
         let Some(platform) = host::platform() else {
             host::toast(ui, l("Platform services are not available"), true);
             return;
@@ -662,7 +892,8 @@ impl Store {
             transfer.stage = TransferStage::Choosing;
             let request = platform.save_location(&transfer.name);
             transfer.platform_request = Some(request);
-            self.platform_pending.insert(request, PlatformPending::SaveLocation(transfer.id));
+            self.platform_pending
+                .insert(request, PlatformPending::SaveLocation(transfer.id));
             self.transfers.push(transfer);
         } else {
             transfer.run(&ui.core, self.progress.sender());
@@ -687,11 +918,16 @@ impl Store {
     }
 
     pub fn transfers_of(&self, owner: &str) -> Vec<&Transfer> {
-        self.transfers.iter().filter(|t| t.owner == owner && matches!(t.stage, TransferStage::Running)).collect()
+        self.transfers
+            .iter()
+            .filter(|t| t.owner == owner && matches!(t.stage, TransferStage::Running))
+            .collect()
     }
 
     fn on_transfer(&mut self, ui: &mut UiContext, id: u64, result: Result<Value, String>) {
-        let Some(index) = self.transfers.iter().position(|t| t.id == id) else { return };
+        let Some(index) = self.transfers.iter().position(|t| t.id == id) else {
+            return;
+        };
         let transfer = self.transfers.remove(index);
         let value = match result {
             Ok(value) => value,
@@ -703,20 +939,33 @@ impl Store {
                 return;
             }
         };
-        let local = value.get("path").and_then(Value::as_str).unwrap_or("").to_owned();
-        let mime = value.get("mime").and_then(Value::as_str).unwrap_or("application/octet-stream").to_owned();
+        let local = value
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let mime = value
+            .get("mime")
+            .and_then(Value::as_str)
+            .unwrap_or("application/octet-stream")
+            .to_owned();
         if value.get("saved") == Some(&Value::Bool(true)) {
             host::toast(ui, lf("Saved to {path}", &[("path", &local)]), false);
             return;
         }
-        let Some(platform) = host::platform() else { return };
+        let Some(platform) = host::platform() else {
+            return;
+        };
         let path = std::path::PathBuf::from(&local);
         let request = match transfer.mode {
             TransferMode::Open => platform.open_path(&path),
             // Mobile "save" shares (no save dialog), like the original.
-            TransferMode::Share | TransferMode::Save => platform.share_file(&path, &mime, &transfer.name),
+            TransferMode::Share | TransferMode::Save => {
+                platform.share_file(&path, &mime, &transfer.name)
+            }
         };
-        self.platform_pending.insert(request, PlatformPending::TransferFinish);
+        self.platform_pending
+            .insert(request, PlatformPending::TransferFinish);
         // The staging copy is kept: it must outlive the external app/share sheet and lives in
         // the temp directory, as in the original.
     }
@@ -728,13 +977,26 @@ impl Store {
     pub fn read_clipboard(&mut self, owner: &str) {
         if let Some(platform) = host::platform() {
             let request = platform.read_clipboard(false);
-            self.platform_pending.insert(request, PlatformPending::Clipboard { owner: owner.to_owned() });
+            self.platform_pending.insert(
+                request,
+                PlatformPending::Clipboard {
+                    owner: owner.to_owned(),
+                },
+            );
         }
     }
 
     /// Flutter `_openLocalEditor`: checks the file's host is the desktop's own daemon, then
     /// lists editor targets for the owner's `Open with` menu.
-    pub fn open_local_editor(&mut self, ui: &mut UiContext, owner: &str, cwd: &str, path: &str, line: usize, column: usize) {
+    pub fn open_local_editor(
+        &mut self,
+        ui: &mut UiContext,
+        owner: &str,
+        cwd: &str,
+        path: &str,
+        line: usize,
+        column: usize,
+    ) {
         let Some(platform) = host::platform().filter(|p| p.capabilities().editors) else {
             host::toast(ui, l("Local desktop host is not available"), true);
             return;
@@ -742,11 +1004,24 @@ impl Store {
         let request = platform.desktop_invoke("desktop_daemon_status", json!({}));
         self.platform_pending.insert(
             request,
-            PlatformPending::DaemonStatus { owner: owner.to_owned(), cwd: cwd.to_owned(), path: path.to_owned(), line, column },
+            PlatformPending::DaemonStatus {
+                owner: owner.to_owned(),
+                cwd: cwd.to_owned(),
+                path: path.to_owned(),
+                line,
+                column,
+            },
         );
     }
 
-    pub fn open_editor(&mut self, editor_id: &str, cwd: &str, path: &str, line: usize, column: usize) {
+    pub fn open_editor(
+        &mut self,
+        editor_id: &str,
+        cwd: &str,
+        path: &str,
+        line: usize,
+        column: usize,
+    ) {
         if let Some(platform) = host::platform() {
             let request = platform.open_editor(paseo_gui_platform::OpenEditorRequest {
                 editor_id: editor_id.to_owned(),
@@ -755,7 +1030,8 @@ impl Store {
                 line: Some(line as u32),
                 column: Some(column as u32),
             });
-            self.platform_pending.insert(request, PlatformPending::Other);
+            self.platform_pending
+                .insert(request, PlatformPending::Other);
         }
     }
 
@@ -763,11 +1039,20 @@ impl Store {
         self.owner_events.remove(owner).unwrap_or_default()
     }
 
-    fn on_platform(&mut self, ui: &mut UiContext, request: u64, result: Result<PlatformValue, paseo_gui_platform::PlatformError>) {
-        let Some(pending) = self.platform_pending.remove(&request) else { return };
+    fn on_platform(
+        &mut self,
+        ui: &mut UiContext,
+        request: u64,
+        result: Result<PlatformValue, paseo_gui_platform::PlatformError>,
+    ) {
+        let Some(pending) = self.platform_pending.remove(&request) else {
+            return;
+        };
         match pending {
             PlatformPending::SaveLocation(id) => {
-                let Some(index) = self.transfers.iter().position(|t| t.id == id) else { return };
+                let Some(index) = self.transfers.iter().position(|t| t.id == id) else {
+                    return;
+                };
                 match result {
                     Ok(PlatformValue::SaveLocation(Some(destination))) => {
                         let transfer = &mut self.transfers[index];
@@ -790,23 +1075,36 @@ impl Store {
             }
             PlatformPending::TransferFinish | PlatformPending::Other => {
                 if let Err(error) = result
-                    && error.code != "cancelled" {
-                        host::toast(ui, error.message, true);
-                    }
+                    && error.code != "cancelled"
+                {
+                    host::toast(ui, error.message, true);
+                }
             }
             PlatformPending::Clipboard { owner } => match result {
                 Ok(PlatformValue::Clipboard(content)) => {
                     if let Some(text) = content.text {
-                        self.owner_events.entry(owner).or_default().push(OwnerEvent::Clipboard(text));
+                        self.owner_events
+                            .entry(owner)
+                            .or_default()
+                            .push(OwnerEvent::Clipboard(text));
                     }
                 }
                 Ok(PlatformValue::Text(Some(text))) => {
-                    self.owner_events.entry(owner).or_default().push(OwnerEvent::Clipboard(text));
+                    self.owner_events
+                        .entry(owner)
+                        .or_default()
+                        .push(OwnerEvent::Clipboard(text));
                 }
                 Ok(_) => {}
                 Err(error) => host::toast(ui, error.message, true),
             },
-            PlatformPending::DaemonStatus { owner, cwd, path, line, column } => {
+            PlatformPending::DaemonStatus {
+                owner,
+                cwd,
+                path,
+                line,
+                column,
+            } => {
                 let status = match result {
                     Ok(PlatformValue::Json(value)) => value,
                     Ok(_) => Value::Null,
@@ -815,7 +1113,10 @@ impl Store {
                         return;
                     }
                 };
-                let host_id = self.session(&owner).map(|s| s.host_id.clone()).unwrap_or_default();
+                let host_id = self
+                    .session(&owner)
+                    .map(|s| s.host_id.clone())
+                    .unwrap_or_default();
                 let local_server = status.get("serverId").and_then(Value::as_str).unwrap_or("");
                 let record_server = host::host(&ui.state, &host_id)
                     .and_then(|h| h.get("serverId"))
@@ -823,17 +1124,47 @@ impl Store {
                     .unwrap_or(&host_id)
                     .to_owned();
                 if local_server != record_server && local_server != host_id {
-                    host::toast(ui, l("This file belongs to a different host. Open a downloaded copy instead."), true);
+                    host::toast(
+                        ui,
+                        l("This file belongs to a different host. Open a downloaded copy instead."),
+                        true,
+                    );
                     return;
                 }
-                let Some(platform) = host::platform() else { return };
+                let Some(platform) = host::platform() else {
+                    return;
+                };
                 let request = platform.list_editor_targets();
-                self.platform_pending.insert(request, PlatformPending::EditorTargets { owner, cwd, path, line, column });
+                self.platform_pending.insert(
+                    request,
+                    PlatformPending::EditorTargets {
+                        owner,
+                        cwd,
+                        path,
+                        line,
+                        column,
+                    },
+                );
             }
-            PlatformPending::EditorTargets { owner, cwd, path, line, column } => match result {
+            PlatformPending::EditorTargets {
+                owner,
+                cwd,
+                path,
+                line,
+                column,
+            } => match result {
                 Ok(PlatformValue::EditorTargets(targets)) => {
                     let targets = targets.into_iter().map(|t| (t.id, t.label)).collect();
-                    self.owner_events.entry(owner).or_default().push(OwnerEvent::EditorTargets { targets, cwd, path, line, column });
+                    self.owner_events
+                        .entry(owner)
+                        .or_default()
+                        .push(OwnerEvent::EditorTargets {
+                            targets,
+                            cwd,
+                            path,
+                            line,
+                            column,
+                        });
                 }
                 Ok(_) => {}
                 Err(error) => host::toast(ui, error.message, true),
@@ -849,22 +1180,31 @@ impl Store {
         let mut changed = false;
         let associations = associations(ui);
         if let Event::Timer(_) = event {
-            let ids: Vec<u64> = self.sessions.iter().filter(|(_, e)| e.timer.is_event(event).is_some()).map(|(id, _)| *id).collect();
+            let ids: Vec<u64> = self
+                .sessions
+                .iter()
+                .filter(|(_, e)| e.timer.is_event(event).is_some())
+                .map(|(id, _)| *id)
+                .collect();
             for id in ids {
                 if let Some(entry) = self.sessions.get_mut(&id) {
                     entry.timer = Timer::default();
-                    entry.session.with_model(&associations, |m, io| m.autosave(io));
+                    entry
+                        .session
+                        .with_model(&associations, |m, io| m.autosave(io));
                     changed = true;
                 }
             }
         }
         if let Event::Actions(actions) = event {
             for action in actions.iter() {
-                if let Some(PlatformAction::Completed { request, result }) = action.downcast_ref::<PlatformAction>()
-                    && self.platform_pending.contains_key(request) {
-                        self.on_platform(ui, *request, result.clone());
-                        changed = true;
-                    }
+                if let Some(PlatformAction::Completed { request, result }) =
+                    action.downcast_ref::<PlatformAction>()
+                    && self.platform_pending.contains_key(request)
+                {
+                    self.on_platform(ui, *request, result.clone());
+                    changed = true;
+                }
             }
         }
         if let Event::Signal = event {
@@ -881,8 +1221,12 @@ impl Store {
         let events = std::mem::take(&mut ui.events);
         for core_event in &events {
             match core_event {
-                CoreEvent::Response { request_id, result, .. } => {
-                    let Some(pending) = self.pending.remove(request_id) else { continue };
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
+                    let Some(pending) = self.pending.remove(request_id) else {
+                        continue;
+                    };
                     changed = true;
                     let result = result.clone().map_err(|e| e.message.clone());
                     self.on_response(ui, request_id, pending, result);
@@ -897,7 +1241,9 @@ impl Store {
                         .filter_map(|r| self.observations.get(r).copied())
                         .collect();
                     for (id, generation) in ids {
-                        let Some(entry) = self.sessions.get_mut(&id) else { continue };
+                        let Some(entry) = self.sessions.get_mut(&id) else {
+                            continue;
+                        };
                         if entry.session.host_id != *host_id {
                             continue;
                         }
@@ -907,16 +1253,26 @@ impl Store {
                             // `fs.file.update` carries a version; a restored subscription's
                             // snapshot repairs what a reconnect missed.
                             Some("fs.file.update") => {
-                                let version = FileVersion::from_json(payload.get("version").unwrap_or(&Value::Null));
+                                let version = FileVersion::from_json(
+                                    payload.get("version").unwrap_or(&Value::Null),
+                                );
                                 entry.session.handle.on_observation(generation, version);
                             }
                             Some("subscription.restored") => {
-                                let version = FileVersion::from_json(payload.get("initial").unwrap_or(&Value::Null));
+                                let version = FileVersion::from_json(
+                                    payload.get("initial").unwrap_or(&Value::Null),
+                                );
                                 entry.session.handle.on_observation(generation, version);
                             }
                             Some("subscription.error") => {
-                                let error = payload.get("error").and_then(Value::as_str).unwrap_or("File observation failed");
-                                entry.session.handle.on_observation(generation, FileVersion::Error(error.to_owned()));
+                                let error = payload
+                                    .get("error")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("File observation failed");
+                                entry.session.handle.on_observation(
+                                    generation,
+                                    FileVersion::Error(error.to_owned()),
+                                );
                             }
                             _ => {}
                         }
@@ -939,7 +1295,9 @@ impl Store {
     }
 
     pub(super) fn pending_cmds_empty(&self) -> bool {
-        self.sessions.values().all(|e| e.session.handle.cmds.is_empty() && e.session.handle.events.is_empty())
+        self.sessions
+            .values()
+            .all(|e| e.session.handle.cmds.is_empty() && e.session.handle.events.is_empty())
             && self.explorers.values().all(|e| e.cmds.is_empty())
     }
 
@@ -950,14 +1308,22 @@ impl Store {
             .sessions
             .iter_mut()
             .filter(|(_, e)| e.session.host_id == host_id)
-            .filter_map(|(id, e)| e.deferred_observe.take().map(|generation| (*id, generation)))
+            .filter_map(|(id, e)| {
+                e.deferred_observe
+                    .take()
+                    .map(|generation| (*id, generation))
+            })
             .collect();
         for (id, generation) in deferred {
             self.issue_observe(ui, id, generation);
         }
         // COMPAT(workspaceFileEditing): a read-as-stat observation does not restore itself.
         if !host::feature(ui, host_id, "workspaceFileEditing") {
-            for entry in self.sessions.values_mut().filter(|e| e.session.host_id == host_id && e.observing) {
+            for entry in self
+                .sessions
+                .values_mut()
+                .filter(|e| e.session.host_id == host_id && e.observing)
+            {
                 entry.session.handle.retry();
             }
         }
@@ -966,28 +1332,37 @@ impl Store {
         for owner in owners {
             if explorer_host(&owner, ui).as_deref() == Some(host_id)
                 && let Some(state) = self.explorers.get_mut(&owner)
-                    && (reconnect || state.root_error().is_some()) {
-                        state.connection_restored();
-                    }
+                && (reconnect || state.root_error().is_some())
+            {
+                state.connection_restored();
+            }
         }
         self.forget_failed_assets();
     }
 
-    fn on_response(&mut self, ui: &mut UiContext, request_id: &str, pending: Pending, result: Result<Value, String>) {
+    fn on_response(
+        &mut self,
+        ui: &mut UiContext,
+        request_id: &str,
+        pending: Pending,
+        result: Result<Value, String>,
+    ) {
         match pending {
-            Pending::Observe(id, generation) => {
-                match result {
-                    Ok(value) => self.classify(ui, id, generation, value),
-                    Err(error) => {
-                        self.observations.remove(request_id);
-                        if let Some(e) = self.sessions.get_mut(&id) {
-                            e.session.handle.on_observed(generation, Err(error));
-                        }
+            Pending::Observe(id, generation) => match result {
+                Ok(value) => self.classify(ui, id, generation, value),
+                Err(error) => {
+                    self.observations.remove(request_id);
+                    if let Some(e) = self.sessions.get_mut(&id) {
+                        e.session.handle.on_observed(generation, Err(error));
                     }
                 }
-            }
+            },
             Pending::Classify(id, generation, ticket) => {
-                let contents = result.and_then(|_| self.stash.take(ticket).ok_or_else(|| "File payload unavailable".to_owned()));
+                let contents = result.and_then(|_| {
+                    self.stash
+                        .take(ticket)
+                        .ok_or_else(|| "File payload unavailable".to_owned())
+                });
                 self.stash.discard(ticket);
                 if let Some(e) = self.sessions.get_mut(&id) {
                     let version = contents.map(|c| {
@@ -997,13 +1372,25 @@ impl Store {
                     match version {
                         Ok(version) => {
                             // COMPAT(fileVersionKind): classify the observed initial version.
-                            let observed = self.observations.iter().any(|(_, pair)| *pair == (id, generation));
-                            let version = if observed { e.session.handle.classify(version) } else { version };
+                            let observed = self
+                                .observations
+                                .iter()
+                                .any(|(_, pair)| *pair == (id, generation));
+                            let version = if observed {
+                                e.session.handle.classify(version)
+                            } else {
+                                version
+                            };
                             e.session.handle.on_observed(generation, Ok(version));
                         }
                         Err(error) => {
                             // An observation that failed to classify releases itself.
-                            let requests: Vec<String> = self.observations.iter().filter(|(_, pair)| **pair == (id, generation)).map(|(r, _)| r.clone()).collect();
+                            let requests: Vec<String> = self
+                                .observations
+                                .iter()
+                                .filter(|(_, pair)| **pair == (id, generation))
+                                .map(|(r, _)| r.clone())
+                                .collect();
                             for request in requests {
                                 ui.core.cancel_request(&request);
                                 self.observations.remove(&request);
@@ -1014,7 +1401,11 @@ impl Store {
                 }
             }
             Pending::Read(id, job, ticket) => {
-                let contents = result.and_then(|_| self.stash.take(ticket).ok_or_else(|| "File payload unavailable".to_owned()));
+                let contents = result.and_then(|_| {
+                    self.stash
+                        .take(ticket)
+                        .ok_or_else(|| "File payload unavailable".to_owned())
+                });
                 self.stash.discard(ticket);
                 if let Some(e) = self.sessions.get_mut(&id) {
                     e.session.handle.on_read(job, contents);
@@ -1031,35 +1422,70 @@ impl Store {
                 if let Some(e) = self.sessions.get_mut(&id) {
                     let outcome = result.and_then(|payload| {
                         service::write_result(&payload).ok_or_else(|| {
-                            service::payload_error(&payload, "fs.file.write.request").unwrap_or_else(|| "Save was not acknowledged".to_owned())
+                            service::payload_error(&payload, "fs.file.write.request")
+                                .unwrap_or_else(|| "Save was not acknowledged".to_owned())
                         })
                     });
                     e.session.handle.on_write(job, outcome);
                 }
             }
-            Pending::List { owner, path, generation } => {
-                let Some(state) = self.explorers.get_mut(&owner) else { return };
+            Pending::List {
+                owner,
+                path,
+                generation,
+            } => {
+                let Some(state) = self.explorers.get_mut(&owner) else {
+                    return;
+                };
                 let listed = result.and_then(|payload| {
                     if let Some(error) = payload.get("error").and_then(Value::as_str) {
                         return Err(error.to_owned());
                     }
-                    let directory = payload.get("directory").filter(|d| d.is_object()).ok_or_else(|| l("Directory listing unavailable").to_owned())?;
+                    let directory = payload
+                        .get("directory")
+                        .filter(|d| d.is_object())
+                        .ok_or_else(|| l("Directory listing unavailable").to_owned())?;
                     Ok(Listing {
-                        entries: directory.get("entries").and_then(Value::as_array).cloned().unwrap_or_default(),
-                        absolute: directory.get("absolutePath").and_then(Value::as_str).map(str::to_owned),
+                        entries: directory
+                            .get("entries")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                        absolute: directory
+                            .get("absolutePath")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                     })
                 });
                 state.on_listed(&path, generation, listed);
             }
-            Pending::Entry { owner, cwd, action } => self.on_entry(ui, &owner, &cwd, action, result),
-            Pending::Asset { owner, key, ticket, active } => {
-                let asset = match result.and_then(|_| self.stash.take(ticket).ok_or_else(|| "File payload unavailable".to_owned())) {
-                    Ok(contents) => Asset::Ready { bytes: contents.bytes, mime: contents.mime_type },
+            Pending::Entry { owner, cwd, action } => {
+                self.on_entry(ui, &owner, &cwd, action, result)
+            }
+            Pending::Asset {
+                owner,
+                key,
+                ticket,
+                active,
+            } => {
+                let asset = match result.and_then(|_| {
+                    self.stash
+                        .take(ticket)
+                        .ok_or_else(|| "File payload unavailable".to_owned())
+                }) {
+                    Ok(contents) => Asset::Ready {
+                        bytes: contents.bytes,
+                        mime: contents.mime_type,
+                    },
                     Err(error) => Asset::Failed(error),
                 };
                 self.stash.discard(ticket);
                 // A released owner's late asset is dropped.
-                if active && (self.owners.contains_key(&owner) || self.explorers.contains_key(&owner) || self.assets.contains_key(&key)) {
+                if active
+                    && (self.owners.contains_key(&owner)
+                        || self.explorers.contains_key(&owner)
+                        || self.assets.contains_key(&key))
+                {
                     self.assets.insert(key, asset);
                 }
             }
@@ -1070,18 +1496,26 @@ impl Store {
 
 /// The host of an explorer owner (its tab target, or a picker's registered host).
 fn explorer_host(owner: &str, ui: &UiContext) -> Option<String> {
-    PICKER_HOSTS.with(|hosts| hosts.borrow().get(owner).cloned()).or_else(|| {
-        ui.layout.target(owner).map(|t| t.server_id.clone()).or_else(|| {
-            OWNER_TARGETS.with(|targets| targets.borrow().get(owner).map(|(host, _)| host.clone()))
+    PICKER_HOSTS
+        .with(|hosts| hosts.borrow().get(owner).cloned())
+        .or_else(|| {
+            ui.layout
+                .target(owner)
+                .map(|t| t.server_id.clone())
+                .or_else(|| {
+                    OWNER_TARGETS
+                        .with(|targets| targets.borrow().get(owner).map(|(host, _)| host.clone()))
+                })
         })
-    })
 }
 
 fn explorer_workspace(owner: &str, ui: &UiContext) -> Option<String> {
     ui.layout
         .target(owner)
         .map(|t| t.workspace_id.clone())
-        .or_else(|| OWNER_TARGETS.with(|targets| targets.borrow().get(owner).map(|(_, ws)| ws.clone())))
+        .or_else(|| {
+            OWNER_TARGETS.with(|targets| targets.borrow().get(owner).map(|(_, ws)| ws.clone()))
+        })
 }
 
 /// `preferences.openInSidePane.explorerFiles` (Flutter `_open` default).
@@ -1100,7 +1534,12 @@ thread_local! {
 }
 
 pub fn register_owner(owner: &str, host_id: &str, workspace_id: &str) {
-    OWNER_TARGETS.with(|targets| targets.borrow_mut().insert(owner.to_owned(), (host_id.to_owned(), workspace_id.to_owned())));
+    OWNER_TARGETS.with(|targets| {
+        targets.borrow_mut().insert(
+            owner.to_owned(),
+            (host_id.to_owned(), workspace_id.to_owned()),
+        )
+    });
 }
 
 pub fn unregister_owner(owner: &str) {
@@ -1109,7 +1548,11 @@ pub fn unregister_owner(owner: &str) {
 }
 
 pub fn register_picker(owner: &str, host_id: &str) {
-    PICKER_HOSTS.with(|hosts| hosts.borrow_mut().insert(owner.to_owned(), host_id.to_owned()));
+    PICKER_HOSTS.with(|hosts| {
+        hosts
+            .borrow_mut()
+            .insert(owner.to_owned(), host_id.to_owned())
+    });
 }
 
 /// Explorer entry parent (re-exported for the view).
@@ -1125,15 +1568,40 @@ mod tests {
     fn released_owner_cannot_receive_old_directory_or_asset_responses() {
         let owner = "picker:release-test";
         with(|s| {
-            s.pending.insert("old-list".into(), Pending::List { owner: owner.into(), path: ".".into(), generation: 0 });
-            s.pending.insert("other-list".into(), Pending::List { owner: "other".into(), path: ".".into(), generation: 0 });
-            s.pending.insert("old-asset".into(), Pending::Asset { owner: owner.into(), key: asset_key(owner, "image.png"), ticket: 1, active: true });
+            s.pending.insert(
+                "old-list".into(),
+                Pending::List {
+                    owner: owner.into(),
+                    path: ".".into(),
+                    generation: 0,
+                },
+            );
+            s.pending.insert(
+                "other-list".into(),
+                Pending::List {
+                    owner: "other".into(),
+                    path: ".".into(),
+                    generation: 0,
+                },
+            );
+            s.pending.insert(
+                "old-asset".into(),
+                Pending::Asset {
+                    owner: owner.into(),
+                    key: asset_key(owner, "image.png"),
+                    ticket: 1,
+                    active: true,
+                },
+            );
         });
         release(owner);
         with(|s| {
             assert!(!s.pending.contains_key("old-list"));
             assert!(s.pending.contains_key("other-list"));
-            assert!(matches!(s.pending.get("old-asset"), Some(Pending::Asset { active: false, .. })));
+            assert!(matches!(
+                s.pending.get("old-asset"),
+                Some(Pending::Asset { active: false, .. })
+            ));
             s.pending.remove("other-list");
             s.pending.remove("old-asset");
         });

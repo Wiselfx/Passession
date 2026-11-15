@@ -15,8 +15,8 @@ use paseo_gui_core::CoreHandle;
 use paseo_terminal::{CellStyle, CursorShape, Key, Line, Modifiers};
 
 use super::find::{FindHits, FindMatch, SearchMode};
-use super::grid::{grapheme_column, selected_text, CellGrid, CellPos, GridPaint, GridSelection};
-use super::input::{self, ImeBridge, KeyCommand, ReplaceTracker, WheelRoute, IME_SENTINEL};
+use super::grid::{CellGrid, CellPos, GridPaint, GridSelection, grapheme_column, selected_text};
+use super::input::{self, IME_SENTINEL, ImeBridge, KeyCommand, ReplaceTracker, WheelRoute};
 use super::links;
 use super::stream::Stream;
 use crate::common::{UiContext, UiEffect};
@@ -150,10 +150,23 @@ fn cell_at(line: &Line, col: usize) -> Option<(String, CellStyle, usize)> {
     let mut first_char = 0;
     for run in &line.runs {
         let count = run.text.chars().count();
-        let columns = line.columns.get(first_char..first_char + count).unwrap_or(&[]);
+        let columns = line
+            .columns
+            .get(first_char..first_char + count)
+            .unwrap_or(&[]);
         if col < start + run.cells {
-            let text = run.text.chars().zip(columns).filter(|(_, c)| **c == col).map(|(ch, _)| ch).collect();
-            let next = columns.iter().copied().find(|c| *c > col).unwrap_or(start + run.cells);
+            let text = run
+                .text
+                .chars()
+                .zip(columns)
+                .filter(|(_, c)| **c == col)
+                .map(|(ch, _)| ch)
+                .collect();
+            let next = columns
+                .iter()
+                .copied()
+                .find(|c| *c > col)
+                .unwrap_or(start + run.cells);
             return Some((text, run.style, next.saturating_sub(col).max(1)));
         }
         start += run.cells;
@@ -179,12 +192,19 @@ impl WaTerminalView {
     /// The sticky modifiers merged into `mods`, then released.
     fn take_sticky(&mut self, mods: Modifiers) -> (Modifiers, bool) {
         let sticky = std::mem::take(&mut self.sticky);
-        let merged = Modifiers { shift: mods.shift || sticky.shift, control: mods.control || sticky.control, alt: mods.alt || sticky.alt, logo: mods.logo };
+        let merged = Modifiers {
+            shift: mods.shift || sticky.shift,
+            control: mods.control || sticky.control,
+            alt: mods.alt || sticky.alt,
+            logo: mods.logo,
+        };
         (merged, sticky != Modifiers::default())
     }
 
     fn send(&mut self, cx: &mut Cx, core: &CoreHandle, bytes: &[u8]) {
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         if !self.connected || bytes.is_empty() {
             return;
         }
@@ -200,7 +220,9 @@ impl WaTerminalView {
     /// Sends an encoded key; returns whether sticky modifiers were consumed.
     pub fn key(&mut self, cx: &mut Cx, core: &CoreHandle, key: Key, mods: Modifiers) -> bool {
         let (mods, consumed) = self.take_sticky(mods);
-        let Some(session) = self.session.as_mut() else { return consumed };
+        let Some(session) = self.session.as_mut() else {
+            return consumed;
+        };
         let bytes = session.screen.encode_key(key, mods);
         self.send(cx, core, &bytes);
         consumed
@@ -234,22 +256,33 @@ impl WaTerminalView {
         if count == 0 {
             return;
         }
-        let Some(session) = self.session.as_mut() else { return };
-        let bytes = session.screen.encode_key(Key::Backspace, Modifiers::default()).repeat(count);
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let bytes = session
+            .screen
+            .encode_key(Key::Backspace, Modifiers::default())
+            .repeat(count);
         self.send(cx, core, &bytes);
     }
 
     /// Pastes text: sanitized, bracketed when the program enabled bracketed paste.
     pub fn paste(&mut self, cx: &mut Cx, core: &CoreHandle, text: &str) {
         self.replaced.clear();
-        let Some(session) = self.session.as_ref() else { return };
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         let bytes = session.screen.encode_paste(text);
         self.send(cx, core, &bytes);
     }
 
     fn selected_text(&mut self) -> String {
-        let Some((start, end)) = self.selection.ordered() else { return String::new() };
-        let Some(session) = self.session.as_mut() else { return String::new() };
+        let Some((start, end)) = self.selection.ordered() else {
+            return String::new();
+        };
+        let Some(session) = self.session.as_mut() else {
+            return String::new();
+        };
         let lines = session.read(start.row, end.row - start.row + 1);
         selected_text(&lines, start, end)
     }
@@ -259,7 +292,10 @@ impl WaTerminalView {
         if self.selection.has_text() {
             return self.selected_text();
         }
-        self.session.as_ref().map(Stream::rendered_text).unwrap_or_default()
+        self.session
+            .as_ref()
+            .map(Stream::rendered_text)
+            .unwrap_or_default()
     }
 
     fn copy_selection(&mut self, cx: &mut Cx) {
@@ -276,12 +312,24 @@ impl WaTerminalView {
     }
 
     fn select_all(&mut self, cx: &mut Cx) {
-        let rows = self.session.as_ref().map(|s| s.screen.total_rows()).unwrap_or(0);
+        let rows = self
+            .session
+            .as_ref()
+            .map(|s| s.screen.total_rows())
+            .unwrap_or(0);
         if rows == 0 {
             return;
         }
         cx.claim_text_selection(self.draw_hit.area());
-        let end = self.snap_cell(CellPos { row: rows - 1, col: usize::MAX }, false).unwrap_or_default();
+        let end = self
+            .snap_cell(
+                CellPos {
+                    row: rows - 1,
+                    col: usize::MAX,
+                },
+                false,
+            )
+            .unwrap_or_default();
         self.selection.set(CellPos::default(), end);
         self.redraw(cx);
     }
@@ -321,7 +369,9 @@ impl WaTerminalView {
 
     /// Reflows the local screen to the fitted size and sends it to the daemon.
     pub fn sync_size(&mut self, core: &CoreHandle, force: bool) {
-        let (Some((rows, cols)), Some(session)) = (self.fitted, self.session.as_mut()) else { return };
+        let (Some((rows, cols)), Some(session)) = (self.fitted, self.session.as_mut()) else {
+            return;
+        };
         match session.screen.resize(rows, cols) {
             Ok(true) => session.publish(),
             Ok(false) => {}
@@ -352,11 +402,16 @@ impl WaTerminalView {
         let row = pos.row.min(session.screen.total_rows().checked_sub(1)?);
         let lines = session.read(row, 1);
         let line = lines.first()?;
-        Some(CellPos { row, col: grapheme_column(line, pos.col, next) })
+        Some(CellPos {
+            row,
+            col: grapheme_column(line, pos.col, next),
+        })
     }
 
     fn handle_selection_event(&mut self, cx: &mut Cx, event: &Event) -> bool {
-        let Some(action) = self.selection.handle_event(cx, event, self.draw_hit.area()) else { return false };
+        let Some(action) = self.selection.handle_event(cx, event, self.draw_hit.area()) else {
+            return false;
+        };
         self.scroll_bars.cancel_touch_scroll();
         if action.phase == TextHandlePhase::Start {
             self.follow = false;
@@ -379,7 +434,13 @@ impl WaTerminalView {
     fn key_down(&mut self, cx: &mut Cx, core: Option<&CoreHandle>, key: &KeyEvent) -> bool {
         self.suppress_text = false;
         self.replaced.clear();
-        match input::key_command(key.key_code, key.modifiers, self.selection.has_text(), APPLE, ANDROID) {
+        match input::key_command(
+            key.key_code,
+            key.modifiers,
+            self.selection.has_text(),
+            APPLE,
+            ANDROID,
+        ) {
             KeyCommand::Send(code, mods) => {
                 self.suppress_text = matches!(code, Key::Char(_) | Key::Space);
                 // A finished line starts the input method's editor over (`ImeBridge`).
@@ -409,7 +470,10 @@ impl WaTerminalView {
         if local.x < 0.0 || local.y < 0.0 {
             return None;
         }
-        Some(((local.y / height).floor() as usize, (local.x / width).floor() as usize))
+        Some((
+            (local.y / height).floor() as usize,
+            (local.x / width).floor() as usize,
+        ))
     }
 
     fn link_at(&mut self, cx: &Cx, abs: DVec2) -> Option<String> {
@@ -420,29 +484,48 @@ impl WaTerminalView {
     /// Where wheel and swipes go now: a live full-screen program, else the scrollback.
     fn wheel_route(&self) -> WheelRoute {
         match self.session.as_ref() {
-            Some(session) if self.connected && session.live(true) => input::wheel_route(session.screen.modes()),
+            Some(session) if self.connected && session.live(true) => {
+                input::wheel_route(session.screen.modes())
+            }
             _ => WheelRoute::Scrollback,
         }
     }
 
     /// Sends `rows` of scrolling (negative = up) at `abs` to a full-screen program.
-    fn scroll_program(&mut self, cx: &Cx, core: &CoreHandle, route: WheelRoute, rows: i64, abs: DVec2, mods: Modifiers) {
+    fn scroll_program(
+        &mut self,
+        cx: &Cx,
+        core: &CoreHandle,
+        route: WheelRoute,
+        rows: i64,
+        abs: DVec2,
+        mods: Modifiers,
+    ) {
         if rows == 0 {
             return;
         }
         let up = rows < 0;
         let count = rows.unsigned_abs().min(64) as usize;
         let cell = self.raw_cell(cx, abs);
-        let Some(session) = self.session.as_mut() else { return };
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
         let bytes = match route {
             WheelRoute::Mouse => {
                 let history = session.screen.history();
                 let (row, col) = cell.unwrap_or((history, 0));
-                let row = row.saturating_sub(history).min(usize::from(session.screen.rows().saturating_sub(1)));
+                let row = row
+                    .saturating_sub(history)
+                    .min(usize::from(session.screen.rows().saturating_sub(1)));
                 let col = col.min(session.cols().saturating_sub(1));
-                session.screen.encode_mouse_wheel(up, col as u16, row as u16, mods, count)
+                session
+                    .screen
+                    .encode_mouse_wheel(up, col as u16, row as u16, mods, count)
             }
-            WheelRoute::Arrows => session.screen.encode_key(if up { Key::Up } else { Key::Down }, Modifiers::default()).repeat(count),
+            WheelRoute::Arrows => session
+                .screen
+                .encode_key(if up { Key::Up } else { Key::Down }, Modifiers::default())
+                .repeat(count),
             WheelRoute::Scrollback => return,
         };
         session.send_input(core, &bytes);
@@ -472,7 +555,10 @@ impl WaTerminalView {
 fn claim_touch_moves(event: &Event, area: Area) {
     if let Event::TouchUpdate(update) = event {
         for touch in &update.touches {
-            if matches!(touch.state, makepad_widgets::makepad_draw::event::TouchState::Move) {
+            if matches!(
+                touch.state,
+                makepad_widgets::makepad_draw::event::TouchState::Move
+            ) {
                 touch.handled.set(area);
             }
         }
@@ -494,13 +580,17 @@ impl Widget for WaTerminalView {
         let uid = self.widget_uid();
         let area = self.draw_hit.area();
         let before = self.scroll_bars.get_scroll_pos();
-        self.scroll_bars.handle_main_event(cx, event, scope, &mut Vec::new());
+        self.scroll_bars
+            .handle_main_event(cx, event, scope, &mut Vec::new());
         let mut consumed = false;
         match event.hits(cx, area) {
             Hit::KeyFocus(_) => {
                 self.has_focus = true;
                 if let Some(ui) = scope.data.get_mut::<UiContext>() {
-                    ui.push(UiEffect::SetFocusScope { owner: uid, scope: Some("terminal".into()) });
+                    ui.push(UiEffect::SetFocusScope {
+                        owner: uid,
+                        scope: Some("terminal".into()),
+                    });
                 }
                 self.redraw(cx);
             }
@@ -511,12 +601,19 @@ impl Widget for WaTerminalView {
                 self.suppress_text = false;
                 self.selection.clear(cx, area);
                 if let Some(ui) = scope.data.get_mut::<UiContext>() {
-                    ui.push(UiEffect::SetFocusScope { owner: uid, scope: None });
+                    ui.push(UiEffect::SetFocusScope {
+                        owner: uid,
+                        scope: None,
+                    });
                 }
                 self.redraw(cx);
             }
             Hit::FingerHoverIn(hover) | Hit::FingerHoverOver(hover) => {
-                let primary = if APPLE { hover.modifiers.logo } else { hover.modifiers.control };
+                let primary = if APPLE {
+                    hover.modifiers.logo
+                } else {
+                    hover.modifiers.control
+                };
                 if primary && self.link_at(cx, hover.abs).is_some() {
                     cx.set_cursor(MouseCursor::Hand);
                 }
@@ -524,14 +621,27 @@ impl Widget for WaTerminalView {
             Hit::FingerDown(down) => {
                 cx.set_key_focus(area);
                 self.selection.dragging = false;
-                let primary = if APPLE { down.modifiers.logo } else { down.modifiers.control };
-                self.touch_pan = (down.device.is_touch() && self.wheel_route() != WheelRoute::Scrollback).then_some((down.abs.y, 0.0));
-                if !down.device.is_touch() && down.device.is_primary_hit() && primary && let Some(url) = self.link_at(cx, down.abs) {
+                let primary = if APPLE {
+                    down.modifiers.logo
+                } else {
+                    down.modifiers.control
+                };
+                self.touch_pan = (down.device.is_touch()
+                    && self.wheel_route() != WheelRoute::Scrollback)
+                    .then_some((down.abs.y, 0.0));
+                if !down.device.is_touch()
+                    && down.device.is_primary_hit()
+                    && primary
+                    && let Some(url) = self.link_at(cx, down.abs)
+                {
                     // Ctrl/Cmd+click opens a link instead of starting a selection.
                     if let Some(ui) = scope.data.get_mut::<UiContext>() {
                         ui.push(UiEffect::OpenExternal { url });
                     }
-                } else if !down.device.is_touch() && down.device.is_primary_hit() && let Some(pos) = self.pos_to_cell(cx, down.abs) {
+                } else if !down.device.is_touch()
+                    && down.device.is_primary_hit()
+                    && let Some(pos) = self.pos_to_cell(cx, down.abs)
+                {
                     self.selection.touch = false;
                     self.selection.set(pos, pos);
                     self.selection.dragging = true;
@@ -549,21 +659,35 @@ impl Widget for WaTerminalView {
                 }
             }
             Hit::FingerMove(moved) => {
-                if self.selection.dragging && let (Some(pos), Some((anchor, _))) = (self.pos_to_cell(cx, moved.abs), self.selection.range()) {
+                if self.selection.dragging
+                    && let (Some(pos), Some((anchor, _))) =
+                        (self.pos_to_cell(cx, moved.abs), self.selection.range())
+                {
                     claim_touch_moves(event, area);
                     self.follow = false;
                     self.selection.set(anchor, pos);
                     self.redraw(cx);
-                } else if moved.device.is_touch() && let Some((last, carry)) = self.touch_pan {
+                } else if moved.device.is_touch()
+                    && let Some((last, carry)) = self.touch_pan
+                {
                     // A swipe over a full-screen program scrolls the program (`less`, `vim`).
                     let route = self.wheel_route();
-                    if route != WheelRoute::Scrollback && let Some(core) = core_of(scope) {
+                    if route != WheelRoute::Scrollback
+                        && let Some(core) = core_of(scope)
+                    {
                         claim_touch_moves(event, area);
                         self.scroll_bars.cancel_touch_scroll();
                         let height = self.grid.cell().map(|(_, height)| height).unwrap_or(0.0);
                         let (rows, carry) = input::wheel_rows(carry, last - moved.abs.y, height);
                         self.touch_pan = Some((moved.abs.y, carry));
-                        self.scroll_program(cx, &core, route, rows, moved.abs, Modifiers::default());
+                        self.scroll_program(
+                            cx,
+                            &core,
+                            route,
+                            rows,
+                            moved.abs,
+                            Modifiers::default(),
+                        );
                     }
                 }
             }
@@ -591,7 +715,9 @@ impl Widget for WaTerminalView {
                 }
             }
             Hit::TextPasteShortcut(request) => {
-                request.allowed.set(input::paste_shortcut(request.modifiers, APPLE));
+                request
+                    .allowed
+                    .set(input::paste_shortcut(request.modifiers, APPLE));
             }
             Hit::KeyDown(key) => {
                 let core = core_of(scope);
@@ -624,7 +750,13 @@ impl Widget for WaTerminalView {
                 // a reset is published on draw, outside this edit, as a new input session.
                 self.ime_text = edit.text.clone();
                 self.ime_selection = edit.selection_utf8();
-                cx.update_terminal_text_input(area, self.ime_id, &self.ime_text, self.ime_selection.0, self.ime_selection.1);
+                cx.update_terminal_text_input(
+                    area,
+                    self.ime_id,
+                    &self.ime_text,
+                    self.ime_selection.0,
+                    self.ime_selection.1,
+                );
                 let preedit = input::composing_text(&edit.text, edit.composing);
                 if preedit != self.preedit {
                     self.preedit = preedit.to_owned();
@@ -652,15 +784,25 @@ impl Widget for WaTerminalView {
         {
             // The wheel over a full-screen program scrolls the program, not the scrollback.
             let route = self.wheel_route();
-            if route != WheelRoute::Scrollback && let Some(core) = core_of(scope) {
+            if route != WheelRoute::Scrollback
+                && let Some(core) = core_of(scope)
+            {
                 scroll.handled_y.set(true);
                 let height = self.grid.cell().map(|(_, height)| height).unwrap_or(0.0);
                 let (rows, carry) = input::wheel_rows(self.wheel_carry, scroll.scroll.y, height);
                 self.wheel_carry = carry;
-                self.scroll_program(cx, &core, route, rows, scroll.abs, input::modifiers(scroll.modifiers));
+                self.scroll_program(
+                    cx,
+                    &core,
+                    route,
+                    rows,
+                    scroll.abs,
+                    input::modifiers(scroll.modifiers),
+                );
             }
         }
-        self.scroll_bars.handle_scroll_event(cx, event, scope, &mut Vec::new());
+        self.scroll_bars
+            .handle_scroll_event(cx, event, scope, &mut Vec::new());
         let after = self.scroll_bars.get_scroll_pos();
         if (after.y - before.y).abs() > 0.5 && !matches!(event, Event::NextFrame(_)) {
             // Scrolling back to the bottom follows output again.
@@ -675,20 +817,33 @@ impl Widget for WaTerminalView {
         self.scroll_bars.begin(cx, walk, self.layout);
         let origin = cx.turtle().pos();
         let (rows, cols, history) = match self.session.as_ref() {
-            Some(session) => (session.screen.total_rows(), session.cols(), session.screen.history()),
+            Some(session) => (
+                session.screen.total_rows(),
+                session.cols(),
+                session.screen.history(),
+            ),
             None => (0, 0, 0),
         };
         // Following keeps the screen's first row at the viewport top, like a terminal window:
         // the content extends below the last row by the viewport's fractional row.
         let screen_top = history as f64 * height;
-        let content = dvec2(cols as f64 * width, (rows as f64 * height).max(screen_top + self.viewport.y));
+        let content = dvec2(
+            cols as f64 * width,
+            (rows as f64 * height).max(screen_top + self.viewport.y),
+        );
         let viewport = self.viewport;
         let scroll = self.scroll_bars.get_scroll_pos();
         let visible_height = if viewport.y > 0.0 { viewport.y } else { 2000.0 };
         let first = (scroll.y / height).floor().max(0.0) as usize;
         let count = (visible_height / height).ceil() as usize + 2;
         self.hit_origin = scroll;
-        self.draw_hit.draw_abs(cx, Rect { pos: origin + scroll, size: dvec2(viewport.x.max(1.0), visible_height) });
+        self.draw_hit.draw_abs(
+            cx,
+            Rect {
+                pos: origin + scroll,
+                size: dvec2(viewport.x.max(1.0), visible_height),
+            },
+        );
         let area = self.draw_hit.area();
         let hit_rect = area.rect(cx);
         if std::mem::take(&mut self.focus_requested) {
@@ -707,7 +862,14 @@ impl Widget for WaTerminalView {
                     let cells: usize = line.runs.iter().map(|run| run.cells).sum();
                     let span = self.selection.span(row, cells);
                     let highlights = self.find.row(row, line.columns.len());
-                    if let Some(rect) = self.grid.draw_line(cx, dvec2(origin.x, origin.y + row as f64 * height), line, &paint, &highlights, span) {
+                    if let Some(rect) = self.grid.draw_line(
+                        cx,
+                        dvec2(origin.x, origin.y + row as f64 * height),
+                        line,
+                        &paint,
+                        &highlights,
+                        span,
+                    ) {
                         self.selection.painted(rect, hit_rect);
                     }
                 }
@@ -719,45 +881,104 @@ impl Widget for WaTerminalView {
                     // Composing text covers the cells from the cursor, clamped to the row; the
                     // cell batch paints under glyphs, so covered glyphs are first repainted in
                     // the background colour, like the block cursor's glyph.
-                    let preedit = if self.has_focus && !exited { input::preedit_cells(&self.preedit) } else { Vec::new() };
+                    let preedit = if self.has_focus && !exited {
+                        input::preedit_cells(&self.preedit)
+                    } else {
+                        Vec::new()
+                    };
                     let preedit_cells: usize = preedit.iter().map(|(_, cells)| cells).sum();
                     let mut col = col;
                     if preedit_cells > 0 {
                         let start = col.min(cols.saturating_sub(preedit_cells));
-                        let rect = Rect { pos: dvec2(origin.x + start as f64 * width, y), size: dvec2(preedit_cells as f64 * width, height) };
+                        let rect = Rect {
+                            pos: dvec2(origin.x + start as f64 * width, y),
+                            size: dvec2(preedit_cells as f64 * width, height),
+                        };
                         self.grid.fill(cx, rect, palette.surface0);
                         for covered in start..start + preedit_cells {
-                            if let Some((text, style, _)) = cell_at(line, covered).filter(|(text, _, _)| !text.trim().is_empty()) {
-                                self.grid.draw_glyph(cx, dvec2(origin.x + covered as f64 * width, y), &text, &style, palette.surface0);
+                            if let Some((text, style, _)) = cell_at(line, covered)
+                                .filter(|(text, _, _)| !text.trim().is_empty())
+                            {
+                                self.grid.draw_glyph(
+                                    cx,
+                                    dvec2(origin.x + covered as f64 * width, y),
+                                    &text,
+                                    &style,
+                                    palette.surface0,
+                                );
                             }
                         }
                         let mut x = rect.pos.x;
                         for (grapheme, cells) in &preedit {
-                            self.grid.draw_glyph(cx, dvec2(x, y), grapheme, &CellStyle::default(), palette.foreground);
+                            self.grid.draw_glyph(
+                                cx,
+                                dvec2(x, y),
+                                grapheme,
+                                &CellStyle::default(),
+                                palette.foreground,
+                            );
                             x += *cells as f64 * width;
                         }
-                        self.grid.fill(cx, Rect { pos: dvec2(rect.pos.x, y + height - 1.0), size: dvec2(rect.size.x, 1.0) }, palette.foreground);
+                        self.grid.fill(
+                            cx,
+                            Rect {
+                                pos: dvec2(rect.pos.x, y + height - 1.0),
+                                size: dvec2(rect.size.x, 1.0),
+                            },
+                            palette.foreground,
+                        );
                         col = (start + preedit_cells).min(cols.saturating_sub(1));
                     }
-                    let cell = if preedit_cells > 0 { None } else { cell_at(line, col) };
+                    let cell = if preedit_cells > 0 {
+                        None
+                    } else {
+                        cell_at(line, col)
+                    };
                     let span = cell.as_ref().map(|(_, _, span)| *span).unwrap_or(1);
-                    let rect = Rect { pos: origin + dvec2(col as f64 * width, row as f64 * height), size: dvec2(span as f64 * width, height) };
+                    let rect = Rect {
+                        pos: origin + dvec2(col as f64 * width, row as f64 * height),
+                        size: dvec2(span as f64 * width, height),
+                    };
                     caret = Some(rect);
                     if cursor.visible && !exited {
                         let color = palette.foreground;
                         let line_w = 1.0_f64.max((width * 0.12).round());
                         let hollow = !self.has_focus || cursor.shape == CursorShape::BlockHollow;
                         match cursor.shape {
-                            CursorShape::Bar => self.grid.fill(cx, Rect { size: dvec2(line_w.max(2.0), height), ..rect }, color),
-                            CursorShape::Underline => {
-                                self.grid.fill(cx, Rect { pos: rect.pos + dvec2(0.0, height - 2.0), size: dvec2(rect.size.x, 2.0) }, color)
-                            }
+                            CursorShape::Bar => self.grid.fill(
+                                cx,
+                                Rect {
+                                    size: dvec2(line_w.max(2.0), height),
+                                    ..rect
+                                },
+                                color,
+                            ),
+                            CursorShape::Underline => self.grid.fill(
+                                cx,
+                                Rect {
+                                    pos: rect.pos + dvec2(0.0, height - 2.0),
+                                    size: dvec2(rect.size.x, 2.0),
+                                },
+                                color,
+                            ),
                             _ if hollow => {
                                 for edge in [
-                                    Rect { size: dvec2(rect.size.x, 1.0), ..rect },
-                                    Rect { pos: rect.pos + dvec2(0.0, height - 1.0), size: dvec2(rect.size.x, 1.0) },
-                                    Rect { size: dvec2(1.0, height), ..rect },
-                                    Rect { pos: rect.pos + dvec2(rect.size.x - 1.0, 0.0), size: dvec2(1.0, height) },
+                                    Rect {
+                                        size: dvec2(rect.size.x, 1.0),
+                                        ..rect
+                                    },
+                                    Rect {
+                                        pos: rect.pos + dvec2(0.0, height - 1.0),
+                                        size: dvec2(rect.size.x, 1.0),
+                                    },
+                                    Rect {
+                                        size: dvec2(1.0, height),
+                                        ..rect
+                                    },
+                                    Rect {
+                                        pos: rect.pos + dvec2(rect.size.x - 1.0, 0.0),
+                                        size: dvec2(1.0, height),
+                                    },
                                 ] {
                                     self.grid.fill(cx, edge, color);
                                 }
@@ -766,8 +987,16 @@ impl Widget for WaTerminalView {
                                 // The cell batch paints under every glyph: the glyph under the
                                 // block is redrawn in the background colour on top.
                                 self.grid.fill(cx, rect, color);
-                                if let Some((text, style, _)) = cell.filter(|(text, _, _)| !text.trim().is_empty()) {
-                                    self.grid.draw_glyph(cx, rect.pos, &text, &style, palette.surface0);
+                                if let Some((text, style, _)) =
+                                    cell.filter(|(text, _, _)| !text.trim().is_empty())
+                                {
+                                    self.grid.draw_glyph(
+                                        cx,
+                                        rect.pos,
+                                        &text,
+                                        &style,
+                                        palette.surface0,
+                                    );
                                 }
                             }
                         }
@@ -775,7 +1004,10 @@ impl Widget for WaTerminalView {
                 }
             }
         }
-        cx.walk_turtle(Walk::size(Size::Fixed(content.x.max(1.0)), Size::Fixed(content.y.max(1.0))));
+        cx.walk_turtle(Walk::size(
+            Size::Fixed(content.x.max(1.0)),
+            Size::Fixed(content.y.max(1.0)),
+        ));
         self.scroll_bars.end(cx);
         let viewport = self.scroll_bars.area().rect(cx).size;
         let resized = viewport != self.viewport && viewport.y > 0.0;
@@ -784,21 +1016,29 @@ impl Widget for WaTerminalView {
             self.max_scroll = (content.y - viewport.y).max(0.0);
             if let Some(target) = self.reveal.take() {
                 // A find match: its row a third down the viewport, its column in view.
-                let y = (target.start_row as f64 * height - viewport.y / 3.0).clamp(0.0, self.max_scroll);
-                let x = (target.start_offset as f64 * width - viewport.x / 2.0).clamp(0.0, (content.x - viewport.x).max(0.0));
+                let y = (target.start_row as f64 * height - viewport.y / 3.0)
+                    .clamp(0.0, self.max_scroll);
+                let x = (target.start_offset as f64 * width - viewport.x / 2.0)
+                    .clamp(0.0, (content.x - viewport.x).max(0.0));
                 self.scroll_bars.set_scroll_pos(cx, dvec2(x, y));
             } else if self.follow {
                 let x = self.scroll_bars.get_scroll_pos().x;
-                self.scroll_bars.set_scroll_pos(cx, dvec2(x, self.max_scroll));
+                self.scroll_bars
+                    .set_scroll_pos(cx, dvec2(x, self.max_scroll));
             }
-            let fitted = (((viewport.y / height).floor().max(1.0)).min(f64::from(u16::MAX)) as u16, ((viewport.x / width).floor().max(2.0)).min(f64::from(u16::MAX)) as u16);
+            let fitted = (
+                ((viewport.y / height).floor().max(1.0)).min(f64::from(u16::MAX)) as u16,
+                ((viewport.x / width).floor().max(2.0)).min(f64::from(u16::MAX)) as u16,
+            );
             if self.fitted != Some(fitted) {
                 self.fitted = Some(fitted);
                 cx.stop_timer(self.resize_timer);
                 self.resize_timer = cx.start_timeout(RESIZE_DEBOUNCE);
             }
         }
-        if self.has_focus && let Some(caret) = caret {
+        if self.has_focus
+            && let Some(caret) = caret
+        {
             // Input methods place their candidate window at the cursor; Android edits a
             // hidden editor (`ImeBridge`) republished here, with a pending reset first.
             cx.add_aligned_rect_area(&mut self.ime_caret, caret);
@@ -807,13 +1047,26 @@ impl Widget for WaTerminalView {
                 self.ime_text = IME_SENTINEL.to_owned();
                 self.ime_selection = (IME_SENTINEL.len(), IME_SENTINEL.len());
             }
-            cx.update_terminal_text_input(area, self.ime_id, &self.ime_text, self.ime_selection.0, self.ime_selection.1);
+            cx.update_terminal_text_input(
+                area,
+                self.ime_id,
+                &self.ime_text,
+                self.ime_selection.0,
+                self.ime_selection.1,
+            );
             if !MOBILE || self.show_ime {
                 // `ime_caret` covers the caret cell: desktop input methods compose over it.
-                cx.show_text_ime_caret(self.ime_caret, Rect { pos: dvec2(0.0, 0.0), size: caret.size });
+                cx.show_text_ime_caret(
+                    self.ime_caret,
+                    Rect {
+                        pos: dvec2(0.0, 0.0),
+                        size: caret.size,
+                    },
+                );
             }
         }
-        self.selection.draw_overlays(cx, area, origin, (width, height), true);
+        self.selection
+            .draw_overlays(cx, area, origin, (width, height), true);
         if (resized || self.scroll_bars.get_scroll_pos() != scroll)
             && let Some(draw_list) = self.scroll_bars.area().draw_list_id()
         {
@@ -844,17 +1097,31 @@ mod tests {
 
     #[test]
     fn cursor_cells_know_wide_glyphs() {
-        let style = CellStyle { bold: true, ..CellStyle::default() };
+        let style = CellStyle {
+            bold: true,
+            ..CellStyle::default()
+        };
         let line = Line {
             text: "a한b".into(),
             columns: vec![0, 1, 3],
             runs: vec![
-                Run { text: "a".into(), cells: 1, style: CellStyle::default() },
-                Run { text: "한b".into(), cells: 3, style },
+                Run {
+                    text: "a".into(),
+                    cells: 1,
+                    style: CellStyle::default(),
+                },
+                Run {
+                    text: "한b".into(),
+                    cells: 3,
+                    style,
+                },
             ],
             wraps_next: false,
         };
-        assert_eq!(cell_at(&line, 0), Some(("a".into(), CellStyle::default(), 1)));
+        assert_eq!(
+            cell_at(&line, 0),
+            Some(("a".into(), CellStyle::default(), 1))
+        );
         assert_eq!(cell_at(&line, 1), Some(("한".into(), style, 2)));
         assert_eq!(cell_at(&line, 3), Some(("b".into(), style, 1)));
         assert_eq!(cell_at(&line, 9), None);

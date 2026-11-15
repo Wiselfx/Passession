@@ -13,7 +13,12 @@ pub struct ConnectOptions {
 }
 impl ConnectOptions {
     pub fn new(target: DaemonTarget) -> Self {
-        Self { target, timeout: Duration::from_secs(15), instance: None, client_type: "cli".into() }
+        Self {
+            target,
+            timeout: Duration::from_secs(15),
+            instance: None,
+            client_type: "cli".into(),
+        }
     }
 }
 pub async fn connect(options: ConnectOptions, cancel: CancellationToken) -> Result<DaemonClient> {
@@ -21,8 +26,19 @@ pub async fn connect(options: ConnectOptions, cancel: CancellationToken) -> Resu
     shared.timeout = options.timeout;
     shared.client_type = options.client_type;
     if let DaemonTarget::Instance { home } = &options.target {
-        let instance = daemon_control::wait_for_daemon_ready(home, options.timeout, options.instance.as_ref(), &cancel).await?;
-        let host = instance.listen.ok_or_else(|| ClientError::new("DAEMON_NOT_READY", "Daemon has not published a listening address"))?;
+        let instance = daemon_control::wait_for_daemon_ready(
+            home,
+            options.timeout,
+            options.instance.as_ref(),
+            &cancel,
+        )
+        .await?;
+        let host = instance.listen.ok_or_else(|| {
+            ClientError::new(
+                "DAEMON_NOT_READY",
+                "Daemon has not published a listening address",
+            )
+        })?;
         shared.target = DaemonTarget::Endpoint { host };
         shared.home = Some(home.clone());
     }

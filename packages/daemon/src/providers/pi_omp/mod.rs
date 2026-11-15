@@ -10,14 +10,14 @@ mod prompt;
 mod session;
 mod transport;
 
-use crate::providers::registry::catalog::refresh_activity;
-use paseo_client::process::{self, CommandSpec};
-use crate::{ providers::api::{
+use crate::providers::api::{
     AgentProvider, AgentSession, EventSink, ImportedSession, LaunchContext, ProviderSpec,
     SubagentHistory, SubagentHistoryRequest,
-}, };
+};
+use crate::providers::registry::catalog::refresh_activity;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::{self, CommandSpec};
 use serde_json::{Value, json};
 use session::Session;
 use std::{
@@ -100,11 +100,11 @@ impl JsonlProvider {
             && let Err(error) = runtime
                 .negotiate(launch::ready_timeout(&self.spec, config))
                 .await
-            {
-                runtime.close().await.ok();
-                drain.abort();
-                return Err(error);
-            }
+        {
+            runtime.close().await.ok();
+            drain.abort();
+            return Err(error);
+        }
         Ok((runtime, drain))
     }
     fn probe_config(&self, options: &Value) -> Value {
@@ -383,8 +383,7 @@ impl AgentProvider for JsonlProvider {
         sink: EventSink,
     ) -> Result<SubagentHistory> {
         let read = async {
-            let events =
-                history::child_history(&self.spec.family, &self.spec.id, &request).await?;
+            let events = history::child_history(&self.spec.family, &self.spec.id, &request).await?;
             let read = if events.iter().all(|event| {
                 event["event"]["type"] != "timeline" || event["event"]["historyComplete"] == true
             }) {

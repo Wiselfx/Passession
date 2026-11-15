@@ -7,10 +7,10 @@
 use super::attachments::wire_attachment;
 use super::i18n::t;
 use super::json::*;
-use super::service::{AfterFlush, ComposerService, Pending, PanelNotice};
+use super::service::{AfterFlush, ComposerService, PanelNotice, Pending};
 use crate::common::{PanelTarget, TabPlacement, UiEffect};
 use paseo_gui_core::CoreError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunKind {
@@ -103,8 +103,20 @@ impl ComposerService {
     /// Flutter `_create`: submit the draft `message` as a new agent (creating the workspace
     /// first when the draft has none). `config` is the effective submit config with offered
     /// feature values; `workspace_id` the target's (may be empty).
-    pub fn start_creation(&mut self, host: &str, draft_key: &str, panel: Option<u64>, message: Value, config: Value, target: CreationTarget) {
-        let CreationTarget { cwd, workspace_id, title } = target;
+    pub fn start_creation(
+        &mut self,
+        host: &str,
+        draft_key: &str,
+        panel: Option<u64>,
+        message: Value,
+        config: Value,
+        target: CreationTarget,
+    ) {
+        let CreationTarget {
+            cwd,
+            workspace_id,
+            title,
+        } = target;
         let draft = self.drafts.draft(draft_key).clone();
         let workspace_id = if workspace_id.is_empty() {
             owned(get(&draft, "creationWorkspaceId"))
@@ -117,7 +129,8 @@ impl ComposerService {
             .map(str::to_owned)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         self.drafts.update(draft_key, json!({"creationKey": key}));
-        self.active_sends.insert(draft_key.to_owned(), owned(get(&message, "messageId")));
+        self.active_sends
+            .insert(draft_key.to_owned(), owned(get(&message, "messageId")));
         self.creations.insert(
             draft_key.to_owned(),
             DraftCreation {
@@ -134,7 +147,9 @@ impl ComposerService {
             },
         );
         self.bump();
-        self.flush_then(AfterFlush::Creation { draft_key: draft_key.to_owned() });
+        self.flush_then(AfterFlush::Creation {
+            draft_key: draft_key.to_owned(),
+        });
     }
 
     pub fn is_creating(&self, draft_key: &str) -> bool {
@@ -170,7 +185,9 @@ impl ComposerService {
     }
 
     fn prepare_agent_request(&mut self, draft_key: &str) {
-        let Some(creation) = self.creations.get_mut(draft_key) else { return };
+        let Some(creation) = self.creations.get_mut(draft_key) else {
+            return;
+        };
         let original = self.drafts.field(draft_key, "creationRequest");
         // A frozen request from an earlier attempt is replayed byte-for-byte (recovery).
         creation.recovering = non_empty_obj(&original);
@@ -191,15 +208,32 @@ impl ComposerService {
             })
         };
         creation.stage = Stage::FlushRequest;
-        self.drafts.update(draft_key, json!({"creationRequest": fields}));
-        self.flush_then(AfterFlush::Creation { draft_key: draft_key.to_owned() });
+        self.drafts
+            .update(draft_key, json!({"creationRequest": fields}));
+        self.flush_then(AfterFlush::Creation {
+            draft_key: draft_key.to_owned(),
+        });
     }
 
     fn start_run(&mut self, draft_key: &str, kind: RunKind, fields: Value, recover: bool) {
-        let Some(creation) = self.creations.get_mut(draft_key) else { return };
-        creation.stage = if kind == RunKind::Workspace { Stage::Workspace } else { Stage::Agent };
+        let Some(creation) = self.creations.get_mut(draft_key) else {
+            return;
+        };
+        creation.stage = if kind == RunKind::Workspace {
+            Stage::Workspace
+        } else {
+            Stage::Agent
+        };
         let key = owned(get(&fields, "idempotencyKey"));
-        creation.run = Some(Run { kind, key, fields, revision: -1, recovering: false, observation: None, waiting: None });
+        creation.run = Some(Run {
+            kind,
+            key,
+            fields,
+            revision: -1,
+            recovering: false,
+            observation: None,
+            waiting: None,
+        });
         if recover {
             self.run_recover(draft_key);
         } else {
@@ -208,9 +242,13 @@ impl ComposerService {
     }
 
     fn run_submit(&mut self, draft_key: &str) {
-        let Some(core) = self.core.clone() else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         let blob_dir = self.blobs.dir().to_path_buf();
-        let Some(creation) = self.creations.get(draft_key) else { return };
+        let Some(creation) = self.creations.get(draft_key) else {
+            return;
+        };
         let Some(run) = &creation.run else { return };
         let kind = run.kind;
         let mut fields = run.fields.clone();
@@ -234,15 +272,27 @@ impl ComposerService {
                 None,
             )
         });
-        self.pending.insert(request, Pending::Creation { draft_key: draft_key.to_owned(), step: CreationStep::Submit(kind) });
+        self.pending.insert(
+            request,
+            Pending::Creation {
+                draft_key: draft_key.to_owned(),
+                step: CreationStep::Submit(kind),
+            },
+        );
     }
 
     fn run_recover(&mut self, draft_key: &str) {
-        let Some(core) = self.core.clone() else { return };
-        let Some(creation) = self.creations.get_mut(draft_key) else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
+        let Some(creation) = self.creations.get_mut(draft_key) else {
+            return;
+        };
         let host = creation.host.clone();
         let connected = self.hosts.get(&host).is_some_and(|h| h.connected);
-        let Some(run) = creation.run.as_mut() else { return };
+        let Some(run) = creation.run.as_mut() else {
+            return;
+        };
         if !connected {
             run.waiting = Some(Wait::Recover);
             return;
@@ -254,16 +304,28 @@ impl ComposerService {
             json!({"type": "creation.subscribe.request", "kind": kind.name(), "idempotencyKey": run.key, "subscribe": false}),
             "creation.subscribe.response",
         );
-        self.pending.insert(request, Pending::Creation { draft_key: draft_key.to_owned(), step: CreationStep::Recover(kind) });
+        self.pending.insert(
+            request,
+            Pending::Creation {
+                draft_key: draft_key.to_owned(),
+                step: CreationStep::Recover(kind),
+            },
+        );
     }
 
     /// CreationClient.reconnect: follow this intent's receipt over a subscription.
     fn run_resume(&mut self, draft_key: &str) {
-        let Some(core) = self.core.clone() else { return };
-        let Some(creation) = self.creations.get_mut(draft_key) else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
+        let Some(creation) = self.creations.get_mut(draft_key) else {
+            return;
+        };
         let host = creation.host.clone();
         let connected = self.hosts.get(&host).is_some_and(|h| h.connected);
-        let Some(run) = creation.run.as_mut() else { return };
+        let Some(run) = creation.run.as_mut() else {
+            return;
+        };
         run.recovering = true;
         if run.observation.is_some() {
             // The core restores the subscription after reconnects (subscription.restored).
@@ -281,7 +343,13 @@ impl ComposerService {
             "creation.subscribe.response",
         );
         run.observation = Some(request.clone());
-        self.pending.insert(request, Pending::Creation { draft_key: draft_key.to_owned(), step: CreationStep::Observe(kind) });
+        self.pending.insert(
+            request,
+            Pending::Creation {
+                draft_key: draft_key.to_owned(),
+                step: CreationStep::Observe(kind),
+            },
+        );
     }
 
     pub(super) fn creation_response(
@@ -292,22 +360,33 @@ impl ComposerService {
         step: CreationStep,
         result: Result<Value, CoreError>,
     ) {
-        if self.creations.get(draft_key).is_none_or(|c| c.run.is_none()) {
+        if self
+            .creations
+            .get(draft_key)
+            .is_none_or(|c| c.run.is_none())
+        {
             return;
         }
         match step {
             CreationStep::Submit(_) => self.submit_result(draft_key, result),
             CreationStep::Recover(_) => match result {
                 Ok(payload) => {
-                    if let Some(error) = paseo_gui_core::response_error(&payload, "creation.subscribe.request") {
-                        return self.run_finished(draft_key, Outcome::Failed(unknown(error.message)));
+                    if let Some(error) =
+                        paseo_gui_core::response_error(&payload, "creation.subscribe.request")
+                    {
+                        return self
+                            .run_finished(draft_key, Outcome::Failed(unknown(error.message)));
                     }
                     let snapshot = get(&payload, "snapshot").clone();
                     if !snapshot.is_object() || rerun(&snapshot) {
                         return self.run_submit(draft_key);
                     }
                     self.apply_receipt_snapshot(draft_key, &snapshot);
-                    if self.creations.get(draft_key).is_some_and(|c| c.run.is_some()) {
+                    if self
+                        .creations
+                        .get(draft_key)
+                        .is_some_and(|c| c.run.is_some())
+                    {
                         self.run_resume(draft_key);
                     }
                 }
@@ -337,7 +416,11 @@ impl ComposerService {
                     self.receipt_snapshot(draft_key, get(&payload, "snapshot"));
                 }
                 Err(error) => {
-                    if let Some(run) = self.creations.get_mut(draft_key).and_then(|c| c.run.as_mut()) {
+                    if let Some(run) = self
+                        .creations
+                        .get_mut(draft_key)
+                        .and_then(|c| c.run.as_mut())
+                    {
                         run.observation = None;
                     }
                     if offline_code(&error.code) || !self.creation_connected(draft_key) {
@@ -352,11 +435,17 @@ impl ComposerService {
     }
 
     fn creation_connected(&self, draft_key: &str) -> bool {
-        self.creations.get(draft_key).is_some_and(|c| self.connected(&c.host))
+        self.creations
+            .get(draft_key)
+            .is_some_and(|c| self.connected(&c.host))
     }
 
     fn set_waiting(&mut self, draft_key: &str, wait: Wait) {
-        if let Some(run) = self.creations.get_mut(draft_key).and_then(|c| c.run.as_mut()) {
+        if let Some(run) = self
+            .creations
+            .get_mut(draft_key)
+            .and_then(|c| c.run.as_mut())
+        {
             run.waiting = Some(wait);
         }
     }
@@ -371,10 +460,11 @@ impl ComposerService {
     }
 
     fn submit_result(&mut self, draft_key: &str, result: Result<Value, CoreError>) {
-        let (kind, key, recovering) = match self.creations.get(draft_key).and_then(|c| c.run.as_ref()) {
-            Some(run) => (run.kind, run.key.clone(), run.recovering),
-            None => return,
-        };
+        let (kind, key, recovering) =
+            match self.creations.get(draft_key).and_then(|c| c.run.as_ref()) {
+                Some(run) => (run.kind, run.key.clone(), run.recovering),
+                None => return,
+            };
         let connected = self.creation_connected(draft_key);
         let payload = match result.map(|envelope| super::ops::open_envelope(&envelope)) {
             Ok(Ok(payload)) => payload,
@@ -390,11 +480,17 @@ impl ComposerService {
                         return;
                     }
                     let message = owned(get(&error, "message"));
-                    let outcome = if get(&error, "outcomeUnknown") == &Value::Bool(true) { unknown(message) } else { rejected(message) };
+                    let outcome = if get(&error, "outcomeUnknown") == &Value::Bool(true) {
+                        unknown(message)
+                    } else {
+                        rejected(message)
+                    };
                     return self.run_finished(draft_key, Outcome::Failed(outcome));
                 }
                 let receipt = get(details, "creation");
-                if s(get(receipt, "kind")) != kind.name() || s(get(receipt, "idempotencyKey")) != key {
+                if s(get(receipt, "kind")) != kind.name()
+                    || s(get(receipt, "idempotencyKey")) != key
+                {
                     return self.run_finished(
                         draft_key,
                         Outcome::Failed(unknown(t("composer.errors.creationMismatchedReceipt"))),
@@ -409,16 +505,27 @@ impl ComposerService {
                     }
                     return;
                 }
-                let outcome = if error.outcome_unknown { unknown(error.message) } else { rejected(error.message) };
+                let outcome = if error.outcome_unknown {
+                    unknown(error.message)
+                } else {
+                    rejected(error.message)
+                };
                 return self.run_finished(draft_key, Outcome::Failed(outcome));
             }
         };
         let creation = get(&payload, "creation").clone();
         if get(&creation, "outcomeUnknown") == &Value::Bool(true) {
-            let message = s_or(get(&creation, "error"), &t("composer.errors.creationOutcomeUnknown")).to_owned();
+            let message = s_or(
+                get(&creation, "error"),
+                &t("composer.errors.creationOutcomeUnknown"),
+            )
+            .to_owned();
             return self.run_finished(draft_key, Outcome::Failed(unknown(message)));
         }
-        if s(get(&creation, "phase")) == "failed" && s(get(&creation, "failedStage")) == "prompt" && get(&creation, "agent").is_object() {
+        if s(get(&creation, "phase")) == "failed"
+            && s(get(&creation, "failedStage")) == "prompt"
+            && get(&creation, "agent").is_object()
+        {
             return self.run_finished(
                 draft_key,
                 Outcome::Complete(json!({"agent": get(&creation, "agent"), "creation": creation, "promptError": get(&creation, "error")})),
@@ -430,7 +537,8 @@ impl ComposerService {
             || get(&payload, "ok") == &Value::Bool(false)
             || get(&payload, "success") == &Value::Bool(false)
         {
-            let message = s_or(get(&payload, "error"), &t("composer.errors.daemonRejected")).to_owned();
+            let message =
+                s_or(get(&payload, "error"), &t("composer.errors.daemonRejected")).to_owned();
             return self.run_finished(draft_key, Outcome::Failed(rejected(message)));
         }
         self.run_finished(draft_key, Outcome::Complete(payload));
@@ -438,7 +546,13 @@ impl ComposerService {
 
     /// CreationClient.receive: an older revision never replaces a newer one.
     fn apply_receipt_snapshot(&mut self, draft_key: &str, receipt: &Value) {
-        let Some(run) = self.creations.get_mut(draft_key).and_then(|c| c.run.as_mut()) else { return };
+        let Some(run) = self
+            .creations
+            .get_mut(draft_key)
+            .and_then(|c| c.run.as_mut())
+        else {
+            return;
+        };
         if s(get(receipt, "idempotencyKey")) != run.key {
             return;
         }
@@ -486,32 +600,59 @@ impl ComposerService {
             })
             .collect();
         for draft_key in keys {
-            let Some(run_kind) = self.creations.get(&draft_key).and_then(|c| c.run.as_ref()).map(|r| r.kind) else { continue };
+            let Some(run_kind) = self
+                .creations
+                .get(&draft_key)
+                .and_then(|c| c.run.as_ref())
+                .map(|r| r.kind)
+            else {
+                continue;
+            };
             if kind_name == format!("{}.create.update", run_kind.name()) {
                 self.apply_receipt_snapshot(&draft_key, payload);
             } else if kind_name == "subscription.restored" {
                 self.receipt_snapshot(&draft_key, get(payload, "snapshot"));
             } else if kind_name == "subscription.error" {
-                let message = s_or(get(payload, "error"), &t("composer.errors.creationSubscriptionFailed")).to_owned();
+                let message = s_or(
+                    get(payload, "error"),
+                    &t("composer.errors.creationSubscriptionFailed"),
+                )
+                .to_owned();
                 self.run_finished(&draft_key, Outcome::Failed(unknown(message)));
             }
         }
     }
 
     pub(super) fn creation_connection_changed(&mut self, host: &str, closed: bool) {
-        let keys: Vec<String> = self.creations.iter().filter(|(_, c)| c.host == host).map(|(k, _)| k.clone()).collect();
+        let keys: Vec<String> = self
+            .creations
+            .iter()
+            .filter(|(_, c)| c.host == host)
+            .map(|(k, _)| k.clone())
+            .collect();
         for draft_key in keys {
             if closed {
                 // CreationClient.close: closing the client fails every unsettled creation.
-                if self.creations.get(&draft_key).is_some_and(|c| c.run.is_some()) {
-                    self.run_finished(&draft_key, Outcome::Failed(unknown(t("composer.errors.daemonClientClosed"))));
+                if self
+                    .creations
+                    .get(&draft_key)
+                    .is_some_and(|c| c.run.is_some())
+                {
+                    self.run_finished(
+                        &draft_key,
+                        Outcome::Failed(unknown(t("composer.errors.daemonClientClosed"))),
+                    );
                 }
                 continue;
             }
             if !self.connected(host) {
                 continue;
             }
-            let waiting = self.creations.get(&draft_key).and_then(|c| c.run.as_ref()).and_then(|r| r.waiting);
+            let waiting = self
+                .creations
+                .get(&draft_key)
+                .and_then(|c| c.run.as_ref())
+                .and_then(|r| r.waiting);
             match waiting {
                 Some(Wait::Recover) => self.run_recover(&draft_key),
                 Some(Wait::Resume) => self.run_resume(&draft_key),
@@ -521,8 +662,12 @@ impl ComposerService {
     }
 
     fn run_finished(&mut self, draft_key: &str, outcome: Outcome) {
-        let Some(creation) = self.creations.get_mut(draft_key) else { return };
-        let Some(run) = creation.run.take() else { return };
+        let Some(creation) = self.creations.get_mut(draft_key) else {
+            return;
+        };
+        let Some(run) = creation.run.take() else {
+            return;
+        };
         if let (Some(observation), Some(core)) = (run.observation, self.core.clone()) {
             core.cancel_request(&observation);
         }
@@ -531,12 +676,16 @@ impl ComposerService {
             (RunKind::Workspace, Outcome::Complete(result)) => {
                 let workspace_id = owned(get(get(&result, "workspace"), "id"));
                 if workspace_id.is_empty() {
-                    return self.creation_failed(draft_key, &rejected(t("composer.errors.workspaceIdentityMissing")));
+                    return self.creation_failed(
+                        draft_key,
+                        &rejected(t("composer.errors.workspaceIdentityMissing")),
+                    );
                 }
                 if let Some(creation) = self.creations.get_mut(draft_key) {
                     creation.workspace_id = workspace_id.clone();
                 }
-                self.drafts.update(draft_key, json!({"creationWorkspaceId": workspace_id}));
+                self.drafts
+                    .update(draft_key, json!({"creationWorkspaceId": workspace_id}));
                 self.prepare_agent_request(draft_key);
             }
             (RunKind::Agent, Outcome::Complete(result)) => self.agent_created(draft_key, result),
@@ -545,7 +694,9 @@ impl ComposerService {
     }
 
     fn agent_created(&mut self, draft_key: &str, response: Value) {
-        let Some(creation) = self.creations.remove(draft_key) else { return };
+        let Some(creation) = self.creations.remove(draft_key) else {
+            return;
+        };
         let agent = get(&response, "agent").clone();
         let agent_id = owned(get(&agent, "id"));
         if agent_id.is_empty() {
@@ -579,7 +730,10 @@ impl ComposerService {
             data = json!({"submissionError": display(&prompt_error)});
         } else {
             self.drafts.acknowledge(draft_key, &message);
-            self.drafts.update(draft_key, json!({"creationKey": null, "creationRequest": null}));
+            self.drafts.update(
+                draft_key,
+                json!({"creationKey": null, "creationRequest": null}),
+            );
             // create-flow-store markLifecycle "sent": optimistic running handoff.
             self.mark_sent(&creation.host, &agent_id);
         }
@@ -600,18 +754,29 @@ impl ComposerService {
         });
         self.notify(
             creation.panel,
-            PanelNotice::SendFinished { key: draft_key.to_owned(), message_id: owned(get(&message, "messageId")), error: None },
+            PanelNotice::SendFinished {
+                key: draft_key.to_owned(),
+                message_id: owned(get(&message, "messageId")),
+                error: None,
+            },
         );
         self.bump();
     }
 
     pub(super) fn creation_failed(&mut self, draft_key: &str, error: &Value) {
-        let Some(creation) = self.creations.remove(draft_key) else { return };
+        let Some(creation) = self.creations.remove(draft_key) else {
+            return;
+        };
         let message = super::service::send_error_message(error);
         let definite = get(error, "outcomeUnknown") != &Value::Bool(true);
-        let failed = self.drafts.fail_send(draft_key, &creation.message, &message, definite);
+        let failed = self
+            .drafts
+            .fail_send(draft_key, &creation.message, &message, definite);
         if failed && definite {
-            self.drafts.update(draft_key, json!({"creationKey": null, "creationRequest": null}));
+            self.drafts.update(
+                draft_key,
+                json!({"creationKey": null, "creationRequest": null}),
+            );
         }
         self.active_sends.remove(draft_key);
         self.notify(

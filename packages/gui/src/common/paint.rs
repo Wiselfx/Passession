@@ -77,8 +77,15 @@ impl TextSpec {
 /// Presents hard line breaks as spaces without dropping later label content.
 /// Paragraph/code layout must keep the original text instead.
 pub fn single_line_text(text: &str) -> Cow<'_, str> {
-    let is_break = |c| matches!(c, '\n' | '\r' | '\u{000b}' | '\u{000c}' | '\u{0085}' | '\u{2028}' | '\u{2029}');
-    let Some(first) = text.find(is_break) else { return Cow::Borrowed(text) };
+    let is_break = |c| {
+        matches!(
+            c,
+            '\n' | '\r' | '\u{000b}' | '\u{000c}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+        )
+    };
+    let Some(first) = text.find(is_break) else {
+        return Cow::Borrowed(text);
+    };
     let mut line = String::with_capacity(text.len());
     line.push_str(&text[..first]);
     let mut chars = text[first..].chars().peekable();
@@ -99,10 +106,17 @@ impl Painter {
     /// The area of the draw list this painter last drew into (`#[redraw]` target): every draw
     /// call of one painter lands in the same list, so any drawn component identifies it.
     pub fn area(&self) -> Area {
-        [self.draw_box.area(), self.text_regular.area(), self.text_medium.area(), self.text_mono.area(), self.text_icon.area(), self.draw_ring.area()]
-            .into_iter()
-            .find(|area| !matches!(area, Area::Empty))
-            .unwrap_or(Area::Empty)
+        [
+            self.draw_box.area(),
+            self.text_regular.area(),
+            self.text_medium.area(),
+            self.text_mono.area(),
+            self.text_icon.area(),
+            self.draw_ring.area(),
+        ]
+        .into_iter()
+        .find(|area| !matches!(area, Area::Empty))
+        .unwrap_or(Area::Empty)
     }
 
     pub fn redraw(&self, cx: &mut Cx) {
@@ -121,7 +135,10 @@ impl Painter {
         let alpha = self.alpha;
         let drawer = self.drawer(spec.font);
         drawer.text_style.font_size = Typography::pt(spec.size);
-        drawer.color = Vec4 { w: spec.color.w * alpha, ..spec.color };
+        drawer.color = Vec4 {
+            w: spec.color.w * alpha,
+            ..spec.color
+        };
         drawer
     }
 
@@ -131,15 +148,32 @@ impl Painter {
         self.draw_box.opacity = alpha;
     }
 
-    pub fn layout(&mut self, cx: &mut Cx, spec: TextSpec, text: &str, max_width: Option<f64>) -> Rc<LaidoutText> {
+    pub fn layout(
+        &mut self,
+        cx: &mut Cx,
+        spec: TextSpec,
+        text: &str,
+        max_width: Option<f64>,
+    ) -> Rc<LaidoutText> {
         let drawer = self.prepare(spec);
-        drawer.layout(cx, 0.0, 0.0, max_width.map(|w| w as f32), max_width.is_some(), Align::default(), text)
+        drawer.layout(
+            cx,
+            0.0,
+            0.0,
+            max_width.map(|w| w as f32),
+            max_width.is_some(),
+            Align::default(),
+            text,
+        )
     }
 
     /// Single-line size.
     pub fn measure(&mut self, cx: &mut Cx, spec: TextSpec, text: &str) -> DVec2 {
         let laid = self.layout(cx, spec, text, None);
-        dvec2(laid.size_in_lpxs.width as f64, laid.size_in_lpxs.height as f64)
+        dvec2(
+            laid.size_in_lpxs.width as f64,
+            laid.size_in_lpxs.height as f64,
+        )
     }
 
     /// Line height of the style (empty string still has one row).
@@ -157,9 +191,19 @@ impl Painter {
     /// Single line inside `rect`, vertically centred, horizontally aligned by `align_x`
     /// (0 left, 0.5 centre, 1 right) and truncated with an ellipsis (`maxLines: 1`,
     /// `TextOverflow.ellipsis`). Returns the drawn rect.
-    pub fn text_in(&mut self, cx: &mut Cx2d, rect: Rect, spec: TextSpec, text: &str, align_x: f64) -> Rect {
+    pub fn text_in(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        spec: TextSpec,
+        text: &str,
+        align_x: f64,
+    ) -> Rect {
         if rect.size.x <= 0.0 || rect.size.y <= 0.0 || text.is_empty() {
-            return Rect { pos: rect.pos, size: DVec2::default() };
+            return Rect {
+                pos: rect.pos,
+                size: DVec2::default(),
+            };
         }
         let line = single_line_text(text);
         let measured = self.measure(cx, spec, &line);
@@ -194,7 +238,9 @@ impl Painter {
         if ellipsis > max_width {
             return String::new();
         }
-        let Some(row) = laid.rows.first() else { return String::new() };
+        let Some(row) = laid.rows.first() else {
+            return String::new();
+        };
         let budget = (max_width - ellipsis).max(0.0) as f32;
         let mut index = row.x_in_lpxs_to_index(budget).min(line.len());
         while index > 0 && !line.is_char_boundary(index) {
@@ -222,7 +268,17 @@ impl Painter {
     /// of the run, so a line painted run by run (syntax colours) matches the layout of its
     /// whole text. Returns the x the run ends at.
     #[allow(clippy::too_many_arguments)]
-    pub fn line_run(&mut self, cx: &mut Cx2d, spec: TextSpec, line_x: f64, x: f64, top: f64, height: f64, text: &str, visible_from: f64) -> f64 {
+    pub fn line_run(
+        &mut self,
+        cx: &mut Cx2d,
+        spec: TextSpec,
+        line_x: f64,
+        x: f64,
+        top: f64,
+        height: f64,
+        text: &str,
+        visible_from: f64,
+    ) -> f64 {
         if text.is_empty() {
             return x;
         }
@@ -231,7 +287,10 @@ impl Painter {
         let indent = if line.contains('\t') { x - line_x } else { 0.0 };
         let drawer = self.prepare(spec);
         let laid = drawer.layout(cx, indent as f32, 0.0, None, false, Align::default(), &line);
-        let size = dvec2(laid.size_in_lpxs.width as f64, laid.size_in_lpxs.height as f64);
+        let size = dvec2(
+            laid.size_in_lpxs.width as f64,
+            laid.size_in_lpxs.height as f64,
+        );
         let pos = dvec2(x - indent, top + (height - size.y) * 0.5);
         if pos.x + size.x >= visible_from {
             drawer.draw_abs_laidout(cx, pos, &laid);
@@ -240,17 +299,35 @@ impl Painter {
     }
 
     /// Wrapped paragraph from `pos` within `max_width`; returns its size.
-    pub fn paragraph(&mut self, cx: &mut Cx2d, pos: DVec2, max_width: f64, spec: TextSpec, text: &str) -> DVec2 {
+    pub fn paragraph(
+        &mut self,
+        cx: &mut Cx2d,
+        pos: DVec2,
+        max_width: f64,
+        spec: TextSpec,
+        text: &str,
+    ) -> DVec2 {
         let laid = self.layout(cx, spec, text, Some(max_width));
-        let size = dvec2(laid.size_in_lpxs.width as f64, laid.size_in_lpxs.height as f64);
+        let size = dvec2(
+            laid.size_in_lpxs.width as f64,
+            laid.size_in_lpxs.height as f64,
+        );
         let drawer = self.prepare(spec);
         drawer.draw_walk_laidout(cx, Walk::abs_rect(Rect { pos, size }), &laid);
         size
     }
 
     /// Height a wrapped paragraph needs.
-    pub fn paragraph_height(&mut self, cx: &mut Cx, max_width: f64, spec: TextSpec, text: &str) -> f64 {
-        self.layout(cx, spec, text, Some(max_width)).size_in_lpxs.height as f64
+    pub fn paragraph_height(
+        &mut self,
+        cx: &mut Cx,
+        max_width: f64,
+        spec: TextSpec,
+        text: &str,
+    ) -> f64 {
+        self.layout(cx, spec, text, Some(max_width))
+            .size_in_lpxs
+            .height as f64
     }
 
     /// A Lucide icon of `size` centred in `rect`.
@@ -258,11 +335,17 @@ impl Painter {
         let glyph = icons::text(name);
         let drawer = &mut self.text_icon;
         drawer.text_style.font_size = Typography::pt(size);
-        drawer.color = Vec4 { w: color.w * self.alpha, ..color };
+        drawer.color = Vec4 {
+            w: color.w * self.alpha,
+            ..color
+        };
         let laid = drawer.layout(cx, 0.0, 0.0, None, false, Align::default(), &glyph);
         let w = laid.size_in_lpxs.width as f64;
         let h = laid.size_in_lpxs.height as f64;
-        let pos = dvec2(rect.pos.x + (rect.size.x - w) * 0.5, rect.pos.y + (rect.size.y - h) * 0.5);
+        let pos = dvec2(
+            rect.pos.x + (rect.size.x - w) * 0.5,
+            rect.pos.y + (rect.size.y - h) * 0.5,
+        );
         drawer.draw_abs(cx, pos, &glyph);
     }
 
@@ -273,8 +356,17 @@ impl Painter {
         self.draw_box.paint(cx, rect, color, radius);
     }
 
-    pub fn outline(&mut self, cx: &mut Cx2d, rect: Rect, fill: Vec4, border: Vec4, width: f64, radius: f64) {
-        self.draw_box.paint_bordered(cx, rect, fill, border, width, radius);
+    pub fn outline(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        fill: Vec4,
+        border: Vec4,
+        width: f64,
+        radius: f64,
+    ) {
+        self.draw_box
+            .paint_bordered(cx, rect, fill, border, width, radius);
     }
 
     /// Paints `rect` and returns the widget's capture/hover area. Makepad hands pointer captures
@@ -284,9 +376,18 @@ impl Painter {
     /// `capture` box; the visible box goes through `draw_box` right after it, which also opens
     /// `draw_box`'s batch before any text of this painter (batches draw in creation order).
     /// Call at most once per frame per painter, before its other drawing.
-    pub fn capture_box(&mut self, cx: &mut Cx2d, rect: Rect, fill: Vec4, border: Vec4, width: f64, radius: f64) -> Area {
+    pub fn capture_box(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        fill: Vec4,
+        border: Vec4,
+        width: f64,
+        radius: f64,
+    ) -> Area {
         self.capture.paint(cx, rect, Vec4::default(), 0.0);
-        self.draw_box.paint_bordered(cx, rect, fill, border, width, radius);
+        self.draw_box
+            .paint_bordered(cx, rect, fill, border, width, radius);
         self.capture.area()
     }
 
@@ -312,26 +413,56 @@ impl Painter {
 
     /// Horizontal hairline (Flutter `Divider(height: 1)`).
     pub fn hline(&mut self, cx: &mut Cx2d, x: f64, y: f64, width: f64, color: Vec4) {
-        self.draw_box.paint(cx, Rect { pos: dvec2(x, y), size: dvec2(width, 1.0) }, color, 0.0);
+        self.draw_box.paint(
+            cx,
+            Rect {
+                pos: dvec2(x, y),
+                size: dvec2(width, 1.0),
+            },
+            color,
+            0.0,
+        );
     }
 
     pub fn vline(&mut self, cx: &mut Cx2d, x: f64, y: f64, height: f64, color: Vec4) {
-        self.draw_box.paint(cx, Rect { pos: dvec2(x, y), size: dvec2(1.0, height) }, color, 0.0);
+        self.draw_box.paint(
+            cx,
+            Rect {
+                pos: dvec2(x, y),
+                size: dvec2(1.0, height),
+            },
+            color,
+            0.0,
+        );
     }
 
     pub fn dot(&mut self, cx: &mut Cx2d, center: DVec2, diameter: f64, color: Vec4) {
         let r = diameter * 0.5;
         self.draw_box.paint(
             cx,
-            Rect { pos: dvec2(center.x - r, center.y - r), size: dvec2(diameter, diameter) },
+            Rect {
+                pos: dvec2(center.x - r, center.y - r),
+                size: dvec2(diameter, diameter),
+            },
             color,
             r,
         );
     }
 
     /// Ring or arc (`progress` of a full turn starting at `rotation` turns).
-    pub fn ring(&mut self, cx: &mut Cx2d, rect: Rect, color: Vec4, stroke: f64, progress: f64, rotation: f64) {
-        self.draw_ring.color = Vec4 { w: color.w * self.alpha, ..color };
+    pub fn ring(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        color: Vec4,
+        stroke: f64,
+        progress: f64,
+        rotation: f64,
+    ) {
+        self.draw_ring.color = Vec4 {
+            w: color.w * self.alpha,
+            ..color
+        };
         self.draw_ring.stroke = stroke as f32;
         self.draw_ring.progress = progress as f32;
         self.draw_ring.rotation = rotation as f32;
@@ -348,7 +479,10 @@ pub struct HitMap<T: Clone> {
 
 impl<T: Clone> Default for HitMap<T> {
     fn default() -> Self {
-        Self { items: Vec::new(), clip: None }
+        Self {
+            items: Vec::new(),
+            clip: None,
+        }
     }
 }
 
@@ -375,11 +509,19 @@ impl<T: Clone + PartialEq> HitMap<T> {
 
     /// Topmost (last pushed) item under `pos`.
     pub fn at(&self, pos: DVec2) -> Option<T> {
-        self.items.iter().rev().find(|(rect, _)| rect.contains(pos)).map(|(_, item)| item.clone())
+        self.items
+            .iter()
+            .rev()
+            .find(|(rect, _)| rect.contains(pos))
+            .map(|(_, item)| item.clone())
     }
 
     pub fn rect_of(&self, item: &T) -> Option<Rect> {
-        self.items.iter().rev().find(|(_, it)| it == item).map(|(rect, _)| *rect)
+        self.items
+            .iter()
+            .rev()
+            .find(|(_, it)| it == item)
+            .map(|(rect, _)| *rect)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -392,16 +534,27 @@ pub fn intersect(a: Rect, b: Rect) -> Rect {
     let y0 = a.pos.y.max(b.pos.y);
     let x1 = (a.pos.x + a.size.x).min(b.pos.x + b.size.x);
     let y1 = (a.pos.y + a.size.y).min(b.pos.y + b.size.y);
-    Rect { pos: dvec2(x0, y0), size: dvec2((x1 - x0).max(0.0), (y1 - y0).max(0.0)) }
+    Rect {
+        pos: dvec2(x0, y0),
+        size: dvec2((x1 - x0).max(0.0), (y1 - y0).max(0.0)),
+    }
 }
 
 pub fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
-    Rect { pos: dvec2(x, y), size: dvec2(w.max(0.0), h.max(0.0)) }
+    Rect {
+        pos: dvec2(x, y),
+        size: dvec2(w.max(0.0), h.max(0.0)),
+    }
 }
 
 /// `rect` shrunk by `dx`/`dy` on each side.
 pub fn inset(r: Rect, dx: f64, dy: f64) -> Rect {
-    rect(r.pos.x + dx, r.pos.y + dy, r.size.x - dx * 2.0, r.size.y - dy * 2.0)
+    rect(
+        r.pos.x + dx,
+        r.pos.y + dy,
+        r.size.x - dx * 2.0,
+        r.size.y - dy * 2.0,
+    )
 }
 
 #[cfg(test)]
@@ -411,19 +564,30 @@ mod tests {
 
     #[test]
     fn single_line_labels_borrow_unchanged_text() {
-        for text in ["", "hello world", "긴 한국어 제목과 English", "a\tb", "👩‍💻e\u{301}"] {
+        for text in [
+            "",
+            "hello world",
+            "긴 한국어 제목과 English",
+            "a\tb",
+            "👩‍💻e\u{301}",
+        ] {
             assert!(matches!(single_line_text(text), Cow::Borrowed(s) if s == text));
         }
     }
 
     #[test]
     fn single_line_labels_preserve_content_across_hard_breaks() {
-        for separator in ["\n", "\r", "\r\n", "\u{000b}", "\u{000c}", "\u{0085}", "\u{2028}", "\u{2029}"] {
+        for separator in [
+            "\n", "\r", "\r\n", "\u{000b}", "\u{000c}", "\u{0085}", "\u{2028}", "\u{2029}",
+        ] {
             let text = format!("# Target{separator}packages/한글");
             assert_eq!(single_line_text(&text), "# Target packages/한글");
             assert_eq!(single_line_text(separator), " ");
         }
-        assert_eq!(single_line_text("\r\n한글\n\nEnglish\u{2029}"), " 한글  English ");
+        assert_eq!(
+            single_line_text("\r\n한글\n\nEnglish\u{2029}"),
+            " 한글  English "
+        );
         assert_eq!(single_line_text("\r\r\n\n"), "   ");
     }
 }

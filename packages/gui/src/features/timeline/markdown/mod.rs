@@ -5,6 +5,7 @@
 
 pub mod html;
 pub mod model;
+pub mod parser;
 pub mod view;
 pub mod worker;
 
@@ -52,7 +53,16 @@ fn stream_blocks(d: &mut Draw, text: &str, root: Option<&str>, linkify: bool) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_parsed(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, blocks: &Rc<Vec<Block>>, x: f64, y: f64, w: f64, color: Vec4) -> f64 {
+fn draw_parsed(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    blocks: &Rc<Vec<Block>>,
+    x: f64,
+    y: f64,
+    w: f64,
+    color: Vec4,
+) -> f64 {
     let previous = d.state.markdown_paragraphs.set_owner(Some(blocks.clone()));
     let height = view::draw_blocks(cx, d, opts, blocks, x, y, w, color, false);
     d.state.markdown_paragraphs.set_owner(previous);
@@ -62,7 +72,17 @@ fn draw_parsed(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, blocks: &Rc<Vec<B
 /// Synchronous Markdown entry point for non-assistant surfaces; returns height.
 /// `streaming` reuses a stable head. Assistant rows use `view::draw_worker`.
 #[allow(clippy::too_many_arguments)]
-pub fn draw(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, text: &str, x: f64, y: f64, w: f64, linkify: bool, streaming: bool) -> f64 {
+pub fn draw(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    text: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    linkify: bool,
+    streaming: bool,
+) -> f64 {
     let color = d.look.palette.foreground;
     let root = opts.workspace_root;
     if streaming

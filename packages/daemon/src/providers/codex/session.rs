@@ -120,9 +120,9 @@ fn normalize_config(config: &mut Value, models: &[Value], resolved: &Value) {
             .iter()
             .find(|m| m["isDefault"] == true)
             .or(models.first())
-        {
-            config["model"] = model["id"].clone();
-        }
+    {
+        config["model"] = model["id"].clone();
+    }
     if config["thinkingOptionId"]
         .as_str()
         .is_none_or(|s| s.trim().is_empty())
@@ -130,9 +130,10 @@ fn normalize_config(config: &mut Value, models: &[Value], resolved: &Value) {
         config["thinkingOptionId"] = resolved["model_reasoning_effort"].clone();
     }
     if config["thinkingOptionId"].is_null()
-        && let Some(model) = models.iter().find(|m| m["id"] == config["model"]) {
-            config["thinkingOptionId"] = model["defaultReasoningEffort"].clone();
-        }
+        && let Some(model) = models.iter().find(|m| m["id"] == config["model"])
+    {
+        config["thinkingOptionId"] = model["defaultReasoningEffort"].clone();
+    }
     reconcile_tier(config, models);
 }
 fn reconcile_tier(config: &mut Value, models: &[Value]) {
@@ -287,7 +288,8 @@ impl CodexSession {
             let initialized = client.initialize().await?;
             let rollback = initialized["userAgent"]
                 .as_str()
-                .and_then(super::version).is_none_or(|v| v < (0, 156, 0));
+                .and_then(super::version)
+                .is_none_or(|v| v < (0, 156, 0));
             let (metadata, skills) = if history_only {
                 (Arc::new(Metadata::default()), None)
             } else {
@@ -327,9 +329,9 @@ impl CodexSession {
                 && let Some(item) = entry["item"]["callId"]
                     .as_str()
                     .and_then(|id| async_questions.timeline(id))
-                {
-                    entry["item"] = item;
-                }
+            {
+                entry["item"] = item;
+            }
         }
         let recorded_cards = card_logs(&options);
         apply_card_logs(&mut history, &recorded_cards);
@@ -561,9 +563,13 @@ impl CodexSession {
             }
             if let Some(thread) = thread {
                 let response = resume(&transport, &thread, &config, &self.inner).await?;
-                let mut history =
-                    load_history(transport.as_ref(), &thread, config["cwd"].as_str(), &self.spec.id)
-                        .await?;
+                let mut history = load_history(
+                    transport.as_ref(),
+                    &thread,
+                    config["cwd"].as_str(),
+                    &self.spec.id,
+                )
+                .await?;
                 let mut state = self.state.lock().unwrap();
                 // Reconnect keeps child items in memory; replay shows the cards as they are.
                 let mut logs = HashMap::new();
@@ -613,9 +619,10 @@ impl CodexSession {
     pub(super) async fn emit(&self, mut event: Value) -> Result<()> {
         event["provider"] = json!(self.spec.id);
         if event.get("turnId").is_none()
-            && let Some(turn) = self.state.lock().unwrap().foreground.clone() {
-                event["turnId"] = json!(turn);
-            }
+            && let Some(turn) = self.state.lock().unwrap().foreground.clone()
+        {
+            event["turnId"] = json!(turn);
+        }
         self.holds.emit(&self.sink, event).await
     }
     async fn ensure_thread(&self) -> Result<String> {
@@ -886,7 +893,9 @@ async fn read_complete(reader: &dyn ThreadReader, id: &str) -> Result<Value> {
     let reply = reader.read_thread(id).await?;
     let turns = &reply["thread"]["turns"];
     if !turns.is_array()
-        || turns.as_array().is_some_and(|turns| turns.iter().any(|turn| !turn["items"].is_array()))
+        || turns
+            .as_array()
+            .is_some_and(|turns| turns.iter().any(|turn| !turn["items"].is_array()))
     {
         bail!("Codex thread/read returned an incomplete thread")
     }
@@ -924,13 +933,15 @@ fn child_descriptors(
                 if !seen.insert(child.clone()) {
                     continue;
                 }
-                descriptors.push(json!({"type":"provider_subagent","provider":provider,"event":{
+                descriptors.push(
+                    json!({"type":"provider_subagent","provider":provider,"event":{
                     "type":"upsert","id":child,
                     "title":tool["detail"]["subAgentType"],
                     "description":tool["detail"]["description"],
                     "status":if tool["status"]=="canceled"{"canceled"}else{"completed"},
                     "toolCallId":tool["callId"],"parentSubagentId":parent,
-                    "source":{"threadId":child}}}));
+                    "source":{"threadId":child}}}),
+                );
             }
         }
     }
@@ -980,7 +991,10 @@ pub(super) fn card_logs(options: &Value) -> HashMap<String, CardLog> {
 /// Parent replay maps a sub-agent card without its activity; keep the recorded
 /// log and its item identities on the card the daemon reconciles by call ID.
 pub(super) fn apply_card_logs(history: &mut [Value], logs: &HashMap<String, CardLog>) {
-    for event in history.iter_mut().filter(|event| event["type"] == "timeline") {
+    for event in history
+        .iter_mut()
+        .filter(|event| event["type"] == "timeline")
+    {
         let item = &mut event["item"];
         if item["type"] != "tool_call" || item["detail"]["type"] != "sub_agent" {
             continue;
@@ -1009,8 +1023,12 @@ pub(super) fn seed_card_logs(
     for (call, card) in cards {
         let lines: Vec<&str> = card.log.split('\n').collect();
         let entries = card.entries.as_array().map(Vec::as_slice).unwrap_or(&[]);
-        let counts: Vec<usize> = entries.iter().map(|e| e["lines"].as_u64().unwrap_or(0) as usize).collect();
-        if entries.is_empty() || counts.contains(&0) || counts.iter().sum::<usize>() != lines.len() {
+        let counts: Vec<usize> = entries
+            .iter()
+            .map(|e| e["lines"].as_u64().unwrap_or(0) as usize)
+            .collect();
+        if entries.is_empty() || counts.contains(&0) || counts.iter().sum::<usize>() != lines.len()
+        {
             prefixes.insert(call.clone(), card.log.clone());
             continue;
         }
@@ -1040,7 +1058,10 @@ pub(super) fn seed_card_logs(
                 }
                 None => json!({"type":"recorded","text":text,"recorded":true}),
             };
-            child_items.entry(child.to_owned()).or_default().push((key.to_owned(), item));
+            child_items
+                .entry(child.to_owned())
+                .or_default()
+                .push((key.to_owned(), item));
         }
         if !prefix.is_empty() {
             prefixes.insert(call.clone(), prefix.join("\n"));
@@ -1120,10 +1141,15 @@ pub(super) async fn stream_subagent_history(
                 .holds
                 .publish_replay(&request, &spec.id, &session.sink, read, |item, snapshot| {
                     let identity = |item: &Value| {
-                        item["messageId"].as_str().or(item["callId"].as_str()).map(str::to_owned)
+                        item["messageId"]
+                            .as_str()
+                            .or(item["callId"].as_str())
+                            .map(str::to_owned)
                     };
                     identity(item).is_some_and(|id| {
-                        snapshot.iter().any(|row| identity(row).as_deref() == Some(id.as_str()))
+                        snapshot
+                            .iter()
+                            .any(|row| identity(row).as_deref() == Some(id.as_str()))
                     })
                 })
                 .await;
@@ -1259,21 +1285,22 @@ impl AgentSession for CodexSession {
             }
         };
         if let Some(text) = prompt.as_str()
-            && text.trim_start().starts_with('/') {
-                let name = text
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim_start_matches('/');
-                if self
-                    .list_commands()
-                    .await?
-                    .iter()
-                    .any(|c| c["name"] == name)
-                {
-                    return Ok(json!({"status":"unavailable"}));
-                }
+            && text.trim_start().starts_with('/')
+        {
+            let name = text
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('/');
+            if self
+                .list_commands()
+                .await?
+                .iter()
+                .any(|c| c["name"] == name)
+            {
+                return Ok(json!({"status":"unavailable"}));
             }
+        }
         let input = super::input::turn_input(prompt).await?;
         {
             let s = self.state.lock().unwrap();
@@ -1314,11 +1341,17 @@ impl AgentSession for CodexSession {
         }
         Ok(json!({"status":"accepted"}))
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         let (history, coverage) = {
             let mut state = self.state.lock().unwrap();
             let history = std::mem::take(&mut state.history);
-            let coverage = std::mem::replace(&mut state.history_coverage, crate::providers::api::HistoryCoverage::Unverified);
+            let coverage = std::mem::replace(
+                &mut state.history_coverage,
+                crate::providers::api::HistoryCoverage::Unverified,
+            );
             (history, coverage)
         };
         for e in history {

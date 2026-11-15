@@ -8,8 +8,8 @@ pub(crate) mod native;
 
 use crate::{
     action::PlatformError,
-    apple::{self, imp, rust_string, Id},
-    mobile::{deliver, MobileSignal},
+    apple::{self, Id, imp, rust_string},
+    mobile::{MobileSignal, deliver},
 };
 use objc2::{
     class, msg_send,
@@ -19,7 +19,8 @@ use serde_json::{Map, Value};
 use std::sync::Mutex;
 
 /// Waiters for `registerForRemoteNotifications` results.
-static TOKEN_WAITERS: Mutex<Vec<tokio::sync::oneshot::Sender<Result<String, PlatformError>>>> = Mutex::new(Vec::new());
+static TOKEN_WAITERS: Mutex<Vec<tokio::sync::oneshot::Sender<Result<String, PlatformError>>>> =
+    Mutex::new(Vec::new());
 
 pub(crate) fn token_waiter() -> tokio::sync::oneshot::Receiver<Result<String, PlatformError>> {
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -44,12 +45,18 @@ extern "C" fn open_url(_this: &AnyObject, _sel: Sel, _app: Id, url: Id, _options
 }
 
 extern "C" fn did_register(_this: &AnyObject, _sel: Sel, _app: Id, token: Id) {
-    let hex: String = apple::data_bytes(token).iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = apple::data_bytes(token)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     finish_token(Ok(hex));
 }
 
 extern "C" fn did_fail_register(_this: &AnyObject, _sel: Sel, _app: Id, error: Id) {
-    finish_token(Err(PlatformError::new("push_unavailable", apple::error_message(error))));
+    finish_token(Err(PlatformError::new(
+        "push_unavailable",
+        apple::error_message(error),
+    )));
 }
 
 /// APNs `userInfo` → (application data). Expo sends `body` as a dictionary;
@@ -59,18 +66,41 @@ fn apns_data(info: &Value) -> Map<String, Value> {
         Some(Value::Object(body)) => body.clone(),
         _ => info
             .as_object()
-            .map(|map| map.iter().filter(|(k, _)| k.as_str() != "aps").map(|(k, v)| (k.clone(), v.clone())).collect())
+            .map(|map| {
+                map.iter()
+                    .filter(|(k, _)| k.as_str() != "aps")
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }
 
-extern "C" fn did_receive_response(_this: &AnyObject, _sel: Sel, _center: Id, response: Id, completion: Id) {
+extern "C" fn did_receive_response(
+    _this: &AnyObject,
+    _sel: Sel,
+    _center: Id,
+    response: Id,
+    completion: Id,
+) {
     let (identifier, info) = apple::user_notifications::response_info(response);
-    match info.get("payload").and_then(Value::as_str).and_then(|p| serde_json::from_str::<Value>(p).ok()) {
+    match info
+        .get("payload")
+        .and_then(Value::as_str)
+        .and_then(|p| serde_json::from_str::<Value>(p).ok())
+    {
         // A locally presented notification: `{id, data}`.
         Some(payload) => {
-            let id = payload.get("id").and_then(Value::as_str).unwrap_or(&identifier).to_owned();
-            let data = payload.get("data").and_then(Value::as_object).cloned().unwrap_or_default();
+            let id = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(&identifier)
+                .to_owned();
+            let data = payload
+                .get("data")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
             deliver(MobileSignal::NotificationTap(id, data));
         }
         None => deliver(MobileSignal::NotificationTap(identifier, apns_data(&info))),
@@ -80,7 +110,13 @@ extern "C" fn did_receive_response(_this: &AnyObject, _sel: Sel, _center: Id, re
 
 /// Direct APNs in the foreground: list only (original `[.list]`); local
 /// notifications: banner + list + sound.
-extern "C" fn will_present(_this: &AnyObject, _sel: Sel, _center: Id, notification: Id, completion: Id) {
+extern "C" fn will_present(
+    _this: &AnyObject,
+    _sel: Sel,
+    _center: Id,
+    notification: Id,
+    completion: Id,
+) {
     let local = unsafe {
         let request: Id = msg_send![notification, request];
         let content: Id = msg_send![request, content];
@@ -107,7 +143,12 @@ fn call_block(block: Id, value: Option<usize>) {
 pub(crate) fn install_delegates() {
     let bool_enc = apple::BOOL_ENC;
     unsafe {
-        apple::add_method(c"NSAppDelegate", c"application:openURL:options:", imp!(open_url), &format!("{bool_enc}@:@@@"));
+        apple::add_method(
+            c"NSAppDelegate",
+            c"application:openURL:options:",
+            imp!(open_url),
+            &format!("{bool_enc}@:@@@"),
+        );
         apple::add_method(
             c"NSAppDelegate",
             c"application:didRegisterForRemoteNotificationsWithDeviceToken:",
@@ -124,8 +165,16 @@ pub(crate) fn install_delegates() {
             c"PaseoNotificationDelegate",
             class!(NSObject),
             &[
-                (c"userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:", imp!(did_receive_response), "v@:@@@?"),
-                (c"userNotificationCenter:willPresentNotification:withCompletionHandler:", imp!(will_present), "v@:@@@?"),
+                (
+                    c"userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:",
+                    imp!(did_receive_response),
+                    "v@:@@@?",
+                ),
+                (
+                    c"userNotificationCenter:willPresentNotification:withCompletionHandler:",
+                    imp!(will_present),
+                    "v@:@@@?",
+                ),
             ],
         );
         let delegate: Id = msg_send![class, new];

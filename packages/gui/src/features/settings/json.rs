@@ -36,7 +36,10 @@ pub fn scalar_text(value: &Value) -> String {
 }
 
 pub fn obj<'a>(value: &'a Value, key: &str) -> &'a Map<String, Value> {
-    value.get(key).and_then(Value::as_object).unwrap_or(&EMPTY_MAP)
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .unwrap_or(&EMPTY_MAP)
 }
 
 pub fn as_obj(value: &Value) -> &Map<String, Value> {
@@ -44,7 +47,11 @@ pub fn as_obj(value: &Value) -> &Map<String, Value> {
 }
 
 pub fn arr<'a>(value: &'a Value, key: &str) -> &'a [Value] {
-    value.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 pub fn bool_of(value: &Value, key: &str) -> Option<bool> {
@@ -57,12 +64,20 @@ pub fn is_true(value: &Value, key: &str) -> bool {
 
 /// `features[name] == true` inside a `server_info`.
 pub fn feature(server_info: &Value, name: &str) -> bool {
-    obj(server_info, "features").get(name).and_then(Value::as_bool) == Some(true)
+    obj(server_info, "features")
+        .get(name)
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 /// Trimmed non-empty lines (Dart `textLines`).
 pub fn text_lines(value: &str) -> Vec<String> {
-    value.split('\n').map(str::trim).filter(|line| !line.is_empty()).map(String::from).collect()
+    value
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// Lines of `NAME=value` into an object; a line without a name fails.
@@ -71,7 +86,10 @@ pub fn parse_pairs(value: &str, message: &str) -> Result<Map<String, Value>, Str
     for line in text_lines(value) {
         match line.find('=') {
             Some(at) if at >= 1 => {
-                result.insert(line[..at].to_string(), Value::String(line[at + 1..].to_string()));
+                result.insert(
+                    line[..at].to_string(),
+                    Value::String(line[at + 1..].to_string()),
+                );
             }
             _ => return Err(message.to_string()),
         }
@@ -80,11 +98,18 @@ pub fn parse_pairs(value: &str, message: &str) -> Result<Map<String, Value>, Str
 }
 
 pub fn pairs_text(map: &Map<String, Value>) -> String {
-    map.iter().map(|(key, value)| format!("{key}={}", scalar_text(value))).collect::<Vec<_>>().join("\n")
+    map.iter()
+        .map(|(key, value)| format!("{key}={}", scalar_text(value)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn lines_text(values: &[Value]) -> String {
-    values.iter().map(scalar_text).collect::<Vec<_>>().join("\n")
+    values
+        .iter()
+        .map(scalar_text)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Pretty JSON for report sheets (Dart `JsonEncoder.withIndent('  ')`).

@@ -164,9 +164,15 @@ async fn placement(
     }
     if let Some(caller) = caller {
         let agent = fetch(client, context, caller).await?;
-        return Ok((text(&agent, "cwd").into(), agent["workspaceId"].as_str().map(str::to_owned)));
+        return Ok((
+            text(&agent, "cwd").into(),
+            agent["workspaceId"].as_str().map(str::to_owned),
+        ));
     }
-    Ok((std::env::current_dir()?.to_string_lossy().into_owned(), None))
+    Ok((
+        std::env::current_dir()?.to_string_lossy().into_owned(),
+        None,
+    ))
 }
 pub(super) async fn images(paths: Vec<String>, strict: bool) -> Result<Vec<Value>> {
     let mut images = Vec::with_capacity(paths.len());
@@ -596,8 +602,19 @@ mod tests {
     }
     #[test]
     fn managed_worktree_options_are_rejected() {
-        for option in ["--worktree", "--worktree-mode", "--worktree-slug", "--new-branch", "--workspace", "--new-workspace"] {
-            assert!(run_command().try_get_matches_from(["run", "hello", option, "value"]).is_err());
+        for option in [
+            "--worktree",
+            "--worktree-mode",
+            "--worktree-slug",
+            "--new-branch",
+            "--workspace",
+            "--new-workspace",
+        ] {
+            assert!(
+                run_command()
+                    .try_get_matches_from(["run", "hello", option, "value"])
+                    .is_err()
+            );
         }
     }
 }

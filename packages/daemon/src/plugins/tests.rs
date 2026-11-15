@@ -98,26 +98,58 @@ async fn hooks_reject_invalid_payloads_and_unknown_events() {
 async fn native_plugins_require_contained_binary_and_preserve_argument_boundaries() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("paseo-plugin.json");
-    tokio::fs::write(&path, br#"{"id":"legacy"}"#).await.unwrap();
-    let error = manifest::read(directory.path()).await.unwrap_err().to_string();
+    tokio::fs::write(&path, br#"{"id":"legacy"}"#)
+        .await
+        .unwrap();
+    let error = manifest::read(directory.path())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("native Rust plugin release"));
     assert!(error.contains("settings and installation records are preserved"));
     let mut value = json!({"id":"sample","runtime":"native","server":{"executable":"plugin-bin","args":["two words",";not a shell",""]}});
-    tokio::fs::write(&path, serde_json::to_vec(&value).unwrap()).await.unwrap();
+    tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+        .await
+        .unwrap();
     // Metadata may be inspected before Cargo has produced the executable.
     assert!(manifest::read(directory.path()).await.is_ok());
     assert!(manifest::native_entry(directory.path()).await.is_err());
     let binary = directory.path().join("plugin-bin");
-    tokio::fs::copy(std::env::current_exe().unwrap(), &binary).await.unwrap();
+    tokio::fs::copy(std::env::current_exe().unwrap(), &binary)
+        .await
+        .unwrap();
     let entry = manifest::native_entry(directory.path()).await.unwrap();
     assert_eq!(entry.args, ["two words", ";not a shell", ""]);
-    assert_eq!(entry.executable, tokio::fs::canonicalize(&binary).await.unwrap());
-    tokio::fs::write(&binary, b"#!/usr/bin/env node\n").await.unwrap();
-    assert!(manifest::native_entry(directory.path()).await.unwrap_err().to_string().contains("not a script"));
-    for executable in ["../escape", "/absolute", "C:\\escape", "dir/../escape", "dir//file", "./file"] {
+    assert_eq!(
+        entry.executable,
+        tokio::fs::canonicalize(&binary).await.unwrap()
+    );
+    tokio::fs::write(&binary, b"#!/usr/bin/env node\n")
+        .await
+        .unwrap();
+    assert!(
+        manifest::native_entry(directory.path())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not a script")
+    );
+    for executable in [
+        "../escape",
+        "/absolute",
+        "C:\\escape",
+        "dir/../escape",
+        "dir//file",
+        "./file",
+    ] {
         value["server"]["executable"] = json!(executable);
-        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap()).await.unwrap();
-        assert!(manifest::read(directory.path()).await.is_err(), "{executable}");
+        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            manifest::read(directory.path()).await.is_err(),
+            "{executable}"
+        );
     }
 }
 
@@ -125,9 +157,16 @@ async fn native_plugins_require_contained_binary_and_preserve_argument_boundarie
 async fn native_manifest_rejects_invalid_argument_vectors() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("paseo-plugin.json");
-    for args in [Value::Null, json!("--flag value"), json!([1]), json!(["bad\u{0}argument"])] {
+    for args in [
+        Value::Null,
+        json!("--flag value"),
+        json!([1]),
+        json!(["bad\u{0}argument"]),
+    ] {
         let value = json!({"id":"sample","runtime":"native","server":{"executable":"plugin-bin","args":args}});
-        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap()).await.unwrap();
+        tokio::fs::write(&path, serde_json::to_vec(&value).unwrap())
+            .await
+            .unwrap();
         assert!(manifest::read(directory.path()).await.is_err());
     }
 }
@@ -136,9 +175,24 @@ async fn native_manifest_rejects_invalid_argument_vectors() {
 #[tokio::test]
 async fn native_executable_symlinks_cannot_escape_installation() {
     let directory = tempfile::tempdir().unwrap();
-    tokio::fs::write(directory.path().join("paseo-plugin.json"), br#"{"id":"sample","runtime":"native","server":{"executable":"plugin-bin","args":[]}}"#).await.unwrap();
-    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), directory.path().join("plugin-bin")).unwrap();
-    assert!(manifest::native_entry(directory.path()).await.unwrap_err().to_string().contains("escapes"));
+    tokio::fs::write(
+        directory.path().join("paseo-plugin.json"),
+        br#"{"id":"sample","runtime":"native","server":{"executable":"plugin-bin","args":[]}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(
+        std::env::current_exe().unwrap(),
+        directory.path().join("plugin-bin"),
+    )
+    .unwrap();
+    assert!(
+        manifest::native_entry(directory.path())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("escapes")
+    );
 }
 
 #[test]

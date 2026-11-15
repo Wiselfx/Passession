@@ -46,7 +46,10 @@ pub enum RowAction {
     ApplyProfile(Value),
     OpenProfiles,
     Drill(String),
-    SelectModel { provider: String, model: String },
+    SelectModel {
+        provider: String,
+        model: String,
+    },
     OpenModels,
     Push(Page),
     OpenFeature(Value),
@@ -97,11 +100,17 @@ impl Row {
     }
 
     fn heading(label: impl Into<String>) -> Self {
-        Self { heading: true, ..Self::new(label) }
+        Self {
+            heading: true,
+            ..Self::new(label)
+        }
     }
 
     fn divider() -> Self {
-        Self { divider: true, ..Self::new("") }
+        Self {
+            divider: true,
+            ..Self::new("")
+        }
     }
 }
 
@@ -128,7 +137,16 @@ fn labels() -> (String, String, String, String, String) {
 
 impl SheetState {
     pub fn new(can_switch: bool) -> Self {
-        Self { pages: vec![Page::Root], drill: None, feature: None, can_switch, config: None, rows: Vec::new(), stacked: None, stacked_rows: Vec::new() }
+        Self {
+            pages: vec![Page::Root],
+            drill: None,
+            feature: None,
+            can_switch,
+            config: None,
+            rows: Vec::new(),
+            stacked: None,
+            stacked_rows: Vec::new(),
+        }
     }
 
     pub fn page(&self) -> Page {
@@ -159,9 +177,12 @@ impl SheetState {
         if !self.can_switch {
             return ctl.modes();
         }
-        crate::features::composer::agent_form::provider_entry(&ctl.providers, s(get(config, "provider")))
-            .map(|entry| maps(get(entry, "modes")))
-            .unwrap_or_else(|| ctl.modes())
+        crate::features::composer::agent_form::provider_entry(
+            &ctl.providers,
+            s(get(config, "provider")),
+        )
+        .map(|entry| maps(get(entry, "modes")))
+        .unwrap_or_else(|| ctl.modes())
     }
 
     fn available_providers(&self, ctl: &Controller, config: &Value) -> Vec<Value> {
@@ -178,12 +199,23 @@ impl SheetState {
     }
 
     /// Rebuild rows for the current page and query; returns the header/view facts.
-    pub fn build(&mut self, ctl: &Controller, compact: bool, query: &str, profiles_supported: bool) -> SheetView {
+    pub fn build(
+        &mut self,
+        ctl: &Controller,
+        compact: bool,
+        query: &str,
+        profiles_supported: bool,
+    ) -> SheetView {
         let config = self.config(ctl);
         let features = ctl.features();
         let modes = self.modes(ctl, &config);
         let providers = ctl.providers.clone();
-        let model = ControlsModel { providers: &providers, config: &config, modes: &modes, features: &features };
+        let model = ControlsModel {
+            providers: &providers,
+            config: &config,
+            modes: &modes,
+            features: &features,
+        };
         let (select_model, loading_label, error_label, unknown, extra_high) = labels();
         let model_labels = ModelLabels {
             select_model: &select_model,
@@ -211,11 +243,18 @@ impl SheetState {
                     .unwrap_or_else(|| self.drill.clone().unwrap_or_default()),
                 Page::Thinking => t("agentControls.thinking.title"),
                 Page::Mode => t("agentControls.mode.title"),
-                Page::Feature => self.feature.as_ref().map(|f| owned(get(f, "label"))).unwrap_or_default(),
+                Page::Feature => self
+                    .feature
+                    .as_ref()
+                    .map(|f| owned(get(f, "label")))
+                    .unwrap_or_default(),
             },
             back: self.pages.len() > 1,
             leading_provider: (page == Page::Models).then(|| {
-                let svg = drilled.as_ref().map(|p| owned(get(p, "iconSvg"))).unwrap_or_default();
+                let svg = drilled
+                    .as_ref()
+                    .map(|p| owned(get(p, "iconSvg")))
+                    .unwrap_or_default();
                 (self.drill.clone().unwrap_or_default(), svg)
             }),
             gear: (page == Page::Models).then(|| self.drill.clone().unwrap_or_default()),
@@ -230,26 +269,52 @@ impl SheetState {
         };
         let mut rows = Vec::new();
         if searchable && !query.is_empty() {
-            let only = if page == Page::Models { drilled.clone() } else { None };
+            let only = if page == Page::Models {
+                drilled.clone()
+            } else {
+                None
+            };
             let scope = match &only {
                 Some(p) => vec![p.clone()],
                 None => available.clone(),
             };
             for provider in &scope {
-                let provider_label = s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned();
+                let provider_label =
+                    s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned();
                 let matches: Vec<Value> = models_of(provider)
                     .into_iter()
                     .filter(|row| {
-                        [model_label(row), owned(get(row, "id")), provider_label.clone(), owned(get(row, "description"))]
-                            .iter()
-                            .any(|field| field.to_lowercase().contains(&query))
+                        [
+                            model_label(row),
+                            owned(get(row, "id")),
+                            provider_label.clone(),
+                            owned(get(row, "description")),
+                        ]
+                        .iter()
+                        .any(|field| field.to_lowercase().contains(&query))
                     })
                     .collect();
                 let qualified = only.is_none() && available.len() > 1;
-                self.model_rows(&mut rows, ctl, &model, provider, &matches, RowFlags { qualified, profiles_supported });
+                self.model_rows(
+                    &mut rows,
+                    ctl,
+                    &model,
+                    provider,
+                    &matches,
+                    RowFlags {
+                        qualified,
+                        profiles_supported,
+                    },
+                );
             }
             if rows.is_empty() {
-                view.empty = Some(("search", t_args("modelSelector.noMatchesForQuery", &[("query", query.as_str())])));
+                view.empty = Some((
+                    "search",
+                    t_args(
+                        "modelSelector.noMatchesForQuery",
+                        &[("query", query.as_str())],
+                    ),
+                ));
             }
             self.rows = rows;
             return view;
@@ -267,7 +332,17 @@ impl SheetState {
                     if available.len() == 1 {
                         let provider = available[0].clone();
                         let models = models_of(&provider);
-                        self.model_rows(&mut rows, ctl, &model, &provider, &models, RowFlags { qualified: false, profiles_supported });
+                        self.model_rows(
+                            &mut rows,
+                            ctl,
+                            &model,
+                            &provider,
+                            &models,
+                            RowFlags {
+                                qualified: false,
+                                profiles_supported,
+                            },
+                        );
                     } else {
                         self.provider_rows(&mut rows, &available);
                     }
@@ -284,7 +359,8 @@ impl SheetState {
                 let provider = drilled.clone().unwrap_or_default();
                 let models = models_of(&provider);
                 if models.is_empty() {
-                    if get(&provider, "error").is_null() && s(get(&provider, "status")) == "loading" {
+                    if get(&provider, "error").is_null() && s(get(&provider, "status")) == "loading"
+                    {
                         view.loading = true;
                     } else if get(&provider, "error").is_null() {
                         view.empty = Some(("search", t("modelSelector.noMatches")));
@@ -292,11 +368,25 @@ impl SheetState {
                         view.empty = Some(("triangle-alert", display(get(&provider, "error"))));
                     }
                 }
-                self.model_rows(&mut rows, ctl, &model, &provider, &models, RowFlags { qualified: false, profiles_supported });
+                self.model_rows(
+                    &mut rows,
+                    ctl,
+                    &model,
+                    &provider,
+                    &models,
+                    RowFlags {
+                        qualified: false,
+                        profiles_supported,
+                    },
+                );
             }
             Page::Thinking => {
                 let options = model.thinking_options();
-                let selected = s_or(get(&config, "thinkingOptionId"), options.first().map(|o| s(get(o, "id"))).unwrap_or("")).to_owned();
+                let selected = s_or(
+                    get(&config, "thinkingOptionId"),
+                    options.first().map(|o| s(get(o, "id"))).unwrap_or(""),
+                )
+                .to_owned();
                 for option in options {
                     let mut row = Row::new(format_thinking_option_label(&option, &extra_high));
                     row.selected = s(get(&option, "id")) == selected;
@@ -305,7 +395,10 @@ impl SheetState {
                 }
             }
             Page::Mode => {
-                let selected = model.selected_mode().map(|m| owned(get(m, "id"))).unwrap_or_default();
+                let selected = model
+                    .selected_mode()
+                    .map(|m| owned(get(m, "id")))
+                    .unwrap_or_default();
                 for mode in &modes {
                     let mut row = Row::new(format_agent_mode_label(mode));
                     if let Some(icon) = mode_option_icon(Some(mode)) {
@@ -320,7 +413,10 @@ impl SheetState {
                 let feature = self.feature.clone().unwrap_or_default();
                 let current = display(&model.feature_value(&feature));
                 if s(get(&feature, "type")) == "toggle" {
-                    for (id, label) in [("true", t("agentControls.features.on")), ("false", t("agentControls.features.off"))] {
+                    for (id, label) in [
+                        ("true", t("agentControls.features.on")),
+                        ("false", t("agentControls.features.off")),
+                    ] {
                         let mut row = Row::new(label);
                         row.selected = current == id;
                         row.action = Some(RowAction::Choose(id.to_owned()));
@@ -328,7 +424,8 @@ impl SheetState {
                     }
                 } else {
                     for option in maps(get(&feature, "options")) {
-                        let mut row = Row::new(s_or(get(&option, "label"), s(get(&option, "id"))).to_owned());
+                        let mut row =
+                            Row::new(s_or(get(&option, "label"), s(get(&option, "id"))).to_owned());
                         row.selected = display(get(&option, "id")) == current;
                         row.action = Some(RowAction::Choose(display(get(&option, "id"))));
                         rows.push(row);
@@ -341,7 +438,13 @@ impl SheetState {
     }
 
     /// model-browser.tsx AgentProfilesPickerContent.
-    fn profile_rows(&self, rows: &mut Vec<Row>, ctl: &Controller, config: &Value, profiles_supported: bool) {
+    fn profile_rows(
+        &self,
+        rows: &mut Vec<Row>,
+        ctl: &Controller,
+        config: &Value,
+        profiles_supported: bool,
+    ) {
         let profiles: Vec<Value> = ctl
             .profiles
             .iter()
@@ -361,7 +464,11 @@ impl SheetState {
         }
         let mut heading = Row::heading(t("modelSelector.profiles"));
         if profiles_supported {
-            heading.secondary = Some(("pencil", RowAction::OpenProfiles, t("modelSelector.editProfilesLabel")));
+            heading.secondary = Some((
+                "pencil",
+                RowAction::OpenProfiles,
+                t("modelSelector.editProfilesLabel"),
+            ));
         }
         rows.push(heading);
         for profile in profiles {
@@ -382,8 +489,12 @@ impl SheetState {
             let models = models_of(provider);
             let loading = models.is_empty() && s(get(provider, "status")) == "loading";
             let failed = models.is_empty() && !get(provider, "error").is_null();
-            let mut row = Row::new(s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned());
-            row.leading = Leading::Provider(owned(get(provider, "provider")), owned(get(provider, "iconSvg")));
+            let mut row =
+                Row::new(s_or(get(provider, "label"), s(get(provider, "provider"))).to_owned());
+            row.leading = Leading::Provider(
+                owned(get(provider, "provider")),
+                owned(get(provider, "iconSvg")),
+            );
             row.loading = loading;
             row.warning = failed;
             row.value = if loading {
@@ -393,7 +504,11 @@ impl SheetState {
             } else {
                 let count = models.len().to_string();
                 t_args(
-                    if models.len() == 1 { "modelSelector.modelCount" } else { "modelSelector.modelCountPlural" },
+                    if models.len() == 1 {
+                        "modelSelector.modelCount"
+                    } else {
+                        "modelSelector.modelCountPlural"
+                    },
                     &[("count", count.as_str())],
                 )
             };
@@ -412,7 +527,10 @@ impl SheetState {
         models: &[Value],
         flags: RowFlags,
     ) {
-        let RowFlags { qualified, profiles_supported } = flags;
+        let RowFlags {
+            qualified,
+            profiles_supported,
+        } = flags;
         let provider_id = owned(get(provider, "provider"));
         let provider_label = s_or(get(provider, "label"), &provider_id).to_owned();
         let selected_id = model.selected_model().map(|m| owned(get(&m, "id")));
@@ -420,19 +538,32 @@ impl SheetState {
             let mut row = Row::new(model_label(entry));
             row.leading = Leading::Provider(provider_id.clone(), owned(get(provider, "iconSvg")));
             let model_id = owned(get(entry, "id"));
-            row.description = if qualified { format!("{provider_label} · {model_id}") } else { model_id.clone() };
-            if let Some(description) = get(entry, "description").as_str().filter(|s| !s.is_empty() && *s != model_id.as_str()) {
+            row.description = if qualified {
+                format!("{provider_label} · {model_id}")
+            } else {
+                model_id.clone()
+            };
+            if let Some(description) = get(entry, "description")
+                .as_str()
+                .filter(|s| !s.is_empty() && *s != model_id.as_str())
+            {
                 row.description.push_str(" · ");
                 row.description.push_str(description);
             }
-            row.selected = s(get(model.config, "provider")) == provider_id && selected_id.as_deref() == Some(s(get(entry, "id")));
-            row.action = Some(RowAction::SelectModel { provider: provider_id.clone(), model: model_id.clone() });
+            row.selected = s(get(model.config, "provider")) == provider_id
+                && selected_id.as_deref() == Some(s(get(entry, "id")));
+            row.action = Some(RowAction::SelectModel {
+                provider: provider_id.clone(),
+                model: model_id.clone(),
+            });
             // model-browser.tsx SelectableModelRow profileAction.
             if profiles_supported && !model_id.is_empty() {
                 let profiled: Vec<&Value> = ctl
                     .profiles
                     .iter()
-                    .filter(|p| s(get(p, "provider")) == provider_id && s(get(p, "model")) == model_id)
+                    .filter(|p| {
+                        s(get(p, "provider")) == provider_id && s(get(p, "model")) == model_id
+                    })
                     .collect();
                 row.secondary = match profiled.len() {
                     0 => Some((
@@ -447,11 +578,21 @@ impl SheetState {
                     1 => Some((
                         "pencil",
                         RowAction::EditProfile(profiled[0].clone()),
-                        t_args("modelSelector.editProfileLabel", &[("name", s(get(profiled[0], "name")))]),
+                        t_args(
+                            "modelSelector.editProfileLabel",
+                            &[("name", s(get(profiled[0], "name")))],
+                        ),
                     )),
                     n => {
                         let count = n.to_string();
-                        Some(("pencil", RowAction::OpenProfiles, t_args("modelSelector.editProfilesCount", &[("count", count.as_str())])))
+                        Some((
+                            "pencil",
+                            RowAction::OpenProfiles,
+                            t_args(
+                                "modelSelector.editProfilesCount",
+                                &[("count", count.as_str())],
+                            ),
+                        ))
                     }
                 };
             }
@@ -459,11 +600,19 @@ impl SheetState {
         }
     }
 
-    fn settings_rows(&self, rows: &mut Vec<Row>, model: &ControlsModel, labels: &ModelLabels, features: &[Value], include_model: bool) {
+    fn settings_rows(
+        &self,
+        rows: &mut Vec<Row>,
+        model: &ControlsModel,
+        labels: &ModelLabels,
+        features: &[Value],
+        include_model: bool,
+    ) {
         let provider = owned(get(model.config, "provider"));
         if include_model {
             let mut row = Row::new(t("modelSelector.model"));
-            row.leading = Leading::Provider(provider.clone(), owned(get(&model.provider(), "iconSvg")));
+            row.leading =
+                Leading::Provider(provider.clone(), owned(get(&model.provider(), "iconSvg")));
             row.value = model.selected_model_label(labels);
             row.chevron = true;
             row.action = Some(RowAction::OpenModels);
@@ -494,7 +643,11 @@ impl SheetState {
             let mut row = Row::new(s_or(get(feature, "label"), s(get(feature, "id"))).to_owned());
             row.leading = Leading::Icon(feature_icon(feature), feature_icon_tint(feature, &value));
             row.value = if kind == "toggle" {
-                if value == Value::Bool(true) { t("agentControls.features.on") } else { t("agentControls.features.off") }
+                if value == Value::Bool(true) {
+                    t("agentControls.features.on")
+                } else {
+                    t("agentControls.features.off")
+                }
             } else {
                 maps(get(feature, "options"))
                     .iter()

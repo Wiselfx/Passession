@@ -10,19 +10,19 @@ pub mod permissions;
 mod relay;
 pub mod storage;
 
+pub(crate) use context::SourceConfig;
 pub use context::{
     MAX_BUFFERED_BYTES, MAX_FRAME_BYTES, OutboundFrame, OwnedOperation, OwnedSubscription,
     RequestContext, has_capability, message_type, request_id,
 };
-pub(crate) use context::SourceConfig;
 pub use identity::{generate_local_pairing_offer, hash_daemon_password, offline_pairing_offer};
 
 use crate::state::AppState;
-use paseo_protocol::crypto::KeyPair;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
+use paseo_protocol::crypto::KeyPair;
 use rand::RngCore;
 use serde_json::{Value, json};
 use std::{
@@ -283,9 +283,10 @@ impl TransportService {
     }
     pub async fn authenticate_status(&self, authorization: Option<&str>) -> bool {
         if let Some(token) = authorization.and_then(extract_http_bearer_token)
-            && self.matches_local_credential(token) {
-                return true;
-            }
+            && self.matches_local_credential(token)
+        {
+            return true;
+        }
         self.authenticate_bearer(authorization).await
     }
     fn matches_local_credential(&self, candidate: &str) -> bool {
@@ -451,10 +452,9 @@ impl TransportService {
                     }
                 },
             };
-            if let Err(error) = validate_hello_identity(
-                &hello,
-                admission.principal["pluginId"].as_str(),
-            ) {
+            if let Err(error) =
+                validate_hello_identity(&hello, admission.principal["pluginId"].as_str())
+            {
                 send_close(&outbound, 4002, error).await;
                 return Ok(());
             }
@@ -1040,9 +1040,10 @@ impl TransportService {
             drop(app);
             if let Some(owned) = owned
                 && let Some(bytes) = storage::read_private(&path).await?
-                    && String::from_utf8(bytes)?.trim() == owned {
-                        tokio::fs::remove_file(path).await?;
-                    }
+                && String::from_utf8(bytes)?.trim() == owned
+            {
+                tokio::fs::remove_file(path).await?;
+            }
         }
         relay?;
         hosts?;
@@ -1058,7 +1059,7 @@ impl TransportService {
             .ok_or_else(|| anyhow!("Daemon is shutting down"))?;
         let hoplite = app.providers.definition("hoplite").is_some();
         let maintenance = app.agents.update_admission.operation()?;
-        let mut message = json!({"type":"status","payload":{"status":"server_info","protocolVersion":1,"serverId":identity["serverId"],"hostname":identity["label"],"version":env!("CARGO_PKG_VERSION"),"sourceId":context.actor_source_id(),"permissions":context.permissions(),"desktopManaged":config["desktopManaged"].as_bool().unwrap_or(false),"features":features::features(&config,hoplite),"capabilities":{}}});
+        let mut message = json!({"type":"status","payload":{"status":"server_info","protocolVersion":1,"serverId":identity["serverId"],"hostname":identity["label"],"version":crate::VERSION,"sourceId":context.actor_source_id(),"permissions":context.permissions(),"desktopManaged":config["desktopManaged"].as_bool().unwrap_or(false),"features":features::features(&config,hoplite),"capabilities":{}}});
         if let Some(operation_id) = maintenance {
             message["payload"]["daemonUpdate"] = json!({"operationId":operation_id,"active":true});
         }
@@ -1077,7 +1078,7 @@ impl TransportService {
         let config = self.config_snapshot();
         let relay = relay_config(&config);
         Ok(
-            json!({"requestId":request_id(request),"serverId":self.identity()["serverId"],"version":env!("CARGO_PKG_VERSION"),"sourceSha":option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or(""),"pid":std::process::id(),"nodePath":app.executable,"startedAt":pid.and_then(|p|p.get("startedAt").cloned()),"listen":self.listen_string(),"relay":relay,"providers":providers,"providersCached":true}),
+            json!({"requestId":request_id(request),"serverId":self.identity()["serverId"],"version":crate::VERSION,"sourceSha":option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or(""),"componentIdentity":crate::component_identity(),"pid":std::process::id(),"nodePath":app.executable,"startedAt":pid.and_then(|p|p.get("startedAt").cloned()),"listen":self.listen_string(),"relay":relay,"providers":providers,"providersCached":true}),
         )
     }
     pub fn listen_string(&self) -> Option<String> {
@@ -1281,9 +1282,10 @@ fn validate_hello(hello: &Value) -> std::result::Result<(), &'static str> {
         && values.as_array().is_none_or(|a| {
             a.iter()
                 .any(|v| v.as_str().is_none_or(|p| !permissions::known_permission(p)))
-        }) {
-            return Err("Invalid session permissions");
-        }
+        })
+    {
+        return Err("Invalid session permissions");
+    }
     if let Some(producer) = hello.get("producer") {
         for (key, max) in [("serverId", 256), ("sourceId", 1024)] {
             if producer[key]
@@ -1299,9 +1301,10 @@ fn validate_hello(hello: &Value) -> std::result::Result<(), &'static str> {
             Some("password") => !auth["password"].is_string(),
             Some("localCredential") => !auth["token"].is_string(),
             _ => true,
-        } {
-            return Err("Invalid hello credential");
         }
+    {
+        return Err("Invalid hello credential");
+    }
     Ok(())
 }
 /// Original `handleHello` after admission: a blank trimmed clientId, or a reserved

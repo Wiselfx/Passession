@@ -10,13 +10,15 @@ use makepad_widgets::*;
 use serde_json::{Value, json};
 
 use crate::common::paint::{Font, rect};
-use crate::common::widgets::{PTextFieldWidgetRefExt, RowMetrics, StatusBucket, agent_live_status_bucket, paint_status_badge};
+use crate::common::widgets::{
+    PTextFieldWidgetRefExt, RowMetrics, StatusBucket, agent_live_status_bucket, paint_status_badge,
+};
 use crate::common::{PanelTarget, UiContext, UiEffect, clock, json as j, tr, tr_args};
 use crate::features::workspace::observe::{ObsEvent, Observation};
+use crate::shell::PaseoShell;
 use crate::shell::chrome::make_ui;
 use crate::shell::hosts::{self, Host, Status, parent_agent_id};
 use crate::shell::ui::{Ui, Variant};
-use crate::shell::PaseoShell;
 use crate::theme::{self, ControlSize};
 
 #[derive(Default)]
@@ -57,7 +59,9 @@ impl SidebarState {
 
     /// True once this touch owns vertical scrolling, including at an edge.
     pub fn touch_move(&mut self, abs: DVec2, time: f64) -> bool {
-        let Some(delta) = self.motion.move_to(abs, time) else { return false };
+        let Some(delta) = self.motion.move_to(abs, time) else {
+            return false;
+        };
         self.scroll_by(delta);
         true
     }
@@ -69,15 +73,22 @@ pub fn nav_prefs(state: &Value) -> Value {
 }
 
 fn strings(prefs: &Value, key: &str) -> Vec<String> {
-    j::array(prefs, key).iter().map(|v| match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }).collect()
+    j::array(prefs, key)
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .collect()
 }
 
 /// `sidebarProjectKey`.
 pub fn project_key(host: &Host<'_>, project: &Value) -> String {
-    format!("project:{}:{}", host.server_id(), j::text(project, "projectId"))
+    format!(
+        "project:{}:{}",
+        host.server_id(),
+        j::text(project, "projectId")
+    )
 }
 
 /// `sidebarProjects`: registered projects plus projects only known through a workspace.
@@ -99,7 +110,10 @@ pub fn projects(host: &Host<'_>) -> Vec<Value> {
 
 /// `sidebarLabelKey`.
 pub fn label_key(name: &str) -> String {
-    name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub fn label_filters(prefs: &Value) -> Vec<String> {
@@ -122,12 +136,22 @@ pub fn workspace_matches_labels(workspace: &Value, filters: &[String]) -> bool {
         .map(|l| label_key(l.as_str().unwrap_or("")))
         .filter(|k| !k.is_empty())
         .collect();
-    filters.iter().any(|f| if f.is_empty() { keys.is_empty() } else { keys.contains(f) })
+    filters.iter().any(|f| {
+        if f.is_empty() {
+            keys.is_empty()
+        } else {
+            keys.contains(f)
+        }
+    })
 }
 
 pub fn host_filters(state: &Value, prefs: &Value) -> Vec<String> {
     let stored = strings(prefs, "hostFilters");
-    hosts::hosts(state).iter().map(|h| h.server_id().to_string()).filter(|id| stored.contains(id)).collect()
+    hosts::hosts(state)
+        .iter()
+        .map(|h| h.server_id().to_string())
+        .filter(|id| stored.contains(id))
+        .collect()
 }
 
 pub fn project_filters(state: &Value, prefs: &Value) -> Vec<String> {
@@ -166,7 +190,10 @@ pub fn compare_names(left: &str, right: &str) -> Ordering {
             let nb: String = b[sk..k].iter().collect::<String>();
             let na = na.trim_start_matches('0');
             let nb = nb.trim_start_matches('0');
-            let (na, nb) = (if na.is_empty() { "0" } else { na }, if nb.is_empty() { "0" } else { nb });
+            let (na, nb) = (
+                if na.is_empty() { "0" } else { na },
+                if nb.is_empty() { "0" } else { nb },
+            );
             let ord = na.len().cmp(&nb.len()).then_with(|| na.cmp(nb));
             if ord != Ordering::Equal {
                 return ord;
@@ -186,8 +213,11 @@ pub fn compare_names(left: &str, right: &str) -> Ordering {
 pub fn ordered_projects(host: &Host<'_>, stored: &[String]) -> Vec<Value> {
     let mut list = projects(host);
     list.sort_by(|a, b| {
-        compare_names(j::text(a, "projectDisplayName"), j::text(b, "projectDisplayName"))
-            .then_with(|| project_key(host, a).cmp(&project_key(host, b)))
+        compare_names(
+            j::text(a, "projectDisplayName"),
+            j::text(b, "projectDisplayName"),
+        )
+        .then_with(|| project_key(host, a).cmp(&project_key(host, b)))
     });
     let keys: Vec<String> = list.iter().map(|p| project_key(host, p)).collect();
     let mut pruned: Vec<String> = Vec::new();
@@ -215,11 +245,15 @@ pub fn ordered_projects(host: &Host<'_>, stored: &[String]) -> Vec<Value> {
 }
 
 fn time_ms(row: &Value, field: &str) -> i64 {
-    DateTime::parse_from_rfc3339(j::text(row, field)).map(|d| d.timestamp_millis()).unwrap_or(0)
+    DateTime::parse_from_rfc3339(j::text(row, field))
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
 }
 
 fn top_level(agent: &Value) -> bool {
-    !hosts::is_archived(agent) && !j::text(agent, "workspaceId").is_empty() && parent_agent_id(agent).is_empty()
+    !hosts::is_archived(agent)
+        && !j::text(agent, "workspaceId").is_empty()
+        && parent_agent_id(agent).is_empty()
 }
 
 /// A session waiting on the user (a permission or question).
@@ -239,7 +273,9 @@ pub fn sessions<'a>(host: &Host<'a>, project: &Value, prefs: &Value) -> Vec<&'a 
             if !top_level(agent) {
                 return false;
             }
-            let Some(workspace) = host.workspace(j::text(agent, "workspaceId")) else { return false };
+            let Some(workspace) = host.workspace(j::text(agent, "workspaceId")) else {
+                return false;
+            };
             if j::text(workspace, "projectId") != project_id {
                 return false;
             }
@@ -262,7 +298,11 @@ pub fn sessions<'a>(host: &Host<'a>, project: &Value, prefs: &Value) -> Vec<&'a 
 /// Keeps `rows` in the previously drawn order `held`; sessions that were not drawn then lead in
 /// their own order.
 pub fn hold_order(rows: &mut [&Value], held: &[String]) {
-    rows.sort_by_key(|agent| held.iter().position(|id| id == j::text(agent, "id")).map_or(0, |at| at + 1));
+    rows.sort_by_key(|agent| {
+        held.iter()
+            .position(|id| id == j::text(agent, "id"))
+            .map_or(0, |at| at + 1)
+    });
 }
 
 /// One project of the session tree as the sidebar lists it.
@@ -299,13 +339,23 @@ fn session_matches(host: &Host<'_>, agent: &Value, query: &str) -> bool {
     let workspace = host.workspace(j::text(agent, "workspaceId"));
     let name = workspace.map_or("", |w| j::text(w, "name"));
     let branch = workspace.map_or("", |w| j::text(j::object(w, "gitRuntime"), "currentBranch"));
-    format!("{} {} {name} {branch}", j::text(agent, "title"), j::text(agent, "provider")).to_lowercase().contains(query)
+    format!(
+        "{} {} {name} {branch}",
+        j::text(agent, "title"),
+        j::text(agent, "provider")
+    )
+    .to_lowercase()
+    .contains(query)
 }
 
 /// The sidebar's session tree: hosts in `hostOrder`, `ordered_projects`, `sessions`, with the
 /// host/project/label filters and the (lowercased) search applied. `held` keeps each project's
 /// drawn order. Search ignores collapse; terminal rows are the caller's.
-pub fn session_tree<'a>(state: &'a Value, query: &str, held: Option<&HashMap<String, Vec<String>>>) -> Vec<HostGroup<'a>> {
+pub fn session_tree<'a>(
+    state: &'a Value,
+    query: &str,
+    held: Option<&HashMap<String, Vec<String>>>,
+) -> Vec<HostGroup<'a>> {
     let prefs = nav_prefs(state);
     let collapsed = strings(&prefs, "collapsed");
     let host_order = strings(&prefs, "hostOrder");
@@ -313,7 +363,12 @@ pub fn session_tree<'a>(state: &'a Value, query: &str, held: Option<&HashMap<Str
     let hf = host_filters(state, &prefs);
     let pf = project_filters(state, &prefs);
     let mut all = hosts::hosts(state);
-    all.sort_by_key(|h| host_order.iter().position(|id| id == h.server_id()).unwrap_or(host_order.len()));
+    all.sort_by_key(|h| {
+        host_order
+            .iter()
+            .position(|id| id == h.server_id())
+            .unwrap_or(host_order.len())
+    });
     let mut out = Vec::new();
     for host in all {
         let sid = host.server_id();
@@ -329,28 +384,57 @@ pub fn session_tree<'a>(state: &'a Value, query: &str, held: Option<&HashMap<Str
             if !pf.is_empty() && !pf.contains(&key) {
                 continue;
             }
-            let matches = format!("{} {}", j::text(project, "projectDisplayName"), j::text(project, "projectRootPath")).to_lowercase().contains(query);
+            let matches = format!(
+                "{} {}",
+                j::text(project, "projectDisplayName"),
+                j::text(project, "projectRootPath")
+            )
+            .to_lowercase()
+            .contains(query);
             let all_rows = sessions(&host, project, &prefs);
             let waiting = all_rows.iter().filter(|a| needs_input(a)).count();
             let mut rows: Vec<&Value> = all_rows
                 .into_iter()
-                .filter(|agent| query.is_empty() || host_matches || matches || session_matches(&host, agent, query))
+                .filter(|agent| {
+                    query.is_empty()
+                        || host_matches
+                        || matches
+                        || session_matches(&host, agent, query)
+                })
                 .collect();
             if let Some(order) = held.and_then(|held| held.get(&key)) {
                 hold_order(&mut rows, order);
             }
             let collapsed = query.is_empty() && collapsed.contains(&key);
-            projects.push(ProjectGroup { project: project.clone(), key, collapsed, matches, sessions: rows, waiting });
+            projects.push(ProjectGroup {
+                project: project.clone(),
+                key,
+                collapsed,
+                matches,
+                sessions: rows,
+                waiting,
+            });
         }
         let collapsed = query.is_empty() && collapsed.iter().any(|c| *c == format!("host:{sid}"));
-        out.push(HostGroup { host, collapsed, matches: host_matches, has_projects: !ordered.is_empty(), projects });
+        out.push(HostGroup {
+            host,
+            collapsed,
+            matches: host_matches,
+            has_projects: !ordered.is_empty(),
+            projects,
+        });
     }
     out
 }
 
 /// Sessions in the order the sidebar shows them (session switching, Ctrl+1–9): rows inside a
 /// collapsed host or project are skipped unless `include_collapsed`.
-pub fn navigation_sessions(state: &Value, query: &str, held: Option<&HashMap<String, Vec<String>>>, include_collapsed: bool) -> Vec<(String, Value)> {
+pub fn navigation_sessions(
+    state: &Value,
+    query: &str,
+    held: Option<&HashMap<String, Vec<String>>>,
+    include_collapsed: bool,
+) -> Vec<(String, Value)> {
     let mut out = Vec::new();
     for group in session_tree(state, query, held) {
         if group.collapsed && !include_collapsed {
@@ -360,7 +444,12 @@ pub fn navigation_sessions(state: &Value, query: &str, held: Option<&HashMap<Str
             if project.collapsed && !include_collapsed {
                 continue;
             }
-            out.extend(project.sessions.iter().map(|agent| (group.host.server_id().to_string(), (*agent).clone())));
+            out.extend(
+                project
+                    .sessions
+                    .iter()
+                    .map(|agent| (group.host.server_id().to_string(), (*agent).clone())),
+            );
         }
     }
     out
@@ -369,7 +458,17 @@ pub fn navigation_sessions(state: &Value, query: &str, held: Option<&HashMap<Str
 /// Whether the pointer rests on the session tree (its rows must not reorder under it).
 pub fn pointer_on_tree(hover: Option<&str>) -> bool {
     hover.is_some_and(|id| {
-        ["session:", "sessionedit:", "sideterm:", "project:", "projplus:", "host:", "hostplus:"].iter().any(|prefix| id.starts_with(prefix))
+        [
+            "session:",
+            "sessionedit:",
+            "sideterm:",
+            "project:",
+            "projplus:",
+            "host:",
+            "hostplus:",
+        ]
+        .iter()
+        .any(|prefix| id.starts_with(prefix))
     })
 }
 
@@ -379,7 +478,11 @@ pub fn others_need_input(state: &Value, focused: Option<&PanelTarget>) -> bool {
         host.agents().any(|agent| {
             top_level(agent)
                 && needs_input(agent)
-                && !focused.is_some_and(|t| t.kind == "agent" && t.server_id == host.server_id() && t.id.as_deref() == Some(j::text(agent, "id")))
+                && !focused.is_some_and(|t| {
+                    t.kind == "agent"
+                        && t.server_id == host.server_id()
+                        && t.id.as_deref() == Some(j::text(agent, "id"))
+                })
         })
     })
 }
@@ -412,7 +515,10 @@ impl TerminalDirectory {
 /// new ones follow in list order, gone ones drop.
 fn merge_terminals(previous: &[Value], listed: &[Value]) -> Vec<Value> {
     let same = |a: &Value, b: &Value| j::text(a, "id") == j::text(b, "id");
-    let mut next: Vec<Value> = previous.iter().filter_map(|old| listed.iter().find(|t| same(t, old)).cloned()).collect();
+    let mut next: Vec<Value> = previous
+        .iter()
+        .filter_map(|old| listed.iter().find(|t| same(t, old)).cloned())
+        .collect();
     for terminal in listed {
         if !j::text(terminal, "id").is_empty() && !next.iter().any(|t| same(t, terminal)) {
             next.push(terminal.clone());
@@ -465,20 +571,39 @@ fn terminal_directories(state: &Value) -> Vec<(String, String, String)> {
 pub fn sync_terminals(sidebar: &mut SidebarState, ui: &UiContext) -> bool {
     let wanted = terminal_directories(&ui.state);
     let before = sidebar.terminals.len();
-    sidebar.terminals.retain(|(host, workspace), dir| wanted.iter().any(|(h, w, cwd)| h == host && w == workspace && *cwd == dir.cwd));
+    sidebar.terminals.retain(|(host, workspace), dir| {
+        wanted
+            .iter()
+            .any(|(h, w, cwd)| h == host && w == workspace && *cwd == dir.cwd)
+    });
     let mut changed = sidebar.terminals.len() != before;
     for (host_id, workspace_id, cwd) in wanted {
-        sidebar.terminals.entry((host_id.clone(), workspace_id.clone())).or_insert_with(|| {
-            let fields = json!({ "cwd": cwd, "workspaceId": workspace_id });
-            let observation = Observation::start(&ui.core, &host_id, "subscribe_terminals_request", "terminals_changed", fields);
-            TerminalDirectory { observation, cwd, terminals: Vec::new() }
-        });
+        sidebar
+            .terminals
+            .entry((host_id.clone(), workspace_id.clone()))
+            .or_insert_with(|| {
+                let fields = json!({ "cwd": cwd, "workspaceId": workspace_id });
+                let observation = Observation::start(
+                    &ui.core,
+                    &host_id,
+                    "subscribe_terminals_request",
+                    "terminals_changed",
+                    fields,
+                );
+                TerminalDirectory {
+                    observation,
+                    cwd,
+                    terminals: Vec::new(),
+                }
+            });
     }
     for dir in sidebar.terminals.values_mut() {
         for item in dir.observation.take(&ui.events) {
             changed |= match item {
                 ObsEvent::Snapshot { payload, .. } => dir.apply(j::array(&payload, "terminals")),
-                ObsEvent::Event(message) if j::text(&message, "type") == "terminals_changed" => dir.apply(j::array(j::object(&message, "payload"), "terminals")),
+                ObsEvent::Event(message) if j::text(&message, "type") == "terminals_changed" => {
+                    dir.apply(j::array(j::object(&message, "payload"), "terminals"))
+                }
                 ObsEvent::Failed(_) | ObsEvent::RestoreFailed(_) => dir.apply(&[]),
                 ObsEvent::Event(_) => false,
             };
@@ -501,7 +626,9 @@ pub struct TerminalRow {
 impl TerminalRow {
     /// The terminal tab this row opens (`PanelTarget` kind `terminal`).
     pub fn target(&self) -> PanelTarget {
-        PanelTarget::new("terminal", &self.host_id, &self.workspace_id, &self.cwd).with_id(&self.id).with_title(&self.label)
+        PanelTarget::new("terminal", &self.host_id, &self.workspace_id, &self.cwd)
+            .with_id(&self.id)
+            .with_title(&self.label)
     }
 }
 
@@ -513,18 +640,36 @@ pub fn terminal_label(terminal: &Value) -> String {
         return title.to_string();
     }
     let name = j::text(terminal, "name").trim();
-    if name.is_empty() || name == "Terminal" { tr("workspace.tabs.fallback.terminal") } else { name.to_string() }
+    if name.is_empty() || name == "Terminal" {
+        tr("workspace.tabs.fallback.terminal")
+    } else {
+        name.to_string()
+    }
 }
 
 /// Live terminals of a project's shown workspaces in workspace order. Configured script and
 /// service terminals (the workspace's `scripts[].terminalId`) stay in their log surfaces.
-pub fn terminal_rows(terminals: &TerminalDirectories, host: &Host<'_>, project_id: &str) -> Vec<TerminalRow> {
+pub fn terminal_rows(
+    terminals: &TerminalDirectories,
+    host: &Host<'_>,
+    project_id: &str,
+) -> Vec<TerminalRow> {
     let sid = host.server_id();
     let mut out = Vec::new();
-    for workspace in host.workspaces().iter().filter(|w| j::text(w, "projectId") == project_id) {
+    for workspace in host
+        .workspaces()
+        .iter()
+        .filter(|w| j::text(w, "projectId") == project_id)
+    {
         let workspace_id = j::text(workspace, "id");
-        let Some(dir) = terminals.get(&(sid.to_string(), workspace_id.to_string())) else { continue };
-        let scripts: Vec<&str> = j::array(workspace, "scripts").iter().map(|s| j::text(s, "terminalId")).filter(|id| !id.is_empty()).collect();
+        let Some(dir) = terminals.get(&(sid.to_string(), workspace_id.to_string())) else {
+            continue;
+        };
+        let scripts: Vec<&str> = j::array(workspace, "scripts")
+            .iter()
+            .map(|s| j::text(s, "terminalId"))
+            .filter(|id| !id.is_empty())
+            .collect();
         for terminal in &dir.terminals {
             let id = j::text(terminal, "id");
             if scripts.contains(&id) {
@@ -544,12 +689,27 @@ pub fn terminal_rows(terminals: &TerminalDirectories, host: &Host<'_>, project_i
 }
 
 /// The row behind a `sideterm:<host>:<terminal>` hit.
-pub fn find_terminal(terminals: &TerminalDirectories, state: &Value, rest: &str) -> Option<TerminalRow> {
+pub fn find_terminal(
+    terminals: &TerminalDirectories,
+    state: &Value,
+    rest: &str,
+) -> Option<TerminalRow> {
     let (sid, terminal_id) = rest.rsplit_once(':')?;
     let host = hosts::host(state, sid)?;
-    let (_, workspace_id) = terminals.iter().find(|((h, _), dir)| h == sid && dir.terminals.iter().any(|t| j::text(t, "id") == terminal_id))?.0;
+    let (_, workspace_id) = terminals
+        .iter()
+        .find(|((h, _), dir)| {
+            h == sid
+                && dir
+                    .terminals
+                    .iter()
+                    .any(|t| j::text(t, "id") == terminal_id)
+        })?
+        .0;
     let project_id = j::text(host.workspace(workspace_id)?, "projectId");
-    terminal_rows(terminals, &host, project_id).into_iter().find(|row| row.id == terminal_id)
+    terminal_rows(terminals, &host, project_id)
+        .into_iter()
+        .find(|row| row.id == terminal_id)
 }
 
 /// Session row subtitle: what the session needs from the user outranks what it is doing; a
@@ -564,14 +724,21 @@ fn agent_status_label(agent: &Value, bucket: StatusBucket) -> String {
             let status = j::text(agent, "status");
             let key = format!("agentList.status.{status}");
             let label = tr(&key);
-            if label == key { status.to_string() } else { label }
+            if label == key {
+                status.to_string()
+            } else {
+                label
+            }
         }
     }
 }
 
 /// `deriveTerminalActivityStatusBucket` as the row subtitle's status.
 fn terminal_status(activity: &Value) -> String {
-    match (j::text(activity, "attentionReason"), j::text(activity, "state")) {
+    match (
+        j::text(activity, "attentionReason"),
+        j::text(activity, "state"),
+    ) {
         ("needs_input", _) => tr("sidebar.statusBucket.needsInput"),
         ("finished", _) => tr("sidebar.statusBucket.readyToReview"),
         (_, "working") => tr("sidebar.statusBucket.working"),
@@ -581,20 +748,31 @@ fn terminal_status(activity: &Value) -> String {
 
 /// `formatCompactTimeAgo`, localized.
 pub fn compact_time_ago(iso: &str) -> String {
-    let Ok(date) = DateTime::parse_from_rfc3339(iso) else { return String::new() };
+    let Ok(date) = DateTime::parse_from_rfc3339(iso) else {
+        return String::new();
+    };
     let date = date.with_timezone(&Utc);
     let elapsed = Utc::now().signed_duration_since(date);
     if elapsed.num_minutes() < 1 {
         return tr("shell.time.now");
     }
     if elapsed.num_hours() < 1 {
-        return tr_args("shell.time.minutes", &[("count", &elapsed.num_minutes().to_string())]);
+        return tr_args(
+            "shell.time.minutes",
+            &[("count", &elapsed.num_minutes().to_string())],
+        );
     }
     if elapsed.num_days() < 1 {
-        return tr_args("shell.time.hours", &[("count", &elapsed.num_hours().to_string())]);
+        return tr_args(
+            "shell.time.hours",
+            &[("count", &elapsed.num_hours().to_string())],
+        );
     }
     if elapsed.num_days() < 7 {
-        return tr_args("shell.time.days", &[("count", &elapsed.num_days().to_string())]);
+        return tr_args(
+            "shell.time.days",
+            &[("count", &elapsed.num_days().to_string())],
+        );
     }
     let local = date.with_timezone(&Local);
     crate::common::month_day(local.month0(), local.day())
@@ -639,8 +817,14 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
     let preferences = j::object(state, "preferences").clone();
     let mut y = r.pos.y;
     let typography = theme::current_typography();
-    let title_h = shell.painter.line_height(cx, crate::common::paint::TextSpec::new(Font::Regular, typography.ui_size(14.0), p.foreground));
-    let small_h = shell.painter.line_height(cx, crate::common::paint::TextSpec::new(Font::Regular, typography.ui_size(12.0), p.muted));
+    let title_h = shell.painter.line_height(
+        cx,
+        crate::common::paint::TextSpec::new(Font::Regular, typography.ui_size(14.0), p.foreground),
+    );
+    let small_h = shell.painter.line_height(
+        cx,
+        crate::common::paint::TextSpec::new(Font::Regular, typography.ui_size(12.0), p.muted),
+    );
     let nav_h = RowMetrics::new(title_h, 0.0, 0.0).height(32.0, 6.0, 16.0);
 
     // Navigation rows (`SidebarHeaderRow`, 2px apart, top 8 bottom 6, bottom border).
@@ -655,11 +839,35 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
                 "search" => ("search", tr("sidebar.sections.search")),
                 _ => ("calendar-clock", tr("sidebar.sections.schedules")),
             };
-            let row_w = if compact && index == 0 { r.size.x - 48.0 } else { r.size.x };
-            header_row(&mut ui, cx, rect(r.pos.x, y, row_w, nav_h), &format!("nav:{id}"), icon, &label);
+            let row_w = if compact && index == 0 {
+                r.size.x - 48.0
+            } else {
+                r.size.x
+            };
+            header_row(
+                &mut ui,
+                cx,
+                rect(r.pos.x, y, row_w, nav_h),
+                &format!("nav:{id}"),
+                icon,
+                &label,
+            );
             if compact && index == 0 {
-                let close = rect(r.pos.x + r.size.x - 40.0, y + (nav_h - 32.0) * 0.5, 32.0, 32.0);
-                ui.icon_button(cx, close, "nav:close", "x", 16.0, 16.0, &tr("sidebar.actions.closeSidebar"));
+                let close = rect(
+                    r.pos.x + r.size.x - 40.0,
+                    y + (nav_h - 32.0) * 0.5,
+                    32.0,
+                    32.0,
+                );
+                ui.icon_button(
+                    cx,
+                    close,
+                    "nav:close",
+                    "x",
+                    16.0,
+                    16.0,
+                    &tr("sidebar.actions.closeSidebar"),
+                );
             }
             y += nav_h + 2.0;
         }
@@ -673,8 +881,18 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
     {
         let mut ui = make_ui(shell);
         let spec = ui.small_muted();
-        ui.text(cx, rect(r.pos.x + 8.0, y, r.size.x - 48.0, header_h), spec, &tr("sessionNavigation.sessions"));
-        let trigger = rect(r.pos.x + r.size.x - 4.0 - 28.0, y + (header_h - 28.0) * 0.5, 28.0, 28.0);
+        ui.text(
+            cx,
+            rect(r.pos.x + 8.0, y, r.size.x - 48.0, header_h),
+            spec,
+            &tr("sessionNavigation.sessions"),
+        );
+        let trigger = rect(
+            r.pos.x + r.size.x - 4.0 - 28.0,
+            y + (header_h - 28.0) * 0.5,
+            28.0,
+            28.0,
+        );
         if ui.is_hover("side:display") {
             let hover = ui.p.sidebar_hover;
             ui.fill(cx, trigger, hover, 6.0);
@@ -688,7 +906,9 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
     // Search field (bare input, 6px radius divider border).
     if shell.data.search.is_none() {
         let field = WidgetRef::new_from_ptr(cx, shell.search_field);
-        field.as_ptext_field().set_placeholder(cx, &tr("sessionNavigation.search"));
+        field
+            .as_ptext_field()
+            .set_placeholder(cx, &tr("sessionNavigation.search"));
         shell.data.search = Some(field);
     }
     if let Some(field) = shell.data.search.clone() {
@@ -706,7 +926,9 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: &Va
     }
     y += 8.0;
     if shell.data.sidebar.busy > 0 {
-        shell.painter.fill(cx, rect(r.pos.x, y - 2.0, r.size.x, 2.0), p.accent, 0.0);
+        shell
+            .painter
+            .fill(cx, rect(r.pos.x, y - 2.0, r.size.x, 2.0), p.accent, 0.0);
     }
 
     // Footer (8/6 padding, top border).
@@ -759,7 +981,12 @@ fn waiting_badge_width(ui: &mut Ui, cx: &mut Cx2d, count: usize) -> f64 {
 /// The 1–9 keycap a held Ctrl/⌘ shows on the first sessions (`session.navigate.index`).
 fn index_hint(ui: &mut Ui, cx: &mut Cx2d, slot: Rect, index: usize) {
     let p = ui.p;
-    let r = rect(slot.pos.x + slot.size.x - 18.0, slot.pos.y + (slot.size.y - 18.0) * 0.5, 18.0, 18.0);
+    let r = rect(
+        slot.pos.x + slot.size.x - 18.0,
+        slot.pos.y + (slot.size.y - 18.0) * 0.5,
+        18.0,
+        18.0,
+    );
     ui.painter.outline(cx, r, p.surface2, p.muted, 1.0, 4.0);
     let spec = ui.spec(Font::Medium, 11.0, p.foreground);
     ui.text_centered(cx, r, spec, &(index + 1).to_string());
@@ -781,7 +1008,14 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
     // The rows read the streams while `ui` borrows the shell; they go back after drawing.
     let terminals = std::mem::take(&mut shell.data.sidebar.terminals);
 
-    cx.begin_turtle(Walk::abs_rect(list), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(list),
+        Layout {
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     let mut ui = make_ui(shell);
     ui.hits.set_clip(Some(list));
     let p = ui.p;
@@ -792,7 +1026,10 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
     // Uniform line metrics keep culling O(1) per row without shaping invisible titles.
     let regular = ui.spec(Font::Regular, 14.0, p.foreground);
     let subtitle = ui.spec(Font::Regular, 12.0, p.muted);
-    let title_h = ui.painter.line_height(cx, regular).max(ui.painter.line_height(cx, group));
+    let title_h = ui
+        .painter
+        .line_height(cx, regular)
+        .max(ui.painter.line_height(cx, group));
     let small_h = ui.painter.line_height(cx, subtitle);
     let group_metrics = RowMetrics::new(title_h, 0.0, 0.0);
     let session_metrics = RowMetrics::new(title_h, small_h, 2.0);
@@ -812,14 +1049,32 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
         // directory's sessions and search matches their label.
         let mut blocks: Vec<(&ProjectGroup, Vec<TerminalRow>)> = Vec::new();
         for project in &host_group.projects {
-            let terms: Vec<TerminalRow> = terminal_rows(&terminals, host, j::text(&project.project, "projectId"))
-                .into_iter()
-                .filter(|row| query.is_empty() || host_matches || project.matches || row.label.to_lowercase().contains(&query))
-                .collect();
-            if !query.is_empty() && !host_matches && !project.matches && project.sessions.is_empty() && terms.is_empty() {
+            let terms: Vec<TerminalRow> =
+                terminal_rows(&terminals, host, j::text(&project.project, "projectId"))
+                    .into_iter()
+                    .filter(|row| {
+                        query.is_empty()
+                            || host_matches
+                            || project.matches
+                            || row.label.to_lowercase().contains(&query)
+                    })
+                    .collect();
+            if !query.is_empty()
+                && !host_matches
+                && !project.matches
+                && project.sessions.is_empty()
+                && terms.is_empty()
+            {
                 continue;
             }
-            drawn_order.insert(project.key.clone(), project.sessions.iter().map(|a| j::text(a, "id").to_string()).collect());
+            drawn_order.insert(
+                project.key.clone(),
+                project
+                    .sessions
+                    .iter()
+                    .map(|a| j::text(a, "id").to_string())
+                    .collect(),
+            );
             blocks.push((project, terms));
         }
         if !query.is_empty() && !host_matches && blocks.is_empty() {
@@ -833,20 +1088,51 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
         }
         let row = rect(x0 + 8.0, y, w - 16.0, group_h);
         // A collapsed host still says how many of its sessions wait on the user.
-        let waiting = if host_collapsed { host_group.waiting() } else { 0 };
-        let badge_w = if waiting > 0 { waiting_badge_width(&mut ui, cx, waiting) + 4.0 } else { 0.0 };
+        let waiting = if host_collapsed {
+            host_group.waiting()
+        } else {
+            0
+        };
+        let badge_w = if waiting > 0 {
+            waiting_badge_width(&mut ui, cx, waiting) + 4.0
+        } else {
+            0.0
+        };
         let slots = group_metrics.layout(row, 0.0, 26.0, 20.0 + badge_w, 4.0);
         let mid = row.pos.y + row.size.y * 0.5;
         let plus_x = slots.trailing.pos.x + slots.trailing.size.x - 20.0;
-        ui.icon(cx, rect(slots.leading.pos.x, mid - 7.0, 14.0, 14.0), if host_collapsed { "chevron-right" } else { "chevron-down" }, 14.0, p.muted);
-        ui.dot(cx, dvec2(slots.leading.pos.x + 22.0, mid), 8.0, status_color(&p, host));
+        ui.icon(
+            cx,
+            rect(slots.leading.pos.x, mid - 7.0, 14.0, 14.0),
+            if host_collapsed {
+                "chevron-right"
+            } else {
+                "chevron-down"
+            },
+            14.0,
+            p.muted,
+        );
+        ui.dot(
+            cx,
+            dvec2(slots.leading.pos.x + 22.0, mid),
+            8.0,
+            status_color(&p, host),
+        );
         ui.text(cx, slots.title, group, &label);
         if waiting > 0 {
             waiting_badge(&mut ui, cx, plus_x - 4.0, mid, waiting);
         }
         // The whole row toggles; the trailing button, registered after it, wins its own square.
         ui.hit(row, format!("host:{sid}"));
-        toolbar_button(&mut ui, cx, plus_x, mid - 10.0, &format!("hostplus:{sid}"), "plus", &tr("sessionNavigation.newSession"));
+        toolbar_button(
+            &mut ui,
+            cx,
+            plus_x,
+            mid - 10.0,
+            &format!("hostplus:{sid}"),
+            "plus",
+            &tr("sessionNavigation.newSession"),
+        );
         y += group_h;
         if host_collapsed {
             continue;
@@ -858,14 +1144,28 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
             y += 2.0;
         }
         if !loading.is_empty() {
-            let lists: Vec<String> = loading.iter().map(|k| tr(&format!("sidebar.refresh.{k}"))).collect();
+            let lists: Vec<String> = loading
+                .iter()
+                .map(|k| tr(&format!("sidebar.refresh.{k}")))
+                .collect();
             let text = tr_args("sidebar.refresh.loading", &[("lists", &lists.join(", "))]);
-            ui.text(cx, rect(x0 + 32.0, y + 4.0, w - 40.0, small_h), small, &text);
+            ui.text(
+                cx,
+                rect(x0 + 32.0, y + 4.0, w - 40.0, small_h),
+                small,
+                &text,
+            );
             y += small_h + 8.0;
         }
         let errors = host.list_errors();
         for (kind, error) in &errors {
-            let text = tr_args("sidebar.refresh.failed", &[("list", &tr(&format!("sidebar.refresh.{kind}"))), ("error", error)]);
+            let text = tr_args(
+                "sidebar.refresh.failed",
+                &[
+                    ("list", &tr(&format!("sidebar.refresh.{kind}"))),
+                    ("error", error),
+                ],
+            );
             let spec = ui.spec(Font::Regular, 12.0, p.danger);
             ui.text(cx, rect(x0 + 32.0, y + 4.0, w - 40.0, small_h), spec, &text);
             y += small_h + 8.0;
@@ -873,7 +1173,16 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
         if !errors.is_empty() {
             let label = tr("common.actions.retry");
             let bw = ui.button_width(cx, &label, None, ControlSize::Sm);
-            ui.button(cx, rect(x0 + 24.0, y, bw, button_h), &format!("hostretry:{sid}"), &label, None, Variant::Ghost, ControlSize::Sm, loading.is_empty());
+            ui.button(
+                cx,
+                rect(x0 + 24.0, y, bw, button_h),
+                &format!("hostretry:{sid}"),
+                &label,
+                None,
+                Variant::Ghost,
+                ControlSize::Sm,
+                loading.is_empty(),
+            );
             y += button_h + 4.0;
         }
         if let Some(error) = host.error() {
@@ -881,34 +1190,95 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
             let tw = w - 40.0;
             let clipped: String = error.lines().take(3).collect::<Vec<_>>().join("\n");
             let h = ui.painter.paragraph_height(cx, tw, spec, &clipped);
-            ui.painter.paragraph(cx, dvec2(x0 + 32.0, y), tw, spec, &clipped);
+            ui.painter
+                .paragraph(cx, dvec2(x0 + 32.0, y), tw, spec, &clipped);
             y += h + 4.0;
             let retry = tr("common.actions.retry");
             let rw = ui.button_width(cx, &retry, None, ControlSize::Sm);
-            ui.button(cx, rect(x0 + 24.0, y, rw, button_h), &format!("hostretry:{sid}"), &retry, None, Variant::Ghost, ControlSize::Sm, true);
+            ui.button(
+                cx,
+                rect(x0 + 24.0, y, rw, button_h),
+                &format!("hostretry:{sid}"),
+                &retry,
+                None,
+                Variant::Ghost,
+                ControlSize::Sm,
+                true,
+            );
             let auth = tr("shell.sidebar.authConnection");
-            let aw = ui.button_width(cx, &auth, None, ControlSize::Sm).min((w - 24.0 - rw - 4.0 - 8.0).max(0.0));
-            ui.button(cx, rect(x0 + 24.0 + rw + 4.0, y, aw, button_h), &format!("hostauth:{sid}"), &auth, None, Variant::Ghost, ControlSize::Sm, true);
+            let aw = ui
+                .button_width(cx, &auth, None, ControlSize::Sm)
+                .min((w - 24.0 - rw - 4.0 - 8.0).max(0.0));
+            ui.button(
+                cx,
+                rect(x0 + 24.0 + rw + 4.0, y, aw, button_h),
+                &format!("hostauth:{sid}"),
+                &auth,
+                None,
+                Variant::Ghost,
+                ControlSize::Sm,
+                true,
+            );
             y += button_h + 4.0;
         }
         for (project, terms) in &blocks {
             let key = &project.key;
-            let name = j::text_or(&project.project, "projectDisplayName", j::text(&project.project, "projectRootPath"));
-            let name = if name.is_empty() { j::text(&project.project, "projectRootPath") } else { name };
+            let name = j::text_or(
+                &project.project,
+                "projectDisplayName",
+                j::text(&project.project, "projectRootPath"),
+            );
+            let name = if name.is_empty() {
+                j::text(&project.project, "projectRootPath")
+            } else {
+                name
+            };
             let row = rect(x0 + 24.0, y, w - 32.0, group_h);
-            let waiting = if project.collapsed { project.waiting } else { 0 };
-            let badge_w = if waiting > 0 { waiting_badge_width(&mut ui, cx, waiting) + 4.0 } else { 0.0 };
+            let waiting = if project.collapsed {
+                project.waiting
+            } else {
+                0
+            };
+            let badge_w = if waiting > 0 {
+                waiting_badge_width(&mut ui, cx, waiting) + 4.0
+            } else {
+                0.0
+            };
             let slots = group_metrics.layout(row, 0.0, 32.0, 20.0 + badge_w, 4.0);
             let mid = row.pos.y + row.size.y * 0.5;
             let plus_x = slots.trailing.pos.x + slots.trailing.size.x - 20.0;
-            ui.icon(cx, rect(slots.leading.pos.x, mid - 7.0, 14.0, 14.0), if project.collapsed { "chevron-right" } else { "chevron-down" }, 14.0, p.muted);
-            ui.icon(cx, rect(slots.leading.pos.x + 18.0, mid - 7.0, 14.0, 14.0), "folder", 14.0, p.muted);
+            ui.icon(
+                cx,
+                rect(slots.leading.pos.x, mid - 7.0, 14.0, 14.0),
+                if project.collapsed {
+                    "chevron-right"
+                } else {
+                    "chevron-down"
+                },
+                14.0,
+                p.muted,
+            );
+            ui.icon(
+                cx,
+                rect(slots.leading.pos.x + 18.0, mid - 7.0, 14.0, 14.0),
+                "folder",
+                14.0,
+                p.muted,
+            );
             ui.text(cx, slots.title, group, name);
             if waiting > 0 {
                 waiting_badge(&mut ui, cx, plus_x - 4.0, mid, waiting);
             }
             ui.hit(row, format!("project:{key}"));
-            toolbar_button(&mut ui, cx, plus_x, mid - 10.0, &format!("projplus:{key}"), "plus", &tr("sessionNavigation.newSession"));
+            toolbar_button(
+                &mut ui,
+                cx,
+                plus_x,
+                mid - 10.0,
+                &format!("projplus:{key}"),
+                "plus",
+                &tr("sessionNavigation.newSession"),
+            );
             y += group_h;
             if project.collapsed {
                 continue;
@@ -925,33 +1295,96 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
                 }
                 let agent_id = j::text(agent, "id");
                 let id = format!("session:{sid}:{agent_id}");
-                let is_selected = selected.as_ref().is_some_and(|t| t.kind == "agent" && t.server_id == sid && t.id.as_deref() == Some(agent_id));
+                let is_selected = selected.as_ref().is_some_and(|t| {
+                    t.kind == "agent" && t.server_id == sid && t.id.as_deref() == Some(agent_id)
+                });
                 if is_selected {
                     ui.fill(cx, row, p.border, 6.0);
                 }
-                let hovered = ui.is_hover(&id) || ui.is_hover(&format!("sessionedit:{sid}:{agent_id}"));
+                let hovered =
+                    ui.is_hover(&id) || ui.is_hover(&format!("sessionedit:{sid}:{agent_id}"));
                 let attention = j::boolean(agent, "requiresAttention", false);
                 let title = j::text(agent, "title");
-                let title = if title.is_empty() { tr("sessionNavigation.untitled") } else { title.to_string() };
+                let title = if title.is_empty() {
+                    tr("sessionNavigation.untitled")
+                } else {
+                    title.to_string()
+                };
                 let hint = hints && index < 9;
-                let trailing = if hint { String::new() } else { compact_time_ago(j::text_or(agent, "updatedAt", j::text(agent, "createdAt"))) };
-                let trailing_w = if hovered { 32.0 } else if hint { 30.0 } else if trailing.is_empty() { 12.0 } else { ui.measure(cx, ui.spec(Font::Regular, 12.0, p.muted), &trailing) + 16.0 };
-                let slots = session_metrics.layout(row, 12.0, 14.0, (trailing_w - 12.0).max(0.0), 8.0);
-                ui.icon(cx, slots.leading, "message-square", 14.0, if attention { p.foreground } else { p.muted });
+                let trailing = if hint {
+                    String::new()
+                } else {
+                    compact_time_ago(j::text_or(agent, "updatedAt", j::text(agent, "createdAt")))
+                };
+                let trailing_w = if hovered {
+                    32.0
+                } else if hint {
+                    30.0
+                } else if trailing.is_empty() {
+                    12.0
+                } else {
+                    ui.measure(cx, ui.spec(Font::Regular, 12.0, p.muted), &trailing) + 16.0
+                };
+                let slots =
+                    session_metrics.layout(row, 12.0, 14.0, (trailing_w - 12.0).max(0.0), 8.0);
+                ui.icon(
+                    cx,
+                    slots.leading,
+                    "message-square",
+                    14.0,
+                    if attention { p.foreground } else { p.muted },
+                );
                 let bucket = agent_live_status_bucket(agent);
                 let backdrop = if is_selected { p.border } else { p.sidebar };
-                let glyph = rect(slots.leading.pos.x, slots.leading.pos.y + (slots.leading.size.y - 14.0) * 0.5, 14.0, 14.0);
-                if paint_status_badge(ui.painter, cx, glyph, Some(bucket).filter(|b| *b != StatusBucket::Done), &p, backdrop) {
+                let glyph = rect(
+                    slots.leading.pos.x,
+                    slots.leading.pos.y + (slots.leading.size.y - 14.0) * 0.5,
+                    14.0,
+                    14.0,
+                );
+                if paint_status_badge(
+                    ui.painter,
+                    cx,
+                    glyph,
+                    Some(bucket).filter(|b| *b != StatusBucket::Done),
+                    &p,
+                    backdrop,
+                ) {
                     let area = ui.painter.draw_box.area();
                     clock::register(cx, area);
                 }
-                let title_spec = ui.spec(if attention { Font::Medium } else { Font::Regular }, 14.0, p.foreground);
+                let title_spec = ui.spec(
+                    if attention {
+                        Font::Medium
+                    } else {
+                        Font::Regular
+                    },
+                    14.0,
+                    p.foreground,
+                );
                 ui.text(cx, slots.title, title_spec, &title);
                 let sub = ui.spec(Font::Regular, 12.0, p.muted);
-                ui.text(cx, slots.subtitle, sub, &format!("{} · {}", j::text(agent, "provider"), agent_status_label(agent, bucket)));
+                ui.text(
+                    cx,
+                    slots.subtitle,
+                    sub,
+                    &format!(
+                        "{} · {}",
+                        j::text(agent, "provider"),
+                        agent_status_label(agent, bucket)
+                    ),
+                );
                 ui.hit(row, id.clone());
                 if hovered {
-                    toolbar_button(&mut ui, cx, slots.trailing.pos.x, row.pos.y + (row.size.y - 20.0) * 0.5, &format!("sessionedit:{sid}:{agent_id}"), "pencil", &tr("workspace.tabs.menu.renameAgent"));
+                    toolbar_button(
+                        &mut ui,
+                        cx,
+                        slots.trailing.pos.x,
+                        row.pos.y + (row.size.y - 20.0) * 0.5,
+                        &format!("sessionedit:{sid}:{agent_id}"),
+                        "pencil",
+                        &tr("workspace.tabs.menu.renameAgent"),
+                    );
                 } else if hint {
                     index_hint(&mut ui, cx, slots.trailing, index);
                 } else if !trailing.is_empty() {
@@ -965,26 +1398,61 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
                 if row.pos.y + row.size.y <= list.pos.y || row.pos.y >= list.pos.y + list.size.y {
                     continue;
                 }
-                let is_selected = selected.as_ref().is_some_and(|t| t.kind == "terminal" && t.server_id == sid && t.id.as_deref() == Some(terminal.id.as_str()));
+                let is_selected = selected.as_ref().is_some_and(|t| {
+                    t.kind == "terminal"
+                        && t.server_id == sid
+                        && t.id.as_deref() == Some(terminal.id.as_str())
+                });
                 if is_selected {
                     ui.fill(cx, row, p.border, 6.0);
                 }
                 let attention = !j::text(&terminal.activity, "attentionReason").is_empty();
                 let slots = session_metrics.layout(row, 12.0, 14.0, 0.0, 8.0);
-                ui.icon(cx, slots.leading, "square-terminal", 14.0, if attention { p.foreground } else { p.muted });
-                let title_spec = ui.spec(if attention { Font::Medium } else { Font::Regular }, 14.0, p.foreground);
+                ui.icon(
+                    cx,
+                    slots.leading,
+                    "square-terminal",
+                    14.0,
+                    if attention { p.foreground } else { p.muted },
+                );
+                let title_spec = ui.spec(
+                    if attention {
+                        Font::Medium
+                    } else {
+                        Font::Regular
+                    },
+                    14.0,
+                    p.foreground,
+                );
                 ui.text(cx, slots.title, title_spec, &terminal.label);
                 let sub = ui.spec(Font::Regular, 12.0, p.muted);
-                ui.text(cx, slots.subtitle, sub, &format!("{} · {}", tr("workspace.tabs.fallback.terminal"), terminal_status(&terminal.activity)));
+                ui.text(
+                    cx,
+                    slots.subtitle,
+                    sub,
+                    &format!(
+                        "{} · {}",
+                        tr("workspace.tabs.fallback.terminal"),
+                        terminal_status(&terminal.activity)
+                    ),
+                );
                 ui.hit(row, format!("sideterm:{sid}:{}", terminal.id));
             }
         }
-        let project_list_loading = host.loading() || loading.contains(&"project") || errors.iter().any(|(k, _)| *k == "project");
+        let project_list_loading = host.loading()
+            || loading.contains(&"project")
+            || errors.iter().any(|(k, _)| *k == "project");
         if !host_group.has_projects && !project_list_loading && query.is_empty() {
             let row = rect(x0 + 24.0, y, w - 32.0, group_h);
             let slots = group_metrics.layout(row, 0.0, 32.0, 0.0, 4.0);
             let mid = row.pos.y + row.size.y * 0.5;
-            ui.icon(cx, rect(slots.leading.pos.x + 18.0, mid - 7.0, 14.0, 14.0), "folder-plus", 14.0, p.muted);
+            ui.icon(
+                cx,
+                rect(slots.leading.pos.x + 18.0, mid - 7.0, 14.0, 14.0),
+                "folder-plus",
+                14.0,
+                p.muted,
+            );
             let spec = ui.spec(Font::Regular, 14.0, p.muted);
             ui.text(cx, slots.title, spec, &tr("sidebar.actions.addProject"));
             ui.hit(row, format!("addproject:{sid}"));
@@ -1001,20 +1469,43 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
             tr("sessionNavigation.empty")
         };
         let text_w = w - 32.0;
-        let text_h = ui.painter.paragraph_height(cx, text_w, spec, &message).max(title_h);
-        ui.painter.paragraph(cx, dvec2(x0 + 16.0, y + 16.0), text_w, spec, &message);
+        let text_h = ui
+            .painter
+            .paragraph_height(cx, text_w, spec, &message)
+            .max(title_h);
+        ui.painter
+            .paragraph(cx, dvec2(x0 + 16.0, y + 16.0), text_w, spec, &message);
         y += text_h + 24.0;
         // Archived sessions and older history are not in the tree: offer the History search.
         let (id, label, variant) = if host_count == 0 {
             ("side:addhost", tr("settings.addHost"), Variant::Outline)
         } else if !query.is_empty() {
             let raw: String = query.chars().take(40).collect();
-            ("side:searchhistory", tr_args("shell.sidebar.searchHistory", &[("query", &raw)]), Variant::Outline)
+            (
+                "side:searchhistory",
+                tr_args("shell.sidebar.searchHistory", &[("query", &raw)]),
+                Variant::Outline,
+            )
         } else {
-            ("side:display", tr("sidebar.display.trigger"), Variant::Ghost)
+            (
+                "side:display",
+                tr("sidebar.display.trigger"),
+                Variant::Ghost,
+            )
         };
-        let bw = ui.button_width(cx, &label, None, ControlSize::Sm).min(text_w);
-        ui.button(cx, rect(x0 + 16.0, y + 8.0, bw, button_h), id, &label, None, variant, ControlSize::Sm, true);
+        let bw = ui
+            .button_width(cx, &label, None, ControlSize::Sm)
+            .min(text_w);
+        ui.button(
+            cx,
+            rect(x0 + 16.0, y + 8.0, bw, button_h),
+            id,
+            &label,
+            None,
+            variant,
+            ControlSize::Sm,
+            true,
+        );
         y += button_h + 16.0;
     }
     y += 8.0;
@@ -1041,25 +1532,70 @@ fn draw_footer(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect) {
     let icon = if compact { 20.0 } else { 16.0 };
     let y = r.pos.y + (r.size.y - extent) * 0.5;
     // `FooterIconButton`: muted glyph, foreground while hovered, round highlight only pressed.
-    let button = |ui: &mut Ui, cx: &mut Cx2d, x: f64, id: &str, glyph: &str, size: f64, tooltip: &str| {
-        let b = rect(x, y, extent, extent);
-        if ui.is_pressed(id) {
-            let h = ui.p.interaction_highlight;
-            ui.fill(cx, b, h, extent * 0.5);
-        }
-        let color = if ui.is_hover(id) { ui.p.foreground } else { ui.p.muted };
-        ui.icon(cx, b, glyph, size, color);
-        ui.hit_tip(b, id, tooltip);
-    };
+    let button =
+        |ui: &mut Ui, cx: &mut Cx2d, x: f64, id: &str, glyph: &str, size: f64, tooltip: &str| {
+            let b = rect(x, y, extent, extent);
+            if ui.is_pressed(id) {
+                let h = ui.p.interaction_highlight;
+                ui.fill(cx, b, h, extent * 0.5);
+            }
+            let color = if ui.is_hover(id) {
+                ui.p.foreground
+            } else {
+                ui.p.muted
+            };
+            ui.icon(cx, b, glyph, size, color);
+            ui.hit_tip(b, id, tooltip);
+        };
     let mut x = r.pos.x + 8.0;
-    button(&mut ui, cx, x, "foot:addproject", "folder-plus", icon, &tr("sidebar.actions.addProject"));
+    button(
+        &mut ui,
+        cx,
+        x,
+        "foot:addproject",
+        "folder-plus",
+        icon,
+        &tr("sidebar.actions.addProject"),
+    );
     x += extent;
-    button(&mut ui, cx, x, "foot:usage", "circle-gauge", icon, &tr("sidebar.footer.usage"));
+    button(
+        &mut ui,
+        cx,
+        x,
+        "foot:usage",
+        "circle-gauge",
+        icon,
+        &tr("sidebar.footer.usage"),
+    );
     x += extent;
-    button(&mut ui, cx, x, "foot:hosts", "server", icon - 1.0, &tr("sidebar.actions.hosts"));
+    button(
+        &mut ui,
+        cx,
+        x,
+        "foot:hosts",
+        "server",
+        icon - 1.0,
+        &tr("sidebar.actions.hosts"),
+    );
     let right = r.pos.x + r.size.x - 8.0;
-    button(&mut ui, cx, right - extent, "foot:settings", "settings", icon, &crate::common::tooltip_with_shortcut(&tr("sidebar.actions.settings"), "toggle-settings"));
-    button(&mut ui, cx, right - extent * 2.0, "foot:help", "circle-help", icon, &tr("sidebar.help.trigger"));
+    button(
+        &mut ui,
+        cx,
+        right - extent,
+        "foot:settings",
+        "settings",
+        icon,
+        &crate::common::tooltip_with_shortcut(&tr("sidebar.actions.settings"), "toggle-settings"),
+    );
+    button(
+        &mut ui,
+        cx,
+        right - extent * 2.0,
+        "foot:help",
+        "circle-help",
+        icon,
+        &tr("sidebar.help.trigger"),
+    );
 }
 
 pub fn scroll(shell: &mut PaseoShell, cx: &mut Cx, delta: f64) {
@@ -1079,7 +1615,9 @@ pub fn touch_up(shell: &mut PaseoShell, cx: &mut Cx, time: f64) -> bool {
 
 pub fn animate(shell: &mut PaseoShell, cx: &mut Cx, event: &Event) {
     let s = &mut shell.data.sidebar;
-    let Some(delta) = s.motion.frame(cx, event) else { return };
+    let Some(delta) = s.motion.frame(cx, event) else {
+        return;
+    };
     let changed = s.scroll_by(delta);
     if changed {
         shell.redraw(cx);
@@ -1088,8 +1626,12 @@ pub fn animate(shell: &mut PaseoShell, cx: &mut Cx, event: &Event) {
 
 /// Search field changes (Event::Actions).
 pub fn handle_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, _ui: &mut UiContext) {
-    let Event::Actions(actions) = event else { return };
-    let Some(field) = shell.data.search.clone() else { return };
+    let Event::Actions(actions) = event else {
+        return;
+    };
+    let Some(field) = shell.data.search.clone() else {
+        return;
+    };
     if let Some(text) = field.as_ptext_field().changed(actions) {
         shell.data.sidebar.stop_motion();
         shell.data.sidebar.query = text.trim().to_lowercase();
@@ -1112,10 +1654,20 @@ pub fn expand(ui: &mut UiContext, key: &str) {
 /// Tracks the session-switch modifier (Ctrl; ⌘ on macOS) held on its own, for the 1–9 row
 /// hints. Returns true when the state changed.
 pub fn track_modifier(state: &mut SidebarState, event: &Event) -> bool {
-    let modifier = if cfg!(target_os = "macos") { KeyCode::Logo } else { KeyCode::Control };
+    let modifier = if cfg!(target_os = "macos") {
+        KeyCode::Logo
+    } else {
+        KeyCode::Control
+    };
     let held = match event {
-        Event::KeyDown(key) => key.key_code == modifier && !key.modifiers.shift && !key.modifiers.alt,
-        Event::KeyUp(_) | Event::AppLostFocus | Event::Pause | Event::Background | Event::MouseDown(_) => false,
+        Event::KeyDown(key) => {
+            key.key_code == modifier && !key.modifiers.shift && !key.modifiers.alt
+        }
+        Event::KeyUp(_)
+        | Event::AppLostFocus
+        | Event::Pause
+        | Event::Background
+        | Event::MouseDown(_) => false,
         _ => return false,
     };
     if held == state.modifier_held {
@@ -1142,12 +1694,17 @@ pub fn set_nav(ui: &mut UiContext, prefs: &mut Value, field: &str, value: Value)
         *prefs = json!({});
     }
     prefs[field] = value;
-    ui.push(UiEffect::SetPreference { key: "navigation".into(), value: prefs.clone() });
+    ui.push(UiEffect::SetPreference {
+        key: "navigation".into(),
+        value: prefs.clone(),
+    });
 }
 
 /// `_move`: reorder within `hostOrder`/`projectOrder`, keeping unrelated stored keys.
 pub fn move_in_order(ui: &mut UiContext, field: &str, keys: &[String], key: &str, delta: i64) {
-    let Some(index) = keys.iter().position(|k| k == key) else { return };
+    let Some(index) = keys.iter().position(|k| k == key) else {
+        return;
+    };
     let destination = index as i64 + delta;
     if destination < 0 || destination >= keys.len() as i64 {
         return;
@@ -1156,7 +1713,10 @@ pub fn move_in_order(ui: &mut UiContext, field: &str, keys: &[String], key: &str
     let item = keys.remove(index);
     keys.insert(destination as usize, item);
     let mut prefs = nav_prefs(&ui.state);
-    let unrelated: Vec<String> = strings(&prefs, field).into_iter().filter(|k| !keys.contains(k)).collect();
+    let unrelated: Vec<String> = strings(&prefs, field)
+        .into_iter()
+        .filter(|k| !keys.contains(k))
+        .collect();
     keys.extend(unrelated);
     set_nav(ui, &mut prefs, field, json!(keys));
 }
@@ -1177,29 +1737,49 @@ mod tests {
     fn unlabelled_filter_matches_only_label_free_workspaces() {
         let filters = vec![String::new()];
         assert!(workspace_matches_labels(&json!({"labels": []}), &filters));
-        assert!(!workspace_matches_labels(&json!({"labels": ["Bug"]}), &filters));
-        assert!(workspace_matches_labels(&json!({"labels": ["  Bug   fix "]}), &["bug fix".to_string()]));
+        assert!(!workspace_matches_labels(
+            &json!({"labels": ["Bug"]}),
+            &filters
+        ));
+        assert!(workspace_matches_labels(
+            &json!({"labels": ["  Bug   fix "]}),
+            &["bug fix".to_string()]
+        ));
     }
 
     #[test]
     fn nav_order_keeps_stored_order_and_appends_missing_defaults() {
-        let prefs = json!({"sidebarNavItems": [{"key": "search"}, {"key": "history", "visible": false}]});
-        assert_eq!(nav_order(&prefs), vec!["search", "new-workspace", "schedules"]);
+        let prefs =
+            json!({"sidebarNavItems": [{"key": "search"}, {"key": "history", "visible": false}]});
+        assert_eq!(
+            nav_order(&prefs),
+            vec!["search", "new-workspace", "schedules"]
+        );
     }
 
     #[test]
     fn terminal_merge_keeps_first_seen_order_and_fresh_fields() {
         let previous = vec![json!({"id": "a", "name": "one"}), json!({"id": "b"})];
-        let listed = vec![json!({"id": "c"}), json!({"id": "a", "name": "renamed"}), json!({"id": ""})];
+        let listed = vec![
+            json!({"id": "c"}),
+            json!({"id": "a", "name": "renamed"}),
+            json!({"id": ""}),
+        ];
         let merged = merge_terminals(&previous, &listed);
-        assert_eq!(merged, vec![json!({"id": "a", "name": "renamed"}), json!({"id": "c"})]);
+        assert_eq!(
+            merged,
+            vec![json!({"id": "a", "name": "renamed"}), json!({"id": "c"})]
+        );
     }
 
     #[test]
     fn terminal_directories_follow_connection_and_sidebar_filters() {
         let workspace = |id: &str, project: &str, extra: Value| {
-            let mut w = json!({"id": id, "projectId": project, "workspaceDirectory": format!("/w/{id}")});
-            w.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+            let mut w =
+                json!({"id": id, "projectId": project, "workspaceDirectory": format!("/w/{id}")});
+            w.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().cloned().unwrap_or_default());
             w
         };
         let state = json!({
@@ -1214,30 +1794,61 @@ mod tests {
             ],
             "preferences": {"navigation": {"projectFilters": ["project:on:p"]}},
         });
-        assert_eq!(terminal_directories(&state), vec![("on".to_string(), "a".to_string(), "/w/a".to_string())]);
+        assert_eq!(
+            terminal_directories(&state),
+            vec![("on".to_string(), "a".to_string(), "/w/a".to_string())]
+        );
     }
 
     #[test]
     fn terminal_labels_prefer_title_then_a_given_name() {
-        assert_eq!(terminal_label(&json!({"title": " vim ", "name": "dev"})), "vim");
+        assert_eq!(
+            terminal_label(&json!({"title": " vim ", "name": "dev"})),
+            "vim"
+        );
         assert_eq!(terminal_label(&json!({"name": "dev"})), "dev");
-        assert_eq!(terminal_label(&json!({"name": "Terminal"})), tr("workspace.tabs.fallback.terminal"));
+        assert_eq!(
+            terminal_label(&json!({"name": "Terminal"})),
+            tr("workspace.tabs.fallback.terminal")
+        );
     }
 
     #[test]
     fn session_status_puts_needed_input_before_activity() {
         let label = |agent: Value| agent_status_label(&agent, agent_live_status_bucket(&agent));
-        assert_eq!(label(json!({"status": "running", "pendingPermissions": [{"id": "q"}]})), tr("sidebar.statusBucket.needsInput"));
-        assert_eq!(label(json!({"status": "error", "requiresAttention": true, "attentionReason": "error"})), tr("sidebar.statusBucket.failed"));
-        assert_eq!(label(json!({"status": "idle", "activeTurn": {"id": "t"}})), tr("sidebar.statusBucket.working"));
-        assert_eq!(label(json!({"status": "idle", "requiresAttention": true, "attentionReason": "finished"})), tr("sidebar.statusBucket.readyToReview"));
-        assert_eq!(label(json!({"status": "idle"})), tr("agentList.status.idle"));
+        assert_eq!(
+            label(json!({"status": "running", "pendingPermissions": [{"id": "q"}]})),
+            tr("sidebar.statusBucket.needsInput")
+        );
+        assert_eq!(
+            label(
+                json!({"status": "error", "requiresAttention": true, "attentionReason": "error"})
+            ),
+            tr("sidebar.statusBucket.failed")
+        );
+        assert_eq!(
+            label(json!({"status": "idle", "activeTurn": {"id": "t"}})),
+            tr("sidebar.statusBucket.working")
+        );
+        assert_eq!(
+            label(
+                json!({"status": "idle", "requiresAttention": true, "attentionReason": "finished"})
+            ),
+            tr("sidebar.statusBucket.readyToReview")
+        );
+        assert_eq!(
+            label(json!({"status": "idle"})),
+            tr("agentList.status.idle")
+        );
     }
 
     fn tree_state(navigation: Value) -> Value {
         let agent = |id: &str, ws: &str, updated: &str, extra: Value| {
-            let mut a = json!({"id": id, "workspaceId": ws, "updatedAt": updated, "status": "idle"});
-            a.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+            let mut a =
+                json!({"id": id, "workspaceId": ws, "updatedAt": updated, "status": "idle"});
+            a.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().cloned().unwrap_or_default());
             a
         };
         json!({
@@ -1260,29 +1871,54 @@ mod tests {
     }
 
     fn ids(list: &[(String, Value)]) -> Vec<String> {
-        list.iter().map(|(_, a)| j::text(a, "id").to_string()).collect()
+        list.iter()
+            .map(|(_, a)| j::text(a, "id").to_string())
+            .collect()
     }
 
     #[test]
     fn navigation_follows_sidebar_order_filters_and_collapse() {
         let state = tree_state(json!({"hostOrder": ["a", "b"]}));
         // Host order, project name order, waiting sessions pinned, then newest first.
-        assert_eq!(ids(&navigation_sessions(&state, "", None, false)), ["first", "alpha", "asks", "new", "old"]);
-        let collapsed = tree_state(json!({"hostOrder": ["a", "b"], "collapsed": ["host:a", "project:b:q"]}));
-        assert_eq!(ids(&navigation_sessions(&collapsed, "", None, false)), ["asks", "new", "old"]);
-        assert_eq!(ids(&navigation_sessions(&collapsed, "", None, true)).len(), 5);
+        assert_eq!(
+            ids(&navigation_sessions(&state, "", None, false)),
+            ["first", "alpha", "asks", "new", "old"]
+        );
+        let collapsed =
+            tree_state(json!({"hostOrder": ["a", "b"], "collapsed": ["host:a", "project:b:q"]}));
+        assert_eq!(
+            ids(&navigation_sessions(&collapsed, "", None, false)),
+            ["asks", "new", "old"]
+        );
+        assert_eq!(
+            ids(&navigation_sessions(&collapsed, "", None, true)).len(),
+            5
+        );
         let filtered = tree_state(json!({"hostFilters": ["b"], "projectFilters": ["project:b:p"]}));
-        assert_eq!(ids(&navigation_sessions(&filtered, "", None, false)), ["asks", "new", "old"]);
-        assert_eq!(ids(&navigation_sessions(&state, "alp", None, false)), ["alpha"]);
+        assert_eq!(
+            ids(&navigation_sessions(&filtered, "", None, false)),
+            ["asks", "new", "old"]
+        );
+        assert_eq!(
+            ids(&navigation_sessions(&state, "alp", None, false)),
+            ["alpha"]
+        );
     }
 
     #[test]
     fn held_order_keeps_drawn_rows_and_puts_new_ones_first() {
         let state = tree_state(json!({}));
         let mut held = HashMap::new();
-        held.insert("project:b:p".to_string(), vec!["old".to_string(), "asks".to_string()]);
+        held.insert(
+            "project:b:p".to_string(),
+            vec!["old".to_string(), "asks".to_string()],
+        );
         let order = ids(&navigation_sessions(&state, "", Some(&held), false));
-        let p: Vec<&str> = order.iter().map(String::as_str).filter(|id| ["old", "new", "asks"].contains(id)).collect();
+        let p: Vec<&str> = order
+            .iter()
+            .map(String::as_str)
+            .filter(|id| ["old", "new", "asks"].contains(id))
+            .collect();
         assert_eq!(p, ["new", "old", "asks"]);
     }
 

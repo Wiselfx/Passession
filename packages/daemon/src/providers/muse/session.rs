@@ -417,9 +417,9 @@ impl Session {
             && let Some(model) = catalog["models"]
                 .as_array()
                 .and_then(|a| a.iter().find(|m| m["id"] == state.config["model"]))
-            {
-                state.config["thinkingOptionId"] = model["defaultThinkingOptionId"].clone();
-            }
+        {
+            state.config["thinkingOptionId"] = model["defaultThinkingOptionId"].clone();
+        }
         state.catalog = catalog;
         Ok(())
     }
@@ -901,7 +901,10 @@ impl AgentSession for Session {
             json!({"status":if result["disposition"]=="steered" && result["turnId"]==expected{"accepted"}else{"unavailable"}}),
         )
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         for event in self.history() {
             sink.emit(event).await?;
         }

@@ -8,18 +8,26 @@ use std::collections::{HashMap, VecDeque};
 
 use makepad_widgets::*;
 use paseo_gui_core::CoreError;
-use paseo_gui_platform::{CloseDecision, PlatformAction, PlatformEvent, PlatformRoute, PlatformValue, QuitReason, WindowGeometry};
+use paseo_gui_platform::{
+    CloseDecision, PlatformAction, PlatformEvent, PlatformRoute, PlatformValue, QuitReason,
+    WindowGeometry,
+};
 use serde_json::{Map, Value, json};
 
 use crate::common::overlay::{
     self as overlay_api, MenuEntry, MenuItem, MenuOptions, OverlayKind, OverlayRequest, SHELL_OWNER,
 };
-use crate::common::{MAIN_WINDOW_ID, PanelTarget, Route, TabPlacement, UiContext, UiEffect, json as j, tr, tr_args};
+use crate::common::{
+    MAIN_WINDOW_ID, PanelTarget, Route, TabPlacement, UiContext, UiEffect, json as j, tr, tr_args,
+};
 use crate::shell::hosts::{self, parent_agent_id};
 use crate::shell::layout::{Axis, CompactDestination, Direction};
 use crate::shell::sheets::{self, history, host_connections, host_dialog, labels, shortcut_help};
 use crate::shell::ui::Press;
-use crate::shell::{Page, PaseoShell, Pending, WindowRequest, WindowState, chrome, overlays, panels, platform, response_message, sidebar};
+use crate::shell::{
+    Page, PaseoShell, Pending, WindowRequest, WindowState, chrome, overlays, panels, platform,
+    response_message, sidebar,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Types
@@ -60,27 +68,74 @@ pub enum HostPurpose {
 /// Shell-owned menus and dialogs awaiting an answer.
 #[derive(Clone, Debug)]
 pub enum ShellOverlay {
-    TabMenu { target: PanelTarget, pane_id: String, explorer: bool },
-    TabOverflow { pane_id: String },
-    HostMenu { host_id: String, order: Vec<String> },
-    ProjectMenu { host_id: String, project: Value, order: Vec<String> },
-    SessionMenu { host_id: String, agent: Value },
-    HeaderMenu { target: Option<PanelTarget> },
-    ScriptsMenu { target: PanelTarget, workspace: Value },
+    TabMenu {
+        target: PanelTarget,
+        pane_id: String,
+        explorer: bool,
+    },
+    TabOverflow {
+        pane_id: String,
+    },
+    HostMenu {
+        host_id: String,
+        order: Vec<String>,
+    },
+    ProjectMenu {
+        host_id: String,
+        project: Value,
+        order: Vec<String>,
+    },
+    SessionMenu {
+        host_id: String,
+        agent: Value,
+    },
+    HeaderMenu {
+        target: Option<PanelTarget>,
+    },
+    ScriptsMenu {
+        target: PanelTarget,
+        workspace: Value,
+    },
     ExplorerNewTab,
     HelpMenu,
     HostPicker,
     DisplayMenu,
-    Guard { key: String, file: bool },
+    Guard {
+        key: String,
+        file: bool,
+    },
     /// `handleCloseTerminalTab`: closing a live terminal tab kills its daemon terminal.
-    CloseTerminal { key: String, host_id: String, terminal_id: String },
-    BulkClose { keys: Vec<String>, after: AfterClose },
-    RemoveHost { host_id: String },
-    RemoveProject { host_id: String, project: Value },
-    ArchiveSession { host_id: String, agent_id: String },
-    RenameTab { target: PanelTarget },
-    RenameSession { host_id: String, agent_id: String },
-    RenameProject { host_id: String, project_id: String },
+    CloseTerminal {
+        key: String,
+        host_id: String,
+        terminal_id: String,
+    },
+    BulkClose {
+        keys: Vec<String>,
+        after: AfterClose,
+    },
+    RemoveHost {
+        host_id: String,
+    },
+    RemoveProject {
+        host_id: String,
+        project: Value,
+    },
+    ArchiveSession {
+        host_id: String,
+        agent_id: String,
+    },
+    RenameTab {
+        target: PanelTarget,
+    },
+    RenameSession {
+        host_id: String,
+        agent_id: String,
+    },
+    RenameProject {
+        host_id: String,
+        project_id: String,
+    },
     /// History page "Filter by host" select.
     HistoryHost,
 }
@@ -89,7 +144,12 @@ pub enum ShellOverlay {
 #[derive(Debug)]
 pub enum ShellAsync {
     /// `project.icon.set` upload bytes read off the GUI thread.
-    ProjectIcon { window: String, host_id: String, project_id: String, data: Result<String, String> },
+    ProjectIcon {
+        window: String,
+        host_id: String,
+        project_id: String,
+        data: Result<String, String>,
+    },
 }
 
 /// Pending project icon picks by platform request id.
@@ -113,15 +173,32 @@ pub(crate) fn toast(shell: &mut PaseoShell, cx: &mut Cx, message: impl Into<Stri
     overlays::toast(&mut shell.data.overlays, cx, message.into(), error);
 }
 
-pub(crate) fn request(shell: &mut PaseoShell, ui: &UiContext, host_id: &str, message: Value, response_type: &str, pending: Pending) {
+pub(crate) fn request(
+    shell: &mut PaseoShell,
+    ui: &UiContext,
+    host_id: &str,
+    message: Value,
+    response_type: &str,
+    pending: Pending,
+) {
     let id = ui.core.request(host_id, message, response_type);
     shell.data.pending.insert(id, pending);
 }
 
-fn open_shell_overlay(shell: &mut PaseoShell, cx: &mut Cx, kind: OverlayKind, overlay: ShellOverlay) -> u64 {
+fn open_shell_overlay(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    kind: OverlayKind,
+    overlay: ShellOverlay,
+) -> u64 {
     let id = overlay_api::next_id();
     shell.data.menus.insert(id, overlay);
-    let request = OverlayRequest { id, owner: SHELL_OWNER.to_string(), window: shell.data.window_id.clone(), kind };
+    let request = OverlayRequest {
+        id,
+        owner: SHELL_OWNER.to_string(),
+        window: shell.data.window_id.clone(),
+        kind,
+    };
     // The overlay takes the pointer, so the chrome never sees it leave the button that opened
     // it; drop that hover now instead of leaving the button highlighted after the overlay closes.
     shell.data.pointer.hover = None;
@@ -131,9 +208,32 @@ fn open_shell_overlay(shell: &mut PaseoShell, cx: &mut Cx, kind: OverlayKind, ov
 
 /// `showPaseoSelect` owned by the shell; the answer reaches [`shell_overlay_result`] as
 /// `{value}` or `{cancelled}`, like a menu.
-pub(crate) fn shell_select(shell: &mut PaseoShell, cx: &mut Cx, anchor: Rect, request: overlay_api::SelectRequest, overlay: ShellOverlay) -> u64 {
-    let overlay_api::SelectRequest { title, options, value, searchable, search_placeholder, empty_text, min_width } = request;
-    let kind = OverlayKind::Select { title, anchor, options, value, searchable, search_placeholder, empty_text, min_width };
+pub(crate) fn shell_select(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    anchor: Rect,
+    request: overlay_api::SelectRequest,
+    overlay: ShellOverlay,
+) -> u64 {
+    let overlay_api::SelectRequest {
+        title,
+        options,
+        value,
+        searchable,
+        search_placeholder,
+        empty_text,
+        min_width,
+    } = request;
+    let kind = OverlayKind::Select {
+        title,
+        anchor,
+        options,
+        value,
+        searchable,
+        search_placeholder,
+        empty_text,
+        min_width,
+    };
     open_shell_overlay(shell, cx, kind, overlay)
 }
 
@@ -146,10 +246,23 @@ fn menu(
     options: MenuOptions,
     overlay: ShellOverlay,
 ) -> u64 {
-    open_shell_overlay(shell, cx, overlay_api::menu_kind(anchor, title, entries, options), overlay)
+    open_shell_overlay(
+        shell,
+        cx,
+        overlay_api::menu_kind(anchor, title, entries, options),
+        overlay,
+    )
 }
 
-fn confirm(shell: &mut PaseoShell, cx: &mut Cx, title: &str, message: &str, label: &str, destructive: bool, overlay: ShellOverlay) {
+fn confirm(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    title: &str,
+    message: &str,
+    label: &str,
+    destructive: bool,
+    overlay: ShellOverlay,
+) {
     let kind = OverlayKind::Confirm {
         title: title.to_string(),
         message: message.to_string(),
@@ -180,7 +293,10 @@ fn anchor_of(shell: &PaseoShell, id: &str) -> Rect {
 }
 
 fn point(abs: DVec2) -> Rect {
-    Rect { pos: abs, size: DVec2::default() }
+    Rect {
+        pos: abs,
+        size: DVec2::default(),
+    }
 }
 
 pub(crate) fn selected(shell: &PaseoShell) -> Option<PanelTarget> {
@@ -188,14 +304,23 @@ pub(crate) fn selected(shell: &PaseoShell) -> Option<PanelTarget> {
 }
 
 fn in_workspace(tab: Option<&PanelTarget>, workspace: &PanelTarget) -> bool {
-    tab.is_some_and(|t| t.server_id == workspace.server_id && t.workspace_id == workspace.workspace_id && t.cwd == workspace.cwd)
+    tab.is_some_and(|t| {
+        t.server_id == workspace.server_id
+            && t.workspace_id == workspace.workspace_id
+            && t.cwd == workspace.cwd
+    })
 }
 
 fn copy(shell: &mut PaseoShell, cx: &mut Cx, text: &str, label_key: &str) {
     if platform::copy_text(text.to_string()).is_none() {
         cx.copy_to_clipboard(text);
     }
-    toast(shell, cx, tr_args("common.states.copiedLabel", &[("label", &tr(label_key))]), false);
+    toast(
+        shell,
+        cx,
+        tr_args("common.states.copiedLabel", &[("label", &tr(label_key))]),
+        false,
+    );
 }
 
 fn new_id() -> String {
@@ -209,7 +334,13 @@ pub fn set_preference(shell: &mut PaseoShell, ui: &mut UiContext, key: &str, val
     let previous = ui.preference(key).cloned();
     let whole = write_preference(ui, key, value);
     let request = ui.core.save_state_flushed("preferences", whole);
-    shell.data.pending.insert(request, Pending::SavePreference { key: key.to_string(), previous });
+    shell.data.pending.insert(
+        request,
+        Pending::SavePreference {
+            key: key.to_string(),
+            previous,
+        },
+    );
 }
 
 /// Replaces `key` (`Null` removes it) in this dispatch's state; returns the whole object.
@@ -218,7 +349,9 @@ fn write_preference(ui: &mut UiContext, key: &str, value: Value) -> Value {
     if !state.get("preferences").is_some_and(Value::is_object) {
         state["preferences"] = json!({});
     }
-    let preferences = state["preferences"].as_object_mut().expect("preferences is an object");
+    let preferences = state["preferences"]
+        .as_object_mut()
+        .expect("preferences is an object");
     if value.is_null() {
         preferences.remove(key);
     } else {
@@ -233,17 +366,33 @@ fn write_preference(ui: &mut UiContext, key: &str, value: Value) -> Value {
 // Targets and opening (AppStore.open / openExplorer / openAgent, navigation_actions)
 
 /// `navigationAgentTarget`.
-pub fn navigation_agent_target(server_id: &str, agent: &Value, project: Option<&Value>) -> PanelTarget {
-    let placement = project.cloned().unwrap_or_else(|| j::object(agent, "project").clone());
+pub fn navigation_agent_target(
+    server_id: &str,
+    agent: &Value,
+    project: Option<&Value>,
+) -> PanelTarget {
+    let placement = project
+        .cloned()
+        .unwrap_or_else(|| j::object(agent, "project").clone());
     let cwd = j::text(agent, "cwd");
-    let cwd = if cwd.is_empty() { j::text(j::object(&placement, "checkout"), "cwd").to_string() } else { cwd.to_string() };
+    let cwd = if cwd.is_empty() {
+        j::text(j::object(&placement, "checkout"), "cwd").to_string()
+    } else {
+        cwd.to_string()
+    };
     PanelTarget::new("agent", server_id, j::text(agent, "workspaceId"), &cwd)
         .with_id(j::text(agent, "id"))
         .with_title(j::text(agent, "title"))
         .with_data(json!({ "project": placement }))
 }
 
-pub fn open_tab(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: PanelTarget, placement: TabPlacement) {
+pub fn open_tab(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &UiContext,
+    target: PanelTarget,
+    placement: TabPlacement,
+) {
     mark_child_tab_open(shell, ui, &target);
     match placement {
         TabPlacement::Main => shell.data.layout.open(target, false),
@@ -252,8 +401,14 @@ pub fn open_tab(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: Pan
         TabPlacement::ExplorerBackground => shell.data.layout.open_explorer(target, false),
     }
     // A retargeted root (title/data changed) gets the new target.
-    if let Some(panel) = shell.data.panels.get_mut(&shell.data.layout.selected().map(PanelTarget::key).unwrap_or_default())
-        && let Some(fresh) = shell.data.layout.target(&panel.target.key()).cloned()
+    if let Some(panel) = shell.data.panels.get_mut(
+        &shell
+            .data
+            .layout
+            .selected()
+            .map(PanelTarget::key)
+            .unwrap_or_default(),
+    ) && let Some(fresh) = shell.data.layout.target(&panel.target.key()).cloned()
         && fresh != panel.target
     {
         panel.target = fresh;
@@ -263,20 +418,44 @@ pub fn open_tab(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: Pan
 }
 
 /// `openAgent`: `fetch_agent_request`, then open (or select) its tab.
-pub fn open_agent(shell: &mut PaseoShell, ui: &UiContext, host_id: &str, agent_id: &str, error: Option<String>, placement: TabPlacement) {
+pub fn open_agent(
+    shell: &mut PaseoShell,
+    ui: &UiContext,
+    host_id: &str,
+    agent_id: &str,
+    error: Option<String>,
+    placement: TabPlacement,
+) {
     request(
         shell,
         ui,
         host_id,
         json!({ "type": "fetch_agent_request", "agentId": agent_id }),
         "fetch_agent_response",
-        Pending::OpenAgent { host_id: host_id.to_string(), error, placement },
+        Pending::OpenAgent {
+            host_id: host_id.to_string(),
+            error,
+            placement,
+        },
     );
 }
 
 /// `openNavigationAgent`.
-pub fn open_navigation_agent(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, server_id: &str, agent: &Value, project: Option<&Value>) {
-    open_tab(shell, cx, ui, navigation_agent_target(server_id, agent, project), TabPlacement::Main);
+pub fn open_navigation_agent(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &UiContext,
+    server_id: &str,
+    agent: &Value,
+    project: Option<&Value>,
+) {
+    open_tab(
+        shell,
+        cx,
+        ui,
+        navigation_agent_target(server_id, agent, project),
+        TabPlacement::Main,
+    );
 }
 
 /// `_markChildTabOpen`: child agents carry `paseo.open-agent-tab.<clientId>` while open.
@@ -284,8 +463,12 @@ fn mark_child_tab_open(shell: &mut PaseoShell, ui: &UiContext, target: &PanelTar
     if target.kind != "agent" || shell.data.marked_child_tabs.contains(&target.key()) {
         return;
     }
-    let Some(id) = target.id.as_deref() else { return };
-    let Some(host) = hosts::host(&ui.state, &target.server_id) else { return };
+    let Some(id) = target.id.as_deref() else {
+        return;
+    };
+    let Some(host) = hosts::host(&ui.state, &target.server_id) else {
+        return;
+    };
     if !host.connected() {
         return;
     }
@@ -326,10 +509,24 @@ fn choose_host(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purpose:
 }
 
 /// `showHostChooser`: local hosts first; one candidate is chosen without asking.
-fn choose_any_host(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purpose: HostPurpose, connected_only: Option<bool>) {
+fn choose_any_host(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    purpose: HostPurpose,
+    connected_only: Option<bool>,
+) {
     let all = hosts::hosts(&ui.state);
-    let mut candidates: Vec<String> = all.iter().filter(|h| h.is_local()).map(|h| h.server_id().to_string()).collect();
-    candidates.extend(all.iter().filter(|h| !h.is_local()).map(|h| h.server_id().to_string()));
+    let mut candidates: Vec<String> = all
+        .iter()
+        .filter(|h| h.is_local())
+        .map(|h| h.server_id().to_string())
+        .collect();
+    candidates.extend(
+        all.iter()
+            .filter(|h| !h.is_local())
+            .map(|h| h.server_id().to_string()),
+    );
     if connected_only == Some(true) {
         candidates.retain(|id| hosts::host(&ui.state, id).is_some_and(|h| h.connected()));
     }
@@ -347,13 +544,24 @@ fn choose_any_host(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purp
                 HostPurpose::ManageLabels => tr("workspaceLabels.manage.title"),
                 _ => tr("shell.commands.chooseHost"),
             };
-            shell.data.overlays.open_sheet(Box::new(host_connections::ChooserSheet::new(title, candidates, purpose)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(host_connections::ChooserSheet::new(
+                    title, candidates, purpose,
+                )));
             shell.redraw(cx);
         }
     }
 }
 
-pub fn host_chosen(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purpose: HostPurpose, host_id: String) {
+pub fn host_chosen(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    purpose: HostPurpose,
+    host_id: String,
+) {
     match purpose {
         HostPurpose::NewSession => {
             let current = selected(shell).filter(|t| t.server_id == host_id);
@@ -367,12 +575,23 @@ pub fn host_chosen(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purp
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
         HostPurpose::AddProject => {
-            let target = PanelTarget::new("new_tab", &host_id, "", "").with_data(json!({ "addProject": true }));
+            let target = PanelTarget::new("new_tab", &host_id, "", "")
+                .with_data(json!({ "addProject": true }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        HostPurpose::Usage => show_page(shell, cx, Page::Settings { host_id: Some(host_id), page: "host/usage".into() }),
+        HostPurpose::Usage => show_page(
+            shell,
+            cx,
+            Page::Settings {
+                host_id: Some(host_id),
+                page: "host/usage".into(),
+            },
+        ),
         HostPurpose::ManageLabels => {
-            shell.data.overlays.open_sheet(Box::new(labels::LabelsSheet::new(host_id, None)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(labels::LabelsSheet::new(host_id, None)));
             shell.redraw(cx);
         }
         HostPurpose::ProjectPath(path) => open_project_path(shell, ui, &host_id, &path),
@@ -383,11 +602,26 @@ pub fn host_chosen(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purp
 /// `openProjectPath`: `project.add` on a capable connected host; the sidebar shows it.
 fn open_project_path(shell: &mut PaseoShell, ui: &UiContext, host_id: &str, path: &str) {
     let trimmed = path.trim();
-    let Some(host) = hosts::host(&ui.state, host_id) else { return };
-    if trimmed.is_empty() || !host.connected() || !host.supports("projectAdd") || !host.supports("stableProjectIdentity") {
+    let Some(host) = hosts::host(&ui.state, host_id) else {
+        return;
+    };
+    if trimmed.is_empty()
+        || !host.connected()
+        || !host.supports("projectAdd")
+        || !host.supports("stableProjectIdentity")
+    {
         return;
     }
-    request(shell, ui, host_id, json!({ "type": "project.add.request", "cwd": trimmed }), "project.add.response", Pending::Refresh { host_id: host_id.to_string() });
+    request(
+        shell,
+        ui,
+        host_id,
+        json!({ "type": "project.add.request", "cwd": trimmed }),
+        "project.add.response",
+        Pending::Refresh {
+            host_id: host_id.to_string(),
+        },
+    );
 }
 
 pub(crate) fn new_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
@@ -395,13 +629,29 @@ pub(crate) fn new_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContex
 }
 
 /// `_openWorkspacePanel`.
-fn open_workspace_panel(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, kind: &str, explorer: bool) {
+fn open_workspace_panel(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &UiContext,
+    kind: &str,
+    explorer: bool,
+) {
     let Some(target) = selected(shell).filter(|t| !t.cwd.is_empty()) else {
         toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
         return;
     };
     let next = PanelTarget::new(kind, &target.server_id, &target.workspace_id, &target.cwd);
-    open_tab(shell, cx, ui, next, if explorer { TabPlacement::Explorer } else { TabPlacement::Main });
+    open_tab(
+        shell,
+        cx,
+        ui,
+        next,
+        if explorer {
+            TabPlacement::Explorer
+        } else {
+            TabPlacement::Main
+        },
+    );
 }
 
 /// Default supporting views follow the selected session's host and directory.
@@ -438,22 +688,35 @@ fn split_with_launcher(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, axis
     let focused = shell.data.layout.focused().id.clone();
     shell.data.layout.split_pane(&focused, axis);
     if let Some(source) = source {
-        let target = PanelTarget::new("new_tab", &source.server_id, &source.workspace_id, &source.cwd)
-            .with_id(new_id());
+        let target = PanelTarget::new(
+            "new_tab",
+            &source.server_id,
+            &source.workspace_id,
+            &source.cwd,
+        )
+        .with_id(new_id());
         open_tab(shell, cx, ui, target, TabPlacement::Main);
     }
     shell.redraw(cx);
 }
 
-
 // ---------------------------------------------------------------------------------------------
 // Closing (closeTab / closePane / canCloseWindow with guards)
 
 /// Starts closing `keys` (tabs) or asking their guards, then `after`.
-pub fn close_tabs(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, keys: Vec<String>, remove: bool, after: AfterClose) {
+pub fn close_tabs(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    keys: Vec<String>,
+    remove: bool,
+    after: AfterClose,
+) {
     // The lifecycle smoke's registered dirty-document guard refuses window close and quit.
     #[cfg(feature = "desktop-smoke")]
-    if matches!(after, AfterClose::Window | AfterClose::Quit(_)) && crate::smoke::close_guard_refuses() {
+    if matches!(after, AfterClose::Window | AfterClose::Quit(_))
+        && crate::smoke::close_guard_refuses()
+    {
         if let AfterClose::Quit(token) = after {
             vote_quit(token, false);
         }
@@ -466,28 +729,55 @@ pub fn close_tabs(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, keys:
         }
         return;
     }
-    shell.data.closing = Some(Closing { queue: keys.into(), remove, after });
+    shell.data.closing = Some(Closing {
+        queue: keys.into(),
+        remove,
+        after,
+    });
     advance_closing(shell, cx, ui);
 }
 
 /// `_closeWorkspaceTabs`: the bulk confirmation, then each tab's guard.
-fn close_bulk(shell: &mut PaseoShell, cx: &mut Cx, keys: Vec<String>, title_key: &str, after: AfterClose) {
+fn close_bulk(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    keys: Vec<String>,
+    title_key: &str,
+    after: AfterClose,
+) {
     if keys.is_empty() {
         return;
     }
     let count = keys.len().to_string();
-    let message = tr_args("workspace.tabs.confirmations.bulk.tabs", &[("tabs", &count)]);
-    confirm(shell, cx, &tr(title_key), &message, &tr("workspace.tabs.confirmations.close"), false, ShellOverlay::BulkClose { keys, after });
+    let message = tr_args(
+        "workspace.tabs.confirmations.bulk.tabs",
+        &[("tabs", &count)],
+    );
+    confirm(
+        shell,
+        cx,
+        &tr(title_key),
+        &message,
+        &tr("workspace.tabs.confirmations.close"),
+        false,
+        ShellOverlay::BulkClose { keys, after },
+    );
 }
 
 fn advance_closing(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
     loop {
-        let Some(closing) = shell.data.closing.as_mut() else { return };
-        let Some(key) = closing.queue.pop_front() else { break };
+        let Some(closing) = shell.data.closing.as_mut() else {
+            return;
+        };
+        let Some(key) = closing.queue.pop_front() else {
+            break;
+        };
         let remove = closing.remove;
         // Removing a saved host only forgets its tabs; the daemon keeps its terminals.
         let kills_terminals = remove && !matches!(closing.after, AfterClose::RemoveHost(_));
-        let Some(target) = shell.data.layout.target(&key).cloned() else { continue };
+        let Some(target) = shell.data.layout.target(&key).cloned() else {
+            continue;
+        };
         if shell.data.dirty.contains(&key) {
             if target.kind == "file" {
                 if panels::file_close_requested(&key) {
@@ -502,7 +792,10 @@ fn advance_closing(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
                     );
                     return;
                 }
-            } else if matches!(target.kind.as_str(), "agent" | "draft" | "provider_subagent") {
+            } else if matches!(
+                target.kind.as_str(),
+                "agent" | "draft" | "provider_subagent"
+            ) {
                 // Agent panel guard: a send or upload in flight refuses the close.
                 toast(shell, cx, tr("shell.commands.waitForSend"), true);
                 abort_closing(shell);
@@ -531,7 +824,9 @@ fn advance_closing(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
             remove_tab(shell, cx, ui, &key);
         }
     }
-    let Some(closing) = shell.data.closing.take() else { return };
+    let Some(closing) = shell.data.closing.take() else {
+        return;
+    };
     finish_closing(shell, cx, ui, closing.after);
 }
 
@@ -546,7 +841,14 @@ fn abort_closing(shell: &mut PaseoShell) {
 /// A live terminal asks `closeTerminalTitle` first; one that already exited (gone from the
 /// daemon's live list) closes directly. A host without a connection cannot answer, so the
 /// terminal counts as live.
-fn check_terminal_close(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, key: String, target: &PanelTarget, terminal_id: String) {
+fn check_terminal_close(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    key: String,
+    target: &PanelTarget,
+    terminal_id: String,
+) {
     let host_id = target.server_id.clone();
     if !hosts::host(&ui.state, &host_id).is_some_and(|h| h.connected()) {
         confirm_terminal_close(shell, cx, key, host_id, terminal_id);
@@ -558,11 +860,28 @@ fn check_terminal_close(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext,
     } else {
         message["workspaceId"] = json!(target.workspace_id);
     }
-    let pending = Pending::TerminalCloseCheck { key, host_id: host_id.clone(), terminal_id };
-    request(shell, ui, &host_id, message, "list_terminals_response", pending);
+    let pending = Pending::TerminalCloseCheck {
+        key,
+        host_id: host_id.clone(),
+        terminal_id,
+    };
+    request(
+        shell,
+        ui,
+        &host_id,
+        message,
+        "list_terminals_response",
+        pending,
+    );
 }
 
-fn confirm_terminal_close(shell: &mut PaseoShell, cx: &mut Cx, key: String, host_id: String, terminal_id: String) {
+fn confirm_terminal_close(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    key: String,
+    host_id: String,
+    terminal_id: String,
+) {
     confirm(
         shell,
         cx,
@@ -570,15 +889,33 @@ fn confirm_terminal_close(shell: &mut PaseoShell, cx: &mut Cx, key: String, host
         &tr("workspace.tabs.confirmations.closeTerminalMessage"),
         &tr("workspace.tabs.confirmations.close"),
         true,
-        ShellOverlay::CloseTerminal { key, host_id, terminal_id },
+        ShellOverlay::CloseTerminal {
+            key,
+            host_id,
+            terminal_id,
+        },
     );
 }
 
 /// The confirmed terminal tab leaves the layout, then its daemon terminal is killed; a failed
 /// kill stays silent like the original's `killTerminal(..).catch(invalidate)`.
-fn close_terminal_confirmed(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, key: &str, host_id: &str, terminal_id: &str) {
+fn close_terminal_confirmed(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    key: &str,
+    host_id: &str,
+    terminal_id: &str,
+) {
     remove_tab(shell, cx, ui, key);
-    request(shell, ui, host_id, json!({ "type": "kill_terminal_request", "terminalId": terminal_id }), "kill_terminal_response", Pending::Silent);
+    request(
+        shell,
+        ui,
+        host_id,
+        json!({ "type": "kill_terminal_request", "terminalId": terminal_id }),
+        "kill_terminal_response",
+        Pending::Silent,
+    );
     advance_closing(shell, cx, ui);
 }
 
@@ -695,7 +1032,13 @@ fn vote_quit(token: u64, allowed: bool) {
 
 /// Close-guard keys of this window (`canCloseWindow`).
 fn guarded_keys(shell: &PaseoShell) -> Vec<String> {
-    shell.data.dirty.iter().filter(|k| shell.data.layout.target(k).is_some()).cloned().collect()
+    shell
+        .data
+        .dirty
+        .iter()
+        .filter(|k| shell.data.layout.target(k).is_some())
+        .cloned()
+        .collect()
 }
 
 /// `_closePane`: the last pane stays; otherwise its tabs close in bulk, then the pane.
@@ -703,18 +1046,32 @@ fn close_pane(shell: &mut PaseoShell, cx: &mut Cx, pane_id: &str) {
     if shell.data.layout.panes().len() <= 1 {
         return;
     }
-    let Some(pane) = shell.data.layout.tree.pane(pane_id) else { return };
+    let Some(pane) = shell.data.layout.tree.pane(pane_id) else {
+        return;
+    };
     let keys = pane.tabs.clone();
     if keys.is_empty() {
         shell.data.layout.close_pane(pane_id);
         shell.redraw(cx);
         return;
     }
-    close_bulk(shell, cx, keys, "workspace.tabs.confirmations.closePaneTitle", AfterClose::ClosePane(pane_id.to_string()));
+    close_bulk(
+        shell,
+        cx,
+        keys,
+        "workspace.tabs.confirmations.closePaneTitle",
+        AfterClose::ClosePane(pane_id.to_string()),
+    );
 }
 
 /// Archived/removed workspaces leave the layout.
-pub fn close_workspace_tabs(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, workspace_ids: &[String]) {
+pub fn close_workspace_tabs(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    host_id: &str,
+    workspace_ids: &[String],
+) {
     let keys: Vec<String> = shell
         .data
         .layout
@@ -726,7 +1083,6 @@ pub fn close_workspace_tabs(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
     close_tabs(shell, cx, ui, keys, true, AfterClose::Nothing);
 }
 
-
 fn workspace_value(state: &Value, host_id: &str, workspace_id: &str) -> Option<Value> {
     hosts::host(state, host_id).and_then(|h| h.workspace(workspace_id).cloned())
 }
@@ -736,15 +1092,35 @@ fn workspace_value(state: &Value, host_id: &str, workspace_id: &str) -> Option<V
 
 pub fn page_route(page: &Page) -> Route {
     match page {
-        Page::Settings { host_id, page } => Route::Settings { host_id: host_id.clone(), page: page.clone() },
-        Page::Schedules { host_id } => Route::Schedules { host_id: host_id.clone() },
-        Page::Sessions { host_id, all_hosts, .. } => Route::Sessions { host_id: (!*all_hosts).then(|| host_id.clone()) },
+        Page::Settings { host_id, page } => Route::Settings {
+            host_id: host_id.clone(),
+            page: page.clone(),
+        },
+        Page::Schedules { host_id } => Route::Schedules {
+            host_id: host_id.clone(),
+        },
+        Page::Sessions {
+            host_id, all_hosts, ..
+        } => Route::Sessions {
+            host_id: (!*all_hosts).then(|| host_id.clone()),
+        },
     }
 }
 
 pub fn show_page(shell: &mut PaseoShell, cx: &mut Cx, page: Page) {
-    if let Page::Sessions { host_id, all_hosts, cwd, project_key } = &page {
-        shell.data.history = Some(history::HistoryPage::new(host_id, *all_hosts, cwd, project_key));
+    if let Page::Sessions {
+        host_id,
+        all_hosts,
+        cwd,
+        project_key,
+    } = &page
+    {
+        shell.data.history = Some(history::HistoryPage::new(
+            host_id,
+            *all_hosts,
+            cwd,
+            project_key,
+        ));
     }
     shell.data.page_serial = shell.data.layout.navigation_serial;
     shell.data.page = Some(page);
@@ -756,11 +1132,23 @@ pub fn show_page(shell: &mut PaseoShell, cx: &mut Cx, page: Page) {
     shell.redraw(cx);
 }
 
-pub(crate) fn show_sessions(shell: &mut PaseoShell, cx: &mut Cx, host_id: &str, all_hosts: bool, cwd: &str, project_key: &str) {
+pub(crate) fn show_sessions(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    host_id: &str,
+    all_hosts: bool,
+    cwd: &str,
+    project_key: &str,
+) {
     show_page(
         shell,
         cx,
-        Page::Sessions { host_id: host_id.to_string(), all_hosts, cwd: cwd.to_string(), project_key: project_key.to_string() },
+        Page::Sessions {
+            host_id: host_id.to_string(),
+            all_hosts,
+            cwd: cwd.to_string(),
+            project_key: project_key.to_string(),
+        },
     );
 }
 
@@ -771,8 +1159,20 @@ pub fn close_page(shell: &mut PaseoShell, cx: &mut Cx) {
     shell.redraw(cx);
 }
 
-pub(crate) fn open_settings(shell: &mut PaseoShell, cx: &mut Cx, host_id: Option<String>, page: &str) {
-    show_page(shell, cx, Page::Settings { host_id, page: page.to_string() });
+pub(crate) fn open_settings(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    host_id: Option<String>,
+    page: &str,
+) {
+    show_page(
+        shell,
+        cx,
+        Page::Settings {
+            host_id,
+            page: page.to_string(),
+        },
+    );
 }
 
 fn open_command_center(shell: &mut PaseoShell, cx: &mut Cx, files: bool) {
@@ -792,7 +1192,13 @@ fn open_command_center(shell: &mut PaseoShell, cx: &mut Cx, files: bool) {
 
 /// Offers `action` to the focused tab first (Flutter `PaseoCommands.invoke`); the tab returns
 /// it unhandled to [`execute`] otherwise.
-pub fn run_command(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: &str, args: &Value) {
+pub fn run_command(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    action: &str,
+    args: &Value,
+) {
     if let Some(key) = chrome::focused_tab(shell).filter(|k| shell.data.panels.contains_key(k)) {
         shell.queue_command(key, action.to_string(), args.clone());
         return;
@@ -809,15 +1215,27 @@ fn direction(action: &str) -> Direction {
     }
 }
 
-pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: &str, args: &Value) {
+pub fn execute(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    action: &str,
+    args: &Value,
+) {
     let target = selected(shell);
     let compact = shell.data.compact;
     let int = |key: &str, fallback: i64| j::int(args, key, fallback);
     match action {
-        "agent.new" | "workspace.project.pick" | "workspace.tab.menu.open" | "workspace.tab.target.agent" => new_session(shell, cx, ui),
+        "agent.new"
+        | "workspace.project.pick"
+        | "workspace.tab.menu.open"
+        | "workspace.tab.target.agent" => new_session(shell, cx, ui),
         "workspace.terminal.new" => new_terminal(shell, cx, ui, TabPlacement::Main),
         "workspace.tab.target.gitLog" => {
-            let supported = target.as_ref().and_then(|t| hosts::host(&ui.state, &t.server_id)).is_some_and(|h| h.supports(crate::features::git::log::FEATURE));
+            let supported = target
+                .as_ref()
+                .and_then(|t| hosts::host(&ui.state, &t.server_id))
+                .is_some_and(|h| h.supports(crate::features::git::log::FEATURE));
             if supported {
                 open_workspace_panel(shell, cx, ui, "git_log", false);
             } else {
@@ -839,7 +1257,13 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         }
         "workspace.tab.close-left" | "workspace.tab.close-right" | "workspace.tab.close-others" => {
             let pane = shell.data.layout.focused().clone();
-            let Some(active) = pane.selected.as_ref().and_then(|s| pane.tabs.iter().position(|k| k == s)) else { return };
+            let Some(active) = pane
+                .selected
+                .as_ref()
+                .and_then(|s| pane.tabs.iter().position(|k| k == s))
+            else {
+                return;
+            };
             let keys: Vec<String> = pane
                 .tabs
                 .iter()
@@ -868,7 +1292,11 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         "workspace.tab.navigate.relative" => {
             let pane = shell.data.layout.focused().clone();
             if !pane.tabs.is_empty() {
-                let current = pane.selected.as_ref().and_then(|s| pane.tabs.iter().position(|k| k == s)).map_or(-1, |i| i as i64);
+                let current = pane
+                    .selected
+                    .as_ref()
+                    .and_then(|s| pane.tabs.iter().position(|k| k == s))
+                    .map_or(-1, |i| i as i64);
                 let len = pane.tabs.len() as i64;
                 let next = (current + int("delta", 1)).rem_euclid(len) as usize;
                 shell.data.layout.select_tab(&pane.tabs[next]);
@@ -880,15 +1308,22 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
             let pane = shell.data.layout.focused().id.clone();
             close_pane(shell, cx, &pane);
         }
-        "workspace.pane.focus.left" | "workspace.pane.focus.right" | "workspace.pane.focus.up" | "workspace.pane.focus.down" => {
+        "workspace.pane.focus.left"
+        | "workspace.pane.focus.right"
+        | "workspace.pane.focus.up"
+        | "workspace.pane.focus.down" => {
             shell.data.layout.focus_adjacent_pane(direction(action));
         }
-        "workspace.pane.move-tab.left" | "workspace.pane.move-tab.right" | "workspace.pane.move-tab.up" | "workspace.pane.move-tab.down" => {
+        "workspace.pane.move-tab.left"
+        | "workspace.pane.move-tab.right"
+        | "workspace.pane.move-tab.up"
+        | "workspace.pane.move-tab.down" => {
             shell.data.layout.move_focused_tab(direction(action));
         }
         "sidebar.toggle.left" => {
             let show = if compact {
-                shell.data.page.is_some() || shell.data.layout.compact_destination != CompactDestination::Sidebar
+                shell.data.page.is_some()
+                    || shell.data.layout.compact_destination != CompactDestination::Sidebar
             } else {
                 !shell.data.layout.sidebar_visible
             };
@@ -901,7 +1336,9 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
             if compact {
                 toggle_compact_explorer(shell, cx, ui);
             } else if shell.data.layout.explorer_visible
-                && target.as_ref().is_some_and(|target| in_workspace(shell.data.layout.selected_explorer_target(), target))
+                && target.as_ref().is_some_and(|target| {
+                    in_workspace(shell.data.layout.selected_explorer_target(), target)
+                })
             {
                 shell.data.layout.show_explorer(false);
             } else {
@@ -910,7 +1347,11 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         }
         "sidebar.toggle.both" => {
             let layout = &shell.data.layout;
-            let show = if compact { layout.compact_destination != CompactDestination::Sidebar } else { !layout.sidebar_visible || !layout.explorer_visible };
+            let show = if compact {
+                layout.compact_destination != CompactDestination::Sidebar
+            } else {
+                !layout.sidebar_visible || !layout.explorer_visible
+            };
             shell.data.layout.show_sidebar(compact, show);
             if !compact {
                 shell.data.layout.show_explorer(show);
@@ -919,24 +1360,47 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         "view.toggle.focus" => {
             let maximized = shell.data.layout.maximized_pane.clone();
             let focused = shell.data.layout.focused().id.clone();
-            shell.data.layout.maximize_pane(if maximized.is_none() { Some(focused) } else { None });
+            shell.data.layout.maximize_pane(if maximized.is_none() {
+                Some(focused)
+            } else {
+                None
+            });
         }
         "settings.toggle" => open_settings(shell, cx, None, ""),
         "command-center.toggle" => open_command_center(shell, cx, false),
         "command-center.files" => open_command_center(shell, cx, true),
         "shortcuts.dialog.toggle" => {
-            shell.data.overlays.open_sheet(Box::new(shortcut_help::ShortcutHelpSheet::new(shell.data.compact)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(shortcut_help::ShortcutHelpSheet::new(
+                    shell.data.compact,
+                )));
         }
         // New Tab / Command Center "Import session": `{serverId, cwd?}`.
         "session.import" => {
             let host_id = j::text(args, "serverId").to_string();
-            let host_id = if host_id.is_empty() { selected(shell).map(|t| t.server_id).unwrap_or_default() } else { host_id };
+            let host_id = if host_id.is_empty() {
+                selected(shell).map(|t| t.server_id).unwrap_or_default()
+            } else {
+                host_id
+            };
             if !host_id.is_empty() {
-                shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(&host_id, j::text(args, "cwd"))));
+                shell
+                    .data
+                    .overlays
+                    .open_sheet(Box::new(history::ImportSheet::new(
+                        &host_id,
+                        j::text(args, "cwd"),
+                    )));
             }
         }
         "theme.cycle" => {
-            let current = ui.preference("theme").and_then(Value::as_str).unwrap_or("auto").to_string();
+            let current = ui
+                .preference("theme")
+                .and_then(Value::as_str)
+                .unwrap_or("auto")
+                .to_string();
             let next = match current.as_str() {
                 "auto" => "light",
                 "light" => "dark",
@@ -944,7 +1408,9 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
             };
             set_preference(shell, ui, "theme", json!(next));
         }
-        "session.navigate.index" | "session.navigate.relative" => navigate_session(shell, cx, ui, action, args),
+        "session.navigate.index" | "session.navigate.relative" => {
+            navigate_session(shell, cx, ui, action, args)
+        }
         "session.next-attention" => next_attention(shell, cx, ui),
         "agent.interrupt" => {
             if let Some(target) = target.filter(|t| t.kind == "agent" && t.id.is_some()) {
@@ -960,13 +1426,22 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         }
         "app.new-window" => request_new_window(),
         _ => {
-            if action.starts_with("message-input.") && !target.as_ref().is_some_and(|t| t.kind == "agent" || t.kind == "draft") {
+            if action.starts_with("message-input.")
+                && !target
+                    .as_ref()
+                    .is_some_and(|t| t.kind == "agent" || t.kind == "draft")
+            {
                 return;
             }
             if action.starts_with("conversation") {
                 return;
             }
-            toast(shell, cx, tr_args("shell.commands.unavailable", &[("action", action)]), true);
+            toast(
+                shell,
+                cx,
+                tr_args("shell.commands.unavailable", &[("action", action)]),
+                true,
+            );
         }
     }
     shell.redraw(cx);
@@ -980,11 +1455,22 @@ fn request_new_window() {
 
 /// `_navigateSession`, in the order the sidebar lists sessions (host order, project order,
 /// filters, collapse and search), so Ctrl+1 is the first row shown.
-fn navigate_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: &str, args: &Value) {
+fn navigate_session(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    action: &str,
+    args: &Value,
+) {
     let state = ui.state.clone();
     let holding = sidebar::pointer_on_tree(shell.data.pointer.hover.as_deref());
     let query = shell.data.sidebar.query.trim().to_lowercase();
-    let sessions = sidebar::navigation_sessions(&state, &query, holding.then_some(&shell.data.sidebar.held), false);
+    let sessions = sidebar::navigation_sessions(
+        &state,
+        &query,
+        holding.then_some(&shell.data.sidebar.held),
+        false,
+    );
     if sessions.is_empty() {
         return;
     }
@@ -995,7 +1481,11 @@ fn navigate_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, act
     } else {
         let at = sessions
             .iter()
-            .position(|(sid, agent)| current.as_ref().is_some_and(|c| c.server_id == *sid && c.id.as_deref() == Some(j::text(agent, "id"))))
+            .position(|(sid, agent)| {
+                current.as_ref().is_some_and(|c| {
+                    c.server_id == *sid && c.id.as_deref() == Some(j::text(agent, "id"))
+                })
+            })
             .map_or(-1, |i| i as i64);
         (at + j::int(args, "delta", 1)).rem_euclid(len)
     };
@@ -1011,8 +1501,15 @@ fn next_attention(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
     let state = ui.state.clone();
     let sessions = sidebar::navigation_sessions(&state, "", None, true);
     let current = selected(shell);
-    let is_current = |sid: &str, agent: &Value| current.as_ref().is_some_and(|c| c.kind == "agent" && c.server_id == sid && c.id.as_deref() == Some(j::text(agent, "id")));
-    let start = sessions.iter().position(|(sid, agent)| is_current(sid, agent)).map_or(0, |i| i + 1);
+    let is_current = |sid: &str, agent: &Value| {
+        current.as_ref().is_some_and(|c| {
+            c.kind == "agent" && c.server_id == sid && c.id.as_deref() == Some(j::text(agent, "id"))
+        })
+    };
+    let start = sessions
+        .iter()
+        .position(|(sid, agent)| is_current(sid, agent))
+        .map_or(0, |i| i + 1);
     let next = (0..sessions.len())
         .map(|offset| &sessions[(start + offset) % sessions.len()])
         .find(|(sid, agent)| !is_current(sid, agent) && sidebar::needs_input(agent))
@@ -1032,21 +1529,37 @@ fn next_attention(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
 // Keyboard and back
 
 /// Returns true when the key was consumed by a shortcut.
-pub fn handle_shortcut(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, key: &KeyEvent) -> bool {
+pub fn handle_shortcut(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    key: &KeyEvent,
+) -> bool {
     if shell.data.focus_scope.name() == "shortcut-capture" {
         return false;
     }
     // Original application menu "New Window" (CmdOrCtrl+Shift+N).
     let m = key.modifiers;
     let mac = cfg!(target_os = "macos");
-    if key.key_code == KeyCode::KeyN && m.shift && !m.alt && if mac { m.logo && !m.control } else { m.control && !m.logo } && platform::desktop_host() {
+    if key.key_code == KeyCode::KeyN
+        && m.shift
+        && !m.alt
+        && if mac {
+            m.logo && !m.control
+        } else {
+            m.control && !m.logo
+        }
+        && platform::desktop_host()
+    {
         request_new_window();
         return true;
     }
     let focus = shell.data.focus_scope.name();
     // A focused terminal tab owns the keyboard unless a field claimed another scope: its shell
     // keys (Ctrl+W, Ctrl+L, Ctrl+K, ...) must not become app shortcuts (`terminal: false`).
-    let terminal = focus == "workspace" && shell.data.page.is_none() && chrome::focused_target(shell).is_some_and(|t| t.kind == "terminal");
+    let terminal = focus == "workspace"
+        && shell.data.page.is_none()
+        && chrome::focused_target(shell).is_some_and(|t| t.kind == "terminal");
     let scope = if terminal { "terminal" } else { focus };
     let command_center = shell.data.command_center_open;
     match shell.data.router.handle_key(cx, key, scope, command_center) {
@@ -1084,28 +1597,63 @@ pub fn back(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) -> bool {
 pub fn apply_effect(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, effect: UiEffect) {
     match effect {
         UiEffect::Navigate(route) => navigate(shell, cx, ui, route),
-        UiEffect::OpenSession { host_id, agent_id } => open_agent(shell, ui, &host_id, &agent_id, None, TabPlacement::Main),
-        UiEffect::OpenSessionWithError { host_id, agent_id, error } => {
-            open_agent(shell, ui, &host_id, &agent_id, Some(error), TabPlacement::Main)
+        UiEffect::OpenSession { host_id, agent_id } => {
+            open_agent(shell, ui, &host_id, &agent_id, None, TabPlacement::Main)
         }
-        UiEffect::CloseTab { tab_key } => close_tabs(shell, cx, ui, vec![tab_key], true, AfterClose::Nothing),
+        UiEffect::OpenSessionWithError {
+            host_id,
+            agent_id,
+            error,
+        } => open_agent(
+            shell,
+            ui,
+            &host_id,
+            &agent_id,
+            Some(error),
+            TabPlacement::Main,
+        ),
+        UiEffect::CloseTab { tab_key } => {
+            close_tabs(shell, cx, ui, vec![tab_key], true, AfterClose::Nothing)
+        }
         UiEffect::Toast { message, is_error } => toast(shell, cx, message, is_error),
         UiEffect::OpenExternal { url } => {
             if platform::open_external(&url).is_none() {
                 toast(shell, cx, tr("shell.commands.openLinkFailed"), true);
             }
         }
-        UiEffect::OpenFile { host_id, workspace_id, path } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, false),
-        UiEffect::OpenFileBeside { host_id, workspace_id, path } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, true),
+        UiEffect::OpenFile {
+            host_id,
+            workspace_id,
+            path,
+        } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, false),
+        UiEffect::OpenFileBeside {
+            host_id,
+            workspace_id,
+            path,
+        } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, true),
         UiEffect::SetCloseGuard { owner, dirty } => {
-            let changed = if dirty { shell.data.dirty.insert(owner) } else { shell.data.dirty.remove(&owner) };
+            let changed = if dirty {
+                shell.data.dirty.insert(owner)
+            } else {
+                shell.data.dirty.remove(&owner)
+            };
             if changed {
                 shell.redraw(cx);
             }
         }
         UiEffect::OpenTab { target, placement } => open_tab(shell, cx, ui, target, placement),
-        UiEffect::OpenDraft { host_id, workspace_id, cwd, draft_id, title, data } => {
-            let target = PanelTarget::new("draft", &host_id, &workspace_id, &cwd).with_id(draft_id).with_title(title).with_data(data);
+        UiEffect::OpenDraft {
+            host_id,
+            workspace_id,
+            cwd,
+            draft_id,
+            title,
+            data,
+        } => {
+            let target = PanelTarget::new("draft", &host_id, &workspace_id, &cwd)
+                .with_id(draft_id)
+                .with_title(title)
+                .with_data(data);
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
         UiEffect::ReplaceTab { tab_key, target } => {
@@ -1135,13 +1683,25 @@ pub fn apply_effect(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, eff
             toast(shell, cx, message, false);
         }
         UiEffect::OpenHostDialog => host_dialog::open_flow(shell, cx, None, None, None),
-        UiEffect::OpenHostConnectionDialog { connection } => host_dialog::open_flow(shell, cx, None, Some(connection), None),
+        UiEffect::OpenHostConnectionDialog { connection } => {
+            host_dialog::open_flow(shell, cx, None, Some(connection), None)
+        }
         UiEffect::OpenHostPairing { host_id } => {
-            shell.data.overlays.open_sheet(Box::new(host_dialog::PairingSheet::new(host_id)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(host_dialog::PairingSheet::new(host_id)));
         }
         UiEffect::CloseSettings => close_page(shell, cx),
         UiEffect::RemoveHost { host_id } => {
-            let keys: Vec<String> = shell.data.layout.tabs.iter().filter(|t| t.server_id == host_id).map(PanelTarget::key).collect();
+            let keys: Vec<String> = shell
+                .data
+                .layout
+                .tabs
+                .iter()
+                .filter(|t| t.server_id == host_id)
+                .map(PanelTarget::key)
+                .collect();
             close_tabs(shell, cx, ui, keys, true, AfterClose::RemoveHost(host_id));
         }
         UiEffect::Redraw => shell.redraw(cx),
@@ -1149,12 +1709,21 @@ pub fn apply_effect(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, eff
 }
 
 /// `Route::Files { path }`: `None` explorer, a trailing `/` reveals that folder, else a file.
-fn open_file(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, host_id: &str, workspace_id: &str, path: &str, beside: bool) {
+fn open_file(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &UiContext,
+    host_id: &str,
+    workspace_id: &str,
+    path: &str,
+    beside: bool,
+) {
     let cwd = workspace_value(&ui.state, host_id, workspace_id)
         .map(|w| j::text(&w, "workspaceDirectory").to_string())
         .unwrap_or_default();
     if path.ends_with('/') {
-        let target = PanelTarget::new("files", host_id, workspace_id, &cwd).with_data(json!({ "reveal": path }));
+        let target = PanelTarget::new("files", host_id, workspace_id, &cwd)
+            .with_data(json!({ "reveal": path }));
         open_tab(shell, cx, ui, target, TabPlacement::Explorer);
         return;
     }
@@ -1165,81 +1734,193 @@ fn open_file(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, host_id: &str,
     let mut data = json!({ "path": file });
     if let Some(location) = location {
         data["location"] = json!(location);
-        if let Some(line) = location.trim_start_matches('L').split(['-', ':']).next().and_then(|l| l.parse::<i64>().ok()) {
+        if let Some(line) = location
+            .trim_start_matches('L')
+            .split(['-', ':'])
+            .next()
+            .and_then(|l| l.parse::<i64>().ok())
+        {
             data["line"] = json!(line);
         }
     }
-    let target = PanelTarget::new("file", host_id, workspace_id, &cwd).with_id(file).with_data(data);
-    open_tab(shell, cx, ui, target, if beside { TabPlacement::Beside } else { TabPlacement::Main });
+    let target = PanelTarget::new("file", host_id, workspace_id, &cwd)
+        .with_id(file)
+        .with_data(data);
+    open_tab(
+        shell,
+        cx,
+        ui,
+        target,
+        if beside {
+            TabPlacement::Beside
+        } else {
+            TabPlacement::Main
+        },
+    );
 }
 
 fn navigate(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: Route) {
     let state = ui.state.clone();
-    let cwd_of = |host: &str, ws: &str| workspace_value(&state, host, ws).map(|w| j::text(&w, "workspaceDirectory").to_string()).unwrap_or_default();
+    let cwd_of = |host: &str, ws: &str| {
+        workspace_value(&state, host, ws)
+            .map(|w| j::text(&w, "workspaceDirectory").to_string())
+            .unwrap_or_default()
+    };
     match route {
         Route::Welcome => close_page(shell, cx),
-        Route::Session { host_id, agent_id } => open_agent(shell, ui, &host_id, &agent_id, None, TabPlacement::Main),
-        Route::Subagent { host_id, parent_agent_id, subagent_id } => {
-            let parent = hosts::host(&state, &host_id).and_then(|h| h.agent(&parent_agent_id).cloned()).unwrap_or(Value::Null);
-            let target = PanelTarget::new("provider_subagent", &host_id, j::text(&parent, "workspaceId"), j::text(&parent, "cwd"))
-                .with_id(subagent_id)
-                .with_data(json!({ "parentAgentId": parent_agent_id }));
+        Route::Session { host_id, agent_id } => {
+            open_agent(shell, ui, &host_id, &agent_id, None, TabPlacement::Main)
+        }
+        Route::Subagent {
+            host_id,
+            parent_agent_id,
+            subagent_id,
+        } => {
+            let parent = hosts::host(&state, &host_id)
+                .and_then(|h| h.agent(&parent_agent_id).cloned())
+                .unwrap_or(Value::Null);
+            let target = PanelTarget::new(
+                "provider_subagent",
+                &host_id,
+                j::text(&parent, "workspaceId"),
+                j::text(&parent, "cwd"),
+            )
+            .with_id(subagent_id)
+            .with_data(json!({ "parentAgentId": parent_agent_id }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        Route::Draft { host_id, workspace_id, draft_id } => {
+        Route::Draft {
+            host_id,
+            workspace_id,
+            draft_id,
+        } => {
             let cwd = cwd_of(&host_id, &workspace_id);
-            let target = PanelTarget::new("draft", &host_id, &workspace_id, &cwd).with_id(draft_id).with_title(tr("sessionNavigation.newSession"));
+            let target = PanelTarget::new("draft", &host_id, &workspace_id, &cwd)
+                .with_id(draft_id)
+                .with_title(tr("sessionNavigation.newSession"));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        Route::Files { host_id, workspace_id, path: None } => {
+        Route::Files {
+            host_id,
+            workspace_id,
+            path: None,
+        } => {
             let cwd = cwd_of(&host_id, &workspace_id);
-            open_tab(shell, cx, ui, PanelTarget::new("files", &host_id, &workspace_id, &cwd), TabPlacement::Explorer);
+            open_tab(
+                shell,
+                cx,
+                ui,
+                PanelTarget::new("files", &host_id, &workspace_id, &cwd),
+                TabPlacement::Explorer,
+            );
         }
-        Route::Files { host_id, workspace_id, path: Some(path) } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, false),
-        Route::Git { host_id, workspace_id } => {
+        Route::Files {
+            host_id,
+            workspace_id,
+            path: Some(path),
+        } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, false),
+        Route::Git {
+            host_id,
+            workspace_id,
+        } => {
             let cwd = cwd_of(&host_id, &workspace_id);
-            open_tab(shell, cx, ui, PanelTarget::new("git_log", &host_id, &workspace_id, &cwd), TabPlacement::Explorer);
+            open_tab(
+                shell,
+                cx,
+                ui,
+                PanelTarget::new("git_log", &host_id, &workspace_id, &cwd),
+                TabPlacement::Explorer,
+            );
         }
         Route::Settings { host_id, page } => open_settings(shell, cx, host_id, &page),
         Route::Schedules { host_id } => show_page(shell, cx, Page::Schedules { host_id }),
         Route::Sessions { host_id } => {
             let all = host_id.is_none();
-            let id = host_id.or_else(|| hosts::hosts(&state).first().map(|h| h.server_id().to_string())).unwrap_or_default();
+            let id = host_id
+                .or_else(|| {
+                    hosts::hosts(&state)
+                        .first()
+                        .map(|h| h.server_id().to_string())
+                })
+                .unwrap_or_default();
             show_sessions(shell, cx, &id, all, "", "");
         }
         Route::CommandCenter => open_command_center(shell, cx, false),
-        Route::Workspace { host_id, workspace_id } => {
+        Route::Workspace {
+            host_id,
+            workspace_id,
+        } => {
             let ws = workspace_id.unwrap_or_default();
             let cwd = cwd_of(&host_id, &ws);
-            let target = PanelTarget::new("new_tab", &host_id, &ws, &cwd).with_id(new_id()).with_title(tr("sessionNavigation.newSession"));
+            let target = PanelTarget::new("new_tab", &host_id, &ws, &cwd)
+                .with_id(new_id())
+                .with_title(tr("sessionNavigation.newSession"));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        Route::Setup { host_id, workspace_id } => {
+        Route::Setup {
+            host_id,
+            workspace_id,
+        } => {
             let workspace = workspace_value(&state, &host_id, &workspace_id).unwrap_or(Value::Null);
             let cwd = j::text(&workspace, "workspaceDirectory").to_string();
             let root = j::text_or(&workspace, "projectRootPath", &cwd).to_string();
-            let target = PanelTarget::new("setup", &host_id, &workspace_id, &cwd).with_data(json!({ "repoRoot": root }));
+            let target = PanelTarget::new("setup", &host_id, &workspace_id, &cwd)
+                .with_data(json!({ "repoRoot": root }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        Route::ProjectSettings { host_id, project_key } => {
-            let target = PanelTarget::new("project_settings", &host_id, "", &project_key).with_data(json!({ "projectKey": project_key }));
+        Route::ProjectSettings {
+            host_id,
+            project_key,
+        } => {
+            let target = PanelTarget::new("project_settings", &host_id, "", &project_key)
+                .with_data(json!({ "projectKey": project_key }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
-        Route::ExecutionLog { host_id, workspace_id, terminal_id } => {
+        Route::ExecutionLog {
+            host_id,
+            workspace_id,
+            terminal_id,
+        } => {
             // An unknown workspace refreshes its host instead of opening.
             open_execution_log(shell, cx, ui, &host_id, &workspace_id, &terminal_id, None);
         }
-        Route::Terminal { host_id, workspace_id, terminal_id } => {
+        Route::Terminal {
+            host_id,
+            workspace_id,
+            terminal_id,
+        } => {
             let cwd = cwd_of(&host_id, &workspace_id);
-            open_tab(shell, cx, ui, PanelTarget::new("terminal", &host_id, &workspace_id, &cwd).with_id(terminal_id), TabPlacement::Main);
+            open_tab(
+                shell,
+                cx,
+                ui,
+                PanelTarget::new("terminal", &host_id, &workspace_id, &cwd).with_id(terminal_id),
+                TabPlacement::Main,
+            );
         }
     }
 }
 
 /// `openExecutionLog`: the workspace must be known (refresh when it is not yet). A terminal
 /// already open as an interactive tab (attention notifications) is shown there instead.
-fn open_execution_log(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, workspace_id: &str, terminal_id: &str, title: Option<String>) -> bool {
-    let open = shell.data.layout.tabs.iter().find(|t| t.kind == "terminal" && t.server_id == host_id && t.id.as_deref() == Some(terminal_id)).cloned();
+fn open_execution_log(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    host_id: &str,
+    workspace_id: &str,
+    terminal_id: &str,
+    title: Option<String>,
+) -> bool {
+    let open = shell
+        .data
+        .layout
+        .tabs
+        .iter()
+        .find(|t| {
+            t.kind == "terminal" && t.server_id == host_id && t.id.as_deref() == Some(terminal_id)
+        })
+        .cloned();
     if let Some(target) = open {
         open_tab(shell, cx, ui, target, TabPlacement::Main);
         return true;
@@ -1248,8 +1929,14 @@ fn open_execution_log(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, h
         ui.core.refresh_host(host_id);
         return false;
     };
-    let cwd = j::text_or(&workspace, "workspaceDirectory", j::text(&workspace, "projectRootPath")).to_string();
-    let mut target = PanelTarget::new("execution_log", host_id, workspace_id, &cwd).with_id(terminal_id);
+    let cwd = j::text_or(
+        &workspace,
+        "workspaceDirectory",
+        j::text(&workspace, "projectRootPath"),
+    )
+    .to_string();
+    let mut target =
+        PanelTarget::new("execution_log", host_id, workspace_id, &cwd).with_id(terminal_id);
     target.title = title;
     open_tab(shell, cx, ui, target, TabPlacement::Main);
     true
@@ -1258,9 +1945,20 @@ fn open_execution_log(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, h
 // ---------------------------------------------------------------------------------------------
 // Responses
 
-pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _request_id: &str, pending: Pending, result: &Result<Value, CoreError>) {
+pub fn on_response(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    _request_id: &str,
+    pending: Pending,
+    result: &Result<Value, CoreError>,
+) {
     match pending {
-        Pending::OpenAgent { host_id, error, placement } => {
+        Pending::OpenAgent {
+            host_id,
+            error,
+            placement,
+        } => {
             let payload = match result {
                 Ok(payload) => payload,
                 Err(e) => return toast(shell, cx, crate::common::error_message(e), true),
@@ -1272,19 +1970,25 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
                 return toast(shell, cx, message, true);
             }
             let workspace_id = j::text(agent, "workspaceId").to_string();
-            let workspace_dir = workspace_value(&ui.state, &host_id, &workspace_id).map(|w| j::text(&w, "workspaceDirectory").to_string()).unwrap_or_default();
+            let workspace_dir = workspace_value(&ui.state, &host_id, &workspace_id)
+                .map(|w| j::text(&w, "workspaceDirectory").to_string())
+                .unwrap_or_default();
             let cwd = j::text_or(agent, "cwd", &workspace_dir).to_string();
             let mut data = json!({ "agent": agent });
             if let Some(error) = error {
                 data["submissionError"] = json!(error);
             }
-            let host_id = hosts::host(&ui.state, &host_id).map(|h| h.server_id().to_string()).unwrap_or(host_id);
+            let host_id = hosts::host(&ui.state, &host_id)
+                .map(|h| h.server_id().to_string())
+                .unwrap_or(host_id);
             let target = PanelTarget::new("agent", &host_id, &workspace_id, &cwd)
                 .with_id(j::text(agent, "id"))
                 .with_title(j::text(agent, "title"))
                 .with_data(data);
             let reveal = shell.data.reveal_agent.as_ref().is_some_and(|(sid, id)| {
-                (sid == &host_id || hosts::host(&ui.state, sid).is_some_and(|h| h.server_id() == host_id)) && target.id.as_deref() == Some(id.as_str())
+                (sid == &host_id
+                    || hosts::host(&ui.state, sid).is_some_and(|h| h.server_id() == host_id))
+                    && target.id.as_deref() == Some(id.as_str())
             });
             if reveal {
                 shell.data.reveal_agent = None;
@@ -1308,7 +2012,13 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
             None => {
                 let removed: Vec<String> = result
                     .as_ref()
-                    .map(|p| j::array(p, "removedWorkspaceIds").iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|p| {
+                        j::array(p, "removedWorkspaceIds")
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 close_workspace_tabs(shell, cx, ui, &host_id, &removed);
                 ui.core.refresh_host(&host_id);
@@ -1327,9 +2037,15 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
             }
         }
         Pending::Silent => {}
-        Pending::TerminalCloseCheck { key, host_id, terminal_id } => {
+        Pending::TerminalCloseCheck {
+            key,
+            host_id,
+            terminal_id,
+        } => {
             let live = match result {
-                Ok(payload) => j::array(payload, "terminals").iter().any(|t| j::text(t, "id") == terminal_id),
+                Ok(payload) => j::array(payload, "terminals")
+                    .iter()
+                    .any(|t| j::text(t, "id") == terminal_id),
                 Err(_) => true,
             };
             if live {
@@ -1339,17 +2055,35 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
                 advance_closing(shell, cx, ui);
             }
         }
-        Pending::CreateTerminal { host_id, workspace_id, cwd, placement } => {
+        Pending::CreateTerminal {
+            host_id,
+            workspace_id,
+            cwd,
+            placement,
+        } => {
             if let Some(message) = response_message(result) {
                 return toast(shell, cx, message, true);
             }
-            let terminal = result.as_ref().map(|p| j::object(p, "terminal").clone()).unwrap_or(Value::Null);
+            let terminal = result
+                .as_ref()
+                .map(|p| j::object(p, "terminal").clone())
+                .unwrap_or(Value::Null);
             let terminal_id = j::text(&terminal, "id");
             if terminal_id.is_empty() {
-                return toast(shell, cx, tr("newWorkspace.errors.createWorktreeFailed"), true);
+                return toast(
+                    shell,
+                    cx,
+                    tr("newWorkspace.errors.createWorktreeFailed"),
+                    true,
+                );
             }
-            let target = PanelTarget::new("terminal", &host_id, j::text_or(&terminal, "workspaceId", &workspace_id), j::text_or(&terminal, "cwd", &cwd))
-                .with_id(terminal_id);
+            let target = PanelTarget::new(
+                "terminal",
+                &host_id,
+                j::text_or(&terminal, "workspaceId", &workspace_id),
+                j::text_or(&terminal, "cwd", &cwd),
+            )
+            .with_id(terminal_id);
             open_tab(shell, cx, ui, target, placement);
         }
         Pending::SavePreference { key, previous } => {
@@ -1367,8 +2101,14 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
             if let Ok(payload) = result {
                 for label in j::array(payload, "labels") {
                     let key = sidebar::label_key(j::text(label, "name"));
-                    if !key.is_empty() && !shell.data.label_catalog.iter().any(|(k, _, _)| *k == key) {
-                        shell.data.label_catalog.push((key, j::text(label, "name").to_string(), j::text(label, "color").to_string()));
+                    if !key.is_empty()
+                        && !shell.data.label_catalog.iter().any(|(k, _, _)| *k == key)
+                    {
+                        shell.data.label_catalog.push((
+                            key,
+                            j::text(label, "name").to_string(),
+                            j::text(label, "color").to_string(),
+                        ));
                     }
                 }
                 refresh_display_menu(shell, cx, ui);
@@ -1381,7 +2121,13 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
 // ---------------------------------------------------------------------------------------------
 // Pointer: clicks on chrome/sidebar/welcome/page ids
 
-pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, _modifiers: KeyModifiers) {
+pub fn click(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    id: &str,
+    _modifiers: KeyModifiers,
+) {
     let state = ui.state.clone();
     let compact = shell.data.compact;
     if let Some(rest) = id.strip_prefix("welcome:") {
@@ -1396,21 +2142,28 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
         "banner:settings" => open_settings(shell, cx, None, ""),
         "hdr:sidebar" => {
             let visible = shell.data.layout.sidebar_visible;
-            shell.data.layout.show_sidebar(compact, if compact { true } else { !visible });
+            shell
+                .data
+                .layout
+                .show_sidebar(compact, if compact { true } else { !visible });
         }
         "hdr:back" => {
             back(shell, cx, ui);
         }
         "hdr:import" => {
             if let Some(target) = selected(shell) {
-                shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(&target.server_id, "")));
+                shell
+                    .data
+                    .overlays
+                    .open_sheet(Box::new(history::ImportSheet::new(&target.server_id, "")));
             }
         }
         "hdr:explorer" => execute(shell, cx, ui, "sidebar.toggle.right", &Value::Null),
         "hdr:menu" => header_menu(shell, cx, &state, anchor_of(shell, id)),
         "hdr:scripts" => {
             if let Some(target) = selected(shell)
-                && let Some(workspace) = workspace_value(&state, &target.server_id, &target.workspace_id)
+                && let Some(workspace) =
+                    workspace_value(&state, &target.server_id, &target.workspace_id)
             {
                 scripts_menu(shell, cx, target, workspace, anchor_of(shell, id));
             }
@@ -1425,7 +2178,11 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
         }
         "empty:new" | "nav:new-workspace" => new_session(shell, cx, ui),
         "nav:history" => {
-            let host = selected(shell).map(|t| t.server_id).or_else(|| hosts::hosts(&state).first().map(|h| h.server_id().to_string()));
+            let host = selected(shell).map(|t| t.server_id).or_else(|| {
+                hosts::hosts(&state)
+                    .first()
+                    .map(|h| h.server_id().to_string())
+            });
             match host {
                 Some(host) => show_sessions(shell, cx, &host, true, "", ""),
                 None => host_dialog::open_flow(shell, cx, None, None, None),
@@ -1433,7 +2190,14 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
         }
         "nav:search" => open_command_center(shell, cx, false),
         "nav:schedules" => {
-            let host = selected(shell).map(|t| t.server_id).or_else(|| hosts::hosts(&state).first().map(|h| h.server_id().to_string())).unwrap_or_default();
+            let host = selected(shell)
+                .map(|t| t.server_id)
+                .or_else(|| {
+                    hosts::hosts(&state)
+                        .first()
+                        .map(|h| h.server_id().to_string())
+                })
+                .unwrap_or_default();
             show_page(shell, cx, Page::Schedules { host_id: host });
         }
         "nav:close" => shell.data.layout.show_sidebar(compact, false),
@@ -1441,8 +2205,19 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
         "side:addhost" => host_dialog::open_flow(shell, cx, None, None, None),
         // Empty sidebar search: the same query over the whole History (archived included).
         "side:searchhistory" => {
-            let query = shell.data.search.as_ref().map(|field| field.text()).unwrap_or_default().trim().to_string();
-            let host = selected(shell).map(|t| t.server_id).or_else(|| hosts::hosts(&state).first().map(|h| h.server_id().to_string()));
+            let query = shell
+                .data
+                .search
+                .as_ref()
+                .map(|field| field.text())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let host = selected(shell).map(|t| t.server_id).or_else(|| {
+                hosts::hosts(&state)
+                    .first()
+                    .map(|h| h.server_id().to_string())
+            });
             if let Some(host) = host {
                 show_sessions(shell, cx, &host, true, "", "");
                 history::search(shell, cx, &query);
@@ -1458,7 +2233,13 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
     shell.redraw(cx);
 }
 
-fn click_prefixed(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, state: &Value, id: &str) {
+fn click_prefixed(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    state: &Value,
+    id: &str,
+) {
     if let Some(rest) = id.strip_prefix("tab:") {
         if let Some((pane, key)) = rest.split_once(':') {
             if pane == "explorer" {
@@ -1474,13 +2255,28 @@ fn click_prefixed(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, state
         if let Some((pane, key)) = rest.split_once(':')
             && let Some(target) = shell.data.layout.target(key).cloned()
         {
-            tab_menu(shell, cx, target, pane, anchor_of(shell, id), pane == "explorer", false);
+            tab_menu(
+                shell,
+                cx,
+                target,
+                pane,
+                anchor_of(shell, id),
+                pane == "explorer",
+                false,
+            );
         }
     } else if let Some(pane) = id.strip_prefix("taboverflow:") {
         tab_overflow_menu(shell, cx, state, pane, anchor_of(shell, id));
     } else if let Some(rest) = id.strip_prefix("tabclose:") {
         if let Some((_, key)) = rest.split_once(':') {
-            close_tabs(shell, cx, ui, vec![key.to_string()], true, AfterClose::Nothing);
+            close_tabs(
+                shell,
+                cx,
+                ui,
+                vec![key.to_string()],
+                true,
+                AfterClose::Nothing,
+            );
         }
     } else if let Some(pane) = id.strip_prefix("panenew:") {
         shell.data.layout.focus_pane(pane);
@@ -1531,15 +2327,32 @@ pub fn secondary(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &s
         if let Some((pane, key)) = rest.split_once(':')
             && let Some(target) = shell.data.layout.target(key).cloned()
         {
-            tab_menu(shell, cx, target, pane, point(abs), pane == "explorer", true);
+            tab_menu(
+                shell,
+                cx,
+                target,
+                pane,
+                point(abs),
+                pane == "explorer",
+                true,
+            );
         }
-    } else if let Some(sid) = id.strip_prefix("host:").or_else(|| id.strip_prefix("hostplus:")) {
+    } else if let Some(sid) = id
+        .strip_prefix("host:")
+        .or_else(|| id.strip_prefix("hostplus:"))
+    {
         host_menu(shell, cx, &state, sid, point(abs));
-    } else if let Some(key) = id.strip_prefix("project:").or_else(|| id.strip_prefix("projplus:")) {
+    } else if let Some(key) = id
+        .strip_prefix("project:")
+        .or_else(|| id.strip_prefix("projplus:"))
+    {
         if let Some((sid, project)) = find_project(&state, key) {
             project_menu(shell, cx, &state, &sid, project, point(abs));
         }
-    } else if let Some(rest) = id.strip_prefix("session:").or_else(|| id.strip_prefix("sessionedit:")) {
+    } else if let Some(rest) = id
+        .strip_prefix("session:")
+        .or_else(|| id.strip_prefix("sessionedit:"))
+    {
         if let Some((sid, agent)) = find_session(&state, rest) {
             session_menu(shell, cx, &state, &sid, agent, point(abs), false);
         }
@@ -1560,25 +2373,43 @@ fn find_project(state: &Value, key: &str) -> Option<(String, Value)> {
 fn find_session(state: &Value, rest: &str) -> Option<(String, Value)> {
     let (sid, agent_id) = rest.rsplit_once(':')?;
     let host = hosts::host(state, sid)?;
-    host.agent(agent_id).map(|a| (host.server_id().to_string(), a.clone()))
+    host.agent(agent_id)
+        .map(|a| (host.server_id().to_string(), a.clone()))
 }
 
 // ---------------------------------------------------------------------------------------------
 // Menus
 
 /// Original desktop tab menu (`buildWorkspaceTabMenuEntries`).
-fn tab_menu(shell: &mut PaseoShell, cx: &mut Cx, target: PanelTarget, pane_id: &str, anchor: Rect, explorer: bool, from_pointer: bool) {
+fn tab_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    target: PanelTarget,
+    pane_id: &str,
+    anchor: Rect,
+    explorer: bool,
+    from_pointer: bool,
+) {
     let agent = target.kind == "agent";
     let id = target.id.clone().unwrap_or_default();
     let keys: Vec<String> = if explorer {
         shell.data.layout.explorer_tabs.clone()
     } else {
-        shell.data.layout.tree.pane(pane_id).map(|p| p.tabs.clone()).unwrap_or_default()
+        shell
+            .data
+            .layout
+            .tree
+            .pane(pane_id)
+            .map(|p| p.tabs.clone())
+            .unwrap_or_default()
     };
     let index = keys.iter().position(|k| *k == target.key());
     let mounted = shell.data.panels.contains_key(&target.key());
     let conversation: Vec<(String, String)> = if mounted {
-        panels::conversation_actions(&target).into_iter().filter(|(value, _)| value != "rename").collect()
+        panels::conversation_actions(&target)
+            .into_iter()
+            .filter(|(value, _)| value != "rename")
+            .collect()
     } else {
         Vec::new()
     };
@@ -1587,67 +2418,187 @@ fn tab_menu(shell: &mut PaseoShell, cx: &mut Cx, target: PanelTarget, pane_id: &
     let compact = shell.data.compact;
     let mut entries = Vec::new();
     if agent {
-        entries.push(item("resume", tr("workspace.tabs.menu.copyResumeCommand"), "copy"));
-        entries.push(MenuItem::new("agentId", tr("workspace.tabs.menu.copyAgentId")).icon("copy").hint(id.chars().take(7).collect::<String>()).entry());
+        entries.push(item(
+            "resume",
+            tr("workspace.tabs.menu.copyResumeCommand"),
+            "copy",
+        ));
+        entries.push(
+            MenuItem::new("agentId", tr("workspace.tabs.menu.copyAgentId"))
+                .icon("copy")
+                .hint(id.chars().take(7).collect::<String>())
+                .entry(),
+        );
     }
     if target.kind == "file" {
         entries.push(item("path", tr("workspace.tabs.menu.copyFilePath"), "copy"));
     }
-    entries.push(item("rename", tr(if agent { "workspace.tabs.menu.renameAgent" } else { "workspace.tabs.menu.rename" }), "pencil"));
+    entries.push(item(
+        "rename",
+        tr(if agent {
+            "workspace.tabs.menu.renameAgent"
+        } else {
+            "workspace.tabs.menu.rename"
+        }),
+        "pencil",
+    ));
     if !conversation.is_empty() {
         entries.push(MenuEntry::Separator);
         for (value, label) in &conversation {
-            entries.push(MenuItem::new(format!("conversation:{value}"), label.clone()).icon(conversation_icon(value)).entry());
+            entries.push(
+                MenuItem::new(format!("conversation:{value}"), label.clone())
+                    .icon(conversation_icon(value))
+                    .entry(),
+            );
         }
     }
     entries.push(MenuEntry::Separator);
     if !explorer {
-        entries.push(MenuItem::new("left", tr("workspace.tabs.menu.closeLeft")).icon("arrow-left-to-line").enabled(index.is_some_and(|i| i > 0)).entry());
+        entries.push(
+            MenuItem::new("left", tr("workspace.tabs.menu.closeLeft"))
+                .icon("arrow-left-to-line")
+                .enabled(index.is_some_and(|i| i > 0))
+                .entry(),
+        );
         entries.push(
             MenuItem::new("right", tr("workspace.tabs.menu.closeRight"))
                 .icon("arrow-right-to-line")
                 .enabled(index.is_some_and(|i| i + 1 < keys.len()))
                 .entry(),
         );
-        entries.push(MenuItem::new("others", tr("workspace.tabs.menu.closeOthers")).icon("copy-x").enabled(keys.len() > 1).entry());
+        entries.push(
+            MenuItem::new("others", tr("workspace.tabs.menu.closeOthers"))
+                .icon("copy-x")
+                .enabled(keys.len() > 1)
+                .entry(),
+        );
         if !compact {
             entries.push(MenuEntry::Separator);
-            entries.push(item("splitRight", tr("workspace.tabs.actions.splitRight"), "columns-2"));
-            entries.push(item("splitDown", tr("workspace.tabs.actions.splitDown"), "rows-2"));
+            entries.push(item(
+                "splitRight",
+                tr("workspace.tabs.actions.splitRight"),
+                "columns-2",
+            ));
+            entries.push(item(
+                "splitDown",
+                tr("workspace.tabs.actions.splitDown"),
+                "rows-2",
+            ));
             entries.push(item(
                 "maximize",
-                tr(if maximized { "workspace.tabs.actions.restorePane" } else { "workspace.tabs.actions.maximizePane" }),
-                if maximized { "minimize-2" } else { "maximize-2" },
+                tr(if maximized {
+                    "workspace.tabs.actions.restorePane"
+                } else {
+                    "workspace.tabs.actions.maximizePane"
+                }),
+                if maximized {
+                    "minimize-2"
+                } else {
+                    "maximize-2"
+                },
             ));
-            entries.push(item("closePane", tr("workspace.tabs.actions.closePane"), "square-x"));
+            entries.push(item(
+                "closePane",
+                tr("workspace.tabs.actions.closePane"),
+                "square-x",
+            ));
         }
         entries.push(MenuEntry::Separator);
     }
     if agent && !conversation_reloads {
-        entries.push(item("reload", tr("workspace.tabs.menu.reloadAgent"), "rotate-cw"));
+        entries.push(item(
+            "reload",
+            tr("workspace.tabs.menu.reloadAgent"),
+            "rotate-cw",
+        ));
     }
     entries.push(item("close", tr("workspace.tabs.menu.close"), "x"));
     let title = chrome::kind_label(&target);
-    let options = MenuOptions { align_end: !from_pointer, ..MenuOptions::default() };
-    menu(shell, cx, anchor, Some(title), entries, options, ShellOverlay::TabMenu { target, pane_id: pane_id.to_string(), explorer });
+    let options = MenuOptions {
+        align_end: !from_pointer,
+        ..MenuOptions::default()
+    };
+    menu(
+        shell,
+        cx,
+        anchor,
+        Some(title),
+        entries,
+        options,
+        ShellOverlay::TabMenu {
+            target,
+            pane_id: pane_id.to_string(),
+            explorer,
+        },
+    );
 }
 
 /// Tabs a narrow strip could not show, listed in strip order.
-fn tab_overflow_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, pane_id: &str, anchor: Rect) {
-    let Some((_, hidden)) = shell.data.chrome.tab_overflow.iter().find(|(pane, _)| pane == pane_id).cloned() else { return };
+fn tab_overflow_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    state: &Value,
+    pane_id: &str,
+    anchor: Rect,
+) {
+    let Some((_, hidden)) = shell
+        .data
+        .chrome
+        .tab_overflow
+        .iter()
+        .find(|(pane, _)| pane == pane_id)
+        .cloned()
+    else {
+        return;
+    };
     let entries = hidden
         .iter()
-        .filter_map(|key| shell.data.layout.target(key).map(|target| item(key, chrome::title(state, target), crate::common::icons::for_tab_kind(&target.kind))))
+        .filter_map(|key| {
+            shell.data.layout.target(key).map(|target| {
+                item(
+                    key,
+                    chrome::title(state, target),
+                    crate::common::icons::for_tab_kind(&target.kind),
+                )
+            })
+        })
         .collect();
-    let options = MenuOptions { align_end: true, ..MenuOptions::default() };
-    menu(shell, cx, anchor, Some(tr("workspace.tabs.overflowTitle")), entries, options, ShellOverlay::TabOverflow { pane_id: pane_id.to_string() });
+    let options = MenuOptions {
+        align_end: true,
+        ..MenuOptions::default()
+    };
+    menu(
+        shell,
+        cx,
+        anchor,
+        Some(tr("workspace.tabs.overflowTitle")),
+        entries,
+        options,
+        ShellOverlay::TabOverflow {
+            pane_id: pane_id.to_string(),
+        },
+    );
 }
 
-fn tab_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, target: PanelTarget, pane_id: &str, explorer: bool, value: &str) {
+fn tab_menu_result(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    target: PanelTarget,
+    pane_id: &str,
+    explorer: bool,
+    value: &str,
+) {
     let keys: Vec<String> = if explorer {
         shell.data.layout.explorer_tabs.clone()
     } else {
-        shell.data.layout.tree.pane(pane_id).map(|p| p.tabs.clone()).unwrap_or_default()
+        shell
+            .data
+            .layout
+            .tree
+            .pane(pane_id)
+            .map(|p| p.tabs.clone())
+            .unwrap_or_default()
     };
     let key = target.key();
     let index = keys.iter().position(|k| *k == key).unwrap_or(0);
@@ -1659,14 +2610,37 @@ fn tab_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, targ
     }
     match value {
         "resume" => copy_resume_command(shell, cx, ui, &target),
-        "agentId" => copy(shell, cx, target.id.as_deref().unwrap_or(""), "workspace.tabs.toasts.agentIdCopiedLabel"),
+        "agentId" => copy(
+            shell,
+            cx,
+            target.id.as_deref().unwrap_or(""),
+            "workspace.tabs.toasts.agentIdCopiedLabel",
+        ),
         "path" => {
-            let path = j::text_or(&target.data, "path", target.id.as_deref().unwrap_or("")).to_string();
-            copy(shell, cx, &path, "workspace.tabs.toasts.filePathCopiedLabel");
+            let path =
+                j::text_or(&target.data, "path", target.id.as_deref().unwrap_or("")).to_string();
+            copy(
+                shell,
+                cx,
+                &path,
+                "workspace.tabs.toasts.filePathCopiedLabel",
+            );
         }
         "rename" => rename_tab(shell, cx, ui, target),
-        "left" => close_bulk(shell, cx, keys[..index].to_vec(), "workspace.tabs.confirmations.closeTabsLeftTitle", AfterClose::Nothing),
-        "right" => close_bulk(shell, cx, keys[index + 1..].to_vec(), "workspace.tabs.confirmations.closeTabsRightTitle", AfterClose::Nothing),
+        "left" => close_bulk(
+            shell,
+            cx,
+            keys[..index].to_vec(),
+            "workspace.tabs.confirmations.closeTabsLeftTitle",
+            AfterClose::Nothing,
+        ),
+        "right" => close_bulk(
+            shell,
+            cx,
+            keys[index + 1..].to_vec(),
+            "workspace.tabs.confirmations.closeTabsRightTitle",
+            AfterClose::Nothing,
+        ),
         "others" => close_bulk(
             shell,
             cx,
@@ -1675,14 +2649,22 @@ fn tab_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, targ
             AfterClose::Nothing,
         ),
         "splitRight" | "splitDown" => {
-            let axis = if value == "splitRight" { Axis::Horizontal } else { Axis::Vertical };
+            let axis = if value == "splitRight" {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
             if let Some(next) = shell.data.layout.split_pane(pane_id, axis) {
                 shell.data.layout.move_tab(&key, &next, None);
             }
         }
         "maximize" => {
             let maximized = shell.data.layout.maximized_pane.as_deref() == Some(pane_id);
-            shell.data.layout.maximize_pane(if maximized { None } else { Some(pane_id.to_string()) });
+            shell.data.layout.maximize_pane(if maximized {
+                None
+            } else {
+                Some(pane_id.to_string())
+            });
         }
         "closePane" => close_pane(shell, cx, pane_id),
         "reload" => reload_agent(shell, cx, ui, &target),
@@ -1705,21 +2687,44 @@ fn resume_template(provider: &str) -> Option<&'static str> {
 }
 
 fn copy_resume_command(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: &PanelTarget) {
-    let agent = hosts::host(&ui.state, &target.server_id).and_then(|h| h.agent(target.id.as_deref().unwrap_or("")).cloned());
+    let agent = hosts::host(&ui.state, &target.server_id)
+        .and_then(|h| h.agent(target.id.as_deref().unwrap_or("")).cloned());
     let session = agent
         .as_ref()
         .map(|a| {
             let runtime = j::text(j::object(a, "runtimeInfo"), "sessionId");
-            if runtime.is_empty() { j::text(j::object(a, "persistence"), "sessionId").to_string() } else { runtime.to_string() }
+            if runtime.is_empty() {
+                j::text(j::object(a, "persistence"), "sessionId").to_string()
+            } else {
+                runtime.to_string()
+            }
         })
         .unwrap_or_default();
     if session.is_empty() {
-        return toast(shell, cx, tr("workspace.tabs.toasts.resumeIdUnavailable"), true);
+        return toast(
+            shell,
+            cx,
+            tr("workspace.tabs.toasts.resumeIdUnavailable"),
+            true,
+        );
     }
-    let Some(template) = agent.as_ref().and_then(|a| resume_template(j::text(a, "provider"))) else {
-        return toast(shell, cx, tr("workspace.tabs.toasts.resumeCommandUnavailable"), true);
+    let Some(template) = agent
+        .as_ref()
+        .and_then(|a| resume_template(j::text(a, "provider")))
+    else {
+        return toast(
+            shell,
+            cx,
+            tr("workspace.tabs.toasts.resumeCommandUnavailable"),
+            true,
+        );
     };
-    copy(shell, cx, &template.replace("{sessionId}", &session), "workspace.tabs.toasts.resumeCommandCopiedLabel");
+    copy(
+        shell,
+        cx,
+        &template.replace("{sessionId}", &session),
+        "workspace.tabs.toasts.resumeCommandCopiedLabel",
+    );
 }
 
 /// Icons for the chat panel's conversation actions wherever a menu lists them.
@@ -1749,22 +2754,37 @@ fn reload_agent(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: &Pa
         &target.server_id,
         json!({ "type": "refresh_agent_request", "agentId": target.id }),
         "status",
-        Pending::ReloadAgent { tab_key: target.key() },
+        Pending::ReloadAgent {
+            tab_key: target.key(),
+        },
     );
 }
 
 /// `_renameTab`.
 fn rename_tab(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: PanelTarget) {
-    let title = tr(if target.kind == "agent" { "workspace.tabs.menu.renameAgent" } else { "workspace.tabs.menu.rename" });
+    let title = tr(if target.kind == "agent" {
+        "workspace.tabs.menu.renameAgent"
+    } else {
+        "workspace.tabs.menu.rename"
+    });
     let current = chrome::title(&ui.state, &target);
-    prompt(shell, cx, &title, &current, ShellOverlay::RenameTab { target });
+    prompt(
+        shell,
+        cx,
+        &title,
+        &current,
+        ShellOverlay::RenameTab { target },
+    );
 }
-
 
 /// Supporting views available from the explorer "+".
 fn explorer_new_tab(shell: &mut PaseoShell, cx: &mut Cx, anchor: Rect) {
     let (keys, _) = chrome::explorer_keys(shell);
-    let kinds: Vec<String> = keys.iter().filter_map(|k| shell.data.layout.target(k)).map(|t| t.kind.clone()).collect();
+    let kinds: Vec<String> = keys
+        .iter()
+        .filter_map(|k| shell.data.layout.target(k))
+        .map(|t| t.kind.clone())
+        .collect();
     let mut entries = Vec::new();
     for (kind, label) in [
         ("files", "panels.files.label"),
@@ -1772,18 +2792,40 @@ fn explorer_new_tab(shell: &mut PaseoShell, cx: &mut Cx, anchor: Rect) {
         ("git_commit", "workspace.git.commit.title"),
     ] {
         if !kinds.iter().any(|k| k == kind) {
-            entries.push(item(kind, tr(label), crate::common::icons::for_tab_kind(kind)));
+            entries.push(item(
+                kind,
+                tr(label),
+                crate::common::icons::for_tab_kind(kind),
+            ));
         }
     }
-    entries.push(item("terminal", tr("workspace.tabs.fallback.terminal"), crate::common::icons::for_tab_kind("terminal")));
-    entries.push(item("pull_request", tr("panels.pullRequest.label"), crate::common::icons::for_tab_kind("pull_request")));
-    menu(shell, cx, anchor, Some(tr("workspace.tabs.actions.newTab")), entries, MenuOptions::default(), ShellOverlay::ExplorerNewTab);
+    entries.push(item(
+        "terminal",
+        tr("workspace.tabs.fallback.terminal"),
+        crate::common::icons::for_tab_kind("terminal"),
+    ));
+    entries.push(item(
+        "pull_request",
+        tr("panels.pullRequest.label"),
+        crate::common::icons::for_tab_kind("pull_request"),
+    ));
+    menu(
+        shell,
+        cx,
+        anchor,
+        Some(tr("workspace.tabs.actions.newTab")),
+        entries,
+        MenuOptions::default(),
+        ShellOverlay::ExplorerNewTab,
+    );
 }
 
 fn explorer_new_tab_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, value: &str) {
     match value {
         "terminal" => new_terminal(shell, cx, ui, TabPlacement::Explorer),
-        "files" | "git_log" | "git_commit" | "pull_request" => open_workspace_panel(shell, cx, ui, value, true),
+        "files" | "git_log" | "git_commit" | "pull_request" => {
+            open_workspace_panel(shell, cx, ui, value, true)
+        }
         _ => {}
     }
 }
@@ -1794,62 +2836,143 @@ fn new_terminal(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, placement: 
     let Some(target) = selected(shell).filter(|t| !t.workspace_id.is_empty()) else {
         return toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
     };
-    let Some(host) = hosts::host(&ui.state, &target.server_id) else { return };
+    let Some(host) = hosts::host(&ui.state, &target.server_id) else {
+        return;
+    };
     if !host.connected() {
         return toast(shell, cx, tr("workspace.terminal.hostDisconnected"), true);
     }
     let cwd = target.cwd.clone();
     let message = json!({ "type": "create_terminal_request", "cwd": cwd, "workspaceId": target.workspace_id });
-    let pending = Pending::CreateTerminal { host_id: target.server_id.clone(), workspace_id: target.workspace_id.clone(), cwd, placement };
-    request(shell, ui, &target.server_id, message, "create_terminal_response", pending);
+    let pending = Pending::CreateTerminal {
+        host_id: target.server_id.clone(),
+        workspace_id: target.workspace_id.clone(),
+        cwd,
+        placement,
+    };
+    request(
+        shell,
+        ui,
+        &target.server_id,
+        message,
+        "create_terminal_response",
+        pending,
+    );
 }
 
 /// Session actions and directory tools, with scripts first on compact layouts.
 fn header_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect) {
     let target = selected(shell);
-    let workspace = target.as_ref().and_then(|t| workspace_value(state, &t.server_id, &t.workspace_id));
+    let workspace = target
+        .as_ref()
+        .and_then(|t| workspace_value(state, &t.server_id, &t.workspace_id));
     let directory = target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default();
-    let branch = workspace.as_ref().map(|w| j::text(j::object(w, "gitRuntime"), "currentBranch").trim().to_string()).unwrap_or_default();
+    let branch = workspace
+        .as_ref()
+        .map(|w| {
+            j::text(j::object(w, "gitRuntime"), "currentBranch")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
     let has_branch = !branch.is_empty() && branch != "HEAD";
-    let is_git = workspace.as_ref().is_some_and(|w| !j::is_null_or_missing(w, "gitRuntime") || j::text(w, "projectKind") == "git");
+    let is_git = workspace.as_ref().is_some_and(|w| {
+        !j::is_null_or_missing(w, "gitRuntime") || j::text(w, "projectKind") == "git"
+    });
     let mut entries = Vec::new();
-    let session_title = target.as_ref().filter(|t| t.kind == "agent").map(|agent| chrome::title(state, agent));
+    let session_title = target
+        .as_ref()
+        .filter(|t| t.kind == "agent")
+        .map(|agent| chrome::title(state, agent));
     if let Some(agent) = target.as_ref().filter(|t| t.kind == "agent") {
         // Compact sheets show the menu title; desktop popovers have none, so the section is labelled.
         if !shell.data.compact {
             entries.push(MenuEntry::Label(session_title.clone().unwrap_or_default()));
         }
-        let conversation = if shell.data.panels.contains_key(&agent.key()) { panels::conversation_actions(agent) } else { Vec::new() };
+        let conversation = if shell.data.panels.contains_key(&agent.key()) {
+            panels::conversation_actions(agent)
+        } else {
+            Vec::new()
+        };
         if conversation.is_empty() {
-            entries.push(item("rename", tr("workspace.tabs.menu.renameAgent"), "pencil"));
-            entries.push(item("reload", tr("workspace.tabs.menu.reloadAgent"), "rotate-cw"));
+            entries.push(item(
+                "rename",
+                tr("workspace.tabs.menu.renameAgent"),
+                "pencil",
+            ));
+            entries.push(item(
+                "reload",
+                tr("workspace.tabs.menu.reloadAgent"),
+                "rotate-cw",
+            ));
         } else {
             for (value, label) in &conversation {
-                entries.push(MenuItem::new(format!("conversation:{value}"), label.clone()).icon(conversation_icon(value)).entry());
+                entries.push(
+                    MenuItem::new(format!("conversation:{value}"), label.clone())
+                        .icon(conversation_icon(value))
+                        .entry(),
+                );
             }
         }
         entries.push(MenuEntry::Separator);
     }
-    if shell.data.compact && workspace.as_ref().is_some_and(|w| !j::array(w, "scripts").is_empty()) {
+    if shell.data.compact
+        && workspace
+            .as_ref()
+            .is_some_and(|w| !j::array(w, "scripts").is_empty())
+    {
         entries.push(item("scripts", tr("workspace.scripts.title"), "play"));
     }
     // Git Log needs the host's `gitLog` feature (older daemons cannot list history).
-    let git_log = target.as_ref().and_then(|t| hosts::host(state, &t.server_id)).is_some_and(|h| h.supports(crate::features::git::log::FEATURE));
+    let git_log = target
+        .as_ref()
+        .and_then(|t| hosts::host(state, &t.server_id))
+        .is_some_and(|h| h.supports(crate::features::git::log::FEATURE));
     if is_git && git_log {
         entries.push(item("gitLog", tr("workspace.git.log.open"), "git-graph"));
     }
-    entries.push(MenuItem::new("copyPath", tr("workspace.header.actions.copyPath")).icon("copy").enabled(!directory.is_empty()).entry());
+    entries.push(
+        MenuItem::new("copyPath", tr("workspace.header.actions.copyPath"))
+            .icon("copy")
+            .enabled(!directory.is_empty())
+            .entry(),
+    );
     if has_branch {
-        entries.push(item("copyBranch", tr("workspace.header.actions.copyBranchName"), "copy"));
+        entries.push(item(
+            "copyBranch",
+            tr("workspace.header.actions.copyBranchName"),
+            "copy",
+        ));
     }
-    entries.push(MenuItem::new("import", tr("workspace.header.actions.importSession")).icon("import").enabled(target.is_some()).entry());
+    entries.push(
+        MenuItem::new("import", tr("workspace.header.actions.importSession"))
+            .icon("import")
+            .enabled(target.is_some())
+            .entry(),
+    );
     let title = Some(session_title.unwrap_or_else(|| tr("shell.menu.sessionActions")));
-    menu(shell, cx, anchor, title, entries, MenuOptions::default(), ShellOverlay::HeaderMenu { target });
+    menu(
+        shell,
+        cx,
+        anchor,
+        title,
+        entries,
+        MenuOptions::default(),
+        ShellOverlay::HeaderMenu { target },
+    );
 }
 
-fn header_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, target: Option<PanelTarget>, value: &str) {
+fn header_menu_result(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    target: Option<PanelTarget>,
+    value: &str,
+) {
     let state = ui.state.clone();
-    let workspace = target.as_ref().and_then(|t| workspace_value(&state, &t.server_id, &t.workspace_id));
+    let workspace = target
+        .as_ref()
+        .and_then(|t| workspace_value(&state, &t.server_id, &t.workspace_id));
     let directory = target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default();
     if let (Some(action), Some(target)) = (value.strip_prefix("conversation:"), target.as_ref()) {
         if let Some(panel) = shell.data.panels.get(&target.key()) {
@@ -1868,26 +2991,56 @@ fn header_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, t
                 reload_agent(shell, cx, ui, &target);
             }
         }
-        "copyPath" => copy(shell, cx, &directory, "workspace.header.toasts.workspacePathCopiedLabel"),
+        "copyPath" => copy(
+            shell,
+            cx,
+            &directory,
+            "workspace.header.toasts.workspacePathCopiedLabel",
+        ),
         "copyBranch" => {
-            let branch = workspace.as_ref().map(|w| j::text(j::object(w, "gitRuntime"), "currentBranch").trim().to_string()).unwrap_or_default();
-            copy(shell, cx, &branch, "workspace.header.toasts.branchNameCopiedLabel");
+            let branch = workspace
+                .as_ref()
+                .map(|w| {
+                    j::text(j::object(w, "gitRuntime"), "currentBranch")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+            copy(
+                shell,
+                cx,
+                &branch,
+                "workspace.header.toasts.branchNameCopiedLabel",
+            );
         }
         "import" => {
             if let Some(target) = target {
-                shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(&target.server_id, &directory)));
+                shell
+                    .data
+                    .overlays
+                    .open_sheet(Box::new(history::ImportSheet::new(
+                        &target.server_id,
+                        &directory,
+                    )));
             }
         }
         "gitLog" => {
             if let Some(target) = target {
-                let next = PanelTarget::new("git_log", &target.server_id, &target.workspace_id, &directory);
+                let next = PanelTarget::new(
+                    "git_log",
+                    &target.server_id,
+                    &target.workspace_id,
+                    &directory,
+                );
                 open_tab(shell, cx, ui, next, TabPlacement::Main);
             }
         }
         "scripts" => {
             if let (Some(target), Some(workspace)) = (target, workspace) {
                 let root = j::text_or(&workspace, "projectRootPath", &directory).to_string();
-                let next = PanelTarget::new("setup", &target.server_id, &target.workspace_id, &directory).with_data(json!({ "repoRoot": root }));
+                let next =
+                    PanelTarget::new("setup", &target.server_id, &target.workspace_id, &directory)
+                        .with_data(json!({ "repoRoot": root }));
                 open_tab(shell, cx, ui, next, TabPlacement::Main);
             }
         }
@@ -1906,7 +3059,13 @@ fn script_url(script: &Value) -> String {
 }
 
 /// Original desktop `WorkspaceScriptsButton` menu.
-fn scripts_menu(shell: &mut PaseoShell, cx: &mut Cx, target: PanelTarget, workspace: Value, anchor: Rect) {
+fn scripts_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    target: PanelTarget,
+    workspace: Value,
+    anchor: Rect,
+) {
     let mut entries = Vec::new();
     for script in j::array(&workspace, "scripts") {
         let name = j::text(script, "scriptName");
@@ -1916,48 +3075,101 @@ fn scripts_menu(shell: &mut PaseoShell, cx: &mut Cx, target: PanelTarget, worksp
             hint.push(lifecycle.to_string());
         }
         if let Some(code) = script.get("exitCode").filter(|v| !v.is_null()) {
-            hint.push(tr_args("workspace.scripts.states.exitCode", &[("code", &code.to_string())]));
+            hint.push(tr_args(
+                "workspace.scripts.states.exitCode",
+                &[("code", &code.to_string())],
+            ));
         }
         entries.push(
             MenuItem::new(format!("toggle:{name}"), name)
-                .icon(if lifecycle == "running" { "square" } else { "play" })
+                .icon(if lifecycle == "running" {
+                    "square"
+                } else {
+                    "play"
+                })
                 .hint(hint.join(" · "))
                 .entry(),
         );
         if !j::text(script, "terminalId").is_empty() {
-            entries.push(MenuItem::new(format!("log:{name}"), tr("workspace.scripts.actions.view")).icon("square-terminal").muted(true).entry());
+            entries.push(
+                MenuItem::new(format!("log:{name}"), tr("workspace.scripts.actions.view"))
+                    .icon("square-terminal")
+                    .muted(true)
+                    .entry(),
+            );
         }
         if !script_url(script).is_empty() {
-            entries.push(MenuItem::new(format!("open:{name}"), tr("workspace.scripts.actions.openService")).icon("external-link").muted(true).entry());
+            entries.push(
+                MenuItem::new(
+                    format!("open:{name}"),
+                    tr("workspace.scripts.actions.openService"),
+                )
+                .icon("external-link")
+                .muted(true)
+                .entry(),
+            );
         }
     }
     entries.push(MenuEntry::Separator);
-    entries.push(item("setup", tr("workspace.header.actions.showSetup"), "settings"));
+    entries.push(item(
+        "setup",
+        tr("workspace.header.actions.showSetup"),
+        "settings",
+    ));
     menu(
         shell,
         cx,
         anchor,
         Some(tr("workspace.scripts.title")),
         entries,
-        MenuOptions { align_end: true, ..MenuOptions::default() },
+        MenuOptions {
+            align_end: true,
+            ..MenuOptions::default()
+        },
         ShellOverlay::ScriptsMenu { target, workspace },
     );
 }
 
-fn scripts_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, target: PanelTarget, workspace: Value, value: &str) {
+fn scripts_menu_result(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    target: PanelTarget,
+    workspace: Value,
+    value: &str,
+) {
     if value == "setup" {
         let root = j::text_or(&workspace, "projectRootPath", &target.cwd).to_string();
-        let next = PanelTarget::new("setup", &target.server_id, &target.workspace_id, &target.cwd).with_data(json!({ "repoRoot": root }));
+        let next = PanelTarget::new(
+            "setup",
+            &target.server_id,
+            &target.workspace_id,
+            &target.cwd,
+        )
+        .with_data(json!({ "repoRoot": root }));
         open_tab(shell, cx, ui, next, TabPlacement::Main);
         return;
     }
-    let Some((verb, name)) = value.split_once(':') else { return };
-    let Some(script) = j::array(&workspace, "scripts").iter().find(|s| j::text(s, "scriptName") == name).cloned() else { return };
+    let Some((verb, name)) = value.split_once(':') else {
+        return;
+    };
+    let Some(script) = j::array(&workspace, "scripts")
+        .iter()
+        .find(|s| j::text(s, "scriptName") == name)
+        .cloned()
+    else {
+        return;
+    };
     match verb {
         "log" => {
-            let next = PanelTarget::new("execution_log", &target.server_id, &target.workspace_id, &target.cwd)
-                .with_id(j::text(&script, "terminalId"))
-                .with_title(name);
+            let next = PanelTarget::new(
+                "execution_log",
+                &target.server_id,
+                &target.workspace_id,
+                &target.cwd,
+            )
+            .with_id(j::text(&script, "terminalId"))
+            .with_title(name);
             open_tab(shell, cx, ui, next, TabPlacement::Main);
         }
         "open" => {
@@ -1968,7 +3180,11 @@ fn scripts_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, 
             }
         }
         _ => {
-            let command = if j::text(&script, "lifecycle") == "running" { "stop" } else { "start" };
+            let command = if j::text(&script, "lifecycle") == "running" {
+                "stop"
+            } else {
+                "start"
+            };
             request(
                 shell,
                 ui,
@@ -1987,20 +3203,50 @@ fn help_menu(shell: &mut PaseoShell, cx: &mut Cx, anchor: Rect) {
     if platform::desktop_host() {
         entries.push(item("shortcuts", tr("sidebar.help.shortcuts"), "keyboard"));
     }
-    entries.push(item("diagnostics", tr("sidebar.help.diagnostics"), "activity"));
+    entries.push(item(
+        "diagnostics",
+        tr("sidebar.help.diagnostics"),
+        "activity",
+    ));
     entries.push(MenuEntry::Separator);
     entries.push(MenuEntry::Label(tr("sidebar.help.reportIssue")));
-    entries.push(item("discord", tr("sidebar.help.discord"), "message-circle"));
+    entries.push(item(
+        "discord",
+        tr("sidebar.help.discord"),
+        "message-circle",
+    ));
     entries.push(item("github", tr("sidebar.help.github"), "bug"));
     entries.push(MenuEntry::Separator);
-    entries.push(MenuItem::new("version", tr("sidebar.help.appName")).hint(crate::app::app_version()).enabled(false).entry());
-    menu(shell, cx, anchor, None, entries, MenuOptions { width: 280.0, align_end: true, sheet: false }, ShellOverlay::HelpMenu);
+    entries.push(
+        MenuItem::new("version", tr("sidebar.help.appName"))
+            .hint(crate::app::app_version())
+            .enabled(false)
+            .entry(),
+    );
+    menu(
+        shell,
+        cx,
+        anchor,
+        None,
+        entries,
+        MenuOptions {
+            width: 280.0,
+            align_end: true,
+            sheet: false,
+        },
+        ShellOverlay::HelpMenu,
+    );
 }
 
 fn help_menu_result(shell: &mut PaseoShell, cx: &mut Cx, value: &str) {
     match value {
         "shortcuts" => {
-            shell.data.overlays.open_sheet(Box::new(shortcut_help::ShortcutHelpSheet::new(shell.data.compact)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(shortcut_help::ShortcutHelpSheet::new(
+                    shell.data.compact,
+                )));
         }
         "diagnostics" => open_settings(shell, cx, None, "diagnostics"),
         "discord" => {
@@ -2019,7 +3265,10 @@ fn host_picker(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect)
     let order = sidebar_host_order(state);
     if order.len() > 10 {
         // Searchable above ten hosts.
-        shell.data.overlays.open_sheet(Box::new(host_connections::ChooserSheet::picker(order)));
+        shell
+            .data
+            .overlays
+            .open_sheet(Box::new(host_connections::ChooserSheet::picker(order)));
         return;
     }
     let p = crate::theme::current_palette();
@@ -2035,9 +3284,27 @@ fn host_picker(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect)
         .collect();
     entries.push(MenuEntry::Separator);
     entries.push(item("add", tr("settings.addHost"), "plus"));
-    let settings_host = selected(shell).map(|t| t.server_id).or_else(|| order.first().cloned()).unwrap_or_default();
-    entries.push(item(&format!("settings:{settings_host}"), tr("shell.hostPicker.settings"), "settings"));
-    menu(shell, cx, anchor, Some(tr("shell.hostPicker.title")), entries, MenuOptions { width: 280.0, ..MenuOptions::default() }, ShellOverlay::HostPicker);
+    let settings_host = selected(shell)
+        .map(|t| t.server_id)
+        .or_else(|| order.first().cloned())
+        .unwrap_or_default();
+    entries.push(item(
+        &format!("settings:{settings_host}"),
+        tr("shell.hostPicker.settings"),
+        "settings",
+    ));
+    menu(
+        shell,
+        cx,
+        anchor,
+        Some(tr("shell.hostPicker.title")),
+        entries,
+        MenuOptions {
+            width: 280.0,
+            ..MenuOptions::default()
+        },
+        ShellOverlay::HostPicker,
+    );
 }
 
 /// `_openHost`: add host, a host's settings (`settings:<id>`), or reveal the host in the
@@ -2048,7 +3315,12 @@ pub fn open_host(shell: &mut PaseoShell, cx: &mut Cx, value: &str) {
         return;
     }
     if let Some(id) = value.strip_prefix("settings:") {
-        open_settings(shell, cx, (!id.is_empty()).then(|| id.to_string()), "host/host");
+        open_settings(
+            shell,
+            cx,
+            (!id.is_empty()).then(|| id.to_string()),
+            "host/host",
+        );
         return;
     }
     if shell.data.page.is_some() {
@@ -2079,20 +3351,47 @@ fn host_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &str, 
     .iter()
     .map(|(value, key)| MenuItem::new(*value, tr(key)).entry())
     .collect();
-    menu(shell, cx, anchor, None, entries, MenuOptions::default(), ShellOverlay::HostMenu { host_id: host_id.to_string(), order });
+    menu(
+        shell,
+        cx,
+        anchor,
+        None,
+        entries,
+        MenuOptions::default(),
+        ShellOverlay::HostMenu {
+            host_id: host_id.to_string(),
+            order,
+        },
+    );
 }
 
 fn sidebar_host_order(state: &Value) -> Vec<String> {
     let prefs = sidebar::nav_prefs(state);
-    let stored: Vec<String> = j::array(&prefs, "hostOrder").iter().filter_map(Value::as_str).map(str::to_string).collect();
-    let mut ids: Vec<String> = hosts::hosts(state).iter().map(|h| h.server_id().to_string()).collect();
+    let stored: Vec<String> = j::array(&prefs, "hostOrder")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    let mut ids: Vec<String> = hosts::hosts(state)
+        .iter()
+        .map(|h| h.server_id().to_string())
+        .collect();
     ids.sort_by_key(|id| stored.iter().position(|s| s == id).unwrap_or(stored.len()));
     ids
 }
 
-fn host_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, action: &str, order: &[String]) {
+fn host_action(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    host_id: &str,
+    action: &str,
+    order: &[String],
+) {
     let state = ui.state.clone();
-    let Some(host) = hosts::host(&state, host_id) else { return };
+    let Some(host) = hosts::host(&state, host_id) else {
+        return;
+    };
     match action {
         "new" => {
             let target = PanelTarget::new("new_tab", host_id, "", "");
@@ -2101,15 +3400,28 @@ fn host_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id:
         "project" => host_chosen(shell, cx, ui, HostPurpose::AddProject, host_id.to_string()),
         "history" => show_sessions(shell, cx, host_id, false, "", ""),
         "import" => {
-            shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(host_id, "")));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(history::ImportSheet::new(host_id, "")));
         }
         "refresh" => ui.core.refresh_host(host_id),
         "edit" => host_dialog::open_flow(shell, cx, None, Some(host.config().clone()), None),
         "connections" => {
-            shell.data.overlays.open_sheet(Box::new(host_connections::ConnectionsSheet::new(host_id.to_string())));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(host_connections::ConnectionsSheet::new(
+                    host_id.to_string(),
+                )));
         }
         "pair" => {
-            shell.data.overlays.open_sheet(Box::new(host_dialog::PairingSheet::new(host_id.to_string())));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(host_dialog::PairingSheet::new(
+                    host_id.to_string(),
+                )));
         }
         "up" => sidebar::move_in_order(ui, "hostOrder", order, host_id, -1),
         "down" => sidebar::move_in_order(ui, "hostOrder", order, host_id, 1),
@@ -2120,17 +3432,35 @@ fn host_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id:
             &tr("shell.commands.removeHostMessage"),
             &tr("sidebar.project.confirmations.removeConfirm"),
             true,
-            ShellOverlay::RemoveHost { host_id: host_id.to_string() },
+            ShellOverlay::RemoveHost {
+                host_id: host_id.to_string(),
+            },
         ),
         _ => {}
     }
     shell.redraw(cx);
 }
 
-fn project_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &str, project: Value, anchor: Rect) {
-    let Some(host) = hosts::host(state, host_id) else { return };
-    let stored: Vec<String> = j::array(&sidebar::nav_prefs(state), "projectOrder").iter().filter_map(Value::as_str).map(str::to_string).collect();
-    let order: Vec<String> = sidebar::ordered_projects(&host, &stored).iter().map(|p| sidebar::project_key(&host, p)).collect();
+fn project_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    state: &Value,
+    host_id: &str,
+    project: Value,
+    anchor: Rect,
+) {
+    let Some(host) = hosts::host(state, host_id) else {
+        return;
+    };
+    let stored: Vec<String> = j::array(&sidebar::nav_prefs(state), "projectOrder")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    let order: Vec<String> = sidebar::ordered_projects(&host, &stored)
+        .iter()
+        .map(|p| sidebar::project_key(&host, p))
+        .collect();
     let entries = [
         ("new", "sessionNavigation.newSession"),
         ("history", "sessions.title"),
@@ -2147,7 +3477,19 @@ fn project_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &st
     .iter()
     .map(|(value, key)| MenuItem::new(*value, tr(key)).entry())
     .collect();
-    menu(shell, cx, anchor, None, entries, MenuOptions::default(), ShellOverlay::ProjectMenu { host_id: host_id.to_string(), project, order });
+    menu(
+        shell,
+        cx,
+        anchor,
+        None,
+        entries,
+        MenuOptions::default(),
+        ShellOverlay::ProjectMenu {
+            host_id: host_id.to_string(),
+            project,
+            order,
+        },
+    );
 }
 
 fn project_history_key(state: &Value, host_id: &str, project: &Value) -> String {
@@ -2168,15 +3510,26 @@ fn project_history_key(state: &Value, host_id: &str, project: &Value) -> String 
         .unwrap_or_default()
 }
 
-fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, project: &Value, action: &str, order: &[String]) {
+fn project_action(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    host_id: &str,
+    project: &Value,
+    action: &str,
+    order: &[String],
+) {
     let state = ui.state.clone();
     let project_id = j::text(project, "projectId").to_string();
     let root = j::text(project, "projectRootPath").to_string();
-    let Some(host) = hosts::host(&state, host_id) else { return };
+    let Some(host) = hosts::host(&state, host_id) else {
+        return;
+    };
     let key = sidebar::project_key(&host, project);
     match action {
         "new" => {
-            let target = PanelTarget::new("new_tab", host_id, "", &root).with_data(json!({ "project": project }));
+            let target = PanelTarget::new("new_tab", host_id, "", &root)
+                .with_data(json!({ "project": project }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
         "history" => {
@@ -2184,11 +3537,15 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
             show_sessions(shell, cx, host_id, false, &root, &project_key);
         }
         "import" => {
-            shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(host_id, &root)));
+            shell
+                .data
+                .overlays
+                .open_sheet(Box::new(history::ImportSheet::new(host_id, &root)));
         }
         "settings" => {
             let name = j::text(project, "projectDisplayName");
-            let mut target = PanelTarget::new("project_settings", host_id, "", &root).with_data(json!({ "project": project }));
+            let mut target = PanelTarget::new("project_settings", host_id, "", &root)
+                .with_data(json!({ "project": project }));
             if !name.is_empty() {
                 target.title = Some(tr_args("shell.tabs.projectSettingsFor", &[("name", name)]));
             }
@@ -2199,7 +3556,14 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
         "icon" => {
             if let Some(request) = platform::pick_image_file() {
                 ICON_PICKS.with(|picks| {
-                    picks.borrow_mut().insert(request, IconPick { window: shell.data.window_id.clone(), host_id: host_id.to_string(), project_id });
+                    picks.borrow_mut().insert(
+                        request,
+                        IconPick {
+                            window: shell.data.window_id.clone(),
+                            host_id: host_id.to_string(),
+                            project_id,
+                        },
+                    );
                 });
             }
         }
@@ -2209,14 +3573,19 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
             host_id,
             json!({ "type": "project.icon.set.request", "projectId": project_id, "source": { "type": "automatic" } }),
             "project.icon.set.response",
-            Pending::Refresh { host_id: host_id.to_string() },
+            Pending::Refresh {
+                host_id: host_id.to_string(),
+            },
         ),
         "rename" => prompt(
             shell,
             cx,
             &tr("sidebar.project.actions.rename"),
             j::text(project, "projectDisplayName"),
-            ShellOverlay::RenameProject { host_id: host_id.to_string(), project_id },
+            ShellOverlay::RenameProject {
+                host_id: host_id.to_string(),
+                project_id,
+            },
         ),
         "reset" => request(
             shell,
@@ -2224,18 +3593,33 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
             host_id,
             json!({ "type": "project.rename.request", "projectId": project_id, "customName": null }),
             "project.rename.response",
-            Pending::Refresh { host_id: host_id.to_string() },
+            Pending::Refresh {
+                host_id: host_id.to_string(),
+            },
         ),
         "remove" => {
-            let count = host.workspaces().iter().filter(|w| j::text(w, "projectId") == project_id).count();
+            let count = host
+                .workspaces()
+                .iter()
+                .filter(|w| j::text(w, "projectId") == project_id)
+                .count();
             confirm(
                 shell,
                 cx,
-                &tr_args("shell.commands.removeProjectTitle", &[("host", &host.label())]),
-                &tr_args("shell.commands.removeProjectMessage", &[("path", &root), ("count", &count.to_string())]),
+                &tr_args(
+                    "shell.commands.removeProjectTitle",
+                    &[("host", &host.label())],
+                ),
+                &tr_args(
+                    "shell.commands.removeProjectMessage",
+                    &[("path", &root), ("count", &count.to_string())],
+                ),
                 &tr("sidebar.project.confirmations.removeConfirm"),
                 true,
-                ShellOverlay::RemoveProject { host_id: host_id.to_string(), project: project.clone() },
+                ShellOverlay::RemoveProject {
+                    host_id: host_id.to_string(),
+                    project: project.clone(),
+                },
             );
         }
         _ => {}
@@ -2243,7 +3627,15 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
 }
 
 /// The sidebar session row's menu; History rows (`with_open`) lead with "Open".
-pub(crate) fn session_menu(shell: &mut PaseoShell, cx: &mut Cx, _state: &Value, host_id: &str, agent: Value, anchor: Rect, with_open: bool) {
+pub(crate) fn session_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    _state: &Value,
+    host_id: &str,
+    agent: Value,
+    anchor: Rect,
+    with_open: bool,
+) {
     let mut entries = Vec::new();
     if with_open {
         entries.push(MenuItem::new("open", tr("sessions.actions.open")).entry());
@@ -2253,19 +3645,55 @@ pub(crate) fn session_menu(shell: &mut PaseoShell, cx: &mut Cx, _state: &Value, 
         entries.push(MenuItem::new("reload", tr("workspace.tabs.menu.reloadAgent")).entry());
     }
     entries.push(MenuItem::new("archive", tr("agentList.archiveSheet.archive")).entry());
-    menu(shell, cx, anchor, None, entries, MenuOptions::default(), ShellOverlay::SessionMenu { host_id: host_id.to_string(), agent });
+    menu(
+        shell,
+        cx,
+        anchor,
+        None,
+        entries,
+        MenuOptions::default(),
+        ShellOverlay::SessionMenu {
+            host_id: host_id.to_string(),
+            agent,
+        },
+    );
 }
 
-fn session_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, agent: &Value, action: &str) {
+fn session_action(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    host_id: &str,
+    agent: &Value,
+    action: &str,
+) {
     let agent_id = j::text(agent, "id").to_string();
     let title = {
         let t = j::text(agent, "title");
-        if t.is_empty() { tr("sessionNavigation.untitled") } else { t.to_string() }
+        if t.is_empty() {
+            tr("sessionNavigation.untitled")
+        } else {
+            t.to_string()
+        }
     };
     match action {
         "open" => open_agent(shell, ui, host_id, &agent_id, None, TabPlacement::Main),
-        "rename" => prompt(shell, cx, &tr("workspace.tabs.menu.renameAgent"), &title, ShellOverlay::RenameSession { host_id: host_id.to_string(), agent_id }),
-        "reload" => reload_agent(shell, cx, ui, &navigation_agent_target(host_id, agent, None)),
+        "rename" => prompt(
+            shell,
+            cx,
+            &tr("workspace.tabs.menu.renameAgent"),
+            &title,
+            ShellOverlay::RenameSession {
+                host_id: host_id.to_string(),
+                agent_id,
+            },
+        ),
+        "reload" => reload_agent(
+            shell,
+            cx,
+            ui,
+            &navigation_agent_target(host_id, agent, None),
+        ),
         "archive" => confirm(
             shell,
             cx,
@@ -2273,7 +3701,10 @@ fn session_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
             &title,
             &tr("agentList.archiveSheet.archive"),
             false,
-            ShellOverlay::ArchiveSession { host_id: host_id.to_string(), agent_id },
+            ShellOverlay::ArchiveSession {
+                host_id: host_id.to_string(),
+                agent_id,
+            },
         ),
         _ => {}
     }
@@ -2292,7 +3723,10 @@ fn display_entries(shell: &PaseoShell, state: &Value) -> Vec<MenuEntry> {
     let mut labels: Vec<(String, String, String)> = shell.data.label_catalog.clone();
     for host in &all {
         for workspace in host.workspaces() {
-            for raw in j::array(workspace, "labels").iter().filter_map(Value::as_str) {
+            for raw in j::array(workspace, "labels")
+                .iter()
+                .filter_map(Value::as_str)
+            {
                 let key = sidebar::label_key(raw);
                 if !key.is_empty() && !labels.iter().any(|(k, _, _)| *k == key) {
                     labels.push((key, raw.trim().to_string(), String::new()));
@@ -2303,7 +3737,12 @@ fn display_entries(shell: &PaseoShell, state: &Value) -> Vec<MenuEntry> {
     let project_count: usize = all.iter().map(|h| sidebar::projects(h).len()).sum();
     let mut entries = Vec::new();
     if all.len() > 1 {
-        let mut page = vec![MenuItem::new("host:all", tr("sidebar.display.hostFilter.all")).checked(j::array(&prefs, "hostFilters").is_empty()).keep_open().entry()];
+        let mut page = vec![
+            MenuItem::new("host:all", tr("sidebar.display.hostFilter.all"))
+                .checked(j::array(&prefs, "hostFilters").is_empty())
+                .keep_open()
+                .entry(),
+        ];
         for host in &all {
             page.push(
                 MenuItem::new(format!("host:{}", host.server_id()), host.display_label())
@@ -2323,12 +3762,28 @@ fn display_entries(shell: &PaseoShell, state: &Value) -> Vec<MenuEntry> {
         });
     }
     if project_count > 1 {
-        let mut page = vec![MenuItem::new("project:all", tr("sidebar.display.projectFilter.all")).checked(project_filters.is_empty()).keep_open().entry()];
+        let mut page = vec![
+            MenuItem::new("project:all", tr("sidebar.display.projectFilter.all"))
+                .checked(project_filters.is_empty())
+                .keep_open()
+                .entry(),
+        ];
         for host in &all {
             for project in sidebar::projects(host) {
                 let key = sidebar::project_key(host, &project);
-                let name = j::text_or(&project, "projectDisplayName", j::text(&project, "projectRootPath")).to_string();
-                page.push(MenuItem::new(format!("project:{key}"), name).icon("folder").checked(project_filters.contains(&key)).keep_open().entry());
+                let name = j::text_or(
+                    &project,
+                    "projectDisplayName",
+                    j::text(&project, "projectRootPath"),
+                )
+                .to_string();
+                page.push(
+                    MenuItem::new(format!("project:{key}"), name)
+                        .icon("folder")
+                        .checked(project_filters.contains(&key))
+                        .keep_open()
+                        .entry(),
+                );
             }
         }
         if all.len() <= 1 {
@@ -2346,7 +3801,9 @@ fn display_entries(shell: &PaseoShell, state: &Value) -> Vec<MenuEntry> {
         let mut page: Vec<MenuEntry> = labels
             .iter()
             .map(|(key, name, color)| {
-                let mut entry = MenuItem::new(format!("label:{key}"), name.clone()).checked(label_filters.contains(key)).keep_open();
+                let mut entry = MenuItem::new(format!("label:{key}"), name.clone())
+                    .checked(label_filters.contains(key))
+                    .keep_open();
                 if color.is_empty() {
                     entry = entry.icon("circle");
                 } else {
@@ -2364,12 +3821,22 @@ fn display_entries(shell: &PaseoShell, state: &Value) -> Vec<MenuEntry> {
         );
         if !label_filters.is_empty() {
             page.push(MenuEntry::Separator);
-            page.push(MenuItem::new("labels:clear", tr("workspaceLabels.filter.clear")).keep_open().entry());
+            page.push(
+                MenuItem::new("labels:clear", tr("workspaceLabels.filter.clear"))
+                    .keep_open()
+                    .entry(),
+            );
         }
         page.push(MenuEntry::Separator);
         page.push(MenuItem::new("labels:manage", tr("workspaceLabels.manage.open")).entry());
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::Submenu { label: tr("workspaceLabels.title"), icon: None, value: None, indicator: !label_filters.is_empty(), entries: page });
+        entries.push(MenuEntry::Submenu {
+            label: tr("workspaceLabels.title"),
+            icon: None,
+            value: None,
+            indicator: !label_filters.is_empty(),
+            entries: page,
+        });
     }
     entries.push(MenuEntry::Separator);
     entries.push(
@@ -2386,7 +3853,11 @@ fn display_menu(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, anchor: Rec
     for host in hosts::hosts(&ui.state) {
         if host.connected() {
             // A host without the label catalog contributes only its workspace labels.
-            let id = ui.core.request(host.server_id(), json!({ "type": "workspace.label.list.request" }), "workspace.label.list.response");
+            let id = ui.core.request(
+                host.server_id(),
+                json!({ "type": "workspace.label.list.request" }),
+                "workspace.label.list.response",
+            );
             shell.data.pending.insert(id, Pending::LabelCatalog);
         }
     }
@@ -2397,7 +3868,11 @@ fn display_menu(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, anchor: Rec
         anchor,
         Some(tr("sidebar.display.heading")),
         entries,
-        MenuOptions { width: 232.0, align_end: true, sheet: true },
+        MenuOptions {
+            width: 232.0,
+            align_end: true,
+            sheet: true,
+        },
         ShellOverlay::DisplayMenu,
     );
     shell.data.display_menu = Some(id);
@@ -2414,7 +3889,14 @@ fn refresh_display_menu(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext) {
 fn display_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, value: &str) {
     let mut prefs = sidebar::nav_prefs(&ui.state);
     let toggle = |prefs: &Value, field: &str, item: &str| -> Value {
-        let mut values: Vec<String> = j::array(prefs, field).iter().map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).collect();
+        let mut values: Vec<String> = j::array(prefs, field)
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .collect();
         match values.iter().position(|v| v == item) {
             Some(i) => {
                 values.remove(i);
@@ -2462,8 +3944,16 @@ fn display_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, value
 // ---------------------------------------------------------------------------------------------
 // Overlay answers
 
-pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: u64, args: &Value) {
-    let Some(overlay) = shell.data.menus.remove(&id) else { return };
+pub fn shell_overlay_result(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    id: u64,
+    args: &Value,
+) {
+    let Some(overlay) = shell.data.menus.remove(&id) else {
+        return;
+    };
     let cancelled = j::boolean(args, "cancelled", false);
     let value = j::text(args, "value").to_string();
     let confirmed = j::boolean(args, "confirmed", false);
@@ -2488,7 +3978,11 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
             ShellOverlay::CloseTerminal { .. } => abort_closing(shell),
             _ => {}
         },
-        ShellOverlay::TabMenu { target, pane_id, explorer } => tab_menu_result(shell, cx, ui, target, &pane_id, explorer, &value),
+        ShellOverlay::TabMenu {
+            target,
+            pane_id,
+            explorer,
+        } => tab_menu_result(shell, cx, ui, target, &pane_id, explorer, &value),
         ShellOverlay::TabOverflow { pane_id } => {
             if pane_id == "explorer" {
                 shell.data.layout.select_explorer_tab(&value);
@@ -2499,11 +3993,21 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                 }
             }
         }
-        ShellOverlay::HostMenu { host_id, order } => host_action(shell, cx, ui, &host_id, &value, &order),
-        ShellOverlay::ProjectMenu { host_id, project, order } => project_action(shell, cx, ui, &host_id, &project, &value, &order),
-        ShellOverlay::SessionMenu { host_id, agent } => session_action(shell, cx, ui, &host_id, &agent, &value),
+        ShellOverlay::HostMenu { host_id, order } => {
+            host_action(shell, cx, ui, &host_id, &value, &order)
+        }
+        ShellOverlay::ProjectMenu {
+            host_id,
+            project,
+            order,
+        } => project_action(shell, cx, ui, &host_id, &project, &value, &order),
+        ShellOverlay::SessionMenu { host_id, agent } => {
+            session_action(shell, cx, ui, &host_id, &agent, &value)
+        }
         ShellOverlay::HeaderMenu { target } => header_menu_result(shell, cx, ui, target, &value),
-        ShellOverlay::ScriptsMenu { target, workspace } => scripts_menu_result(shell, cx, ui, target, workspace, &value),
+        ShellOverlay::ScriptsMenu { target, workspace } => {
+            scripts_menu_result(shell, cx, ui, target, workspace, &value)
+        }
         ShellOverlay::ExplorerNewTab => explorer_new_tab_result(shell, cx, ui, &value),
         ShellOverlay::HelpMenu => help_menu_result(shell, cx, &value),
         ShellOverlay::HostPicker => open_host(shell, cx, &value),
@@ -2528,7 +4032,11 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                 abort_closing(shell);
             }
         }
-        ShellOverlay::CloseTerminal { key, host_id, terminal_id } => {
+        ShellOverlay::CloseTerminal {
+            key,
+            host_id,
+            terminal_id,
+        } => {
             if confirmed {
                 close_terminal_confirmed(shell, cx, ui, &key, &host_id, &terminal_id);
             } else {
@@ -2542,7 +4050,14 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
         }
         ShellOverlay::RemoveHost { host_id } => {
             if confirmed {
-                let keys: Vec<String> = shell.data.layout.tabs.iter().filter(|t| t.server_id == host_id).map(PanelTarget::key).collect();
+                let keys: Vec<String> = shell
+                    .data
+                    .layout
+                    .tabs
+                    .iter()
+                    .filter(|t| t.server_id == host_id)
+                    .map(PanelTarget::key)
+                    .collect();
                 close_tabs(shell, cx, ui, keys, true, AfterClose::RemoveHost(host_id));
             }
         }
@@ -2554,7 +4069,9 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                     &host_id,
                     json!({ "type": "project.remove.request", "projectId": j::text(&project, "projectId") }),
                     "project.remove.response",
-                    Pending::RemoveProject { host_id: host_id.clone() },
+                    Pending::RemoveProject {
+                        host_id: host_id.clone(),
+                    },
                 );
             }
         }
@@ -2566,7 +4083,10 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                     &host_id,
                     json!({ "type": "archive_agent_request", "agentId": agent_id }),
                     "agent_archived",
-                    Pending::ArchiveSession { host_id: host_id.clone(), agent_id: agent_id.clone() },
+                    Pending::ArchiveSession {
+                        host_id: host_id.clone(),
+                        agent_id: agent_id.clone(),
+                    },
                 );
             }
         }
@@ -2597,11 +4117,16 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                     &host_id,
                     json!({ "type": "update_agent_request", "agentId": agent_id, "name": name }),
                     "update_agent_response",
-                    Pending::Refresh { host_id: host_id.clone() },
+                    Pending::Refresh {
+                        host_id: host_id.clone(),
+                    },
                 );
             }
         }
-        ShellOverlay::RenameProject { host_id, project_id } => {
+        ShellOverlay::RenameProject {
+            host_id,
+            project_id,
+        } => {
             if !text.is_empty() {
                 request(
                     shell,
@@ -2609,7 +4134,9 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                     &host_id,
                     json!({ "type": "project.rename.request", "projectId": project_id, "customName": text }),
                     "project.rename.response",
-                    Pending::Refresh { host_id: host_id.clone() },
+                    Pending::Refresh {
+                        host_id: host_id.clone(),
+                    },
                 );
             }
         }
@@ -2621,19 +4148,36 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
 // ---------------------------------------------------------------------------------------------
 // Platform, window and lifecycle
 
-pub fn handle_platform_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, ui: &mut UiContext) {
+pub fn handle_platform_actions(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    event: &Event,
+    ui: &mut UiContext,
+) {
     process_routes(shell, cx, ui);
     // Host removals waiting on push revocation: the 2.5 s bound passed.
-    if let Some(index) = shell.data.revoking.iter().position(|(_, _, timer)| timer.is_event(event).is_some()) {
+    if let Some(index) = shell
+        .data
+        .revoking
+        .iter()
+        .position(|(_, _, timer)| timer.is_event(event).is_some())
+    {
         let (_, host_id, _) = shell.data.revoking.remove(index);
         ui.core.remove_host(&host_id);
     }
-    let Event::Actions(actions) = event else { return };
+    let Event::Actions(actions) = event else {
+        return;
+    };
     let main = shell.is_main();
     for action in platform::actions(actions) {
         match action {
             PlatformAction::Completed { request, result } => {
-                if let Some(index) = shell.data.revoking.iter().position(|(r, _, _)| *r == request) {
+                if let Some(index) = shell
+                    .data
+                    .revoking
+                    .iter()
+                    .position(|(r, _, _)| *r == request)
+                {
                     // Best effort: a failed revocation still removes the host.
                     let (_, host_id, timer) = shell.data.revoking.remove(index);
                     cx.stop_timer(timer);
@@ -2669,13 +4213,22 @@ pub fn handle_platform_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Even
             }
             PlatformAction::Event(event) => match event {
                 PlatformEvent::Route(route) if main => queue_route(shell, route),
-                PlatformEvent::ConnectionLink { url } if main => host_dialog::open_flow(shell, cx, None, None, Some(url)),
-                PlatformEvent::QuitRequested { token, .. } => {
+                PlatformEvent::ConnectionLink { url } if main => {
+                    host_dialog::open_flow(shell, cx, None, None, Some(url))
+                }
+                PlatformEvent::QuitRequested { token, reason } => {
                     match crate::shell::window_state(&shell.data.window_id) {
                         // A dormant first window is not open: it has no say.
                         Some(WindowState::Dormant) => {}
                         state => {
                             let keys = guarded_keys(shell);
+                            if reason == QuitReason::RemoteAppUpdate {
+                                let allowed = keys.is_empty();
+                                #[cfg(feature = "desktop-smoke")]
+                                let allowed = allowed && !crate::smoke::close_guard_refuses();
+                                vote_quit(token, allowed);
+                                continue;
+                            }
                             if state == Some(WindowState::Tray) && !keys.is_empty() {
                                 // Dirty-document prompts must not be trapped in a hidden window.
                                 platform::show_windows();
@@ -2688,10 +4241,17 @@ pub fn handle_platform_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Even
                 PlatformEvent::QuitReady if main => crate::shell::request_quit_now(),
                 PlatformEvent::QuitCancelled => {}
                 PlatformEvent::ShowWindow if main => crate::shell::set_tray_hidden(false),
-                PlatformEvent::OpenWindow { route } if main => crate::shell::request_window(WindowRequest { route }),
+                PlatformEvent::OpenWindow { route } if main => {
+                    crate::shell::request_window(WindowRequest { route })
+                }
                 PlatformEvent::LocalDaemonStatus { status } if main => {
-                    if matches!(status.get("status").and_then(Value::as_str), Some("running" | "starting"))
-                        && status.get("listen").and_then(Value::as_str).is_some_and(|listen| !listen.is_empty())
+                    if matches!(
+                        status.get("status").and_then(Value::as_str),
+                        Some("running" | "starting")
+                    ) && status
+                        .get("listen")
+                        .and_then(Value::as_str)
+                        .is_some_and(|listen| !listen.is_empty())
                     {
                         ui.core.discover_local_daemon();
                     }
@@ -2704,7 +4264,13 @@ pub fn handle_platform_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Even
         }
     }
     for action in actions.iter() {
-        if let Some(ShellAsync::ProjectIcon { window, host_id, project_id, data }) = action.downcast_ref::<ShellAsync>() {
+        if let Some(ShellAsync::ProjectIcon {
+            window,
+            host_id,
+            project_id,
+            data,
+        }) = action.downcast_ref::<ShellAsync>()
+        {
             if *window != shell.data.window_id {
                 continue;
             }
@@ -2715,7 +4281,9 @@ pub fn handle_platform_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Even
                     host_id,
                     json!({ "type": "project.icon.set.request", "projectId": project_id, "source": { "type": "upload", "data": data } }),
                     "project.icon.set.response",
-                    Pending::Refresh { host_id: host_id.clone() },
+                    Pending::Refresh {
+                        host_id: host_id.clone(),
+                    },
                 ),
                 Err(error) => toast(shell, cx, error.clone(), true),
             }
@@ -2742,7 +4310,12 @@ fn read_icon(pick: IconPick, path: std::path::PathBuf) {
         let data = std::fs::read(&path)
             .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
             .map_err(|e| format!("{}: {e}", path.display()));
-        Cx::post_action(ShellAsync::ProjectIcon { window: pick.window, host_id: pick.host_id, project_id: pick.project_id, data });
+        Cx::post_action(ShellAsync::ProjectIcon {
+            window: pick.window,
+            host_id: pick.host_id,
+            project_id: pick.project_id,
+            data,
+        });
     });
 }
 
@@ -2774,9 +4347,17 @@ fn process_routes(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
 
 /// Opens `route` in this window; `false` while its host is not known (or not connected for
 /// projects) yet.
-fn open_route(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: &PlatformRoute) -> bool {
+fn open_route(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    route: &PlatformRoute,
+) -> bool {
     match route {
-        PlatformRoute::Agent { server_id, agent_id } => {
+        PlatformRoute::Agent {
+            server_id,
+            agent_id,
+        } => {
             if hosts::host(&ui.state, server_id).is_none() {
                 return false;
             }
@@ -2793,8 +4374,13 @@ fn open_route(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: &P
             open_agent(shell, ui, server_id, agent_id, None, TabPlacement::Main);
             true
         }
-        PlatformRoute::ExecutionLog { server_id, workspace_id, terminal_id } => {
-            hosts::host(&ui.state, server_id).is_some() && open_execution_log(shell, cx, ui, server_id, workspace_id, terminal_id, None)
+        PlatformRoute::ExecutionLog {
+            server_id,
+            workspace_id,
+            terminal_id,
+        } => {
+            hosts::host(&ui.state, server_id).is_some()
+                && open_execution_log(shell, cx, ui, server_id, workspace_id, terminal_id, None)
         }
         PlatformRoute::Project { path, server_id } => {
             let connected = hosts::hosts(&ui.state)
@@ -2805,7 +4391,9 @@ fn open_route(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: &P
             }
             match server_id {
                 Some(id) => open_project_path(shell, ui, id, path),
-                None => choose_any_host(shell, cx, ui, HostPurpose::ProjectPath(path.clone()), None),
+                None => {
+                    choose_any_host(shell, cx, ui, HostPurpose::ProjectPath(path.clone()), None)
+                }
             }
             true
         }
@@ -2819,7 +4407,12 @@ fn open_route(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: &P
     }
 }
 
-pub fn handle_window_events(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, ui: &mut UiContext) {
+pub fn handle_window_events(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    event: &Event,
+    ui: &mut UiContext,
+) {
     if std::mem::take(&mut shell.data.close_requested) {
         let keys = guarded_keys(shell);
         close_tabs(shell, cx, ui, keys, false, AfterClose::Window);
@@ -2868,10 +4461,17 @@ pub fn handle_window_events(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, 
 }
 
 fn geometry_key(shell: &PaseoShell) -> String {
-    if shell.is_main() { MAIN_WINDOW_ID.to_string() } else { shell.data.window_id.clone() }
+    if shell.is_main() {
+        MAIN_WINDOW_ID.to_string()
+    } else {
+        shell.data.window_id.clone()
+    }
 }
 
-pub fn record_geometry(shell: &mut PaseoShell, geom: &makepad_widgets::makepad_platform::event::WindowGeom) {
+pub fn record_geometry(
+    shell: &mut PaseoShell,
+    geom: &makepad_widgets::makepad_platform::event::WindowGeom,
+) {
     if !shell.data.geometry_applied {
         return;
     }
@@ -2902,9 +4502,13 @@ pub fn apply_initial_geometry(shell: &mut PaseoShell, cx: &mut Cx) {
     if shell.data.geometry_applied {
         return;
     }
-    let Some(window) = shell.data.os_window else { return };
+    let Some(window) = shell.data.os_window else {
+        return;
+    };
     shell.data.geometry_applied = true;
-    let Some(geometry) = platform::window_geometry(&geometry_key(shell)) else { return };
+    let Some(geometry) = platform::window_geometry(&geometry_key(shell)) else {
+        return;
+    };
     // AppKit drains platform_ops with pop(): enqueue zoom first so restoring
     // the normal frame happens before zoom captures its unzoom destination.
     #[cfg(target_os = "macos")]
@@ -2912,7 +4516,10 @@ pub fn apply_initial_geometry(shell: &mut PaseoShell, cx: &mut Cx) {
         cx.push_unique_platform_op(CxOsOp::MaximizeWindow(window));
     }
     if geometry.width > 0.0 && geometry.height > 0.0 {
-        cx.push_unique_platform_op(CxOsOp::ResizeWindow(window, dvec2(geometry.width, geometry.height)));
+        cx.push_unique_platform_op(CxOsOp::ResizeWindow(
+            window,
+            dvec2(geometry.width, geometry.height),
+        ));
     }
     if let (Some(x), Some(y)) = (geometry.x, geometry.y) {
         cx.push_unique_platform_op(CxOsOp::RepositionWindow(window, dvec2(x, y)));

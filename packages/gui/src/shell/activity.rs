@@ -68,7 +68,8 @@ impl Activity {
 
     /// `updateView`: the focused tab and app visibility.
     pub fn update_view(&mut self, ui: &UiContext, target: Option<&PanelTarget>, visible: bool) {
-        let same_target = self.target.as_ref().map(PanelTarget::key) == target.map(PanelTarget::key);
+        let same_target =
+            self.target.as_ref().map(PanelTarget::key) == target.map(PanelTarget::key);
         if self.visible == visible && same_target {
             return;
         }
@@ -87,14 +88,21 @@ impl Activity {
     /// `recordInput` from pointer and key events.
     pub fn record_input(&mut self, ui: &UiContext) {
         self.last_activity = SystemTime::now();
-        if self.last_immediate.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
+        if self
+            .last_immediate
+            .is_none_or(|t| t.elapsed() >= Duration::from_secs(5))
+        {
             self.last_immediate = Some(Instant::now());
             self.send_all(ui);
         }
     }
 
     fn send(&self, ui: &UiContext, server_id: &str) {
-        let focused = self.visible && self.target.as_ref().is_some_and(|t| t.server_id == server_id);
+        let focused = self.visible
+            && self
+                .target
+                .as_ref()
+                .is_some_and(|t| t.server_id == server_id);
         let kind = self.target.as_ref().map(|t| t.kind.as_str());
         let id = self.target.as_ref().and_then(|t| t.id.clone());
         ui.core.notify(
@@ -123,7 +131,9 @@ impl Activity {
     /// The app badge on every platform: sessions requiring attention, kept current so a tap on
     /// one notification never clears the count of others still waiting.
     fn update_badge(&mut self, ui: &UiContext) {
-        let agents = hosts::hosts(&ui.state).into_iter().flat_map(|host| host.agents().collect::<Vec<_>>());
+        let agents = hosts::hosts(&ui.state)
+            .into_iter()
+            .flat_map(|host| host.agents().collect::<Vec<_>>());
         let count = paseo_gui_platform::notification_policy::attention_badge_count(agents);
         if self.badge == Some(count) {
             return;
@@ -143,7 +153,11 @@ impl Activity {
             self.idle_request = paseo_gui_platform::platform().map(|p| p.idle_milliseconds());
         }
         match event {
-            Event::MouseDown(_) | Event::TouchUpdate(_) | Event::TextHandle(_) | Event::Scroll(_) | Event::KeyDown(_) => self.record_input(ui),
+            Event::MouseDown(_)
+            | Event::TouchUpdate(_)
+            | Event::TextHandle(_)
+            | Event::Scroll(_)
+            | Event::KeyDown(_) => self.record_input(ui),
             Event::Actions(actions) => {
                 for action in crate::shell::platform::actions(actions) {
                     if let PlatformAction::Completed { request, result } = action {
@@ -198,8 +212,9 @@ impl Activity {
             session_finished: crate::common::tr("shell.notifications.sessionFinished"),
             session_failed: crate::common::tr("shell.notifications.sessionFailed"),
         };
-        if let Some(request) = paseo_gui_platform::notification_policy::attention_notification(server_id, event, &view, &labels)
-            && let Some(platform) = paseo_gui_platform::platform()
+        if let Some(request) = paseo_gui_platform::notification_policy::attention_notification(
+            server_id, event, &view, &labels,
+        ) && let Some(platform) = paseo_gui_platform::platform()
         {
             platform.notify(request);
         }

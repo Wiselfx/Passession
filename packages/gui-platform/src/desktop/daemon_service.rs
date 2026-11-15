@@ -4,19 +4,19 @@
 //! start is never stopped on quit.
 
 use crate::action::PlatformError;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
-    sync::{oneshot, OnceCell},
+    sync::{OnceCell, oneshot},
 };
 
 /// Unpacked, platform-native release assets (never inside an archive).
@@ -26,19 +26,41 @@ pub(crate) struct DaemonRuntime {
     pub cli_shim_path: PathBuf,
     pub working_directory: PathBuf,
     pub environment: HashMap<String, String>,
+    pub identity: Option<paseo_protocol::components::ComponentIdentity>,
+    pub executable_sha256: Option<String>,
 }
 
 impl DaemonRuntime {
     /// `PASEO_DESKTOP_RUNTIME`, else `<exe dir>/runtime/desktop-runtime.json`
     /// (`Contents/Resources/runtime/` inside a macOS bundle).
     pub fn locate() -> anyhow::Result<Self> {
+        if let Some(store) = super::component_store::Store::discover()? {
+            let selected = store.selected()?;
+            let reference = &selected[&paseo_protocol::components::ComponentId::Daemon];
+            let executable = store.image(reference)?;
+            return Ok(Self {
+                working_directory: executable
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("Missing component runtime directory"))?
+                    .to_owned(),
+                cli_shim_path: executable.clone(),
+                executable,
+                environment: HashMap::new(),
+                identity: Some(reference.component.identity.clone()),
+                executable_sha256: Some(reference.component.executable_sha256.clone()),
+            });
+        }
         let manifest = match std::env::var_os("PASEO_DESKTOP_RUNTIME") {
             Some(path) => PathBuf::from(path),
             None => {
                 let executable = std::env::current_exe()?;
                 let directory = executable.parent().unwrap_or(Path::new("."));
                 if cfg!(target_os = "macos") {
-                    directory.join("..").join("Resources").join("runtime").join("desktop-runtime.json")
+                    directory
+                        .join("..")
+                        .join("Resources")
+                        .join("runtime")
+                        .join("desktop-runtime.json")
                 } else {
                     directory.join("runtime").join("desktop-runtime.json")
                 }
@@ -65,7 +87,14 @@ impl DaemonRuntime {
             .and_then(Value::as_object)
             .map(|map| {
                 map.iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())))
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            v.as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| v.to_string()),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -74,6 +103,8 @@ impl DaemonRuntime {
             cli_shim_path: resolve("cliShimPath")?,
             working_directory: resolve("workingDirectory")?,
             environment,
+            identity: None,
+            executable_sha256: None,
         })
     }
 
@@ -82,6 +113,8 @@ impl DaemonRuntime {
             "executable": self.executable,
             "cliShimPath": self.cli_shim_path,
             "workingDirectory": self.working_directory,
+            "identity": self.identity,
+            "executableSha256": self.executable_sha256,
         })
     }
 }
@@ -142,6 +175,8 @@ fn helper_command(runtime: &DaemonRuntime) -> tokio::process::Command {
     command
         .current_dir(&runtime.working_directory)
         .envs(&runtime.environment)
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_PRELOAD")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -181,27 +216,44 @@ impl DaemonService {
 
     async fn ensure_open(&self) -> Result<Arc<Helper>, PlatformError> {
         if self.closed.load(Ordering::SeqCst) || self.reject_new.load(Ordering::SeqCst) {
-            return Err(helper_error("DAEMON_SERVICE_CLOSED", "Desktop daemon service is closed."));
+            return Err(helper_error(
+                "DAEMON_SERVICE_CLOSED",
+                "Desktop daemon service is closed.",
+            ));
         }
-        self.helper.get_or_try_init(|| async {
-            if self.closed.load(Ordering::SeqCst) || self.reject_new.load(Ordering::SeqCst) {
-                return Err(helper_error("DAEMON_SERVICE_CLOSED", "Desktop daemon service is closed."));
-            }
-            self.open().await
-        }).await.cloned()
+        self.helper
+            .get_or_try_init(|| async {
+                if self.closed.load(Ordering::SeqCst) || self.reject_new.load(Ordering::SeqCst) {
+                    return Err(helper_error(
+                        "DAEMON_SERVICE_CLOSED",
+                        "Desktop daemon service is closed.",
+                    ));
+                }
+                self.open().await
+            })
+            .await
+            .cloned()
     }
 
     async fn open(&self) -> Result<Arc<Helper>, PlatformError> {
         if !self.runtime.executable.is_file() {
             return Err(helper_error(
                 "RUNTIME_MISSING",
-                format!("Bundled native Paseo executable is missing. ({})", self.runtime.executable.display()),
+                format!(
+                    "Bundled native Paseo executable is missing. ({})",
+                    self.runtime.executable.display()
+                ),
             ));
         }
         let mut child = helper_command(&self.runtime)
             .arg("desktop-host")
             .spawn()
-            .map_err(|error| helper_error("HELPER_START_FAILED", format!("Could not start the desktop daemon helper: {error}")))?;
+            .map_err(|error| {
+                helper_error(
+                    "HELPER_START_FAILED",
+                    format!("Could not start the desktop daemon helper: {error}"),
+                )
+            })?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().expect("piped stdout");
         let mut stderr = child.stderr.take().expect("piped stderr");
@@ -218,7 +270,10 @@ impl DaemonService {
                     Ok(Some(line)) => receive(&reader_pending, &line),
                     Ok(None) => break,
                     Err(error) => {
-                        fail_pending(&reader_pending, helper_error("HELPER_IO", error.to_string()));
+                        fail_pending(
+                            &reader_pending,
+                            helper_error("HELPER_IO", error.to_string()),
+                        );
                         break;
                     }
                 }
@@ -248,13 +303,24 @@ impl DaemonService {
         tokio::spawn(async move {
             let status = child.wait().await;
             wait_alive.store(false, Ordering::SeqCst);
-            let code = status.ok().and_then(|s| s.code()).map(|c| c.to_string()).unwrap_or_else(|| "signal".into());
+            let code = status
+                .ok()
+                .and_then(|s| s.code())
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into());
             let text = diagnostics.lock().unwrap().clone();
             fail_pending(
                 &wait_pending,
                 helper_error(
                     "HELPER_EXITED",
-                    format!("Desktop daemon helper exited ({code}).{}", if text.is_empty() { String::new() } else { format!("\n{text}") }),
+                    format!(
+                        "Desktop daemon helper exited ({code}).{}",
+                        if text.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n{text}")
+                        }
+                    ),
                 ),
             );
             wait_exited.notify_waiters();
@@ -267,14 +333,31 @@ impl DaemonService {
             alive,
         });
         let mut args = json!({
+            "protocolVersion": 1,
+            "capabilities": ["component-runtime-v1"],
             "runtime": self.runtime.to_json(),
             "settings": (self.settings)().to_json(),
         });
         if let Some(version) = self.app_version.as_deref().filter(|v| !v.is_empty()) {
             args["appVersion"] = version.into();
         }
-        if let Err(error) = self.send(&helper, "initialize", args).await {
-            // No start request was sent, so initialization failure owns no daemon.
+        let initialized = self.send(&helper, "initialize", args).await.and_then(|response| {
+            if response["protocolVersion"] != 1
+                || !response["capabilities"].as_array().is_some_and(|values| values.iter().any(|v| v == "component-runtime-v1"))
+            {
+                return Err(helper_error("COMPONENT_RUNTIME_PREREQUISITE",
+                    "One-time packaged upgrade required: desktop-host lacks component-runtime-v1."));
+            }
+            if let Some(identity) = &self.runtime.identity
+                && (response["daemon"]["version"] != identity.version
+                    || response["daemon"]["sourceSha"] != identity.source_sha
+                    || response["daemon"]["abiVersion"] != identity.abi_version)
+            {
+                return Err(helper_error("COMPONENT_RUNTIME_IDENTITY", "Selected daemon identity/ABI differs from the initialized runtime."));
+            }
+            Ok(())
+        });
+        if let Err(error) = initialized {
             helper.stdin.lock().await.take();
             if helper.alive.load(Ordering::SeqCst) {
                 helper.exited.notified().await;
@@ -284,12 +367,33 @@ impl DaemonService {
         Ok(helper)
     }
 
-    async fn send(&self, helper: &Helper, command: &str, args: Value) -> Result<Value, PlatformError> {
+    pub async fn runtime_processes(&self) -> Result<Value, PlatformError> {
+        // Snapshotting shutdown authority must never spawn a replacement host.
+        // A failed `open` has already closed its pipes and waited for child exit.
+        let Some(helper) = self.helper.get() else {
+            return Ok(json!([]));
+        };
+        if !helper.alive.load(Ordering::SeqCst) {
+            return Err(helper_error(
+                "APP_UPDATE_OWNER_LOST",
+                "The owned desktop-host exited before its runtime snapshot.",
+            ));
+        }
+        self.send(helper, "runtime_processes", json!({})).await
+    }
+
+    async fn send(
+        &self,
+        helper: &Helper,
+        command: &str,
+        args: Value,
+    ) -> Result<Value, PlatformError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let (tx, rx) = oneshot::channel();
         // Register the response before writing so even immediate replies are safe.
         helper.pending.lock().unwrap().insert(id, tx);
-        let mut line = serde_json::to_vec(&json!({"id": id, "command": command, "args": args})).unwrap();
+        let mut line =
+            serde_json::to_vec(&json!({"id": id, "command": command, "args": args})).unwrap();
         line.push(b'\n');
         let written = {
             let mut stdin = helper.stdin.lock().await;
@@ -298,21 +402,38 @@ impl DaemonService {
                     Ok(()) => stdin.flush().await,
                     Err(error) => Err(error),
                 },
-                None => Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Desktop daemon helper input is closed.")),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "Desktop daemon helper input is closed.",
+                )),
             }
         };
         if let Err(error) = written {
             helper.pending.lock().unwrap().remove(&id);
-            return Err(helper_error("HELPER_IO", format!("Desktop daemon helper is not running: {error}")));
+            return Err(helper_error(
+                "HELPER_IO",
+                format!("Desktop daemon helper is not running: {error}"),
+            ));
         }
-        rx.await
-            .unwrap_or_else(|_| Err(helper_error("HELPER_EXITED", "Desktop daemon helper exited.")))
+        rx.await.unwrap_or_else(|_| {
+            Err(helper_error(
+                "HELPER_EXITED",
+                "Desktop daemon helper exited.",
+            ))
+        })
     }
 
-    async fn request(&self, command: &str, args: Map<String, Value>) -> Result<Value, PlatformError> {
+    async fn request(
+        &self,
+        command: &str,
+        args: Map<String, Value>,
+    ) -> Result<Value, PlatformError> {
         let helper = self.ensure_open().await?;
         if self.reject_new.load(Ordering::SeqCst) {
-            return Err(helper_error("DAEMON_SERVICE_CLOSING", "Desktop daemon service is closing."));
+            return Err(helper_error(
+                "DAEMON_SERVICE_CLOSING",
+                "Desktop daemon service is closing.",
+            ));
         }
         let mut args = args;
         args.insert("settings".into(), (self.settings)().to_json());
@@ -322,10 +443,43 @@ impl DaemonService {
     pub async fn status(&self) -> Result<Value, PlatformError> {
         self.request("status", Map::new()).await
     }
+    pub async fn app_update_drain(
+        &self,
+        operation: &str,
+        force: bool,
+        timeout: u64,
+    ) -> Result<(), PlatformError> {
+        let args = json!({"operationId":operation,"forceRunning":force,"idleTimeoutMs":timeout});
+        let result = self
+            .request("app_update_drain", args.as_object().unwrap().clone())
+            .await?;
+        if result["ready"] != true {
+            return Err(helper_error(
+                "APP_UPDATE_BUSY",
+                "Running tasks did not drain; current APP retained.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn app_update_drain_release(&self, operation: &str) -> Result<(), PlatformError> {
+        let args = json!({"operationId":operation});
+        self.request(
+            "app_update_drain_release",
+            args.as_object().unwrap().clone(),
+        )
+        .await?;
+        Ok(())
+    }
     pub async fn start(&self) -> Result<Value, PlatformError> {
         self.request("start", Map::new()).await
     }
-    pub async fn stop(&self, reason: &str, pid: Option<i64>, started_at: Option<String>) -> Result<Value, PlatformError> {
+    pub async fn stop(
+        &self,
+        reason: &str,
+        pid: Option<i64>,
+        started_at: Option<String>,
+    ) -> Result<Value, PlatformError> {
         let mut args = Map::new();
         args.insert("reason".into(), reason.into());
         if let Some(pid) = pid {
@@ -336,7 +490,11 @@ impl DaemonService {
         }
         self.request("stop", args).await
     }
-    pub async fn restart(&self, pid: Option<i64>, started_at: Option<String>) -> Result<Value, PlatformError> {
+    pub async fn restart(
+        &self,
+        pid: Option<i64>,
+        started_at: Option<String>,
+    ) -> Result<Value, PlatformError> {
         let mut args = Map::new();
         if let Some(pid) = pid {
             args.insert("pid".into(), pid.into());
@@ -353,25 +511,51 @@ impl DaemonService {
     /// Retains the desktop command names used by settings/host workflows.
     pub async fn invoke(&self, command: &str, args: &Value) -> Result<Value, PlatformError> {
         let pid = args.get("pid").and_then(Value::as_i64);
-        let started_at = args.get("startedAt").and_then(Value::as_str).map(str::to_owned);
+        let started_at = args
+            .get("startedAt")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         match command {
             "desktop_daemon_status" => self.status().await,
             "start_desktop_daemon" => self.start().await,
             "stop_desktop_daemon" => {
-                let reason = args.get("reason").and_then(Value::as_str).unwrap_or("manual_ipc");
+                let reason = args
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("manual_ipc");
                 self.stop(reason, pid, started_at).await
             }
             "restart_desktop_daemon" => self.restart(pid, started_at).await,
             "desktop_daemon_logs" => self.logs().await,
-            _ => Err(PlatformError::invalid(format!("Unknown desktop daemon command: {command}"))),
+            _ => Err(PlatformError::invalid(format!(
+                "Unknown desktop daemon command: {command}"
+            ))),
         }
     }
 
     /// Cancels pending startup before stopping only the exact launch this session
     /// acquired. A failed shutdown is surfaced and the service stays usable.
     pub async fn close(&self, keep_running: Option<bool>) -> Result<(), PlatformError> {
+        self.close_policy(keep_running, false).await
+    }
+
+    pub async fn close_for_update(&self) -> Result<(), PlatformError> {
+        self.close_policy(Some(false), true).await
+    }
+
+    async fn close_policy(
+        &self,
+        keep_running: Option<bool>,
+        require_owned_stopped: bool,
+    ) -> Result<(), PlatformError> {
         let _closing = self.closing.lock().await;
         if self.closed.load(Ordering::SeqCst) {
+            if require_owned_stopped {
+                return Err(helper_error(
+                    "APP_UPDATE_OWNER_LOST",
+                    "Desktop ownership channel closed before update handoff.",
+                ));
+            }
             return Ok(());
         }
         self.reject_new.store(true, Ordering::SeqCst);
@@ -380,13 +564,22 @@ impl DaemonService {
             // Failed initialization owns no daemon and must remain retryable.
             let helper = self
                 .helper
-                .get_or_try_init(|| async { Err(helper_error("DAEMON_SERVICE_CLOSED", "Desktop daemon service is closed.")) })
+                .get_or_try_init(|| async {
+                    Err(helper_error(
+                        "DAEMON_SERVICE_CLOSED",
+                        "Desktop daemon service is closed.",
+                    ))
+                })
                 .await
                 .ok()
                 .cloned();
+            if require_owned_stopped && helper.as_ref().is_none_or(|h| !h.alive.load(Ordering::SeqCst)) {
+                return Err(helper_error("APP_UPDATE_OWNER_LOST", "Cannot confirm owned daemon shutdown: desktop ownership channel is unavailable."));
+            }
             if let Some(helper) = helper.filter(|h| h.alive.load(Ordering::SeqCst)) {
                 let keep = keep_running.unwrap_or((self.settings)().keep_running_after_quit);
-                self.send(&helper, "close", json!({"keepRunning": keep})).await?;
+                self.send(&helper, "close", json!({"keepRunning": keep, "requireOwnedStopped": require_owned_stopped}))
+                    .await?;
                 helper.stdin.lock().await.take();
                 if helper.alive.load(Ordering::SeqCst) {
                     helper.exited.notified().await;
@@ -412,16 +605,29 @@ fn receive(pending: &Pending, line: &str) {
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(error) => {
-            fail_pending(pending, helper_error("INVALID_HELPER_RESPONSE", error.to_string()));
+            fail_pending(
+                pending,
+                helper_error("INVALID_HELPER_RESPONSE", error.to_string()),
+            );
             return;
         }
     };
-    let Some(id) = message.get("id").and_then(Value::as_u64) else { return };
-    let Some(sender) = pending.lock().unwrap().remove(&id) else { return };
+    let Some(id) = message.get("id").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(sender) = pending.lock().unwrap().remove(&id) else {
+        return;
+    };
     let result = match message.get("error") {
         Some(Value::Object(error)) => Err(helper_error(
-            error.get("code").and_then(Value::as_str).unwrap_or("DAEMON_HELPER_ERROR"),
-            error.get("message").and_then(Value::as_str).unwrap_or("Desktop daemon operation failed."),
+            error
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("DAEMON_HELPER_ERROR"),
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Desktop daemon operation failed."),
         )),
         _ => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
     };
@@ -429,7 +635,12 @@ fn receive(pending: &Pending, line: &str) {
 }
 
 fn fail_pending(pending: &Pending, error: PlatformError) {
-    let senders: Vec<_> = pending.lock().unwrap().drain().map(|(_, sender)| sender).collect();
+    let senders: Vec<_> = pending
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, sender)| sender)
+        .collect();
     for sender in senders {
         let _ = sender.send(Err(error.clone()));
     }
@@ -441,16 +652,22 @@ mod tests {
 
     #[tokio::test]
     async fn failed_helper_initialization_remains_retryable_until_close() {
-        let directory = std::env::temp_dir().join(format!("paseo-missing-runtime-{}", uuid::Uuid::new_v4()));
+        let directory =
+            std::env::temp_dir().join(format!("paseo-missing-runtime-{}", uuid::Uuid::new_v4()));
         let service = DaemonService::new(
             DaemonRuntime {
                 executable: directory.join("paseo"),
                 cli_shim_path: directory.join("paseo"),
                 working_directory: directory,
                 environment: HashMap::new(),
+                identity: None,
+                executable_sha256: None,
             },
             None,
-            Arc::new(|| DaemonSettings { managed: true, keep_running_after_quit: false }),
+            Arc::new(|| DaemonSettings {
+                managed: true,
+                keep_running_after_quit: false,
+            }),
         );
         for _ in 0..2 {
             let error = service.ensure_open().await.err().unwrap();
@@ -470,7 +687,10 @@ mod tests {
         }
         use windows::Win32::System::Console::GetConsoleWindow;
         unsafe {
-            assert!(GetConsoleWindow().0.is_null(), "helper allocated a console window");
+            assert!(
+                GetConsoleWindow().0.is_null(),
+                "helper allocated a console window"
+            );
         }
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
@@ -489,17 +709,36 @@ mod tests {
             cli_shim_path: executable.clone(),
             executable,
             environment: HashMap::new(),
+            identity: None,
+            executable_sha256: None,
         };
         let mut child = helper_command(&runtime)
-            .args(["--exact", "desktop::daemon_service::tests::helper_console_fixture", "--nocapture"])
+            .args([
+                "--exact",
+                "desktop::daemon_service::tests::helper_console_fixture",
+                "--nocapture",
+            ])
             .env("PASEO_HELPER_CONSOLE_PROBE", "1")
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(b"initialize\n").await.unwrap();
-        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
-            .await.unwrap().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"initialize\n")
+            .await
+            .unwrap();
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(String::from_utf8_lossy(&output.stdout).contains("helper-ready"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("helper-diagnostic"));
     }

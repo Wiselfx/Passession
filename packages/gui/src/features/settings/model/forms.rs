@@ -35,6 +35,7 @@ pub enum Parse {
 pub struct SettingField {
     pub key: String,
     pub label: String,
+    pub hint: Option<String>,
     pub kind: Kind,
     /// Initial text for text fields, bool for switches.
     pub value: Value,
@@ -47,21 +48,35 @@ impl SettingField {
         Self {
             key: key.into(),
             label,
-            kind: Kind::Text { multiline: false, secret: false },
+            hint: None,
+            kind: Kind::Text {
+                multiline: false,
+                secret: false,
+            },
             value: Value::String(value.into()),
             required: false,
             parse: Parse::Raw,
         }
     }
+    pub fn hint(mut self, hint: String) -> Self {
+        self.hint = Some(hint);
+        self
+    }
     pub fn multiline(mut self) -> Self {
         if let Kind::Text { secret, .. } = self.kind {
-            self.kind = Kind::Text { multiline: true, secret };
+            self.kind = Kind::Text {
+                multiline: true,
+                secret,
+            };
         }
         self
     }
     pub fn secret(mut self) -> Self {
         if let Kind::Text { multiline, .. } = self.kind {
-            self.kind = Kind::Text { multiline, secret: true };
+            self.kind = Kind::Text {
+                multiline,
+                secret: true,
+            };
         }
         self
     }
@@ -74,7 +89,15 @@ impl SettingField {
         self
     }
     pub fn toggle(key: &str, label: String, value: bool) -> Self {
-        Self { key: key.into(), label, kind: Kind::Bool, value: Value::Bool(value), required: false, parse: Parse::Raw }
+        Self {
+            key: key.into(),
+            label,
+            hint: None,
+            kind: Kind::Bool,
+            value: Value::Bool(value),
+            required: false,
+            parse: Parse::Raw,
+        }
     }
 }
 
@@ -126,7 +149,17 @@ impl FormSheet {
                 bools.insert(field.key.clone(), field.value.as_bool() == Some(true));
             }
         }
-        Self { id, title, description: None, fields, bools, errors: HashMap::new(), busy: false, error: None, on_save }
+        Self {
+            id,
+            title,
+            description: None,
+            fields,
+            bools,
+            errors: HashMap::new(),
+            busy: false,
+            error: None,
+            on_save,
+        }
     }
 
     pub fn describe(mut self, description: String) -> Self {
@@ -147,7 +180,8 @@ impl FormSheet {
                 Kind::Text { .. } => {
                     let text = text_of(&self.field_id(&field.key));
                     if field.required && text.trim().is_empty() {
-                        self.errors.insert(field.key.clone(), t("settingsNative.required"));
+                        self.errors
+                            .insert(field.key.clone(), t("settingsNative.required"));
                         continue;
                     }
                     match parse_value(field.parse, &text) {
@@ -160,10 +194,17 @@ impl FormSheet {
                     }
                 }
                 Kind::Bool => {
-                    values.insert(field.key.clone(), Value::Bool(self.bools.get(&field.key).copied().unwrap_or(false)));
+                    values.insert(
+                        field.key.clone(),
+                        Value::Bool(self.bools.get(&field.key).copied().unwrap_or(false)),
+                    );
                 }
             }
         }
-        if self.errors.is_empty() { Some(values) } else { None }
+        if self.errors.is_empty() {
+            Some(values)
+        } else {
+            None
+        }
     }
 }

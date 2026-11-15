@@ -262,10 +262,11 @@ fn image_directory() -> Result<Arc<PathBuf>> {
         .lock()
         .map_err(|_| anyhow!("Image directory lock poisoned"))?;
     if let Some(path) = cached.as_ref()
-        && fs::symlink_metadata(path.as_path()).is_ok_and(|m| m.file_type().is_dir()) {
-            private_mode(path, 0o700)?;
-            return Ok(Arc::clone(path));
-        }
+        && fs::symlink_metadata(path.as_path()).is_ok_and(|m| m.file_type().is_dir())
+    {
+        private_mode(path, 0o700)?;
+        return Ok(Arc::clone(path));
+    }
     // Persist after shutdown: timeline Markdown references these paths on replay.
     let path = tempfile::Builder::new()
         .prefix("paseo-attachments-")
@@ -280,12 +281,12 @@ fn image_directory() -> Result<Arc<PathBuf>> {
 fn image_data<'a>(data: &'a str, mime: Option<&'a str>) -> (&'a str, &'a str) {
     if let Some(rest) = data.strip_prefix("data:")
         && let Some((mime, data)) = rest.split_once(";base64,")
-            && !mime.is_empty()
-                && !mime.contains(';')
-                && !data.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
-            {
-                return (data, mime);
-            }
+        && !mime.is_empty()
+        && !mime.contains(';')
+        && !data.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+    {
+        return (data, mime);
+    }
     (data, mime.unwrap_or("image/png"))
 }
 

@@ -26,7 +26,10 @@ static PATHS: LazyLock<AppPaths> = LazyLock::new(|| {
     // `cargo xtask dev app` isolates development runs from the installed app.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let paths = match std::env::var_os("PASEO_GUI_STATE_DIR").filter(|v| !v.is_empty()) {
-        Some(dev) => AppPaths { support_dir: PathBuf::from(dev), ..paths },
+        Some(dev) => AppPaths {
+            support_dir: PathBuf::from(dev),
+            ..paths
+        },
         None => paths,
     };
     paths
@@ -47,9 +50,17 @@ fn resolve() -> AppPaths {
         .unwrap_or_else(|| home_dir().join(".local").join("share"));
     let primary = data_home.join(DESKTOP_APP_ID);
     let legacy = data_home.join("paseo_sessions");
-    let support_dir = if !primary.is_dir() && legacy.is_dir() { legacy } else { primary };
+    let support_dir = if !primary.is_dir() && legacy.is_dir() {
+        legacy
+    } else {
+        primary
+    };
     let temp_dir = std::env::temp_dir();
-    AppPaths { support_dir, cache_dir: temp_dir.clone(), temp_dir }
+    AppPaths {
+        support_dir,
+        cache_dir: temp_dir.clone(),
+        temp_dir,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -60,8 +71,15 @@ fn resolve() -> AppPaths {
         .join("Application Support")
         .join(DESKTOP_APP_ID);
     let temp_dir = std::env::temp_dir();
-    let cache_dir = home_dir().join("Library").join("Caches").join(DESKTOP_APP_ID);
-    AppPaths { support_dir, temp_dir, cache_dir }
+    let cache_dir = home_dir()
+        .join("Library")
+        .join("Caches")
+        .join(DESKTOP_APP_ID);
+    AppPaths {
+        support_dir,
+        temp_dir,
+        cache_dir,
+    }
 }
 
 #[cfg(windows)]
@@ -74,7 +92,11 @@ fn resolve() -> AppPaths {
         .unwrap_or_else(|| home_dir().join("AppData").join("Roaming"));
     let support_dir = roaming.join("Paseo").join("Paseo Sessions");
     let temp_dir = std::env::temp_dir();
-    AppPaths { support_dir, cache_dir: temp_dir.clone(), temp_dir }
+    AppPaths {
+        support_dir,
+        cache_dir: temp_dir.clone(),
+        temp_dir,
+    }
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -88,7 +110,8 @@ fn home_dir() -> PathBuf {
     let home = std::env::var_os("USERPROFILE");
     #[cfg(not(windows))]
     let home = std::env::var_os("HOME");
-    home.map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    home.map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// original native_file_actions.dart `_temporaryFile`: a unique
@@ -113,13 +136,21 @@ pub fn transfer_staging_file(name: &str) -> std::io::Result<PathBuf> {
             c => c,
         })
         .collect();
-    Ok(directory.join(if safe.is_empty() { "download".to_owned() } else { safe }))
+    Ok(directory.join(if safe.is_empty() {
+        "download".to_owned()
+    } else {
+        safe
+    }))
 }
 
 /// Removes a staging directory created by [`transfer_staging_file`].
 pub fn remove_transfer_staging(file: &Path) -> std::io::Result<()> {
     match file.parent() {
-        Some(parent) if parent.file_name().is_some_and(|n| n.to_string_lossy().starts_with("transfer-")) => {
+        Some(parent)
+            if parent
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("transfer-")) =>
+        {
             std::fs::remove_dir_all(parent)
         }
         _ => Ok(()),
@@ -160,4 +191,3 @@ mod tests {
         assert_eq!(super::remote_basename("a\\b\\"), "b");
     }
 }
-

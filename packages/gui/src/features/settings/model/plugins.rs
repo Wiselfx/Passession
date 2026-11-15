@@ -15,7 +15,13 @@ pub enum PageState {
     Ready,
 }
 
-pub fn resolve_page(connected: bool, supported: bool, loading: bool, error: bool, count: usize) -> PageState {
+pub fn resolve_page(
+    connected: bool,
+    supported: bool,
+    loading: bool,
+    error: bool,
+    count: usize,
+) -> PageState {
     if !connected {
         PageState::Offline
     } else if !supported {
@@ -35,7 +41,11 @@ fn registry_host(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let host = rest.split(['/', '?', '#']).next()?;
     let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
-    if host.is_empty() { None } else { Some(host.to_string()) }
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 /// `formatPluginIdentity` over the native daemon's installation kinds.
@@ -57,7 +67,11 @@ pub fn identity(identity: &Value) -> String {
         _ => return String::new(),
     };
     let path = str_of(identity, "pluginPath");
-    if path.is_empty() || path == "." { source } else { format!("{source}:{path}") }
+    if path.is_empty() || path == "." {
+        source
+    } else {
+        format!("{source}:{path}")
+    }
 }
 
 /// `formatPluginInstallation`: identity · revision (git revisions shortened).
@@ -65,6 +79,14 @@ pub fn installation(installation: &Value) -> String {
     let id = get(installation, "identity");
     let label = identity(id);
     let revision = str_of(installation, "currentRevision");
-    let revision = if str_of(id, "kind") == "git" { revision.chars().take(12).collect::<String>() } else { revision.to_string() };
-    if revision.is_empty() { label } else { format!("{label} · {revision}") }
+    let revision = if str_of(id, "kind") == "git" {
+        revision.chars().take(12).collect::<String>()
+    } else {
+        revision.to_string()
+    };
+    if revision.is_empty() {
+        label
+    } else {
+        format!("{label} · {revision}")
+    }
 }

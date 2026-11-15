@@ -53,8 +53,7 @@ font of the family returns `.notdef` and the last one draws its box.
 C1) as a space instead, keeping its own cluster, so the shaped text, row
 substrings and glyph count per byte are unchanged for selection, copy and find.
 A TAB keeps the space advance as its unit and is flagged; all other controls
-(the CR of CRLF, form feed, ESC, ...) get a zero advance. The right-to-left
-placeholder reshaping keeps them blank as well.
+(the CR of CRLF, form feed, ESC, ...) get a zero advance.
 
 `src/text/layouter.rs` resolves a TAB's advance when the glyph is placed: the
 distance from its row-local x (including `first_row_indent_in_lpxs`) to the next
@@ -146,6 +145,18 @@ applies them to the ttf-parser face before the rustybuzz face is built, so
 outlines, metrics, advances and shaping all use that instance.
 `from_data_and_index` keeps its signature (default instance). DSL fonts use no
 variations. Collection faces (`index` > 0) were already supported.
+
+UI and asynchronous font families share `FallbackRequests` through the font
+catalog. Missing shaped glyphs enqueue their source grapheme's Unicode scalars;
+the application resolves installed faces off-thread and extends the family.
+Queue overflow leaves omitted scalars eligible for a later layout. Per-family
+Unicode bitmaps prevent repeated negative lookups from cycling indefinitely.
+A fresh queue on appearance changes permits previously unavailable glyphs.
+
+The upstream RTL workaround replaced decreasing clusters with literal squares.
+The shaper now retains contextual glyphs in logical-cluster order so discovery
+and source selection refer to the original text. This removes forced missing
+glyphs; it does not implement full bidi visual ordering.
 
 A definition whose bytes do not parse at its face index, or an undefined font
 id, no longer panics: `Loader::get_or_load_font` returns `None`, logs the

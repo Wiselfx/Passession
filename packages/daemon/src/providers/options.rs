@@ -116,11 +116,12 @@ fn issue_path(input: &Value, pointer: &str) -> Vec<Value> {
     for part in pointer.split('/').skip(1) {
         let part = part.replace("~1", "/").replace("~0", "~");
         if current.is_array()
-            && let Ok(index) = part.parse::<usize>() {
-                path.push(json!(index));
-                current = current.get(index).unwrap_or(&Value::Null);
-                continue;
-            }
+            && let Ok(index) = part.parse::<usize>()
+        {
+            path.push(json!(index));
+            current = current.get(index).unwrap_or(&Value::Null);
+            continue;
+        }
         current = current.get(&part).unwrap_or(&Value::Null);
         path.push(Value::String(part));
     }
@@ -185,12 +186,12 @@ pub fn validate(provider: &str, family: &str, options: &Value) -> Result<Value> 
         && let Some(capabilities) = normalized
             .get_mut("clientCapabilities")
             .and_then(Value::as_object_mut)
-        {
-            capabilities.retain(|key, _| matches!(key.as_str(), "fs" | "terminal"));
-            if let Some(files) = capabilities.get_mut("fs").and_then(Value::as_object_mut) {
-                files.retain(|key, _| matches!(key.as_str(), "readTextFile" | "writeTextFile"));
-            }
+    {
+        capabilities.retain(|key, _| matches!(key.as_str(), "fs" | "terminal"));
+        if let Some(files) = capabilities.get_mut("fs").and_then(Value::as_object_mut) {
+            files.retain(|key, _| matches!(key.as_str(), "readTextFile" | "writeTextFile"));
         }
+    }
     Ok(normalized)
 }
 

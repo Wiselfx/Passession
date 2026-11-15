@@ -160,7 +160,9 @@ fn creation_reads_require_an_enabled_ready_entry() {
         "Provider 'codex' is disabled"
     );
     assert_eq!(
-        message(json!({"provider":"codex","enabled":true,"status":"error","error":"login required"})),
+        message(
+            json!({"provider":"codex","enabled":true,"status":"error","error":"login required"})
+        ),
         "login required"
     );
     assert_eq!(

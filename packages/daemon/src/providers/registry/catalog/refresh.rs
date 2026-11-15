@@ -214,9 +214,10 @@ async fn assemble(
             if let Some(definition) = definition {
                 for field in ["icon", "colorTier"] {
                     if mode.get(field).is_none_or(Value::is_null)
-                        && let Some(value) = definition.get(field) {
-                            mode[field] = value.clone();
-                        }
+                        && let Some(value) = definition.get(field)
+                    {
+                        mode[field] = value.clone();
+                    }
                 }
             }
         }

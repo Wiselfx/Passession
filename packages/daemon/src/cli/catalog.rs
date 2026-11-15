@@ -4,9 +4,9 @@ use super::{
     output::{Format, Output},
     positional, string, switch,
 };
-use paseo_client::DaemonClient;
 use anyhow::{Result, anyhow};
 use clap::{ArgMatches, Command};
+use paseo_client::DaemonClient;
 use serde_json::{Value, json};
 use std::time::Duration;
 mod plugins;

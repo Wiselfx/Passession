@@ -78,7 +78,11 @@ impl fmt::Display for WriteError {
                 self.written, self.total, self.source
             )
         } else if self.total == 0 {
-            write!(f, "subprocess stdin write rejected before I/O: {}", self.source)
+            write!(
+                f,
+                "subprocess stdin write rejected before I/O: {}",
+                self.source
+            )
         } else {
             write!(
                 f,
@@ -245,7 +249,8 @@ impl ManagedProcess {
         deadline: Option<Instant>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        self.write_json_controlled(value, deadline, Some(cancel)).await
+        self.write_json_controlled(value, deadline, Some(cancel))
+            .await
     }
 
     async fn write_json_controlled(
@@ -274,7 +279,8 @@ impl ManagedProcess {
                     written: 0,
                     total: 0,
                     source: stopped.await,
-                }.into());
+                }
+                .into());
             }
             frame
         };
@@ -283,7 +289,8 @@ impl ManagedProcess {
         serde_json::to_writer(&mut *frame.bytes, value)
             .context("serializing subprocess JSON frame")?;
         frame.bytes.push(b'\n');
-        self.write_bytes_controlled(&frame.bytes, deadline, cancel).await
+        self.write_bytes_controlled(&frame.bytes, deadline, cancel)
+            .await
     }
 
     /// Writes all bytes asynchronously. If this future is dropped during I/O,
@@ -733,9 +740,10 @@ pub async fn run(
         result = operation => result,
     };
     if result.is_err()
-        && let Err(cleanup) = process.terminate(FAILURE_GRACE).await {
-            return result.context(format!("subprocess cleanup failed: {cleanup:#}"));
-        }
+        && let Err(cleanup) = process.terminate(FAILURE_GRACE).await
+    {
+        return result.context(format!("subprocess cleanup failed: {cleanup:#}"));
+    }
     result
 }
 

@@ -112,7 +112,6 @@ impl CheckoutState {
     }
 }
 
-
 struct ActionRun {
     host: String,
     cwd: String,
@@ -124,7 +123,10 @@ struct ActionRun {
 }
 
 impl ActionRun {
-    fn accept_response(&mut self, result: &Result<Value, paseo_gui_core::CoreError>) -> Result<(), Failure> {
+    fn accept_response(
+        &mut self,
+        result: &Result<Value, paseo_gui_core::CoreError>,
+    ) -> Result<(), Failure> {
         let outcome = wire::git_result(result).map(|_| ());
         if outcome.is_ok() {
             self.steps.pop_front();
@@ -162,9 +164,18 @@ pub struct ReviewPlan {
 /// A Create PR review in progress (one per window).
 enum Review {
     /// Title (first line) and description of the pull request.
-    PrText { plan: ReviewPlan, base: String, prompt: u64 },
+    PrText {
+        plan: ReviewPlan,
+        base: String,
+        prompt: u64,
+    },
     /// The base branch, prefilled.
-    PrBase { plan: ReviewPlan, title: String, body: String, prompt: u64 },
+    PrBase {
+        plan: ReviewPlan,
+        title: String,
+        body: String,
+        prompt: u64,
+    },
 }
 
 impl Review {
@@ -253,8 +264,12 @@ impl GitStore {
             match core_event {
                 CoreEvent::Connected { host_id, .. } => {
                     self.connected.insert(host_id.clone(), true);
-                    let keys: Vec<CheckoutKey> =
-                        self.checkouts.keys().filter(|k| &k.0 == host_id).cloned().collect();
+                    let keys: Vec<CheckoutKey> = self
+                        .checkouts
+                        .keys()
+                        .filter(|k| &k.0 == host_id)
+                        .cloned()
+                        .collect();
                     for key in keys {
                         self.reload(cx, &key);
                     }
@@ -273,7 +288,9 @@ impl GitStore {
                         self.apply_status_push(cx, host_id, &event["payload"]);
                     }
                 }
-                CoreEvent::Response { request_id, result, .. } => {
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
                     if let Some(pending) = self.pending.remove(request_id) {
                         self.on_response(cx, ui, pending, result);
                     }
@@ -320,7 +337,10 @@ impl GitStore {
         }
         let checkout = key(host_id, cwd);
         let created = !self.checkouts.contains_key(&checkout);
-        self.checkouts.entry(checkout.clone()).or_insert_with(CheckoutState::new).refs += 1;
+        self.checkouts
+            .entry(checkout.clone())
+            .or_insert_with(CheckoutState::new)
+            .refs += 1;
         self.connected
             .entry(host_id.to_owned())
             .or_insert_with(|| host::connected(ui, host_id));
@@ -336,7 +356,9 @@ impl GitStore {
             if state.refs == 0 {
                 self.checkouts.remove(&checkout);
                 self.pending.retain(|_, pending| match pending {
-                    Pending::StatusRead { key, .. } | Pending::PrStatus { key, .. } => *key != checkout,
+                    Pending::StatusRead { key, .. } | Pending::PrStatus { key, .. } => {
+                        *key != checkout
+                    }
                     _ => true,
                 });
             }
@@ -368,15 +390,32 @@ impl GitStore {
         }
         state.read_seq += 1;
         let seq = state.read_seq;
-        let request = wire::send(&core, host_id, "checkout_status_request", json!({ "cwd": cwd }));
-        state.reads.insert(seq, ReadSlot { result: None, waiters: 1 });
+        let request = wire::send(
+            &core,
+            host_id,
+            "checkout_status_request",
+            json!({ "cwd": cwd }),
+        );
+        state.reads.insert(
+            seq,
+            ReadSlot {
+                result: None,
+                waiters: 1,
+            },
+        );
         state.current_read = Some((seq, invalidation));
-        self.pending.insert(request, Pending::StatusRead { key: checkout, seq });
+        self.pending
+            .insert(request, Pending::StatusRead { key: checkout, seq });
         Some(seq)
     }
 
     /// The settled result of read `seq`, consumed once per joined reader.
-    pub fn take_read(&mut self, host_id: &str, cwd: &str, seq: u64) -> Option<Result<Value, Failure>> {
+    pub fn take_read(
+        &mut self,
+        host_id: &str,
+        cwd: &str,
+        seq: u64,
+    ) -> Option<Result<Value, Failure>> {
         let state = self.checkouts.get_mut(&key(host_id, cwd))?;
         let slot = state.reads.get_mut(&seq)?;
         let result = slot.result.clone()?;
@@ -420,14 +459,21 @@ impl GitStore {
 
     /// Original `CheckoutGitState.reloadPullRequest`.
     pub fn reload_pull_request(&mut self, cx: &mut Cx, checkout: &CheckoutKey) {
-        let Some(core) = self.core.clone() else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         let Some(state) = self.checkouts.get_mut(checkout) else {
             return;
         };
         state.pr_generation += 1;
         state.pr_loading = state.pr_payload.is_none();
         state.pr_fetching = true;
-        let request = wire::send(&core, &checkout.0, "checkout_pr_status_request", json!({ "cwd": checkout.1 }));
+        let request = wire::send(
+            &core,
+            &checkout.0,
+            "checkout_pr_status_request",
+            json!({ "cwd": checkout.1 }),
+        );
         self.pending.insert(
             request,
             Pending::PrStatus {
@@ -453,7 +499,10 @@ impl GitStore {
                 if let Some(slot) = state.reads.get_mut(&seq) {
                     slot.result = Some(wire::checkout_result(result));
                 }
-                if state.current_read.is_some_and(|(current, _)| current == seq) {
+                if state
+                    .current_read
+                    .is_some_and(|(current, _)| current == seq)
+                {
                     state.current_read = None;
                 }
                 let Some((wait_seq, generation)) = state.reload_wait else {
@@ -488,7 +537,10 @@ impl GitStore {
                 }
                 self.changed(cx);
             }
-            Pending::PrStatus { key: checkout, generation } => {
+            Pending::PrStatus {
+                key: checkout,
+                generation,
+            } => {
                 let Some(state) = self.checkouts.get_mut(&checkout) else {
                     return;
                 };
@@ -516,7 +568,10 @@ impl GitStore {
 
     /// Original `CheckoutInvalidations.revision`.
     pub fn invalidation(&self, host_id: &str, cwd: &str) -> u64 {
-        self.invalidations.get(&key(host_id, cwd)).copied().unwrap_or(0)
+        self.invalidations
+            .get(&key(host_id, cwd))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Original `invalidateCheckoutGitQueries`: status, PR status, commits,
@@ -538,8 +593,13 @@ impl GitStore {
             .unwrap_or_default()
     }
 
-
-    fn set_action_status(&mut self, cx: &mut Cx, checkout: &CheckoutKey, action_id: &str, status: ActionStatus) {
+    fn set_action_status(
+        &mut self,
+        cx: &mut Cx,
+        checkout: &CheckoutKey,
+        action_id: &str,
+        status: ActionStatus,
+    ) {
         let entry = (checkout.clone(), action_id.to_owned());
         let current = self.action_status.get(&entry).copied().unwrap_or_default();
         if current == status {
@@ -567,10 +627,20 @@ impl GitStore {
         failure_key: &str,
         success_label: Option<String>,
     ) {
-        let steps = steps.into_iter().map(|(kind, fields)| (kind.to_owned(), fields)).collect();
-        self.start_run(cx, host_id, cwd, action_id, steps, t(failure_key), success_label);
+        let steps = steps
+            .into_iter()
+            .map(|(kind, fields)| (kind.to_owned(), fields))
+            .collect();
+        self.start_run(
+            cx,
+            host_id,
+            cwd,
+            action_id,
+            steps,
+            t(failure_key),
+            success_label,
+        );
     }
-
 
     #[allow(clippy::too_many_arguments)]
     fn start_run(
@@ -603,7 +673,9 @@ impl GitStore {
     }
 
     fn send_next_step(&mut self, run: ActionRun) {
-        let Some(core) = self.core.as_ref() else { return };
+        let Some(core) = self.core.as_ref() else {
+            return;
+        };
         let Some((kind, fields)) = run.steps.front() else {
             return;
         };
@@ -679,18 +751,36 @@ impl GitStore {
 
     /// Retries only unfinished steps, and never an operation with an unknown outcome.
     pub fn retry_failure(&mut self, cx: &mut Cx, host_id: &str, cwd: &str) {
-        let Some(failure) = self.last_failure(host_id, cwd) else { return };
-        if !failure.retryable || self.action_status(host_id, cwd, &failure.action_id) == ActionStatus::Pending {
+        let Some(failure) = self.last_failure(host_id, cwd) else {
+            return;
+        };
+        if !failure.retryable
+            || self.action_status(host_id, cwd, &failure.action_id) == ActionStatus::Pending
+        {
             return;
         }
-        let ActionFailure { action_id, title, steps, success_label, .. } = failure.clone();
+        let ActionFailure {
+            action_id,
+            title,
+            steps,
+            success_label,
+            ..
+        } = failure.clone();
         self.start_run(cx, host_id, cwd, &action_id, steps, title, success_label);
     }
 
     // -----------------------------------------------------------------------
     // Create PR review.
 
-    fn open_review_prompt(ui: &mut UiContext, title: &str, message: &str, initial: &str, placeholder: &str, confirm: &str, multiline: bool) -> u64 {
+    fn open_review_prompt(
+        ui: &mut UiContext,
+        title: &str,
+        message: &str,
+        initial: &str,
+        placeholder: &str,
+        confirm: &str,
+        multiline: bool,
+    ) -> u64 {
         use crate::common::overlay as shared;
         shared::with_owner(ui, REVIEW_OWNER, |ui| {
             if multiline {
@@ -703,11 +793,23 @@ impl GitStore {
 
     /// Create PR through a review: title and description (empty lets the
     /// host write them), then the base branch, prefilled.
-    pub fn review_pr(&mut self, cx: &mut Cx, ui: &mut UiContext, plan: ReviewPlan, base: String, branch: String) {
-        if self.review.is_some() || self.action_status(&plan.host, &plan.cwd, "create-pr") == ActionStatus::Pending {
+    pub fn review_pr(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        plan: ReviewPlan,
+        base: String,
+        branch: String,
+    ) {
+        if self.review.is_some()
+            || self.action_status(&plan.host, &plan.cwd, "create-pr") == ActionStatus::Pending
+        {
             return;
         }
-        let message = tr("workspace.git.actions.review.prMessage", &[("base", base.clone()), ("branch", branch)]);
+        let message = tr(
+            "workspace.git.actions.review.prMessage",
+            &[("base", base.clone()), ("branch", branch)],
+        );
         let prompt = Self::open_review_prompt(
             ui,
             &t("workspace.git.actions.review.prTitle"),
@@ -726,12 +828,18 @@ impl GitStore {
             return None;
         }
         let review = self.review.take()?;
-        let answer = if flag(args, "cancelled") { None } else { args.get("text").and_then(Value::as_str).map(str::to_owned) };
+        let answer = if flag(args, "cancelled") {
+            None
+        } else {
+            args.get("text").and_then(Value::as_str).map(str::to_owned)
+        };
         Some((review, answer))
     }
 
     fn on_review_answer(&mut self, cx: &mut Cx, ui: &mut UiContext, id: u64, args: &Value) {
-        let Some((review, answer)) = self.take_review_answer(id, args) else { return };
+        let Some((review, answer)) = self.take_review_answer(id, args) else {
+            return;
+        };
         self.changed(cx);
         // Cancel (or a dismissed prompt) ends the review without running anything.
         let Some(answer) = answer else { return };
@@ -747,9 +855,16 @@ impl GitStore {
                     &t("workspace.git.actions.review.createPr"),
                     false,
                 );
-                self.review = Some(Review::PrBase { plan, title, body, prompt });
+                self.review = Some(Review::PrBase {
+                    plan,
+                    title,
+                    body,
+                    prompt,
+                });
             }
-            Review::PrBase { plan, title, body, .. } => {
+            Review::PrBase {
+                plan, title, body, ..
+            } => {
                 let mut fields = json!({});
                 if !title.is_empty() {
                     fields["title"] = json!(title);
@@ -763,7 +878,15 @@ impl GitStore {
                 }
                 let steps = vec![("checkout_pr_create_request".to_owned(), fields)];
                 let failure = t("workspace.git.actions.toasts.failedCreatePr");
-                self.start_run(cx, &plan.host, &plan.cwd, "create-pr", steps, failure, plan.success_label);
+                self.start_run(
+                    cx,
+                    &plan.host,
+                    &plan.cwd,
+                    "create-pr",
+                    steps,
+                    failure,
+                    plan.success_label,
+                );
             }
         }
     }
@@ -797,7 +920,12 @@ impl GitStore {
     }
 
     /// Mutates a draft and persists it when `edit` reports a change.
-    pub fn edit_draft(&mut self, cx: &mut Cx, draft_key: &str, edit: impl FnOnce(&mut ReviewDraft) -> bool) {
+    pub fn edit_draft(
+        &mut self,
+        cx: &mut Cx,
+        draft_key: &str,
+        edit: impl FnOnce(&mut ReviewDraft) -> bool,
+    ) {
         let Some(draft) = self.drafts.get_mut(draft_key) else {
             return;
         };
@@ -805,13 +933,22 @@ impl GitStore {
             return;
         }
         if let Some(core) = &self.core {
-            core.save_state(&format!("prefs:{}", storage_key(draft_key)), draft.persisted());
+            core.save_state(
+                &format!("prefs:{}", storage_key(draft_key)),
+                draft.persisted(),
+            );
         }
         self.changed(cx);
     }
 
     /// Updates only a draft's feedback phase (never persisted).
-    pub fn set_draft_phase(&mut self, cx: &mut Cx, draft_key: &str, sending: Option<usize>, failed: Option<String>) {
+    pub fn set_draft_phase(
+        &mut self,
+        cx: &mut Cx,
+        draft_key: &str,
+        sending: Option<usize>,
+        failed: Option<String>,
+    ) {
         if let Some(draft) = self.drafts.get_mut(draft_key) {
             draft.phase.sending = sending;
             draft.phase.failed = failed;
@@ -846,7 +983,8 @@ pub fn pr_status(state: Option<&CheckoutState>) -> &Value {
 fn action_retryable(result: &Result<Value, paseo_gui_core::CoreError>) -> bool {
     match result {
         Err(error) => !error.outcome_unknown,
-        Ok(payload) => paseo_gui_core::response_error(payload, "git action").is_none_or(|error| !error.outcome_unknown),
+        Ok(payload) => paseo_gui_core::response_error(payload, "git action")
+            .is_none_or(|error| !error.outcome_unknown),
     }
 }
 
@@ -864,24 +1002,51 @@ mod tests {
     use super::*;
 
     fn review_plan() -> ReviewPlan {
-        ReviewPlan { host: "host".into(), cwd: "/repo".into(), success_label: None }
+        ReviewPlan {
+            host: "host".into(),
+            cwd: "/repo".into(),
+            success_label: None,
+        }
     }
 
     #[test]
     fn cancelled_review_never_submits_and_empty_confirm_is_distinct() {
         let mut store = GitStore::default();
         for review in [
-            Review::PrText { plan: review_plan(), base: "main".into(), prompt: 7 },
-            Review::PrBase { plan: review_plan(), title: "Title".into(), body: String::new(), prompt: 7 },
+            Review::PrText {
+                plan: review_plan(),
+                base: "main".into(),
+                prompt: 7,
+            },
+            Review::PrBase {
+                plan: review_plan(),
+                title: "Title".into(),
+                body: String::new(),
+                prompt: 7,
+            },
         ] {
             store.review = Some(review);
-            let (_, answer) = store.take_review_answer(7, &json!({ "cancelled": true, "text": "" })).unwrap();
+            let (_, answer) = store
+                .take_review_answer(7, &json!({ "cancelled": true, "text": "" }))
+                .unwrap();
             assert!(answer.is_none());
             assert!(store.review.is_none());
-            assert!(store.take_review_answer(7, &json!({ "text": "duplicate" })).is_none());
+            assert!(
+                store
+                    .take_review_answer(7, &json!({ "text": "duplicate" }))
+                    .is_none()
+            );
         }
-        store.review = Some(Review::PrText { plan: review_plan(), base: "main".into(), prompt: 8 });
-        assert!(store.take_review_answer(7, &json!({ "text": "stale" })).is_none());
+        store.review = Some(Review::PrText {
+            plan: review_plan(),
+            base: "main".into(),
+            prompt: 8,
+        });
+        assert!(
+            store
+                .take_review_answer(7, &json!({ "text": "stale" }))
+                .is_none()
+        );
         let (_, answer) = store.take_review_answer(8, &json!({ "text": "" })).unwrap();
         assert_eq!(answer.as_deref(), Some(""));
     }
@@ -900,7 +1065,10 @@ mod tests {
             success_label: None,
         };
         assert!(run.accept_response(&Ok(json!({ "success": true }))).is_ok());
-        assert!(run.accept_response(&Ok(json!({ "error": { "message": "Push rejected" } }))).is_err());
+        assert!(
+            run.accept_response(&Ok(json!({ "error": { "message": "Push rejected" } })))
+                .is_err()
+        );
         assert_eq!(run.steps.len(), 1);
         assert_eq!(run.steps.front().unwrap().0, "checkout_push_request");
         assert!(run.accept_response(&Ok(json!({ "success": true }))).is_ok());
@@ -909,17 +1077,35 @@ mod tests {
 
     #[test]
     fn retry_refuses_unknown_transport_and_server_outcomes() {
-        let error = paseo_gui_core::CoreError { code: "DAEMON_REQUEST_TIMEOUT".into(), message: "Timed out".into(), outcome_unknown: true };
+        let error = paseo_gui_core::CoreError {
+            code: "DAEMON_REQUEST_TIMEOUT".into(),
+            message: "Timed out".into(),
+            outcome_unknown: true,
+        };
         assert!(!action_retryable(&Err(error.clone())));
-        assert!(action_retryable(&Err(paseo_gui_core::CoreError { outcome_unknown: false, ..error })));
-        assert!(!action_retryable(&Ok(json!({ "success": false, "outcomeUnknown": true }))));
+        assert!(action_retryable(&Err(paseo_gui_core::CoreError {
+            outcome_unknown: false,
+            ..error
+        })));
+        assert!(!action_retryable(&Ok(
+            json!({ "success": false, "outcomeUnknown": true })
+        )));
         assert!(action_retryable(&Ok(json!({ "success": false }))));
     }
 
     #[test]
     fn pull_request_text_splits_title_and_body() {
-        assert_eq!(split_title_body("  Fix login\n\nThe form now validates.\nTwo lines. "), ("Fix login".to_owned(), "The form now validates.\nTwo lines.".to_owned()));
-        assert_eq!(split_title_body("Only a title"), ("Only a title".to_owned(), String::new()));
+        assert_eq!(
+            split_title_body("  Fix login\n\nThe form now validates.\nTwo lines. "),
+            (
+                "Fix login".to_owned(),
+                "The form now validates.\nTwo lines.".to_owned()
+            )
+        );
+        assert_eq!(
+            split_title_body("Only a title"),
+            ("Only a title".to_owned(), String::new())
+        );
         assert_eq!(split_title_body("  \n "), (String::new(), String::new()));
     }
 }

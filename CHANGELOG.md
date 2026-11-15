@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Embed a private Tailscale node in native clients, with OS-protected encrypted state, explicit browser login, account/device status and disconnect/reconnect/logout controls. Select Embedded Tailscale per host without enabling an OS VPN; Normal hosts and external internet access remain available. Tailnet-selected connections, including host HTTP images, retain their route and TLS authority instead of falling back to ordinary networking.
+- Add a host Version page with pinned update requests, per-component selection, durable progress and reconnection. App-owned hosts use a small Go helper with authenticated handoff, dirty-document approval, health verification and rollback.
+- Render Mermaid sequences inside conversations, with expandable source and native SVG/PNG export. Preserve sequence event order, activation boundaries and nested alternative/loop regions.
+
+### Changed
+
+- Version app, daemon, Tailnet and update-helper independently. Rebuild and deliver only changed component inputs, retain verified unchanged artifacts, and use a coherent desktop component store. Keep mobile installation atomic and macOS signed app cohorts intact.
+- Plan CI checks and native release jobs from affected dependency closures; skip native work and publication for a no-change release plan.
+- Rename client update feeds from `flutter-*` to `app-*` and runtime identity to `app`, without compatibility aliases. Older clients using the previous feed need a manual installer update.
+
+### Fixed
+
+- Keep Commit's file list available when Git reports an opaque embedded repository or linked checkout among untracked paths. Ordinary untracked files remain selectable; nested repositories are not traversed, and selected-file commits explicitly reject directories and gitlinks rather than claiming their contents were committed.
+- Resolve missing text glyphs from installed system fonts on demand across scripts, including code and diff views. Preserve primary mono fonts, collection faces and variable axes; refresh retained layouts when fallback fonts arrive and stop repeat lookups for unavailable glyphs. Remove the renderer's forced RTL square substitution; full bidi visual ordering remains separate.
+- Apply consistent multilingual Markdown emphasis without changing literal code or copied source. Preserve linked-image destinations, mixed image/text layout and table content across chat, detail sheets and file previews.
+- Prepare newly expanded Mermaid source in retained Markdown layouts, and restrict scrolled chat-row pointer hits to the visible timeline instead of intercepting fixed header controls.
+- Keep compact sidebar controls from dispatching input to obscured session forms, and keep Tailnet configuration fields above their help text when the mobile keyboard opens.
+- Start embedded Tailscale inside Android's unprivileged app sandbox using OS interface snapshots and network-change callbacks, and keep backend initialization in the app's private state directory rather than requiring netlink access or a desktop home directory.
+- Recover cleanly from update planning failures and proven pre-handoff helper exits; retain recovery authority for ambiguous activation failures.
+- Keep read-only subscriptions and session discovery available while an update drains work, including requests authorized by alternative Hub permissions. Replacement clients can reconnect without admitting new mutations during the trial.
+
 ## 0.13.26 - 2026-11-15
 
 ### Changed

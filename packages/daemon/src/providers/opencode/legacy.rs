@@ -1,8 +1,8 @@
 mod projection;
 mod prompt;
-mod tools;
 #[cfg(test)]
 mod tests;
+mod tools;
 
 use super::{
     catalog,
@@ -195,7 +195,13 @@ pub(super) async fn attach(
     spec: ProviderSpec,
     launch: super::SessionLaunch,
 ) -> Result<Arc<dyn AgentSession>> {
-    let super::SessionLaunch { info, config, context, options, sink } = launch;
+    let super::SessionLaunch {
+        info,
+        config,
+        context,
+        options,
+        sink,
+    } = launch;
     let id = info["id"]
         .as_str()
         .ok_or_else(|| anyhow!("OpenCode returned a session without an id"))?
@@ -473,9 +479,10 @@ impl Inner {
                                     tracing::warn!(%error,"OpenCode permissions hydration failed");
                                 }
                                 if let Ok(status) = this.runner_status().await
-                                    && matches!(status.as_str(), "busy" | "retry") {
-                                        this.consume(&json!({"type":"session.status","properties":{"sessionID":this.id,"status":{"type":status}}})).await?;
-                                    }
+                                    && matches!(status.as_str(), "busy" | "retry")
+                                {
+                                    this.consume(&json!({"type":"session.status","properties":{"sessionID":this.id,"status":{"type":status}}})).await?;
+                                }
                             } else if let Err(error) = this.repair_gap().await {
                                 tracing::warn!(%error,"OpenCode event gap recovery failed");
                                 repair_pending = true;
@@ -603,12 +610,14 @@ impl Inner {
                 None
             };
             let mut changed = None;
-            if sid == self.id && kind == "message.updated"
+            if sid == self.id
+                && kind == "message.updated"
                 && let Some(model) = model(&e["properties"]["info"])
-                    && st.config["model"] != model {
-                        st.config["model"] = json!(model);
-                        changed = Some(runtime_info(&self.spec.id, &self.id, &st.config));
-                    }
+                && st.config["model"] != model
+            {
+                st.config["model"] = json!(model);
+                changed = Some(runtime_info(&self.spec.id, &self.id, &st.config));
+            }
             let events = st.projection.translate(e);
             (st.turn.clone(), new_turn, events, changed)
         };
@@ -785,10 +794,13 @@ impl Inner {
                     .is_some_and(|c| c.status["status"] == "running");
                 let detected = st.projection.detect(
                     &child.info,
-                    Some(if child.active() { "running" } else { "completed" }),
+                    Some(if child.active() {
+                        "running"
+                    } else {
+                        "completed"
+                    }),
                 );
-                if let (Some(up), Some(c)) =
-                    (detected.first(), st.projection.children.get_mut(id))
+                if let (Some(up), Some(c)) = (detected.first(), st.projection.children.get_mut(id))
                 {
                     c.status = up["event"].clone();
                 }
@@ -1160,10 +1172,9 @@ impl Inner {
             }
         } else {
             let mut body = json!({"reply":if deny{"reject"}else if response["selectedActionId"]=="allow_always"{"always"}else{"once"}});
-            if deny
-                && let Some(message) = response.get("message") {
-                    body["message"] = message.clone();
-                }
+            if deny && let Some(message) = response.get("message") {
+                body["message"] = message.clone();
+            }
             (format!("/permission/{}/reply", segment(id)), Some(body))
         };
         self.request(Method::POST, &path, &directory, body).await?;
@@ -1217,11 +1228,15 @@ impl LiveFamily for Inner {
             messages
         };
         let weak = Arc::downgrade(&self);
-        family::on_outcome(request.replay, self.cancel.clone(), move |applied| async move {
-            if let Some(this) = weak.upgrade() {
-                this.settle_replay(&child, applied, &messages).await;
-            }
-        });
+        family::on_outcome(
+            request.replay,
+            self.cancel.clone(),
+            move |applied| async move {
+                if let Some(this) = weak.upgrade() {
+                    this.settle_replay(&child, applied, &messages).await;
+                }
+            },
+        );
         Ok(())
     }
 }
@@ -1613,7 +1628,10 @@ impl AgentSession for LegacySession {
         }
         Ok(json!({"status":"accepted"}))
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         let this = &self.inner;
         this.reconnect_if_needed().await?;
         let info = this
@@ -1776,9 +1794,9 @@ impl AgentSession for LegacySession {
                     CancellationToken::new(),
                 )
                 .await
-            {
-                tracing::debug!(%error,"Failed to delete non-persistent OpenCode session");
-            }
+        {
+            tracing::debug!(%error,"Failed to delete non-persistent OpenCode session");
+        }
         runtime.unbind_session(&this.id, &this.context.agent_id);
         this.state().turn = None;
         Ok(())

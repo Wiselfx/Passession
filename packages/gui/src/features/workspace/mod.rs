@@ -23,7 +23,10 @@ pub mod setup;
 
 use makepad_widgets::*;
 
-pub use panel::{WorkspacePanel, WorkspacePanelRef, WorkspacePanelWidgetExt, WorkspacePanelWidgetRefExt, WorkspaceTarget};
+pub use panel::{
+    WorkspacePanel, WorkspacePanelRef, WorkspacePanelWidgetExt, WorkspacePanelWidgetRefExt,
+    WorkspaceTarget,
+};
 
 /// Registers the submodule DSL (shared kit, sub-views). The shell calls this before the
 /// module's macro-generated `live_design`, which defines the `WorkspacePanel` root.

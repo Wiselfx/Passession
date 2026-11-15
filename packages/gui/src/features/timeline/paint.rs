@@ -78,6 +78,7 @@ pub struct RowState {
     pub markdown_tail: Option<(u64, Rc<Vec<super::markdown::model::Block>>)>,
     /// Worker results belong to this exact row and sequential code-block key.
     pub fence_highlights: HashMap<String, super::highlight::FenceRequest>,
+    pub mermaid: HashMap<String, super::mermaid::Request>,
     pub selection: Option<(usize, usize)>,
     /// Permission card / question form state.
     pub permission: Option<super::permission::CardState>,
@@ -100,6 +101,7 @@ impl RowState {
     pub fn toggle(&mut self, key: &str) {
         let next = !self.expanded.get(key).copied().unwrap_or(false);
         self.expanded.insert(key.to_owned(), next);
+        self.markdown_presentation.invalidate_interaction();
     }
 
     pub fn copied_now(&self, key: &str, now: f64) -> bool {

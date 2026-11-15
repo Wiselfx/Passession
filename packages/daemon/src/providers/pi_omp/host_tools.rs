@@ -434,7 +434,12 @@ mod tests {
             {"type":"text","text":"A deliberately formatted result:\n  unchanged"},
             {"type":"image","data":"AA==","mimeType":"image/png"}
         ]);
-        for error in [None, Some(Value::Null), Some(json!(false)), Some(json!(true))] {
+        for error in [
+            None,
+            Some(Value::Null),
+            Some(json!(false)),
+            Some(json!(true)),
+        ] {
             let mut input = json!({"content":content,"structuredContent":{"failure":{"code":32}}});
             if let Some(error) = &error {
                 input["isError"] = error.clone();

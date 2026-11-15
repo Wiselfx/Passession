@@ -8,10 +8,21 @@ Your code never leaves your machine. Paseo is a local-first tool that connects d
 
 The Paseo daemon can run anywhere you want to execute agents: your laptop, a Mac Mini, a VPS, or a Docker container. The daemon listens for connections and manages agent lifecycles.
 
-Clients connect to the daemon over WebSocket. There are two ways to establish this connection:
+Native clients connect to the daemon over WebSocket through these network paths:
 
 - **Relay connection** — The daemon connects outbound to our relay server, and clients meet it there. No open ports required.
 - **Direct connection** — The daemon listens on a network address and clients connect directly.
+- **Embedded Tailscale connection** — A private userspace node carries selected native-client hosts through the tailnet without installing a device-wide VPN, changing OS routes/DNS or taking over another Tailscale app.
+
+### Embedded Tailscale boundary
+
+Normal hosts and unrelated public web requests remain available while embedded Tailscale is enabled. Only hosts explicitly selected as Embedded Tailscale are fail-closed: their daemon traffic must use authenticated tailnet peers/routes, with MagicDNS resolved inside the node and no ordinary-network or relay fallback. HTTPS/WSS retain the destination's certificate and SNI checks. Host HTTP images share that transport; daemon credentials stay on the exact admitted origin and are never attached to external redirect/icon chains.
+
+The app packages a pinned libtailscale/tsnet adaptation and authenticates its private loopback SOCKS proxy with process-only credentials. It disables remote diagnostic logs, plaintext backend/logging side files, ambient authentication keys and implicit browser login. Control-plane and DERP connectivity still use the underlying internet; Tailscale encryption protects the peer traffic.
+
+Node state is AES-256-GCM encrypted. Its key is stored through Linux Secret Service, Apple Keychain or Windows Credential Manager; Android uses a non-exportable Keystore key to wrap it in private no-backup storage. Locked, missing or corrupt existing credentials produce an error rather than a new identity or plaintext file. This does not protect against an already-compromised process or the same OS user.
+
+Login opens a validated authorization URL only after an explicit request. Disconnect retains the login. Logout requests remote node-key expiry before clearing local identity; a failed request preserves encrypted state for retry. It does not delete the device from the tailnet admin console. The daemon machine still needs its own tailnet connectivity, reachable listener, ACL/firewall policy and daemon authentication.
 
 ## Relay threat model
 
@@ -64,7 +75,7 @@ In Docker, the official image runs the daemon and agents as the non-root
 `paseo` user by default. Mounted workspaces and credentials are still fully
 available to anything the agents run inside the container.
 
-For remote access, use the relay connection. It is the supported path for reaching the daemon off-machine, and it adds end-to-end encryption plus a pairing handshake before commands are accepted.
+For remote access, use the encrypted relay or a properly configured Tailscale connection. The relay adds pairing and end-to-end encryption before commands are accepted; Tailscale relies on tailnet identity and network policy in addition to the daemon's authentication.
 
 Host header validation and CORS origin checks are defense-in-depth controls for localhost exposure. They help block DNS rebinding and browser-based attacks, but they do not replace network isolation.
 

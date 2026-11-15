@@ -90,7 +90,9 @@ pub(super) fn resolve_document(id: &str, document: &Value) -> Result<Resolved> {
             let version = string(&artifact, "version")?;
             let source = format!("cargo:{name}@{version}");
             let (parsed, _) = super::cargo::parse(&source)?;
-            if parsed != name { bail!("Invalid registry Cargo crate"); }
+            if parsed != name {
+                bail!("Invalid registry Cargo crate");
+            }
             let target = json!({"kind":"cargo","version":version,"checksum":string(&artifact,"checksum")?,"resolved":string(&artifact,"resolved")?});
             super::cargo::validate(&target)?;
             if target["resolved"] != super::cargo::download_url(name, version) {
@@ -106,14 +108,16 @@ pub(super) fn resolve_document(id: &str, document: &Value) -> Result<Resolved> {
         "release" => {
             let target = super::release::target(&artifact, string(&artifact, "url")?)?;
             let mut input = target.clone();
-            input["source"] = json!(format!("release:{}",string(&target,"url")?));
+            input["source"] = json!(format!("release:{}", string(&target, "url")?));
             if let Some(path) = artifact.get("pluginPath") {
                 plugin_path(Some(path.as_str().context("Invalid registry pluginPath")?))?;
                 input["pluginPath"] = path.clone();
             }
             (input, target)
         }
-        "npm" => bail!("This registry entry still targets npm/JavaScript. Ask its publisher for a native Rust Cargo, Git, or release artifact; no plugin was installed."),
+        "npm" => bail!(
+            "This registry entry still targets npm/JavaScript. Ask its publisher for a native Rust Cargo, Git, or release artifact; no plugin was installed."
+        ),
         "git" => {
             let remote = string(&artifact, "remote")?;
             let commit = string(&artifact, "commit")?;
@@ -146,10 +150,13 @@ pub(super) fn resolve_document(id: &str, document: &Value) -> Result<Resolved> {
 pub fn assert_identity(identity: &Value, artifact: &Value) -> Result<()> {
     let matches = if identity["kind"] == "cargo" && artifact["kind"] == "cargo" {
         identity["crateName"] == artifact["crate"]
-            && identity["pluginPath"].as_str() == Some(artifact["pluginPath"].as_str().unwrap_or("."))
+            && identity["pluginPath"].as_str()
+                == Some(artifact["pluginPath"].as_str().unwrap_or("."))
     } else if identity["kind"] == "release" && artifact["kind"] == "release" {
-        identity["origin"].as_str() == Some(super::release::origin(string(artifact, "url")?)?.as_str())
-            && identity["pluginPath"].as_str() == Some(artifact["pluginPath"].as_str().unwrap_or("."))
+        identity["origin"].as_str()
+            == Some(super::release::origin(string(artifact, "url")?)?.as_str())
+            && identity["pluginPath"].as_str()
+                == Some(artifact["pluginPath"].as_str().unwrap_or("."))
     } else if identity["kind"] == "git" && artifact["kind"] == "git" {
         identity["remote"].as_str()
             == Some(super::reference::redact(string(artifact, "remote")?).as_str())

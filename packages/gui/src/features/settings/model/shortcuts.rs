@@ -11,7 +11,11 @@ use crate::features::settings::platform::{APPLE, MOBILE};
 
 /// Shared `keyboard.json` catalog (needs §GuiShell 4).
 static CATALOG: LazyLock<Vec<Value>> = LazyLock::new(|| {
-    serde_json::from_str::<Vec<Value>>(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/keyboard.json"))).unwrap_or_default()
+    serde_json::from_str::<Vec<Value>>(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/resources/keyboard.json"
+    )))
+    .unwrap_or_default()
 });
 
 #[derive(Clone, Debug)]
@@ -26,8 +30,16 @@ pub struct Binding {
 
 fn matches_platform(when: &Value) -> bool {
     let mac = cfg!(target_os = "macos");
-    let mac_ok = when.get("mac").and_then(Value::as_bool).map(|m| m == mac).unwrap_or(true);
-    let desktop_ok = when.get("desktop").and_then(Value::as_bool).map(|d| d != MOBILE).unwrap_or(true);
+    let mac_ok = when
+        .get("mac")
+        .and_then(Value::as_bool)
+        .map(|m| m == mac)
+        .unwrap_or(true);
+    let desktop_ok = when
+        .get("desktop")
+        .and_then(Value::as_bool)
+        .map(|d| d != MOBILE)
+        .unwrap_or(true);
     mac_ok && desktop_ok
 }
 
@@ -44,7 +56,8 @@ pub fn catalog() -> Vec<Binding> {
                 label: crate::features::settings::json::str_or(help, "label", action).to_string(),
                 combo: str_of(binding, "combo").to_string(),
                 section: str_of(help, "section").to_string(),
-                help_id: crate::features::settings::json::str_or(help, "id", str_of(binding, "id")).to_string(),
+                help_id: crate::features::settings::json::str_or(help, "id", str_of(binding, "id"))
+                    .to_string(),
                 index_payload: str_of(get(binding, "payload"), "type") == "index",
             }
         })
@@ -91,7 +104,9 @@ pub fn overrides(preferences: &Value) -> serde_json::Map<String, Value> {
 
 /// Original `isShortcutCaptureComplete`.
 pub fn capture_complete(binding: &Binding, steps: &[String]) -> bool {
-    let Some(last) = steps.last() else { return false };
+    let Some(last) = steps.last() else {
+        return false;
+    };
     if !binding.index_payload {
         return true;
     }
@@ -102,10 +117,25 @@ pub fn capture_complete(binding: &Binding, steps: &[String]) -> bool {
 fn is_digit(code: KeyCode) -> bool {
     matches!(
         code,
-        KeyCode::Key1 | KeyCode::Key2 | KeyCode::Key3 | KeyCode::Key4 | KeyCode::Key5 | KeyCode::Key6 | KeyCode::Key7 | KeyCode::Key8 | KeyCode::Key9
+        KeyCode::Key1
+            | KeyCode::Key2
+            | KeyCode::Key3
+            | KeyCode::Key4
+            | KeyCode::Key5
+            | KeyCode::Key6
+            | KeyCode::Key7
+            | KeyCode::Key8
+            | KeyCode::Key9
             | KeyCode::Key0
-            | KeyCode::Numpad1 | KeyCode::Numpad2 | KeyCode::Numpad3 | KeyCode::Numpad4 | KeyCode::Numpad5 | KeyCode::Numpad6 | KeyCode::Numpad7
-            | KeyCode::Numpad8 | KeyCode::Numpad9
+            | KeyCode::Numpad1
+            | KeyCode::Numpad2
+            | KeyCode::Numpad3
+            | KeyCode::Numpad4
+            | KeyCode::Numpad5
+            | KeyCode::Numpad6
+            | KeyCode::Numpad7
+            | KeyCode::Numpad8
+            | KeyCode::Numpad9
     )
 }
 
@@ -177,14 +207,26 @@ pub enum CaptureKey {
 
 /// Original `onCaptureKey` + `keyboardEventToComboString` (Ctrl Alt Shift Cmd).
 pub fn capture_key(binding: &Binding, code: KeyCode, modifiers: KeyModifiers) -> CaptureKey {
-    if matches!(code, KeyCode::Control | KeyCode::Alt | KeyCode::Shift | KeyCode::Logo | KeyCode::Capslock | KeyCode::Unknown) {
+    if matches!(
+        code,
+        KeyCode::Control
+            | KeyCode::Alt
+            | KeyCode::Shift
+            | KeyCode::Logo
+            | KeyCode::Capslock
+            | KeyCode::Unknown
+    ) {
         return CaptureKey::Ignore;
     }
     let modified = modifiers.control || modifiers.logo || modifiers.alt || modifiers.shift;
     if code == KeyCode::Backspace && !modified {
         return CaptureKey::RemoveLast;
     }
-    let key = if binding.index_payload && is_digit(code) && code != KeyCode::Key0 && code != KeyCode::Numpad0 {
+    let key = if binding.index_payload
+        && is_digit(code)
+        && code != KeyCode::Key0
+        && code != KeyCode::Numpad0
+    {
         "Digit".to_string()
     } else {
         match key_name(code) {
@@ -232,11 +274,27 @@ pub fn format_step(step: &str) -> String {
     let modifiers: Vec<String> = parts
         .iter()
         .filter(|p| !p.is_empty())
-        .map(|p| if p.eq_ignore_ascii_case("cmd") { "meta".to_string() } else { p.to_lowercase() })
+        .map(|p| {
+            if p.eq_ignore_ascii_case("cmd") {
+                "meta".to_string()
+            } else {
+                p.to_lowercase()
+            }
+        })
         .collect();
     if APPLE {
-        let order = [("ctrl", "⌃"), ("alt", "⌥"), ("shift", "⇧"), ("mod", "⌘"), ("meta", "⌘")];
-        let symbols: String = order.iter().filter(|(m, _)| modifiers.iter().any(|x| x == m)).map(|(_, s)| *s).collect();
+        let order = [
+            ("ctrl", "⌃"),
+            ("alt", "⌥"),
+            ("shift", "⇧"),
+            ("mod", "⌘"),
+            ("meta", "⌘"),
+        ];
+        let symbols: String = order
+            .iter()
+            .filter(|(m, _)| modifiers.iter().any(|x| x == m))
+            .map(|(_, s)| *s)
+            .collect();
         return format!("{symbols}{key}");
     }
     let mut out: Vec<String> = modifiers
@@ -245,7 +303,12 @@ pub fn format_step(step: &str) -> String {
             "mod" | "ctrl" => "Ctrl".to_string(),
             "alt" => "Alt".to_string(),
             "shift" => "Shift".to_string(),
-            "meta" => if cfg!(target_os = "windows") { "Win" } else { "Super" }.to_string(),
+            "meta" => if cfg!(target_os = "windows") {
+                "Win"
+            } else {
+                "Super"
+            }
+            .to_string(),
             other => other.to_string(),
         })
         .collect();

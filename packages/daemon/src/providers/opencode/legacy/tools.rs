@@ -50,9 +50,10 @@ fn task_session(value: &Value) -> Option<String> {
     static ID: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\btask_id:\s*(ses_[A-Za-z0-9]+)").unwrap());
     if let Some(s) = output_text(value)
-        && let Some(c) = ID.captures(&s) {
-            return Some(c[1].to_owned());
-        }
+        && let Some(c) = ID.captures(&s)
+    {
+        return Some(c[1].to_owned());
+    }
     ["task_id", "taskId", "sessionID", "sessionId"]
         .iter()
         .find_map(|k| normalized(&value[*k]))
@@ -207,27 +208,28 @@ fn xml_decode(value: &str) -> String {
 }
 fn read_output(output: &Value) -> (Option<String>, Option<String>) {
     if let Some(raw) = output.as_str()
-        && raw.trim().starts_with("<path>") {
-            static PATH: LazyLock<Regex> =
-                LazyLock::new(|| Regex::new(r"(?is)<path>(.*?)</path>").unwrap());
-            static CONTENT: LazyLock<Regex> =
-                LazyLock::new(|| Regex::new(r"(?is)<content>(.*?)</content>").unwrap());
-            if let Some(c) = CONTENT.captures(raw) {
-                let body = &c[1];
-                let body = body
-                    .strip_prefix("\r\n")
-                    .or_else(|| body.strip_prefix('\n'))
-                    .unwrap_or(body);
-                let body = body
-                    .strip_suffix("\r\n")
-                    .or_else(|| body.strip_suffix('\n'))
-                    .unwrap_or(body);
-                return (
-                    PATH.captures(raw).map(|c| xml_decode(c[1].trim())),
-                    Some(xml_decode(body)),
-                );
-            }
+        && raw.trim().starts_with("<path>")
+    {
+        static PATH: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?is)<path>(.*?)</path>").unwrap());
+        static CONTENT: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?is)<content>(.*?)</content>").unwrap());
+        if let Some(c) = CONTENT.captures(raw) {
+            let body = &c[1];
+            let body = body
+                .strip_prefix("\r\n")
+                .or_else(|| body.strip_prefix('\n'))
+                .unwrap_or(body);
+            let body = body
+                .strip_suffix("\r\n")
+                .or_else(|| body.strip_suffix('\n'))
+                .unwrap_or(body);
+            return (
+                PATH.captures(raw).map(|c| xml_decode(c[1].trim())),
+                Some(xml_decode(body)),
+            );
         }
+    }
     let payload = output
         .get("data")
         .or_else(|| output.get("structuredContent"))

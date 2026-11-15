@@ -56,7 +56,11 @@ pub fn detect_line_separator(content: &str) -> &'static str {
         match byte {
             b'\n' => return "\n",
             b'\r' => {
-                return if bytes.get(index + 1) == Some(&b'\n') { "\r\n" } else { "\r" };
+                return if bytes.get(index + 1) == Some(&b'\n') {
+                    "\r\n"
+                } else {
+                    "\r"
+                };
             }
             _ => {}
         }
@@ -146,7 +150,10 @@ impl FileEditorModel {
     }
 
     fn is_loaded(&self) -> bool {
-        !matches!(self.status, FileEditorStatus::Loading | FileEditorStatus::Failed)
+        !matches!(
+            self.status,
+            FileEditorStatus::Loading | FileEditorStatus::Failed
+        )
     }
 
     fn changed(&mut self) {
@@ -169,8 +176,15 @@ impl FileEditorModel {
         // Until the in-flight write settles, reverting to the old disk text still
         // needs a save: that write may replace it with a different buffer.
         let modified = content != self.persisted
-            || self.saving_content.as_ref().is_some_and(|(_, pending)| *pending != content);
-        let mut status = if modified { FileEditorStatus::Dirty } else { FileEditorStatus::Clean };
+            || self
+                .saving_content
+                .as_ref()
+                .is_some_and(|(_, pending)| *pending != content);
+        let mut status = if modified {
+            FileEditorStatus::Dirty
+        } else {
+            FileEditorStatus::Clean
+        };
         if self.status == FileEditorStatus::Conflict {
             status = FileEditorStatus::Conflict;
         }
@@ -187,7 +201,10 @@ impl FileEditorModel {
     }
 
     pub fn save(&mut self, io: &mut dyn ModelIo) {
-        if !matches!(self.status, FileEditorStatus::Dirty | FileEditorStatus::Error) {
+        if !matches!(
+            self.status,
+            FileEditorStatus::Dirty | FileEditorStatus::Error
+        ) {
             return;
         }
         self.write(false, io);
@@ -255,7 +272,13 @@ impl FileEditorModel {
     }
 
     /// A read the model asked for finished.
-    pub fn on_read(&mut self, seq: u64, reconcile: bool, result: Result<String, String>, io: &mut dyn ModelIo) {
+    pub fn on_read(
+        &mut self,
+        seq: u64,
+        reconcile: bool,
+        result: Result<String, String>,
+        io: &mut dyn ModelIo,
+    ) {
         if self.disposed || seq != self.read_sequence {
             return;
         }
@@ -305,7 +328,11 @@ impl FileEditorModel {
         self.changed();
         // The content being saved is remembered by sequence: the buffer may change meanwhile.
         self.saving_content = Some((self.save_sequence, self.content.clone()));
-        io.write_text(self.with_separator(&self.content), force, self.save_sequence);
+        io.write_text(
+            self.with_separator(&self.content),
+            force,
+            self.save_sequence,
+        );
     }
 
     /// A write the model asked for finished.
@@ -313,7 +340,9 @@ impl FileEditorModel {
         if self.disposed || seq != self.save_sequence {
             return;
         }
-        let saved = self.saving_content.take_if(|(sequence, _)| *sequence == seq);
+        let saved = self
+            .saving_content
+            .take_if(|(sequence, _)| *sequence == seq);
         self.saving = false;
         match result {
             Err(WriteFailure::Conflict) => self.enter_conflict(Conflict::Changed, io),
@@ -328,8 +357,11 @@ impl FileEditorModel {
                     self.persisted = content;
                 }
                 self.modified = self.content != self.persisted;
-                self.status =
-                    if self.modified { FileEditorStatus::Dirty } else { FileEditorStatus::Clean };
+                self.status = if self.modified {
+                    FileEditorStatus::Dirty
+                } else {
+                    FileEditorStatus::Clean
+                };
                 self.changed();
                 if self.modified {
                     io.schedule_autosave();
@@ -362,7 +394,11 @@ impl FileEditorModel {
         if self.status != FileEditorStatus::Conflict {
             return;
         }
-        self.status = if self.modified { FileEditorStatus::Dirty } else { FileEditorStatus::Clean };
+        self.status = if self.modified {
+            FileEditorStatus::Dirty
+        } else {
+            FileEditorStatus::Clean
+        };
         self.conflict = None;
         self.error = None;
         self.changed();
@@ -434,7 +470,11 @@ mod tests {
                 return;
             }
             for (seq, reconcile) in reads {
-                let result = if io.exists { Ok(io.disk.clone()) } else { Err("missing".to_owned()) };
+                let result = if io.exists {
+                    Ok(io.disk.clone())
+                } else {
+                    Err("missing".to_owned())
+                };
                 if result.is_ok() {
                     io.base = io.revision;
                 }
@@ -457,7 +497,11 @@ mod tests {
     }
 
     fn open(text: &str) -> (FileEditorModel, Io) {
-        let mut io = Io { disk: text.to_owned(), exists: true, ..Io::default() };
+        let mut io = Io {
+            disk: text.to_owned(),
+            exists: true,
+            ..Io::default()
+        };
         let mut model = FileEditorModel::new();
         model.open(&mut io);
         run(&mut model, &mut io);
@@ -578,7 +622,10 @@ mod tests {
         let active = model.save_sequence;
         model.on_write(active - 1, Ok(()), &mut io);
         assert!(model.saving);
-        assert_eq!(model.saving_content.as_ref().map(|(seq, _)| *seq), Some(active));
+        assert_eq!(
+            model.saving_content.as_ref().map(|(seq, _)| *seq),
+            Some(active)
+        );
         run(&mut model, &mut io);
         assert_eq!(model.status(), FileEditorStatus::Clean);
     }

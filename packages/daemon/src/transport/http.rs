@@ -241,7 +241,7 @@ impl Handler {
             };
             return json_response(
                 StatusCode::OK,
-                json!({"status":"server_info", "serverId":identity["serverId"], "hostname":hostname::get().ok().and_then(|s| s.into_string().ok()).unwrap_or_default(), "version":env!("CARGO_PKG_VERSION"), "listen":listen}),
+                json!({"status":"server_info", "serverId":identity["serverId"], "hostname":hostname::get().ok().and_then(|s| s.into_string().ok()).unwrap_or_default(), "version":crate::VERSION, "listen":listen}),
             );
         }
         if is_get && path == "/api/files/download" {
@@ -299,10 +299,10 @@ impl Handler {
         }
         if let Some(origin) = header(&request, "origin")
             && !policy::allowed_origin(origin, config, &self.listen)
-                && !header(&request, "host").is_some_and(|host| policy::same_origin(origin, host))
-            {
-                return error(StatusCode::FORBIDDEN, "Origin not allowed");
-            }
+            && !header(&request, "host").is_some_and(|host| policy::same_origin(origin, host))
+        {
+            return error(StatusCode::FORBIDDEN, "Origin not allowed");
+        }
         let valid_connection = header(&request, "connection").is_some_and(|value| {
             value
                 .split(',')
@@ -408,10 +408,9 @@ impl Handler {
             };
         }
         let sse = method == "POST";
-        if sse
-            && let Some(response) = mcp_media_error(request.headers()) {
-                return response;
-            }
+        if sse && let Some(response) = mcp_media_error(request.headers()) {
+            return response;
+        }
         let body = match body_json(request).await {
             Ok(value) => value,
             Err(response) => return response,

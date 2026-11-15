@@ -1,7 +1,7 @@
 //! Native forge adapters. Commands remain injectable; no daemon/transport state is retained.
-use paseo_client::process::{CommandOutput, CommandSpec};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::{CommandOutput, CommandSpec};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -168,19 +168,19 @@ impl<T> Cache<T> {
                 .cell
                 .get()
                 .is_none_or(|v| ttl(v).is_none_or(|ttl| entry.born.elapsed() < ttl))
-            {
-                entry.used = self.clock;
-                return entry.cell.clone();
-            }
+        {
+            entry.used = self.clock;
+            return entry.cell.clone();
+        }
         if self.entries.len() >= self.capacity
             && let Some(oldest) = self
                 .entries
                 .iter()
                 .min_by_key(|(_, e)| e.used)
                 .map(|(k, _)| k.clone())
-            {
-                self.entries.remove(&oldest);
-            }
+        {
+            self.entries.remove(&oldest);
+        }
         let cell = Arc::new(OnceCell::new());
         self.entries.insert(
             key,
@@ -299,7 +299,10 @@ impl ForgeEngine {
         env: &BTreeMap<String, String>,
         cancel: &CancellationToken,
     ) -> Result<Option<String>> {
-        Ok(self.origin(cwd, env, cancel).await?.map(|remote| remote.host))
+        Ok(self
+            .origin(cwd, env, cancel)
+            .await?
+            .map(|remote| remote.host))
     }
     async fn resolve_remote(
         &self,
@@ -364,41 +367,39 @@ impl ForgeEngine {
                     }
                     if let Ok(tea) = tea
                         && tea.status == 0
-                            && let Some(login) = serde_json::from_slice::<Value>(&tea.stdout)
-                                .ok()
-                                .and_then(|v| tea_login(&v, &host).map(str::to_owned))
-                            {
-                                let probe = self
-                                    .raw(
-                                        cwd,
-                                        env,
-                                        cancel,
-                                        "tea",
-                                        strings(&[
-                                            "api",
-                                            "--login",
-                                            &login,
-                                            "-i",
-                                            "/api/forgejo/v1/version",
-                                        ]),
-                                        5,
-                                    )
-                                    .await;
-                                // `tea api` exits 0 regardless of HTTP status; the first status
-                                // line on stderr (else stdout) decides, and anything but 2xx
-                                // keeps the Gitea default.
-                                let is_forgejo = probe
-                                    .ok()
-                                    .filter(|v| v.status == 0)
-                                    .and_then(|v| {
-                                        http_status(&v.stderr).or_else(|| {
-                                            http_status(&String::from_utf8_lossy(&v.stdout))
-                                        })
-                                    })
-                                    .is_some_and(|s| (200..300).contains(&s));
-                                matches
-                                    .push(if is_forgejo { "forgejo" } else { "gitea" }.to_owned());
-                            }
+                        && let Some(login) = serde_json::from_slice::<Value>(&tea.stdout)
+                            .ok()
+                            .and_then(|v| tea_login(&v, &host).map(str::to_owned))
+                    {
+                        let probe = self
+                            .raw(
+                                cwd,
+                                env,
+                                cancel,
+                                "tea",
+                                strings(&[
+                                    "api",
+                                    "--login",
+                                    &login,
+                                    "-i",
+                                    "/api/forgejo/v1/version",
+                                ]),
+                                5,
+                            )
+                            .await;
+                        // `tea api` exits 0 regardless of HTTP status; the first status
+                        // line on stderr (else stdout) decides, and anything but 2xx
+                        // keeps the Gitea default.
+                        let is_forgejo = probe
+                            .ok()
+                            .filter(|v| v.status == 0)
+                            .and_then(|v| {
+                                http_status(&v.stderr)
+                                    .or_else(|| http_status(&String::from_utf8_lossy(&v.stdout)))
+                            })
+                            .is_some_and(|s| (200..300).contains(&s));
+                        matches.push(if is_forgejo { "forgejo" } else { "gitea" }.to_owned());
+                    }
                     Ok::<_, anyhow::Error>(if matches.len() == 1 {
                         matches.pop()
                     } else {
@@ -517,22 +518,22 @@ impl ForgeEngine {
                 | "disablePullRequestAutoMerge"
         );
         // `searchRepositories` is the one GitHub read the source never caches.
-        let result = if resolution.forge == "github" && !mutation && operation != "searchRepositories"
-        {
-            let key = read_key(cwd, env, operation, input);
-            let cell = {
-                let mut reads = self.reads.lock().await;
-                if b(input, "force") {
-                    reads.entries.remove(&key);
-                }
-                reads.cell(key, |_| Some(Duration::from_secs(30)))
+        let result =
+            if resolution.forge == "github" && !mutation && operation != "searchRepositories" {
+                let key = read_key(cwd, env, operation, input);
+                let cell = {
+                    let mut reads = self.reads.lock().await;
+                    if b(input, "force") {
+                        reads.entries.remove(&key);
+                    }
+                    reads.cell(key, |_| Some(Duration::from_secs(30)))
+                };
+                cell.get_or_try_init(|| context.dispatch(operation, input))
+                    .await
+                    .cloned()
+            } else {
+                context.dispatch(operation, input).await
             };
-            cell.get_or_try_init(|| context.dispatch(operation, input))
-                .await
-                .cloned()
-        } else {
-            context.dispatch(operation, input).await
-        };
         if mutation {
             self.invalidate(cwd).await;
         }
@@ -556,13 +557,14 @@ impl ForgeEngine {
         if let Some(remote) = remote {
             resolution.host = remote.host.clone();
             resolution.project_path = remote.path.clone();
-            if remote.ssh && cloud_forge(&resolution.host) != Some("github")
+            if remote.ssh
+                && cloud_forge(&resolution.host) != Some("github")
                 && let Some(host) = self
                     .ssh_hostname(cwd, env, cancel, &resolution.host)
                     .await?
-                {
-                    resolution.host = host;
-                }
+            {
+                resolution.host = host;
+            }
             if cloud_forge(&resolution.host) != Some("github") {
                 // `resolveGitHubEnterpriseHost`: a verified Enterprise host is cached for the
                 // daemon's lifetime; an unauthenticated one must never fall back to github.com.
@@ -584,16 +586,14 @@ impl ForgeEngine {
                         .await
                     {
                         Ok(_) => Ok::<_, anyhow::Error>(Some(host.clone())),
-                        Err(error) if auth_state(&error) == "unauthenticated" => {
-                            Err(ForgeError {
-                                auth_state: "unauthenticated",
-                                message: "GitHub CLI authentication failed".into(),
-                                stderr: format!("GitHub CLI is not authenticated for host {host}"),
-                                stdout: String::new(),
-                                exit_code: None,
-                            }
-                            .into())
+                        Err(error) if auth_state(&error) == "unauthenticated" => Err(ForgeError {
+                            auth_state: "unauthenticated",
+                            message: "GitHub CLI authentication failed".into(),
+                            stderr: format!("GitHub CLI is not authenticated for host {host}"),
+                            stdout: String::new(),
+                            exit_code: None,
                         }
+                        .into()),
                         Err(error) if auth_state(&error) == "cli_missing" => Err(error),
                         Err(_) if cancel.is_cancelled() => bail!("Forge request cancelled"),
                         Err(_) => bail!("Unable to verify GitHub Enterprise host {host}"),
@@ -708,8 +708,7 @@ impl Context<'_> {
                     return Err(self.command_error(&args, message, String::new(), None));
                 }
                 // A killed process (timeout or output cap) reports the source's fixed text.
-                let stderr = if message.contains("timed out") || message.contains("output limit")
-                {
+                let stderr = if message.contains("timed out") || message.contains("output limit") {
                     format!(
                         "{binary} was terminated before completing (timed out after 30000ms or exceeded the output limit)"
                     )
@@ -1043,7 +1042,10 @@ mod tests {
     #[test]
     fn remotes_parse_like_git_remote_location() {
         let scp = parse_remote("git@GitHub.com.:Owner/Repo.git").unwrap();
-        assert_eq!((scp.host.as_str(), scp.path.as_str(), scp.ssh), ("github.com", "Owner/Repo", true));
+        assert_eq!(
+            (scp.host.as_str(), scp.path.as_str(), scp.ssh),
+            ("github.com", "Owner/Repo", true)
+        );
         let https = parse_remote("https://gitlab.example.com/group/sub/proj.git/").unwrap();
         assert_eq!(
             (https.host.as_str(), https.path.as_str(), https.ssh),

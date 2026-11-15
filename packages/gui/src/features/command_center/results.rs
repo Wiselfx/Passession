@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 
 use serde_json::Value;
 
-use super::matching::{compare_scores, score_text_fields, MatchScore};
+use super::matching::{MatchScore, compare_scores, score_text_fields};
 use crate::common::UiEffect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +29,10 @@ pub enum Run {
 pub enum Icon {
     None,
     Glyph(&'static str),
-    Provider { provider: String, bucket: Option<crate::common::widgets::StatusBucket> },
+    Provider {
+        provider: String,
+        bucket: Option<crate::common::widgets::StatusBucket>,
+    },
     File(String),
 }
 
@@ -79,23 +82,33 @@ impl ResultRow {
 
 pub fn score_fields(query: &str, visible: &[&str], hidden: &[String]) -> Option<Score> {
     if let Some(matched) = score_text_fields(query, visible, false) {
-        return Some(Score { field_rank: 0, matched });
+        return Some(Score {
+            field_rank: 0,
+            matched,
+        });
     }
     if hidden.is_empty() {
         return None;
     }
     let mut all: Vec<&str> = visible.to_vec();
     all.extend(hidden.iter().map(String::as_str));
-    score_text_fields(query, &all, false).map(|matched| Score { field_rank: 1, matched })
+    score_text_fields(query, &all, false).map(|matched| Score {
+        field_rank: 1,
+        matched,
+    })
 }
 
 fn compare(a: &Score, b: &Score) -> Ordering {
-    a.field_rank.cmp(&b.field_rank).then_with(|| compare_scores(&a.matched, &b.matched))
+    a.field_rank
+        .cmp(&b.field_rank)
+        .then_with(|| compare_scores(&a.matched, &b.matched))
 }
 
 /// Built-in rows rank by which fields matched and the tier only; recency breaks ties.
 fn compare_built_in(a: &Score, b: &Score) -> Ordering {
-    a.field_rank.cmp(&b.field_rank).then(a.matched.tier.cmp(&b.matched.tier))
+    a.field_rank
+        .cmp(&b.field_rank)
+        .then(a.matched.tier.cmp(&b.matched.tier))
 }
 
 /// Most recent first; rows without a time sort after every row with one.
@@ -113,12 +126,17 @@ pub fn rank_built_in(rows: Vec<ResultRow>, query: &str) -> Vec<ResultRow> {
     }
     let mut scored: Vec<(usize, ResultRow, Score)> = indexed
         .into_iter()
-        .filter_map(|(i, row)| score_fields(query, &[&row.title, &row.subtitle], &row.hidden).map(|s| (i, row, s)))
+        .filter_map(|(i, row)| {
+            score_fields(query, &[&row.title, &row.subtitle], &row.hidden).map(|s| (i, row, s))
+        })
         .collect();
-    scored.sort_by(|a, b| compare_built_in(&a.2, &b.2).then_with(|| by_recency(&a.1, &b.1)).then(a.0.cmp(&b.0)));
+    scored.sort_by(|a, b| {
+        compare_built_in(&a.2, &b.2)
+            .then_with(|| by_recency(&a.1, &b.1))
+            .then(a.0.cmp(&b.0))
+    });
     scored.into_iter().map(|(_, r, _)| r).collect()
 }
-
 
 /// A registered action (presentation kind "action").
 #[derive(Clone, Debug)]
@@ -139,7 +157,11 @@ pub struct Contribution {
 
 /// Registry order: group rank, group, rank, id.
 pub fn compare_contributions(a: &Contribution, b: &Contribution) -> Ordering {
-    a.group_rank.cmp(&b.group_rank).then_with(|| a.group.cmp(&b.group)).then(a.rank.cmp(&b.rank)).then_with(|| a.id.cmp(&b.id))
+    a.group_rank
+        .cmp(&b.group_rank)
+        .then_with(|| a.group.cmp(&b.group))
+        .then(a.rank.cmp(&b.rank))
+        .then_with(|| a.id.cmp(&b.id))
 }
 
 #[derive(Clone, Debug)]
@@ -198,19 +220,32 @@ pub fn contribution_sections(contributions: &[Contribution], query: &str) -> Vec
         };
         registry.push((contribution.id.clone(), index));
         let section = &mut sections[position];
-        let mut row = ResultRow::new(contribution.id.clone(), Kind::Action, contribution.title.clone(), contribution.run.clone());
+        let mut row = ResultRow::new(
+            contribution.id.clone(),
+            Kind::Action,
+            contribution.title.clone(),
+            contribution.run.clone(),
+        );
         row.shortcut = contribution.shortcut.clone();
         row.icon = Icon::Glyph(contribution.icon);
         row.score = score;
         section.results.push(row);
-        if let Some(score) = score && section.score.is_none_or(|s| compare(&score, &s).is_lt()) {
+        if let Some(score) = score
+            && section.score.is_none_or(|s| compare(&score, &s).is_lt())
+        {
             section.score = Some(score);
         }
     }
     if !has_query {
         return sections;
     }
-    let index_of = |id: &str| registry.iter().find(|(r, _)| r == id).map(|(_, i)| *i).unwrap_or(0);
+    let index_of = |id: &str| {
+        registry
+            .iter()
+            .find(|(r, _)| r == id)
+            .map(|(_, i)| *i)
+            .unwrap_or(0)
+    };
     for section in &mut sections {
         section.results.sort_by(|a, b| {
             let delta = match (&a.score, &b.score) {
@@ -227,7 +262,10 @@ pub fn contribution_sections(contributions: &[Contribution], query: &str) -> Vec
 /// One projected list row (`projectCommandCenterRows` over `list-metrics.ts`).
 #[derive(Clone, Debug)]
 pub enum ListRow {
-    Section { title: Option<String>, divider: bool },
+    Section {
+        title: Option<String>,
+        divider: bool,
+    },
     Result(Box<ResultRow>),
 }
 
@@ -245,7 +283,10 @@ pub fn project_rows(mut sections: Vec<Section>) -> Projection {
     for (index, section) in sections.into_iter().enumerate() {
         let divider = index > 0;
         if divider || section.title.is_some() {
-            rows.push(ListRow::Section { title: section.title, divider });
+            rows.push(ListRow::Section {
+                title: section.title,
+                divider,
+            });
         }
         for result in section.results {
             selectable.push(rows.len());
@@ -257,14 +298,24 @@ pub fn project_rows(mut sections: Vec<Section>) -> Projection {
 
 /// `_joinSubtitle`.
 pub fn join_subtitle(parts: &[Option<&str>]) -> String {
-    parts.iter().flatten().filter(|p| !p.trim().is_empty()).copied().collect::<Vec<_>>().join(" · ")
+    parts
+        .iter()
+        .flatten()
+        .filter(|p| !p.trim().is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// `describeWorkspaceFilePath`: (path, name, directory).
 pub fn describe_file_path(path: &str) -> (String, String, String) {
     let normalized = path.replace('\\', "/");
     match normalized.rfind('/') {
-        Some(index) => (normalized.clone(), normalized[index + 1..].to_owned(), normalized[..index].to_owned()),
+        Some(index) => (
+            normalized.clone(),
+            normalized[index + 1..].to_owned(),
+            normalized[..index].to_owned(),
+        ),
         None => (normalized.clone(), normalized.clone(), String::new()),
     }
 }
@@ -281,7 +332,9 @@ pub fn pick_attention_agent<'a>(agents: impl Iterator<Item = &'a Value>) -> Opti
     use crate::features::workspace::rpc::str_of;
     let mut selected: Option<(i64, i64, &'a Value)> = None;
     for agent in agents {
-        if agent.get("requiresAttention") != Some(&Value::Bool(true)) || !str_of(agent, "parentAgentId").is_empty() {
+        if agent.get("requiresAttention") != Some(&Value::Bool(true))
+            || !str_of(agent, "parentAgentId").is_empty()
+        {
             continue;
         }
         let priority = match str_of(agent, "attentionReason") {
@@ -291,7 +344,10 @@ pub fn pick_attention_agent<'a>(agents: impl Iterator<Item = &'a Value>) -> Opti
             _ => continue,
         };
         let timestamp = super::parse_ms(agent.get("attentionTimestamp")).unwrap_or(i64::MAX);
-        if selected.as_ref().is_none_or(|(p, t, _)| priority < *p || (priority == *p && timestamp < *t)) {
+        if selected
+            .as_ref()
+            .is_none_or(|(p, t, _)| priority < *p || (priority == *p && timestamp < *t))
+        {
             selected = Some((priority, timestamp, agent));
         }
     }
@@ -312,9 +368,11 @@ mod tests {
     fn built_in_rows_take_five_most_recent_without_query() {
         let rows = (0..7).map(|i| row(&i.to_string(), "x", i)).collect();
         let ranked = rank_built_in(rows, "");
-        assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["6", "5", "4", "3", "2"]);
+        assert_eq!(
+            ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["6", "5", "4", "3", "2"]
+        );
     }
-
 
     #[test]
     fn attention_priority_and_age() {

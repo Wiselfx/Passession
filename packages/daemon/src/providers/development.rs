@@ -405,7 +405,10 @@ impl AgentSession for Session {
         }
         Ok(json!({"status":"accepted"}))
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         let history = self.inner.state.lock().unwrap().history.clone();
         for e in history {
             sink.emit(e).await?;

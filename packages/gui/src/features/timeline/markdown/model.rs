@@ -5,7 +5,10 @@
 
 use super::super::links::{FileLinkSourceType, is_inline_code_file_link, linkify_ranges};
 use super::html::normalize_markdown_html;
-use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use super::parser::{Markdown, StyleDepth};
+use pulldown_cmark::{
+    Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Tag, TagEnd,
+};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -18,10 +21,24 @@ pub struct Style {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Inline {
-    Text { text: String, style: Style },
-    Code { text: String, style: Style },
-    Link { href: String, kind: FileLinkSourceType, children: Vec<Inline> },
-    Image { url: String, alt: String },
+    Text {
+        text: String,
+        style: Style,
+    },
+    Code {
+        text: String,
+        style: Style,
+    },
+    Link {
+        href: String,
+        kind: FileLinkSourceType,
+        children: Vec<Inline>,
+    },
+    Image {
+        url: String,
+        alt: String,
+        link: Option<(String, FileLinkSourceType)>,
+    },
     /// Hard or soft line break (softLineBreak: true renders soft breaks as newlines).
     Break,
 }
@@ -44,12 +61,28 @@ pub enum AlertKind {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
     Paragraph(Vec<Inline>),
-    Heading { level: u8, inlines: Vec<Inline> },
-    List { start: Option<u64>, items: Vec<ListItem> },
+    Heading {
+        level: u8,
+        inlines: Vec<Inline>,
+    },
+    List {
+        start: Option<u64>,
+        items: Vec<ListItem>,
+    },
     Quote(Vec<Block>),
-    Alert { kind: AlertKind, blocks: Vec<Block> },
-    Code { lang: String, text: String },
-    Table { aligns: Vec<Alignment>, head: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
+    Alert {
+        kind: AlertKind,
+        blocks: Vec<Block>,
+    },
+    Code {
+        lang: String,
+        text: String,
+    },
+    Table {
+        aligns: Vec<Alignment>,
+        head: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
+    },
     Rule,
 }
 
@@ -72,7 +105,12 @@ enum Frame {
     List(Option<u64>, Vec<ListItem>),
     Item(Option<bool>, Vec<Block>, Vec<Inline>),
     Code(String, String),
-    Table(Vec<Alignment>, Vec<Vec<Inline>>, Vec<Vec<Vec<Inline>>>, bool),
+    Table(
+        Vec<Alignment>,
+        Vec<Vec<Inline>>,
+        Vec<Vec<Vec<Inline>>>,
+        bool,
+    ),
     Row(Vec<Vec<Inline>>),
     Cell(Vec<Inline>),
 }
@@ -96,8 +134,10 @@ impl Builder {
     fn push_inline(&mut self, inline: Inline) {
         if let Some(image) = &mut self.image {
             // Image alt text collects its text children.
-            if let Inline::Text { text, .. } | Inline::Code { text, .. } = &inline {
-                image.1.push_str(text);
+            match &inline {
+                Inline::Text { text, .. } | Inline::Code { text, .. } => image.1.push_str(text),
+                Inline::Break => image.1.push(' '),
+                _ => {}
             }
             return;
         }
@@ -106,7 +146,9 @@ impl Builder {
             return;
         }
         match self.stack.last_mut() {
-            Some(Frame::Paragraph(inlines)) | Some(Frame::Heading(_, inlines)) | Some(Frame::Cell(inlines)) => inlines.push(inline),
+            Some(Frame::Paragraph(inlines))
+            | Some(Frame::Heading(_, inlines))
+            | Some(Frame::Cell(inlines)) => inlines.push(inline),
             Some(Frame::Item(_, _, inlines)) => inlines.push(inline),
             _ => {
                 // Tight content outside any paragraph: open one implicitly.
@@ -130,13 +172,26 @@ impl Builder {
             code.push_str(text);
             return;
         }
-        self.push_inline(Inline::Text { text: text.to_owned(), style: self.style });
+        self.push_inline(Inline::Text {
+            text: text.to_owned(),
+            style: self.style,
+        });
     }
 
     fn code(&mut self, code: &str) {
-        let inline = Inline::Code { text: code.to_owned(), style: self.style };
-        if self.links.is_empty() && self.image.is_none() && is_inline_code_file_link(code, self.workspace_root.as_deref()) {
-            self.push_inline(Inline::Link { href: code.to_owned(), kind: FileLinkSourceType::InlineCode, children: vec![inline] });
+        let inline = Inline::Code {
+            text: code.to_owned(),
+            style: self.style,
+        };
+        if self.links.is_empty()
+            && self.image.is_none()
+            && is_inline_code_file_link(code, self.workspace_root.as_deref())
+        {
+            self.push_inline(Inline::Link {
+                href: code.to_owned(),
+                kind: FileLinkSourceType::InlineCode,
+                children: vec![inline],
+            });
         } else {
             self.push_inline(inline);
         }
@@ -168,7 +223,10 @@ fn linkify(inlines: Vec<Inline>, _workspace_root: Option<&str>) -> Vec<Inline> {
                 let mut cursor = 0;
                 for (start, end) in ranges {
                     if start > cursor {
-                        out.push(Inline::Text { text: text[cursor..start].to_owned(), style });
+                        out.push(Inline::Text {
+                            text: text[cursor..start].to_owned(),
+                            style,
+                        });
                     }
                     let token = text[start..end].to_owned();
                     out.push(Inline::Link {
@@ -179,7 +237,10 @@ fn linkify(inlines: Vec<Inline>, _workspace_root: Option<&str>) -> Vec<Inline> {
                     cursor = end;
                 }
                 if cursor < text.len() {
-                    out.push(Inline::Text { text: text[cursor..].to_owned(), style });
+                    out.push(Inline::Text {
+                        text: text[cursor..].to_owned(),
+                        style,
+                    });
                 }
             }
             other => out.push(other),
@@ -203,7 +264,15 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
         workspace_root: workspace_root.map(str::to_owned),
         ..Default::default()
     };
-    for event in Parser::new_ext(&normalized, options) {
+    let markdown = Markdown::new(&normalized, options);
+    let mut depth = StyleDepth::default();
+    for event in markdown.events() {
+        match &event {
+            Event::Start(tag) => depth.start(tag),
+            Event::End(tag) => depth.end(*tag),
+            _ => {}
+        }
+        (b.style.bold, b.style.italic, b.style.strike) = depth.flags();
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => b.stack.push(Frame::Paragraph(Vec::new())),
@@ -218,17 +287,24 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                     };
                     b.stack.push(Frame::Heading(level, Vec::new()));
                 }
-                Tag::BlockQuote(kind) => b.stack.push(Frame::Quote(kind.map(alert_kind), Vec::new())),
+                Tag::BlockQuote(kind) => {
+                    b.stack.push(Frame::Quote(kind.map(alert_kind), Vec::new()))
+                }
                 Tag::CodeBlock(kind) => {
                     let lang = match kind {
-                        CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or("").to_owned(),
+                        CodeBlockKind::Fenced(info) => {
+                            info.split_whitespace().next().unwrap_or("").to_owned()
+                        }
                         CodeBlockKind::Indented => String::new(),
                     };
                     b.stack.push(Frame::Code(lang, String::new()));
                 }
                 Tag::List(start) => b.stack.push(Frame::List(start, Vec::new())),
                 Tag::Item => b.stack.push(Frame::Item(None, Vec::new(), Vec::new())),
-                Tag::Table(aligns) => b.stack.push(Frame::Table(aligns, Vec::new(), Vec::new(), false)),
+                Tag::Table(aligns) => {
+                    b.stack
+                        .push(Frame::Table(aligns, Vec::new(), Vec::new(), false))
+                }
                 Tag::TableHead => {
                     if let Some(Frame::Table(_, _, _, in_head)) = b.stack.last_mut() {
                         *in_head = true;
@@ -237,14 +313,13 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                 }
                 Tag::TableRow => b.stack.push(Frame::Row(Vec::new())),
                 Tag::TableCell => b.stack.push(Frame::Cell(Vec::new())),
-                Tag::Emphasis => b.style.italic = true,
-                Tag::Strong => b.style.bold = true,
-                Tag::Strikethrough => b.style.strike = true,
                 Tag::Link { dest_url, .. } => {
                     let kind = FileLinkSourceType::Markdown;
                     b.links.push((dest_url.to_string(), kind, Vec::new()));
                 }
-                Tag::Image { dest_url, .. } => b.image = Some((dest_url.to_string(), String::new())),
+                Tag::Image { dest_url, .. } => {
+                    b.image = Some((dest_url.to_string(), String::new()))
+                }
                 _ => {}
             },
             Event::End(tag) => match tag {
@@ -259,7 +334,11 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                 }
                 TagEnd::Heading(_) => {
                     if let Some(Frame::Heading(level, inlines)) = b.stack.pop() {
-                        let inlines = if linkify_files { linkify(inlines, workspace_root) } else { inlines };
+                        let inlines = if linkify_files {
+                            linkify(inlines, workspace_root)
+                        } else {
+                            inlines
+                        };
                         b.push_block(Block::Heading { level, inlines });
                     }
                 }
@@ -272,11 +351,7 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                     }
                 }
                 TagEnd::CodeBlock => {
-                    if let Some(Frame::Code(lang, mut text)) = b.stack.pop() {
-                        // MarkdownCodeBlock drops the fence's final newline.
-                        if text.ends_with('\n') {
-                            text.pop();
-                        }
+                    if let Some(Frame::Code(lang, text)) = b.stack.pop() {
                         b.push_block(Block::Code { lang, text });
                     }
                 }
@@ -288,7 +363,11 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                 TagEnd::Item => {
                     if let Some(Frame::Item(task, mut blocks, inlines)) = b.stack.pop() {
                         if !inlines.is_empty() {
-                            let inlines = if linkify_files { linkify(inlines, workspace_root) } else { inlines };
+                            let inlines = if linkify_files {
+                                linkify(inlines, workspace_root)
+                            } else {
+                                inlines
+                            };
                             blocks.push(Block::Paragraph(inlines));
                         }
                         if let Some(Frame::List(_, items)) = b.stack.last_mut() {
@@ -313,7 +392,11 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                 }
                 TagEnd::TableCell => {
                     if let Some(Frame::Cell(inlines)) = b.stack.pop() {
-                        let inlines = if linkify_files { linkify(inlines, workspace_root) } else { inlines };
+                        let inlines = if linkify_files {
+                            linkify(inlines, workspace_root)
+                        } else {
+                            inlines
+                        };
                         if let Some(Frame::Row(cells)) = b.stack.last_mut() {
                             cells.push(inlines);
                         }
@@ -324,17 +407,43 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                         b.push_block(Block::Table { aligns, head, rows });
                     }
                 }
-                TagEnd::Emphasis => b.style.italic = false,
-                TagEnd::Strong => b.style.bold = false,
-                TagEnd::Strikethrough => b.style.strike = false,
                 TagEnd::Link => {
                     if let Some((href, kind, children)) = b.links.pop() {
-                        b.push_inline(Inline::Link { href, kind, children });
+                        let mut text = Vec::new();
+                        for child in children {
+                            if let Inline::Image { url, alt, .. } = child {
+                                if !text.is_empty() {
+                                    b.push_inline(Inline::Link {
+                                        href: href.clone(),
+                                        kind,
+                                        children: std::mem::take(&mut text),
+                                    });
+                                }
+                                b.push_inline(Inline::Image {
+                                    url,
+                                    alt,
+                                    link: Some((href.clone(), kind)),
+                                });
+                            } else {
+                                text.push(child);
+                            }
+                        }
+                        if !text.is_empty() {
+                            b.push_inline(Inline::Link {
+                                href,
+                                kind,
+                                children: text,
+                            });
+                        }
                     }
                 }
                 TagEnd::Image => {
                     if let Some((url, alt)) = b.image.take() {
-                        b.push_inline(Inline::Image { url, alt });
+                        b.push_inline(Inline::Image {
+                            url,
+                            alt,
+                            link: None,
+                        });
                     }
                 }
                 _ => {}
@@ -344,7 +453,10 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
                 if linkify_files {
                     b.code(&code);
                 } else {
-                    b.push_inline(Inline::Code { text: code.to_string(), style: b.style });
+                    b.push_inline(Inline::Code {
+                        text: code.to_string(),
+                        style: b.style,
+                    });
                 }
             }
             Event::Html(html) | Event::InlineHtml(html) => b.text(&html),
@@ -382,10 +494,13 @@ pub fn parse(source: &str, workspace_root: Option<&str>, linkify_files: bool) ->
 
 // ---- streaming (chat_markdown.dart markdownStableSplit) ----
 
-static HTML_BLOCK_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^ {0,3}<[A-Za-z!/?]").unwrap());
-static REFERENCE_DEFINITION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^ {0,3}\[[^\]\n]+\]:").unwrap());
+static HTML_BLOCK_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^ {0,3}<[A-Za-z!/?]").unwrap());
+static REFERENCE_DEFINITION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^ {0,3}\[[^\]\n]+\]:").unwrap());
 static STREAM_FENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(`{3,}|~{3,})").unwrap());
-static LIST_MARKER_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:[-*+]|\d{1,9}[.)])(?:\s|$)").unwrap());
+static LIST_MARKER_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[-*+]|\d{1,9}[.)])(?:\s|$)").unwrap());
 
 /// Where the last top-level block of `source` starts, when the text before it
 /// parses into exactly the blocks it forms in the whole text.
@@ -414,7 +529,12 @@ pub fn markdown_stable_split(source: &str) -> Option<usize> {
                 previous_blank = false;
             }
             None => {
-                if previous_blank && start > 0 && !line.is_empty() && line.trim_start().len() == line.len() && !LIST_MARKER_LINE.is_match(line) {
+                if previous_blank
+                    && start > 0
+                    && !line.is_empty()
+                    && line.trim_start().len() == line.len()
+                    && !LIST_MARKER_LINE.is_match(line)
+                {
                     split = Some(start);
                 }
                 if marker.is_some() {
@@ -447,7 +567,9 @@ pub fn find_pattern(query: &str) -> Option<Regex> {
 pub fn text_blocks(blocks: &[Block], out: &mut Vec<String>) {
     for block in blocks {
         match block {
-            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => out.push(inline_text(inlines)),
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                out.push(inline_text(inlines))
+            }
             Block::List { items, .. } => {
                 for item in items {
                     text_blocks(&item.blocks, out);
@@ -481,8 +603,97 @@ pub fn inline_text(inlines: &[Inline]) -> String {
 /// Occurrences of `query` in the rendered text of `source` (a match never
 /// spans two blocks).
 pub fn find_match_count(source: &str, query: &str) -> usize {
-    let Some(pattern) = find_pattern(query) else { return 0 };
+    let Some(pattern) = find_pattern(query) else {
+        return 0;
+    };
     let mut texts = Vec::new();
     text_blocks(&parse(source, None, false), &mut texts);
     texts.iter().map(|t| pattern.find_iter(t).count()).sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paragraph(source: &str) -> Vec<Inline> {
+        let mut blocks = parse(source, None, false);
+        assert_eq!(blocks.len(), 1);
+        match blocks.remove(0) {
+            Block::Paragraph(inlines) => inlines,
+            other => panic!("expected paragraph, got {other:?}"),
+        }
+    }
+
+    fn styled_text(inlines: &[Inline], bold: bool, italic: bool) -> String {
+        inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, style } if style.bold == bold && style.italic == italic => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn multilingual_emphasis_keeps_display_and_find_text_exact() {
+        let source = "첨부한 위치대로 **호스트 메뉴 맨 아래에 ‘버전’**을 추가하겠습니다.";
+        let inlines = paragraph(source);
+        assert_eq!(
+            inline_text(&inlines),
+            "첨부한 위치대로 호스트 메뉴 맨 아래에 ‘버전’을 추가하겠습니다."
+        );
+        assert_eq!(
+            styled_text(&inlines, true, false),
+            "호스트 메뉴 맨 아래에 ‘버전’"
+        );
+        assert_eq!(find_match_count(source, "‘버전’을"), 1);
+        let code = paragraph(r"\*\*‘literal’\*\*을 and `**‘code’**을`");
+        assert_eq!(inline_text(&code), "**‘literal’**을 and **‘code’**을");
+        assert!(styled_text(&code, true, false).is_empty());
+    }
+
+    #[test]
+    fn nested_styles_restore_outer_emphasis() {
+        let inlines = paragraph("**outer __inner__ tail** and *outer _inner_ tail*");
+        assert_eq!(styled_text(&inlines, true, false), "outer inner tail");
+        assert_eq!(styled_text(&inlines, false, true), "outer inner tail");
+        let both = paragraph("***‘both’***을");
+        assert_eq!(styled_text(&both, true, true), "‘both’");
+        assert_eq!(styled_text(&both, false, false), "을");
+    }
+
+    #[test]
+    fn linked_images_keep_target_order_and_alt_content() {
+        let inlines = paragraph("[before ![a `code`\nline](image.png) after](guide.md)");
+        assert_eq!(inlines.len(), 3);
+        assert!(matches!(&inlines[0], Inline::Link { href, children, .. }
+            if href == "guide.md" && inline_text(children) == "before "));
+        assert!(
+            matches!(&inlines[1], Inline::Image { url, alt, link: Some((href, FileLinkSourceType::Markdown)) }
+            if url == "image.png" && alt == "a code line" && href == "guide.md")
+        );
+        assert!(matches!(&inlines[2], Inline::Link { href, children, .. }
+            if href == "guide.md" && inline_text(children) == " after"));
+    }
+
+    #[test]
+    fn reference_labels_keep_destination_and_multilingual_bold() {
+        for label in ["[**‘버전’**을][]", "[**‘버전’**을]", "[**‘버전’**을][ref]"]
+        {
+            let source = format!(
+                "{label}\n\n[**‘버전’**을]: https://example.test/correct\n[ref]: https://example.test/correct\n[**‘버전한**을]: https://example.test/wrong\n",
+            );
+            let inlines = paragraph(&source);
+            let [Inline::Link { href, children, .. }] = inlines.as_slice() else {
+                panic!("reference link lost: {inlines:?}");
+            };
+            assert_eq!(href, "https://example.test/correct");
+            assert_eq!(inline_text(children), "‘버전’을");
+            assert_eq!(styled_text(children, true, false), "‘버전’");
+            assert_eq!(styled_text(children, false, false), "을");
+            assert!(source.starts_with(label));
+        }
+    }
 }

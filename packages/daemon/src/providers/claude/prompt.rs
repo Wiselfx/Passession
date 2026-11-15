@@ -30,10 +30,11 @@ pub(super) fn user_message(prompt: &Value, session_id: Option<&str>) -> Result<V
         bail!("Claude prompt must be text or content blocks");
     }
     if let Some(index) = slash
-        && index + 1 < content.len() {
-            let block = content.remove(index);
-            content.push(block);
-        }
+        && index + 1 < content.len()
+    {
+        let block = content.remove(index);
+        content.push(block);
+    }
     Ok(
         json!({"type":"user","message":{"role":"user","content":content},"parent_tool_use_id":null,"uuid":uuid::Uuid::new_v4().to_string(),"session_id":session_id.unwrap_or("")}),
     )

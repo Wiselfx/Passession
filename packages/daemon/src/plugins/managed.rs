@@ -1,6 +1,6 @@
 use super::manifest;
-use paseo_client::process::{CommandSpec, ManagedProcess};
 use anyhow::{Context, Result, bail};
+use paseo_client::process::{CommandSpec, ManagedProcess};
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
@@ -131,7 +131,9 @@ impl ManagedSources {
     fn locate(&self, id: &str, configured: &Path, record: &Value) -> Result<Location> {
         manifest::validate_id(id)?;
         if record["kind"] == "npm" {
-            bail!("Plugin {id} has a retired npm/JavaScript source record. Its source record and settings have been preserved. To migrate without deleting settings, disable this plugin, obtain and build a native Rust release in a separate directory, then change this existing plugin ID's directory path in configuration and explicitly enable it. Do not remove the plugin to migrate: removal deletes its settings. The legacy source record remains read-only; automatic managed updates require a native source installation.");
+            bail!(
+                "Plugin {id} has a retired npm/JavaScript source record. Its source record and settings have been preserved. To migrate without deleting settings, disable this plugin, obtain and build a native Rust release in a separate directory, then change this existing plugin ID's directory path in configuration and explicitly enable it. Do not remove the plugin to migrate: removal deletes its settings. The legacy source record remains read-only; automatic managed updates require a native source installation."
+            );
         }
         let plugin_root = absolute(&self.root.join(id))?;
         let configured = absolute(configured)?;
@@ -212,22 +214,37 @@ impl ManagedSources {
         };
         let location = self.locate(id, configured, &record)?;
         let mut result = json!({"identity":location.identity});
-        if matches!(location.identity["kind"].as_str(), Some("cargo" | "release")) {
+        if matches!(
+            location.identity["kind"].as_str(),
+            Some("cargo" | "release")
+        ) {
             let artifact = async {
                 containment(&self.root, &location.version_root).await?;
                 containment(&location.version_root, configured).await?;
                 if location.identity["kind"] == "cargo" {
-                    cargo::artifact(&location.version_root, string(&location.identity, "crateName")?).await
+                    cargo::artifact(
+                        &location.version_root,
+                        string(&location.identity, "crateName")?,
+                    )
+                    .await
                 } else {
                     let artifact = release::artifact(&location.version_root).await?;
-                    if release::origin(string(&artifact, "url")?)? != string(&location.identity, "origin")? {
+                    if release::origin(string(&artifact, "url")?)?
+                        != string(&location.identity, "origin")?
+                    {
                         bail!("Release acquisition source does not match its record");
                     }
                     Ok(artifact)
                 }
-            }.await;
+            }
+            .await;
             if let Ok(artifact) = artifact {
-                result["currentRevision"] = artifact[if artifact["kind"] == "cargo" { "version" } else { "sha256" }].clone();
+                result["currentRevision"] = artifact[if artifact["kind"] == "cargo" {
+                    "version"
+                } else {
+                    "sha256"
+                }]
+                .clone();
                 result["artifact"] = artifact;
             }
         } else if let Ok(revision) = self.revision(&location, configured).await {
@@ -239,10 +256,18 @@ impl ManagedSources {
     pub async fn prepare_install(&self, input: &Value) -> Result<Candidate> {
         let source = string(input, "source")?;
         if source.starts_with("npm:") || source.starts_with('@') {
-            bail!("npm/JavaScript plugins are no longer supported. Install a native Rust plugin from cargo:, release:, Git, or a local directory.");
+            bail!(
+                "npm/JavaScript plugins are no longer supported. Install a native Rust plugin from cargo:, release:, Git, or a local directory."
+            );
         }
-        if !source.starts_with("release:") && ["version", "sha256", "format"].iter().any(|key| input.get(*key).is_some()) {
-            bail!("Install version, sha256 and format fields are only valid for release: sources; use cargo:crate@version for Cargo");
+        if !source.starts_with("release:")
+            && ["version", "sha256", "format"]
+                .iter()
+                .any(|key| input.get(*key).is_some())
+        {
+            bail!(
+                "Install version, sha256 and format fields are only valid for release: sources; use cargo:crate@version for Cargo"
+            );
         }
         let options = self.options()?;
         if let Some(identity) = reference::registry(
@@ -495,7 +520,9 @@ impl ManagedSources {
             } else {
                 "update"
             }
-        } else if target_revision == revision && (identity["kind"] == "git" || current["artifact"] == target) {
+        } else if target_revision == revision
+            && (identity["kind"] == "git" || current["artifact"] == target)
+        {
             "current"
         } else {
             "update"
@@ -531,7 +558,9 @@ impl ManagedSources {
         }
         validate_target(&proposal["target"])?;
         if current["identity"]["kind"] == "release"
-            && release::origin(string(&proposal["target"], "url")?)? != string(&current["identity"], "origin")? {
+            && release::origin(string(&proposal["target"], "url")?)?
+                != string(&current["identity"], "origin")?
+        {
             bail!("Release source origin changed; reinstall to approve the new source");
         }
         Ok(())
@@ -562,7 +591,7 @@ impl ManagedSources {
             json!({"source":format!("cargo:{}@{}",string(&identity,"crateName")?,string(target,"version")?),"pluginPath":identity["pluginPath"]})
         } else {
             let mut input = target.clone();
-            input["source"] = json!(format!("release:{}",string(target,"url")?));
+            input["source"] = json!(format!("release:{}", string(target, "url")?));
             input["pluginPath"] = identity["pluginPath"].clone();
             input
         };
@@ -583,13 +612,18 @@ impl ManagedSources {
         containment(&self.root, &location.version_root).await?;
         containment(&location.version_root, &candidate.directory).await?;
         let artifact = match location.identity["kind"].as_str() {
-            Some("cargo") => Some(cargo::artifact(
-                &location.version_root,
-                string(&location.identity, "crateName")?,
-            ).await?),
+            Some("cargo") => Some(
+                cargo::artifact(
+                    &location.version_root,
+                    string(&location.identity, "crateName")?,
+                )
+                .await?,
+            ),
             Some("release") => {
                 let artifact = release::artifact(&location.version_root).await?;
-                if release::origin(string(&artifact, "url")?)? != string(&location.identity, "origin")? {
+                if release::origin(string(&artifact, "url")?)?
+                    != string(&location.identity, "origin")?
+                {
                     bail!("Release acquisition source does not match its record");
                 }
                 Some(artifact)
@@ -843,13 +877,14 @@ struct StagingCleanup(Option<PathBuf>);
 impl Drop for StagingCleanup {
     fn drop(&mut self) {
         if let Some(path) = self.0.take()
-            && let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn(async move {
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(async move {
                     if let Err(error) = remove_tree(&path).await {
                         tracing::warn!(path=%path.display(), %error, "Failed to remove abandoned plugin staging directory");
                     }
                 });
-            }
+        }
     }
 }
 

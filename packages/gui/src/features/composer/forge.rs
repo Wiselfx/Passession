@@ -15,7 +15,11 @@ pub struct ForgeRef {
 
 impl ForgeRef {
     pub fn kind(&self) -> &'static str {
-        if self.change_request { "change_request" } else { "issue" }
+        if self.change_request {
+            "change_request"
+        } else {
+            "issue"
+        }
     }
     pub fn key(&self) -> String {
         format!("{}:{}", self.kind(), self.number)
@@ -32,7 +36,11 @@ fn normalize_remote_path(path: &str) -> Option<String> {
     if let Some(stripped) = normalized.strip_suffix(".git") {
         normalized = stripped.to_owned();
     }
-    if normalized.is_empty() { None } else { Some(normalized) }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 fn valid_remote_host(host: &str) -> bool {
@@ -44,7 +52,9 @@ fn valid_remote_host(host: &str) -> bool {
     if !ok(bytes[0]) || !ok(bytes[bytes.len() - 1]) {
         return false;
     }
-    bytes.iter().all(|&c| ok(c) || c == b'.' || c == b'_' || c == b'-')
+    bytes
+        .iter()
+        .all(|&c| ok(c) || c == b'.' || c == b'_' || c == b'-')
 }
 
 fn percent_decode(input: &str) -> Option<String> {
@@ -69,15 +79,27 @@ fn split_url(url: &str) -> Option<(String, String, String)> {
     let (scheme, rest) = url.split_once("://")?;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..end];
-    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let host = if host_port.starts_with('[') {
-        host_port.split(']').next().unwrap_or("").trim_start_matches('[').to_owned()
+        host_port
+            .split(']')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('[')
+            .to_owned()
     } else {
         host_port.split(':').next().unwrap_or("").to_owned()
     };
     let remainder = &rest[end..];
     let path_end = remainder.find(['?', '#']).unwrap_or(remainder.len());
-    Some((scheme.to_lowercase(), host, remainder[..path_end].to_owned()))
+    Some((
+        scheme.to_lowercase(),
+        host,
+        remainder[..path_end].to_owned(),
+    ))
 }
 
 /// protocol git-remote.ts parseGitRemoteLocation.
@@ -129,10 +151,13 @@ fn web_urls(body: &str) -> Vec<&str> {
     let lower = body.to_ascii_lowercase();
     let mut search = 0;
     while search < body.len() {
-        let next = [lower[search..].find("http://"), lower[search..].find("https://")]
-            .into_iter()
-            .flatten()
-            .min();
+        let next = [
+            lower[search..].find("http://"),
+            lower[search..].find("https://"),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let Some(offset) = next else { break };
         let start = search + offset;
         let mut end = start;
@@ -142,7 +167,11 @@ fn web_urls(body: &str) -> Vec<&str> {
             }
             end = start + index + ch.len_utf8();
         }
-        let scheme_len = if lower[start..].starts_with("https://") { 8 } else { 7 };
+        let scheme_len = if lower[start..].starts_with("https://") {
+            8
+        } else {
+            7
+        };
         if end > start + scheme_len {
             out.push(&body[start..end]);
         }
@@ -173,14 +202,18 @@ pub fn extract_forge_refs(text: &str, remote_url: Option<&str>) -> Vec<ForgeRef>
     let mut seen = HashSet::new();
     for raw in web_urls(body) {
         let raw = raw.trim_end_matches(['.', ',', ';', ':', '!']);
-        let Some((scheme, host, path)) = split_url(raw) else { continue };
+        let Some((scheme, host, path)) = split_url(raw) else {
+            continue;
+        };
         if scheme != "http" && scheme != "https" {
             continue;
         }
         if !web_hosts.contains(&normalize_git_host(&host)) {
             continue;
         }
-        let Some(pathname) = percent_decode(&path) else { continue };
+        let Some(pathname) = percent_decode(&path) else {
+            continue;
+        };
         for (forge, change, infix) in FORGE_REFERENCE_PATHS {
             if !forge_ids.is_empty() && !forge_ids.contains(forge) {
                 continue;
@@ -195,11 +228,16 @@ pub fn extract_forge_refs(text: &str, remote_url: Option<&str>) -> Vec<ForgeRef>
             if digits.is_empty() || !(after.is_empty() || after.starts_with('/')) {
                 continue;
             }
-            let Ok(number) = digits.parse::<i64>() else { continue };
+            let Ok(number) = digits.parse::<i64>() else {
+                continue;
+            };
             if number <= 0 {
                 continue;
             }
-            let reference = ForgeRef { change_request: *change, number };
+            let reference = ForgeRef {
+                change_request: *change,
+                number,
+            };
             if seen.insert(reference.key()) {
                 refs.push(reference);
             }
@@ -211,7 +249,10 @@ pub fn extract_forge_refs(text: &str, remote_url: Option<&str>) -> Vec<ForgeRef>
 
 /// forge-auto-attach.ts attachmentKey: `kind:number` of a forge attachment, None otherwise.
 pub fn forge_attachment_key(attachment: &Value) -> Option<String> {
-    let kind = attachment.get("type").filter(|v| !v.is_null()).unwrap_or(get(attachment, "kind"));
+    let kind = attachment
+        .get("type")
+        .filter(|v| !v.is_null())
+        .unwrap_or(get(attachment, "kind"));
     let kind = s(kind);
     let change = kind == "forge_change_request" || kind == "github_pr";
     let issue = kind == "forge_issue" || kind == "github_issue";
@@ -222,7 +263,11 @@ pub fn forge_attachment_key(attachment: &Value) -> Option<String> {
         .get("number")
         .filter(|v| !v.is_null())
         .unwrap_or(get(get(attachment, "item"), "number"));
-    Some(format!("{}:{}", if change { "change_request" } else { "issue" }, display(number)))
+    Some(format!(
+        "{}:{}",
+        if change { "change_request" } else { "issue" },
+        display(number)
+    ))
 }
 
 /// The composer state the auto-attach follows.
@@ -287,7 +332,9 @@ pub struct ForgeAutoAttach {
 
 fn attached(attachments: &[Value], reference: &ForgeRef) -> bool {
     let key = reference.key();
-    attachments.iter().any(|a| forge_attachment_key(a).as_deref() == Some(key.as_str()))
+    attachments
+        .iter()
+        .any(|a| forge_attachment_key(a).as_deref() == Some(key.as_str()))
 }
 
 fn present(reference: &ForgeRef, input: &ForgeInput) -> bool {
@@ -335,7 +382,10 @@ impl ForgeAutoAttach {
     pub fn update(&mut self, input: ForgeInput) -> ForgeEffects {
         let mut effects = ForgeEffects::default();
         self.latest = Some(input.clone());
-        let target = format!("{:?}|{}|{}|{}", input.remote_url, input.connected, input.server_id, input.cwd);
+        let target = format!(
+            "{:?}|{}|{}|{}",
+            input.remote_url, input.connected, input.server_id, input.cwd
+        );
         let relevance = format!("{}|{target}", self.relevance_key(&input));
         if self.relevance_deps.as_deref() != Some(relevance.as_str()) {
             self.relevance_deps = Some(relevance);
@@ -346,7 +396,11 @@ impl ForgeAutoAttach {
         }
         let candidates = format!(
             "{}|{target}",
-            self.candidate_refs(&input).iter().map(ForgeRef::key).collect::<Vec<_>>().join("|")
+            self.candidate_refs(&input)
+                .iter()
+                .map(ForgeRef::key)
+                .collect::<Vec<_>>()
+                .join("|")
         );
         if self.candidate_deps.as_deref() == Some(candidates.as_str()) {
             return effects;
@@ -363,8 +417,17 @@ impl ForgeAutoAttach {
         effects.cancel_timer = true;
         let Some(lookup) = run.lookup else { return };
         let current = self.latest.clone().expect("latest input");
-        let current_keys: Vec<String> = self.candidate_refs(&current).iter().map(ForgeRef::key).collect();
-        let retained: Vec<String> = run.keys.iter().filter(|k| current_keys.contains(k)).cloned().collect();
+        let current_keys: Vec<String> = self
+            .candidate_refs(&current)
+            .iter()
+            .map(ForgeRef::key)
+            .collect();
+        let retained: Vec<String> = run
+            .keys
+            .iter()
+            .filter(|k| current_keys.contains(k))
+            .cloned()
+            .collect();
         if current_keys != retained {
             self.invalidate(lookup, &run.keys, effects);
         } else {
@@ -374,7 +437,9 @@ impl ForgeAutoAttach {
 
     fn start_run(&mut self, effects: &mut ForgeEffects) {
         let initial = self.latest.clone().expect("latest input");
-        let previous = self.previous_target.replace((initial.server_id.clone(), initial.cwd.clone()));
+        let previous = self
+            .previous_target
+            .replace((initial.server_id.clone(), initial.cwd.clone()));
         if let Some((server, cwd)) = previous
             && !cwd.trim().is_empty()
             && !initial.cwd.trim().is_empty()
@@ -398,7 +463,12 @@ impl ForgeAutoAttach {
         if refs.is_empty() {
             return;
         }
-        self.run = Some(Run { keys: refs.iter().map(ForgeRef::key).collect(), refs, initial, lookup: None });
+        self.run = Some(Run {
+            keys: refs.iter().map(ForgeRef::key).collect(),
+            refs,
+            initial,
+            lookup: None,
+        });
         effects.cancel_timer = false;
         effects.start_timer = true;
     }
@@ -406,7 +476,9 @@ impl ForgeAutoAttach {
     /// The 300ms debounce elapsed: start the lookup and its searches.
     pub fn timer_fired(&mut self) -> ForgeEffects {
         let mut effects = ForgeEffects::default();
-        let Some(run) = self.run.as_mut() else { return effects };
+        let Some(run) = self.run.as_mut() else {
+            return effects;
+        };
         if run.lookup.is_some() {
             return effects;
         }
@@ -441,14 +513,25 @@ impl ForgeAutoAttach {
     }
 
     /// A forge search finished (`items` from searchForgeItems, or Err).
-    pub fn search_finished(&mut self, lookup: u64, index: usize, snapshot_cwd: &str, items: Result<Vec<Value>, String>) -> ForgeEffects {
+    pub fn search_finished(
+        &mut self,
+        lookup: u64,
+        index: usize,
+        snapshot_cwd: &str,
+        items: Result<Vec<Value>, String>,
+    ) -> ForgeEffects {
         let mut effects = ForgeEffects::default();
-        let Some(entry) = self.lookups.iter().find(|l| l.id == lookup) else { return effects };
-        let Some(reference) = entry.refs.get(index).copied() else { return effects };
+        let Some(entry) = self.lookups.iter().find(|l| l.id == lookup) else {
+            return effects;
+        };
+        let Some(reference) = entry.refs.get(index).copied() else {
+            return effects;
+        };
         let initial = entry.initial.clone();
         let item = items.ok().and_then(|items| {
             items.into_iter().find(|candidate| {
-                s(get(candidate, "kind")) == reference.kind() && get(candidate, "number").as_i64() == Some(reference.number)
+                s(get(candidate, "kind")) == reference.kind()
+                    && get(candidate, "number").as_i64() == Some(reference.number)
             })
         });
         let current = self.latest.clone().expect("latest input");
@@ -463,8 +546,16 @@ impl ForgeAutoAttach {
         effects
     }
 
-    fn settle(&mut self, lookup: u64, index: usize, item: Option<Value>, effects: &mut ForgeEffects) {
-        let Some(entry) = self.lookups.iter_mut().find(|l| l.id == lookup) else { return };
+    fn settle(
+        &mut self,
+        lookup: u64,
+        index: usize,
+        item: Option<Value>,
+        effects: &mut ForgeEffects,
+    ) {
+        let Some(entry) = self.lookups.iter_mut().find(|l| l.id == lookup) else {
+            return;
+        };
         if entry.settled[index] {
             return;
         }
@@ -474,9 +565,15 @@ impl ForgeAutoAttach {
     }
 
     fn drain(&mut self, lookup: u64, effects: &mut ForgeEffects) {
-        let latest_attachments = self.latest.as_ref().map(|l| l.attachments.clone()).unwrap_or_default();
+        let latest_attachments = self
+            .latest
+            .as_ref()
+            .map(|l| l.attachments.clone())
+            .unwrap_or_default();
         let removed = self.removed.clone();
-        let Some(position) = self.lookups.iter().position(|l| l.id == lookup) else { return };
+        let Some(position) = self.lookups.iter().position(|l| l.id == lookup) else {
+            return;
+        };
         let entry = &mut self.lookups[position];
         while entry.next < entry.refs.len() && entry.settled[entry.next] {
             let item = entry.items[entry.next].take();
@@ -484,7 +581,10 @@ impl ForgeAutoAttach {
             entry.next += 1;
             if let Some(item) = item {
                 let already = attached(&latest_attachments, &reference)
-                    || effects.attach.iter().any(|a| s(get(a, "kind")) == reference.kind() && get(a, "number").as_i64() == Some(reference.number));
+                    || effects.attach.iter().any(|a| {
+                        s(get(a, "kind")) == reference.kind()
+                            && get(a, "number").as_i64() == Some(reference.number)
+                    });
                 if !removed.contains(&reference.key()) && !already {
                     effects.attach.push(item);
                 }
@@ -497,7 +597,9 @@ impl ForgeAutoAttach {
     }
 
     fn invalidate(&mut self, lookup: u64, keys: &[String], effects: &mut ForgeEffects) {
-        let Some(entry) = self.lookups.iter_mut().find(|l| l.id == lookup) else { return };
+        let Some(entry) = self.lookups.iter_mut().find(|l| l.id == lookup) else {
+            return;
+        };
         for index in 0..entry.refs.len() {
             if !keys.contains(&entry.refs[index].key()) || index < entry.next {
                 continue;
@@ -508,8 +610,15 @@ impl ForgeAutoAttach {
         self.drain(lookup, effects);
     }
 
-    fn invalidate_irrelevant(&mut self, lookup: u64, current: &ForgeInput, effects: &mut ForgeEffects) {
-        let Some(entry) = self.lookups.iter().find(|l| l.id == lookup) else { return };
+    fn invalidate_irrelevant(
+        &mut self,
+        lookup: u64,
+        current: &ForgeInput,
+        effects: &mut ForgeEffects,
+    ) {
+        let Some(entry) = self.lookups.iter().find(|l| l.id == lookup) else {
+            return;
+        };
         let keys: Vec<String> = entry
             .refs
             .iter()
@@ -536,8 +645,16 @@ impl Lookup {
 /// use-forge-search-query.ts: request fields and response normalization for a forge search
 /// (`forge.search` or the legacy `github_search`, whose `pr` items become change requests).
 pub fn forge_search_request(legacy: bool, cwd: &str, query: &str) -> (Value, &'static str) {
-    let kind = if legacy { "github_search_request" } else { "forge.search.request" };
-    let response = if legacy { "github_search_response" } else { "forge.search.response" };
+    let kind = if legacy {
+        "github_search_request"
+    } else {
+        "forge.search.request"
+    };
+    let response = if legacy {
+        "github_search_response"
+    } else {
+        "forge.search.response"
+    };
     (
         serde_json::json!({"type": kind, "cwd": cwd, "query": query.trim(), "limit": 20}),
         response,
@@ -551,7 +668,11 @@ pub fn forge_search_items(legacy: bool, result: &Value) -> Vec<Value> {
             if !legacy {
                 return item;
             }
-            let kind = if s(get(&item, "kind")) == "pr" { "change_request" } else { "issue" };
+            let kind = if s(get(&item, "kind")) == "pr" {
+                "change_request"
+            } else {
+                "issue"
+            };
             merged(&item, &serde_json::json!({"kind": kind}))
         })
         .collect()

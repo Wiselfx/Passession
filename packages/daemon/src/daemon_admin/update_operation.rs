@@ -9,8 +9,21 @@ mod journal;
 mod tests;
 
 pub(crate) use admission::submit;
+pub(crate) use drain::{announce as announce_app_admission, release as release_app_admission};
 pub(crate) use drain::{handle_drain, initialize as initialize_admission, wire_admission};
 pub(crate) use execution::{execute, recover_bootstrap};
+pub(crate) use journal::Lease as AdmissionLease;
+
+pub(crate) async fn ensure_app_cutover_allowed(home: &Path) -> Result<()> {
+    journal::ensure_no_legacy_update(home).await?;
+    if journal::current(home)
+        .await?
+        .is_some_and(|operation| !operation.terminal())
+    {
+        bail!("Another native update operation is still active");
+    }
+    Ok(())
+}
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -37,6 +50,9 @@ pub struct ResumeRequest {
 pub struct SubmitRequest {
     pub operation_id: String,
     pub source: UpdateSource,
+    /// Omitted for legacy callers so their durable request fingerprints remain stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_release: Option<super::updater::ReleaseIdentity>,
     pub resume: Option<ResumeRequest>,
     pub idle_timeout_ms: u64,
     pub force_running: bool,
@@ -125,7 +141,9 @@ impl Operation {
     fn terminal(&self) -> bool {
         match self.phase {
             Phase::Failed | Phase::RolledBack => true,
-            Phase::Committed => self.continuation.as_ref()
+            Phase::Committed => self
+                .continuation
+                .as_ref()
                 .is_none_or(|value| value.state != ContinuationState::Pending),
             _ => false,
         }
@@ -134,10 +152,12 @@ impl Operation {
     fn view(&self) -> Value {
         // In particular, request.resume.text and private launch environment must
         // never be returned by status or copied into CLI progress messages.
-        let continuation = self.continuation.as_ref().map(|value| json!({
-            "agentId":value.agent_id,"messageId":value.message_id,
-            "state":value.state,"error":value.error,
-        }));
+        let continuation = self.continuation.as_ref().map(|value| {
+            json!({
+                "agentId":value.agent_id,"messageId":value.message_id,
+                "state":value.state,"error":value.error,
+            })
+        });
         json!({
             "schemaVersion":self.schema_version,"operationId":self.operation_id,
             "phase":self.phase,"terminal":self.terminal(),"accepted":self.executor.is_some(),
@@ -164,8 +184,12 @@ fn validate_id(id: &str) -> Result<()> {
 
 pub async fn status(home: &Path, operation_id: &str) -> Result<Value> {
     validate_id(operation_id)?;
-    let mut operation = journal::read(home, operation_id).await?
-        .with_context(|| format!("Unknown native update operation {operation_id}"))?;
+    let mut operation = journal::read(home, operation_id).await?.ok_or_else(|| {
+        paseo_client::ClientError::new(
+            "UPDATE_OPERATION_NOT_FOUND",
+            format!("Unknown native update operation {operation_id}"),
+        )
+    })?;
     let observation = continuation::observe(&mut operation).await;
     let mut view = operation.view();
     if let Err(error) = observation {

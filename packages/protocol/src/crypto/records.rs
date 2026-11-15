@@ -98,9 +98,10 @@ pub fn decode_protected_record(
     let mut assembly: Option<(FrameKind, usize, usize)> = None;
     while offset < record.len() {
         if let Some((_, _, expected_chunks)) = assembly
-            && index >= expected_chunks {
-                return Err(CryptoError::Record("unexpected chunk after final"));
-            }
+            && index >= expected_chunks
+        {
+            return Err(CryptoError::Record("unexpected chunk after final"));
+        }
         if record.len() - offset < LENGTH_BYTES {
             return Err(CryptoError::Record("record truncated"));
         }

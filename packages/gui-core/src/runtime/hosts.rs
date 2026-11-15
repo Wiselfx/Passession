@@ -14,8 +14,7 @@ use crate::{
     CoreError, RequestId,
     connection::{self, Control, Inbound, OpenRequest, Opened, RouteIn},
     error::host_unknown,
-    host_config,
-    ids,
+    host_config, ids,
     protocol::response_error,
     storage,
 };
@@ -51,6 +50,11 @@ struct Link {
     waiters: Vec<oneshot::Sender<Result<Rc<Conn>, CoreError>>>,
     rtt: Option<Duration>,
     verifying: Option<u64>,
+    socket_cancel: tokio_util::sync::CancellationToken,
+    /// A fresh resource epoch remains usable while the WebSocket is disconnected, so
+    /// unrelated public images are not blocked by an unavailable embedded node.
+    resource_cancel: tokio_util::sync::CancellationToken,
+    resource_generation: u64,
 }
 
 pub(crate) struct Host {
@@ -114,6 +118,9 @@ impl Host {
                 waiters: Vec::new(),
                 rtt: None,
                 verifying: None,
+                socket_cancel: tokio_util::sync::CancellationToken::new(),
+                resource_cancel: tokio_util::sync::CancellationToken::new(),
+                resource_generation: 0,
             }),
             dir: RefCell::new(dir),
             selector: RefCell::new(None),
@@ -131,7 +138,10 @@ impl Host {
     }
 
     pub fn config_id(&self) -> String {
-        self.config.borrow()["id"].as_str().unwrap_or_default().to_owned()
+        self.config.borrow()["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
     }
 
     pub fn matches(&self, id: &str) -> bool {
@@ -148,6 +158,10 @@ impl Host {
         self.link.borrow().conn.as_ref().map(|conn| conn.generation)
     }
 
+    pub fn resource_cancellation(&self) -> tokio_util::sync::CancellationToken {
+        self.link.borrow().resource_cancel.clone()
+    }
+
     pub fn connecting(&self) -> bool {
         self.link.borrow().status == Status::Connecting
     }
@@ -158,6 +172,10 @@ impl Host {
 
     pub fn rtt(&self) -> Option<Duration> {
         self.link.borrow().rtt
+    }
+
+    pub fn reconnect_enabled(&self) -> bool {
+        self.link.borrow().enabled
     }
 
     pub fn enable(&self) {
@@ -173,6 +191,9 @@ impl Host {
 
     /// Flutter files `_localHost`: a desktop-managed daemon reached over a local socket.
     fn is_local(&self) -> bool {
+        if host_config::uses_tailnet(&self.config.borrow()) {
+            return false;
+        }
         if cfg!(any(target_os = "android", target_os = "ios")) || self.origin.is_some() {
             return false;
         }
@@ -181,7 +202,10 @@ impl Host {
         }
         let config = self.config.borrow();
         let endpoint = config["endpoint"].as_str().unwrap_or_default();
-        if endpoint.starts_with("unix:") || endpoint.starts_with("pipe:") || endpoint.starts_with('/') {
+        if endpoint.starts_with("unix:")
+            || endpoint.starts_with("pipe:")
+            || endpoint.starts_with('/')
+        {
             return true;
         }
         let candidate = if endpoint.contains("://") {
@@ -192,7 +216,9 @@ impl Host {
         url::Url::parse(&candidate)
             .ok()
             .and_then(|url| url.host_str().map(str::to_owned))
-            .is_some_and(|host| matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]" | "::1"))
+            .is_some_and(|host| {
+                matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]" | "::1")
+            })
     }
 
     /// The saved `state.json` row.
@@ -259,6 +285,7 @@ impl Host {
             "maintenanceOperationId": dir.maintenance,
             "serverInfo": *self.server_info.borrow(),
             "connectionGeneration": link.generation,
+            "httpGeneration": link.resource_generation,
             "latencyMs": link.rtt.map(|rtt| rtt.as_millis() as u64),
             "probes": probes,
             "isLocal": self.is_local(),
@@ -273,7 +300,9 @@ impl Host {
 // Connection lifecycle
 
 fn relay_key(config: &Value) -> Option<String> {
-    host_config::resolve(config).ok().and_then(|resolved| resolved.relay_key)
+    host_config::resolve(config)
+        .ok()
+        .and_then(|resolved| resolved.relay_key)
 }
 
 fn protected_pref(key: &str) -> String {
@@ -319,6 +348,8 @@ pub(crate) fn start_attempt(core: &Rc<Core>, host: &Rc<Host>) {
         if let Some(timer) = link.reconnect.take() {
             timer.abort();
         }
+        link.socket_cancel.cancel();
+        link.socket_cancel = core.cancel.child_token();
         link.generation += 1;
         link.status = Status::Connecting;
         link.generation
@@ -326,8 +357,9 @@ pub(crate) fn start_attempt(core: &Rc<Core>, host: &Rc<Host>) {
     core.touch();
     let core = core.clone();
     let host = host.clone();
+    let socket_cancel = host.link.borrow().socket_cancel.clone();
     tokio::task::spawn_local(async move {
-        let result = open(&core, &host).await;
+        let result = open(&core, &host, &socket_cancel).await;
         let current = host.link.borrow().generation == generation && !core.closing.get();
         match result {
             Ok(opened) if current => admit(&core, &host, opened, generation).await,
@@ -341,7 +373,11 @@ pub(crate) fn start_attempt(core: &Rc<Core>, host: &Rc<Host>) {
     });
 }
 
-async fn open(core: &Rc<Core>, host: &Rc<Host>) -> Result<Opened, CoreError> {
+async fn open(
+    core: &Rc<Core>,
+    host: &Rc<Host>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<Opened, CoreError> {
     let config = host.config.borrow().clone();
     let request = OpenRequest {
         client_id: core.client_id.borrow().clone(),
@@ -350,8 +386,21 @@ async fn open(core: &Rc<Core>, host: &Rc<Host>) -> Result<Opened, CoreError> {
         timeout: CONNECT_TIMEOUT,
     };
     match &host.origin {
+        Some(_) if host_config::uses_tailnet(&config) => Err(CoreError::new(
+            "invalid_connection",
+            "Embedded Tailscale requires a direct host, not a connected-host route.",
+            false,
+        )),
         Some(origin) => open_route(core, host, origin, request).await,
-        None => connection::open_direct(&config, request, core.buffers.clone(), &core.cancel).await,
+        None => {
+            let (proxy, tailnet_cancel) = super::tailnet::route(core, &config)?;
+            let open =
+                connection::open_direct(&config, request, core.buffers.clone(), cancel, proxy);
+            tokio::select! { biased;
+                _ = tailnet_cancel.cancelled() => Err(CoreError::new("TAILNET_CHANGED", "Embedded Tailscale configuration changed", false)),
+                result = open => result,
+            }
+        }
     }
 }
 
@@ -370,9 +419,10 @@ async fn open_route(
         ));
     };
     if origin.status() == Status::Error
-        && let Some(error) = origin.error.borrow().clone().filter(CoreError::is_terminal) {
-            return Err(error);
-        }
+        && let Some(error) = origin.error.borrow().clone().filter(CoreError::is_terminal)
+    {
+        return Err(error);
+    }
     let parent = connect(core, &origin).await?;
     let scope = ids::new_id();
     let (route_tx, route_rx) = tokio::sync::mpsc::unbounded_channel::<RouteIn>();
@@ -435,33 +485,34 @@ async fn open_route(
 async fn admit(core: &Rc<Core>, host: &Rc<Host>, opened: Opened, generation: u64) {
     let config = host.config.borrow().clone();
     if opened.security == Some(paseo_client::crypto::SecurityMode::Protected)
-        && let Some(key) = relay_key(&config) {
-            core.protected_keys.borrow_mut().insert(key.clone());
-            let pref = protected_pref(&key);
-            let known = core.store.borrow().prefs.values.get(&pref) == Some(&Value::Bool(true));
-            if !known {
-                core.store
-                    .borrow_mut()
-                    .prefs
-                    .values
-                    .insert(pref, Value::Bool(true));
-                if let Err(error) = store::write_prefs(core).await {
-                    let client = opened.client.clone();
-                    tokio::task::spawn_local(async move { client.close().await });
-                    lost(
-                        core,
-                        host,
-                        generation,
-                        CoreError::new(
-                            "RELAY_SECURITY",
-                            format!("Unable to persist relay security policy: {}", error.message),
-                            false,
-                        ),
-                    );
-                    return;
-                }
+        && let Some(key) = relay_key(&config)
+    {
+        core.protected_keys.borrow_mut().insert(key.clone());
+        let pref = protected_pref(&key);
+        let known = core.store.borrow().prefs.values.get(&pref) == Some(&Value::Bool(true));
+        if !known {
+            core.store
+                .borrow_mut()
+                .prefs
+                .values
+                .insert(pref, Value::Bool(true));
+            if let Err(error) = store::write_prefs(core).await {
+                let client = opened.client.clone();
+                tokio::task::spawn_local(async move { client.close().await });
+                lost(
+                    core,
+                    host,
+                    generation,
+                    CoreError::new(
+                        "RELAY_SECURITY",
+                        format!("Unable to persist relay security policy: {}", error.message),
+                        false,
+                    ),
+                );
+                return;
             }
         }
+    }
     if host.link.borrow().generation != generation || core.closing.get() {
         let client = opened.client.clone();
         tokio::task::spawn_local(async move { client.close().await });
@@ -558,7 +609,10 @@ async fn heartbeat(core: Rc<Core>, host: Rc<Host>, conn: Rc<Conn>) {
                         conn.generation,
                         CoreError::new(
                             "DAEMON_CONNECTION_LOST",
-                            format!("Liveness check timed out ({}ms)", LIVENESS_TIMEOUT.as_millis()),
+                            format!(
+                                "Liveness check timed out ({}ms)",
+                                LIVENESS_TIMEOUT.as_millis()
+                            ),
                             true,
                         ),
                     );
@@ -643,6 +697,10 @@ fn schedule_reconnect(core: &Rc<Core>, host: &Rc<Host>) {
 pub(crate) fn close_link(core: &Rc<Core>, host: &Rc<Host>) {
     let (conn, waiters, was_active) = {
         let mut link = host.link.borrow_mut();
+        link.socket_cancel.cancel();
+        link.resource_cancel.cancel();
+        link.resource_cancel = core.cancel.child_token();
+        link.resource_generation += 1;
         if let Some(timer) = link.reconnect.take() {
             timer.abort();
         }
@@ -650,7 +708,11 @@ pub(crate) fn close_link(core: &Rc<Core>, host: &Rc<Host>) {
         link.generation += 1;
         link.status = Status::Disconnected;
         link.rtt = None;
-        (link.conn.take(), std::mem::take(&mut link.waiters), was_active)
+        (
+            link.conn.take(),
+            std::mem::take(&mut link.waiters),
+            was_active,
+        )
     };
     let error = CoreError::new("DAEMON_CONNECTION_LOST", "Client closed", true);
     if let Some(conn) = conn {
@@ -742,10 +804,11 @@ fn verify_connection(core: &Rc<Core>, host: &Rc<Host>) {
             )
             .await;
         if let Err(error) = result
-            && host.conn_generation() == Some(conn.generation) {
-                lost(&core, &host, conn.generation, error);
-                ensure_connected(&core, &host, false);
-            }
+            && host.conn_generation() == Some(conn.generation)
+        {
+            lost(&core, &host, conn.generation, error);
+            ensure_connected(&core, &host, false);
+        }
         let mut link = host.link.borrow_mut();
         if link.verifying == Some(conn.generation) {
             link.verifying = None;
@@ -757,6 +820,7 @@ pub(crate) fn set_app_visible(core: &Rc<Core>, visible: bool) {
     if !visible {
         return;
     }
+    super::tailnet::resume(core);
     let hosts: Vec<Rc<Host>> = core.hosts.borrow().clone();
     for host in hosts {
         ensure_connected(core, &host, true);
@@ -792,12 +856,21 @@ pub(crate) async fn connect_host(core: &Rc<Core>, value: Value) {
         );
         return;
     }
+    if let Err(error) = host_config::resolve(&config) {
+        core.error(None, error);
+        return;
+    }
     let config_id = config["id"].as_str().unwrap_or_default().to_owned();
     let existing = core
         .hosts
         .borrow()
         .iter()
-        .find(|host| host.connections.borrow().iter().any(|c| c["id"] == config_id.as_str()))
+        .find(|host| {
+            host.connections
+                .borrow()
+                .iter()
+                .any(|c| c["id"] == config_id.as_str())
+        })
         .cloned();
     if let Some(host) = existing {
         update_host(core, &host, config).await;
@@ -808,7 +881,9 @@ pub(crate) async fn connect_host(core: &Rc<Core>, value: Value) {
         .unwrap_or_else(|| config_id.clone());
     let mut connections = vec![config.clone()];
     for candidate in extra {
-        if storage::valid_config(&candidate) && !connections.iter().any(|c| c["id"] == candidate["id"]) {
+        if storage::valid_config(&candidate)
+            && !connections.iter().any(|c| c["id"] == candidate["id"])
+        {
             connections.push(candidate);
         }
     }
@@ -821,6 +896,7 @@ pub(crate) async fn connect_host(core: &Rc<Core>, value: Value) {
 /// Flutter `updateHost`.
 async fn update_host(core: &Rc<Core>, host: &Rc<Host>, config: Value) {
     detach(core, host);
+    dispose_selector(host);
     let credentials_changed = {
         let mut connections = host.connections.borrow_mut();
         match connections.iter().position(|c| c["id"] == config["id"]) {
@@ -907,6 +983,9 @@ pub(crate) fn activate_connection(core: &Rc<Core>, host: &Rc<Host>, connection: 
     if core.closing.get() || !core.contains(host) || host.selector.borrow().is_none() {
         return;
     }
+    if host_config::uses_tailnet(&host.config.borrow()) != host_config::uses_tailnet(&connection) {
+        return;
+    }
     detach(core, host);
     *host.config.borrow_mut() = connection;
     attach(core, host);
@@ -915,7 +994,12 @@ pub(crate) fn activate_connection(core: &Rc<Core>, host: &Rc<Host>, connection: 
 }
 
 /// Merges a host that resolved to an already saved server (Flutter duplicate handling).
-pub(crate) async fn merge_into(core: &Rc<Core>, host: &Rc<Host>, duplicate: &Rc<Host>, previous_id: &str) {
+pub(crate) async fn merge_into(
+    core: &Rc<Core>,
+    host: &Rc<Host>,
+    duplicate: &Rc<Host>,
+    previous_id: &str,
+) {
     {
         let connections = host.connections.borrow().clone();
         let mut target = duplicate.connections.borrow_mut();
@@ -924,6 +1008,16 @@ pub(crate) async fn merge_into(core: &Rc<Core>, host: &Rc<Host>, duplicate: &Rc<
                 target.push(config);
             }
         }
+    }
+    // Resolving an explicitly selected tailnet connection to a known server must not
+    // silently adopt that server's existing normal route during duplicate coalescing.
+    if host_config::uses_tailnet(&host.config.borrow())
+        && !host_config::uses_tailnet(&duplicate.config.borrow())
+    {
+        detach(core, duplicate);
+        dispose_selector(duplicate);
+        *duplicate.config.borrow_mut() = host.config.borrow().clone();
+        attach(core, duplicate);
     }
     core.hosts.borrow_mut().retain(|h| !Rc::ptr_eq(h, host));
     dispose_selector(host);
@@ -1003,7 +1097,11 @@ pub(crate) async fn refresh_hosts(core: &Rc<Core>) {
 pub(crate) async fn discover_routes(core: &Rc<Core>, origin: &Rc<Host>, directory: Value) {
     let rows = directory["hosts"].as_array().cloned().unwrap_or_default();
     for row in rows {
-        let Some(id) = row["serverId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned) else {
+        let Some(id) = row["serverId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+        else {
             continue;
         };
         let route = format!("{}/{id}", origin.server_id());
@@ -1015,7 +1113,11 @@ pub(crate) async fn discover_routes(core: &Rc<Core>, origin: &Rc<Host>, director
         {
             continue;
         }
-        let label = row["label"].as_str().filter(|l| !l.is_empty()).unwrap_or(&id).to_owned();
+        let label = row["label"]
+            .as_str()
+            .filter(|l| !l.is_empty())
+            .unwrap_or(&id)
+            .to_owned();
         let config = json!({
             "id": format!("{}/{id}", origin.config_id()),
             "label": label,
@@ -1067,7 +1169,11 @@ pub(crate) async fn discover_local_daemon(core: &Rc<Core>) {
         .config
         .daemon_home
         .clone()
-        .or_else(|| std::env::var_os("PASEO_HOME").filter(|v| !v.is_empty()).map(Into::into))
+        .or_else(|| {
+            std::env::var_os("PASEO_HOME")
+                .filter(|v| !v.is_empty())
+                .map(Into::into)
+        })
         .or_else(|| dirs::home_dir().map(|home| home.join(".paseo")));
     let Some(home) = home else {
         return;
@@ -1102,6 +1208,9 @@ pub(crate) async fn discover_local_daemon(core: &Rc<Core>) {
     };
     let listening = host_config::socket_identity(&listen);
     let local = |c: &Value| {
+        if host_config::uses_tailnet(c) {
+            return false;
+        }
         let endpoint = c["endpoint"].as_str().unwrap_or_default();
         endpoint == listen
             || (listening.is_some() && host_config::socket_identity(endpoint) == listening)
@@ -1128,7 +1237,8 @@ pub(crate) async fn discover_local_daemon(core: &Rc<Core>) {
             let mut connections = host.connections.borrow_mut();
             if !connections.iter().any(&local) {
                 let config = host.config.borrow();
-                let mut connection = json!({"id": new_host_id(), "label": config["label"], "endpoint": listen});
+                let mut connection =
+                    json!({"id": new_host_id(), "label": config["label"], "endpoint": listen});
                 if let Some(path) = &credential_path {
                     connection["localCredentialPath"] = path.clone().into();
                 }
@@ -1161,16 +1271,21 @@ pub(crate) async fn discover_local_daemon(core: &Rc<Core>) {
                 .cloned()
         };
         if let Some(selected) = selected
-            && selected != *host.config.borrow() {
-                detach(core, &host);
-                *host.config.borrow_mut() = selected;
-                attach(core, &host);
-            }
+            && selected != *host.config.borrow()
+        {
+            detach(core, &host);
+            *host.config.borrow_mut() = selected;
+            attach(core, &host);
+        }
         save(core).await;
         return;
     }
     // Original `upsertConnectionFromListen`: labelled with the advertised hostname.
-    let hostname = lock["hostname"].as_str().unwrap_or_default().trim().to_owned();
+    let hostname = lock["hostname"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
     let mut config = json!({
         "id": new_host_id(),
         "label": if hostname.is_empty() { listen.clone() } else { hostname },
@@ -1180,21 +1295,34 @@ pub(crate) async fn discover_local_daemon(core: &Rc<Core>) {
         config["localCredentialPath"] = path.into();
     }
     let id = config["id"].as_str().unwrap_or_default().to_owned();
-    let host = Host::new(core.next_key(), config.clone(), id, None, vec![config], None);
+    let host = Host::new(
+        core.next_key(),
+        config.clone(),
+        id,
+        None,
+        vec![config],
+        None,
+    );
     add_to_core(core, &host);
     save(core).await;
 }
 
 /// Adds `CoreConfig::default_endpoint` when no saved connection reaches it.
 async fn ensure_default_endpoint(core: &Rc<Core>) {
-    let Some(endpoint) = core.config.default_endpoint.clone().filter(|e| !e.trim().is_empty()) else {
+    let Some(endpoint) = core
+        .config
+        .default_endpoint
+        .clone()
+        .filter(|e| !e.trim().is_empty())
+    else {
         return;
     };
     let identity = host_config::socket_identity(&endpoint);
     let present = core.hosts.borrow().iter().any(|host| {
         host.connections.borrow().iter().any(|c| {
             let saved = c["endpoint"].as_str().unwrap_or_default();
-            saved == endpoint || (identity.is_some() && host_config::socket_identity(saved) == identity)
+            saved == endpoint
+                || (identity.is_some() && host_config::socket_identity(saved) == identity)
         })
     });
     if present {
@@ -1202,7 +1330,14 @@ async fn ensure_default_endpoint(core: &Rc<Core>) {
     }
     let id = new_host_id();
     let config = json!({"id": id, "label": endpoint, "endpoint": endpoint});
-    let host = Host::new(core.next_key(), config.clone(), id, None, vec![config], None);
+    let host = Host::new(
+        core.next_key(),
+        config.clone(),
+        id,
+        None,
+        vec![config],
+        None,
+    );
     add_to_core(core, &host);
     save(core).await;
 }
@@ -1221,8 +1356,11 @@ pub(crate) fn probe_host(core: &Rc<Core>, request_id: RequestId, config: Value) 
                 protected_known: protected_known(&core, &config),
                 timeout: host_config::probe_connect_timeout(&config),
             };
-            let opened =
-                connection::open_direct(&config, request, core.buffers.clone(), &core.cancel).await?;
+            let (proxy, tailnet_cancel) = super::tailnet::route(&core, &config)?;
+            let opened = tokio::select! { biased;
+                _ = tailnet_cancel.cancelled() => return Err(CoreError::new("TAILNET_CHANGED", "Embedded Tailscale configuration changed", false)),
+                result = connection::open_direct(&config, request, core.buffers.clone(), &tailnet_cancel, proxy) => result?,
+            };
             let info = opened.client.server_info();
             let client = opened.client.clone();
             tokio::task::spawn_local(async move { client.close().await });
@@ -1242,6 +1380,7 @@ pub(crate) async fn initialize(core: &Rc<Core>) {
     let (mut loaded, prefs) = store::load(paths).await;
     let hosts = std::mem::take(&mut loaded.hosts);
     core.store.borrow_mut().apply_loaded(&mut loaded, prefs);
+    super::tailnet::initialize(core);
     let stored_id = core
         .store
         .borrow()
@@ -1328,5 +1467,47 @@ mod tests {
         assert_eq!(reconnect_delay(4), Duration::from_millis(24_000));
         assert_eq!(reconnect_delay(5), Duration::from_millis(30_000));
         assert_eq!(reconnect_delay(40), Duration::from_millis(30_000));
+    }
+
+    #[tokio::test]
+    async fn tailnet_duplicate_merge_preserves_selected_network_authority() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let core = Core::new(
+                    crate::CoreConfig {
+                        state_dir: dir.path().to_owned(),
+                        daemon_home: None,
+                        default_endpoint: None,
+                        tailnet_key_store: None,
+                    },
+                    std::sync::Arc::new(crate::events::EventQueue::new(std::sync::Arc::new(|| {}))),
+                );
+                // Exercise merge ownership without starting unrelated directory hydration.
+                core.closing.set(true);
+                let tailnet =
+                    json!({"id":"tail","endpoint":"ws://peer:6767/ws","networkMode":"tailnet"});
+                let normal = json!({"id":"normal","endpoint":"ws://peer:6767/ws"});
+                let incoming = Host::new(
+                    1,
+                    tailnet.clone(),
+                    "server".into(),
+                    None,
+                    vec![tailnet],
+                    None,
+                );
+                let existing =
+                    Host::new(2, normal.clone(), "server".into(), None, vec![normal], None);
+                let normal_socket = existing.resource_cancellation();
+                core.hosts
+                    .borrow_mut()
+                    .extend([incoming.clone(), existing.clone()]);
+                merge_into(&core, &incoming, &existing, "incoming").await;
+                assert!(host_config::uses_tailnet(&existing.config.borrow()));
+                assert!(normal_socket.is_cancelled());
+                assert_eq!(core.hosts.borrow().len(), 1);
+                assert_eq!(existing.connections.borrow().len(), 2);
+            })
+            .await;
     }
 }

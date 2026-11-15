@@ -19,11 +19,21 @@ const COMPACT_TREE_ROW_HEIGHT: f64 = 44.0;
 
 /// The minimum height of a `ChangedFilesTree` row.
 pub fn tree_row_height(compact: bool) -> f64 {
-    if compact { COMPACT_TREE_ROW_HEIGHT } else { TREE_ROW_HEIGHT }
+    if compact {
+        COMPACT_TREE_ROW_HEIGHT
+    } else {
+        TREE_ROW_HEIGHT
+    }
 }
 
 pub fn tree_row_metrics(cx: &mut Cx2d, paint: &mut GitPaint) -> RowMetrics {
-    RowMetrics::measure(&mut paint.painter, cx, TextSpec::new(Font::Regular, ui(14.0), palette().foreground), None, 0.0)
+    RowMetrics::measure(
+        &mut paint.painter,
+        cx,
+        TextSpec::new(Font::Regular, ui(14.0), palette().foreground),
+        None,
+        0.0,
+    )
 }
 
 /// Original `FileTreeRow` of `ChangedFilesTree` in its 28px `band`: 12px plus
@@ -56,17 +66,34 @@ pub fn file_tree_row(
         }
     };
     let indent = (4.0 + depth as f64 * 12.0).min(band.size.x);
-    let content = rect(band.pos.x + indent, band.pos.y, band.size.x - indent, band.size.y);
+    let content = rect(
+        band.pos.x + indent,
+        band.pos.y,
+        band.size.x - indent,
+        band.size.y,
+    );
     let right = band.pos.x + band.size.x - 8.0;
     // Stats return their measured width; do not format/shape them a second time
     // just to reserve the trailing slot.
     paint.begin_clip(cx, content);
     let trailing_width = match row {
-        TreeRow::Folder { additions, deletions, .. } => diff_stat(cx, paint, right, center_y, *additions, *deletions, true),
+        TreeRow::Folder {
+            additions,
+            deletions,
+            ..
+        } => diff_stat(cx, paint, right, center_y, *additions, *deletions, true),
         TreeRow::File { index, .. } => {
             let file = &files[*index];
             change_icon(cx, paint, dvec2(right - 7.0, center_y), change_kind(file));
-            22.0 + diff_stat(cx, paint, right - 22.0, center_y, int(file, "additions"), int(file, "deletions"), true)
+            22.0 + diff_stat(
+                cx,
+                paint,
+                right - 22.0,
+                center_y,
+                int(file, "additions"),
+                int(file, "deletions"),
+                true,
+            )
         }
     };
     let slots = metrics.layout(content, 8.0, 16.0, trailing_width, 8.0);
@@ -74,16 +101,36 @@ pub fn file_tree_row(
     if slots.leading.size.x >= 16.0 {
         match row {
             TreeRow::Folder { path, .. } => {
-                let chevron = if collapsed.contains(path) { "chevron-right" } else { "chevron-down" };
-                paint.painter.icon(cx, slots.leading, chevron, 16.0, colors.muted);
+                let chevron = if collapsed.contains(path) {
+                    "chevron-right"
+                } else {
+                    "chevron-down"
+                };
+                paint
+                    .painter
+                    .icon(cx, slots.leading, chevron, 16.0, colors.muted);
             }
             TreeRow::File { .. } => {
-                icon_ready = paint.file_icon(cx, rect(slots.leading.pos.x, center_y - 8.0, 16.0, 16.0), label);
+                icon_ready = paint.file_icon(
+                    cx,
+                    rect(slots.leading.pos.x, center_y - 8.0, 16.0, 16.0),
+                    label,
+                );
             }
         }
     }
     let alpha = if hovered { 1.0 } else { 0.76 };
-    paint.painter.text_in(cx, slots.title, TextSpec::new(Font::Regular, ui(14.0), with_alpha(colors.foreground, alpha)), label, 0.0);
+    paint.painter.text_in(
+        cx,
+        slots.title,
+        TextSpec::new(
+            Font::Regular,
+            ui(14.0),
+            with_alpha(colors.foreground, alpha),
+        ),
+        label,
+        0.0,
+    );
     paint.end_clip(cx);
     icon_ready
 }
@@ -128,7 +175,15 @@ pub fn toolbar_trailing_padding(compact: bool, framed: bool) -> f64 {
 /// Original `FilePaneToolbar`: a 36px band with a 1px bottom border.
 pub fn toolbar_band(cx: &mut Cx2d, paint: &mut GitPaint, area: Rect, sidebar: bool) {
     let colors = palette();
-    paint.fill(cx, area, if sidebar { colors.sidebar } else { colors.surface0 });
+    paint.fill(
+        cx,
+        area,
+        if sidebar {
+            colors.sidebar
+        } else {
+            colors.surface0
+        },
+    );
     paint.fill(
         cx,
         rect(area.pos.x, area.pos.y + area.size.y - 1.0, area.size.x, 1.0),
@@ -157,7 +212,11 @@ pub fn toolbar_button(
         paint.rounded(cx, area, colors.interaction_highlight, 6.0, None);
     }
     if let Some(icon) = icon {
-        let color = if enabled { colors.muted } else { with_alpha(colors.extra_muted, 0.5) };
+        let color = if enabled {
+            colors.muted
+        } else {
+            with_alpha(colors.extra_muted, 0.5)
+        };
         paint.icon(cx, icon, toolbar_icon_size(compact), color, area.center());
     }
     area
@@ -196,18 +255,46 @@ pub fn label_trigger(
         paint.icon(cx, icon, 14.0, color, dvec2(cursor + 7.0, center_y));
         cursor += leading_width;
     }
-    let color = if highlighted { colors.foreground } else { colors.muted };
-    paint.text_centered(cx, Font::Regular, size, color, cursor, area.pos.y, height, &fitted, text_max + 1.0);
+    let color = if highlighted {
+        colors.foreground
+    } else {
+        colors.muted
+    };
+    paint.text_centered(
+        cx,
+        Font::Regular,
+        size,
+        color,
+        cursor,
+        area.pos.y,
+        height,
+        &fitted,
+        text_max + 1.0,
+    );
     cursor += text_width;
     if chevron {
-        paint.icon(cx, "chevron-down", 12.0, colors.muted, dvec2(cursor + 4.0 + 6.0, center_y));
+        paint.icon(
+            cx,
+            "chevron-down",
+            12.0,
+            colors.muted,
+            dvec2(cursor + 4.0 + 6.0, center_y),
+        );
     }
     area
 }
 
 /// Original `DiffStat`: `+a` in success and `-d` in danger, 4px apart, small.
 /// Draws right-aligned ending at `right` when `right_align`, else from `x`.
-pub fn diff_stat(cx: &mut Cx2d, paint: &mut GitPaint, x: f64, center_y: f64, additions: i64, deletions: i64, right_align: bool) -> f64 {
+pub fn diff_stat(
+    cx: &mut Cx2d,
+    paint: &mut GitPaint,
+    x: f64,
+    center_y: f64,
+    additions: i64,
+    deletions: i64,
+    right_align: bool,
+) -> f64 {
     let colors = palette();
     let size = ui(12.0);
     let plus = format!("+{}", format_diff_count(additions));
@@ -218,16 +305,49 @@ pub fn diff_stat(cx: &mut Cx2d, paint: &mut GitPaint, x: f64, center_y: f64, add
     let start = if right_align { x - width } else { x };
     let line = paint.measure(cx, Font::Regular, size, "Ag").y;
     let top = center_y - line / 2.0;
-    paint.text(cx, Font::Regular, size, colors.success, dvec2(start, top), &plus);
-    paint.text(cx, Font::Regular, size, colors.danger, dvec2(start + plus_width + 4.0, top), &minus);
+    paint.text(
+        cx,
+        Font::Regular,
+        size,
+        colors.success,
+        dvec2(start, top),
+        &plus,
+    );
+    paint.text(
+        cx,
+        Font::Regular,
+        size,
+        colors.danger,
+        dvec2(start + plus_width + 4.0, top),
+        &minus,
+    );
     width
 }
 
-pub fn measure_diff_stat(cx: &mut Cx2d, paint: &mut GitPaint, additions: i64, deletions: i64) -> f64 {
+pub fn measure_diff_stat(
+    cx: &mut Cx2d,
+    paint: &mut GitPaint,
+    additions: i64,
+    deletions: i64,
+) -> f64 {
     let size = ui(12.0);
-    paint.measure(cx, Font::Regular, size, &format!("+{}", format_diff_count(additions))).x
+    paint
+        .measure(
+            cx,
+            Font::Regular,
+            size,
+            &format!("+{}", format_diff_count(additions)),
+        )
+        .x
         + 4.0
-        + paint.measure(cx, Font::Regular, size, &format!("-{}", format_diff_count(deletions))).x
+        + paint
+            .measure(
+                cx,
+                Font::Regular,
+                size,
+                &format!("-{}", format_diff_count(deletions)),
+            )
+            .x
 }
 
 /// Original `FileChangeIcon`: square-plus / square-minus / square-dot, 14px.
@@ -269,7 +389,14 @@ fn button_metrics(size: ButtonSize, compact: bool) -> (f64, f64, f64) {
 }
 
 /// The width a [`button`] needs.
-pub fn measure_button(cx: &mut Cx2d, paint: &mut GitPaint, label: &str, icon: bool, size: ButtonSize, compact: bool) -> f64 {
+pub fn measure_button(
+    cx: &mut Cx2d,
+    paint: &mut GitPaint,
+    label: &str,
+    icon: bool,
+    size: ButtonSize,
+    compact: bool,
+) -> f64 {
     let (_, padding, text) = button_metrics(size, compact);
     let text_width = paint.measure(cx, Font::Medium, ui(text), label).x;
     padding * 2.0 + text_width + if icon { 16.0 + 6.0 } else { 0.0 }
@@ -299,7 +426,11 @@ pub fn button(
     let (background, border, foreground) = match variant {
         ButtonVariant::Primary => (colors.primary, None, colors.on_primary),
         ButtonVariant::Destructive => (colors.destructive, None, vec4(1.0, 1.0, 1.0, 1.0)),
-        ButtonVariant::Secondary => (colors.surface2, Some((colors.border, 1.0)), colors.foreground),
+        ButtonVariant::Secondary => (
+            colors.surface2,
+            Some((colors.border, 1.0)),
+            colors.foreground,
+        ),
         ButtonVariant::Ghost => (vec4(0.0, 0.0, 0.0, 0.0), None, colors.muted),
     };
     let background = if hovered && enabled && variant == ButtonVariant::Ghost {
@@ -317,7 +448,11 @@ pub fn button(
     if hovered && enabled && variant != ButtonVariant::Ghost {
         paint.rounded(cx, area, colors.interaction_highlight, 6.0, None);
     }
-    let foreground = if hovered && enabled && variant == ButtonVariant::Ghost { colors.foreground } else { foreground };
+    let foreground = if hovered && enabled && variant == ButtonVariant::Ghost {
+        colors.foreground
+    } else {
+        foreground
+    };
     let foreground = with_alpha(foreground, opacity);
     let text_px = ui(text);
     let text_width = paint.measure(cx, Font::Medium, text_px, label).x;

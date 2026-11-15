@@ -1,7 +1,7 @@
 use super::storage;
-use paseo_protocol::crypto::KeyPair;
 use anyhow::{Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use paseo_protocol::crypto::KeyPair;
 use rand::RngCore;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path, sync::Arc};

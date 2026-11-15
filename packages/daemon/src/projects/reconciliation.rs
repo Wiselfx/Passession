@@ -240,9 +240,9 @@ impl ProjectService {
                         Ok(p)
                     })
                     .await?
-                {
-                    self.publish_project(&updated).await?;
-                }
+            {
+                self.publish_project(&updated).await?;
+            }
             for (workspace, state) in &workspace_states {
                 if workspace["projectId"] != project_id || *state != DirectoryObservation::Present {
                     continue;

@@ -129,7 +129,7 @@ pub fn publish_worker_ready(listen: &str, server_id: &str) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     serde_json::to_writer(
         &mut stdout,
-        &json!({"type":"paseo:ready","token":token,"listen":listen,"serverId":server_id,"version":env!("CARGO_PKG_VERSION"),"sourceSha":option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or("")}),
+        &json!({"type":"paseo:ready","token":token,"listen":listen,"serverId":server_id,"version":crate::VERSION,"sourceSha":option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or("")}),
     )?;
     stdout.write_all(b"\n")?;
     stdout.flush()?;
@@ -399,12 +399,15 @@ async fn drain<R: AsyncRead + Unpin>(
             let mut lifecycle = false;
             if let Some((sender, token)) = &events
                 && let Ok(value) = serde_json::from_slice::<Value>(line)
-                    && matches!(value["type"].as_str(), Some("paseo:ready" | "paseo:stopping"))
-                        && value["token"].as_str() == Some(token.as_str())
-                    {
-                        lifecycle = true;
-                        let _ = sender.send(value).await;
-                    }
+                && matches!(
+                    value["type"].as_str(),
+                    Some("paseo:ready" | "paseo:stopping")
+                )
+                && value["token"].as_str() == Some(token.as_str())
+            {
+                lifecycle = true;
+                let _ = sender.send(value).await;
+            }
             if !lifecycle {
                 log.write(line).await;
                 if stderr {

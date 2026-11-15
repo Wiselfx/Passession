@@ -97,10 +97,18 @@ pub struct PromptDeliveryError {
 }
 impl PromptDeliveryError {
     pub fn not_delivered(message: impl Into<String>) -> anyhow::Error {
-        Self { rejected: false, message: message.into() }.into()
+        Self {
+            rejected: false,
+            message: message.into(),
+        }
+        .into()
     }
     pub fn rejected(message: impl Into<String>) -> anyhow::Error {
-        Self { rejected: true, message: message.into() }.into()
+        Self {
+            rejected: true,
+            message: message.into(),
+        }
+        .into()
     }
 }
 
@@ -196,7 +204,11 @@ impl SubagentReplay {
     /// `None` when the parent's event owner closed before applying it.
     pub async fn outcome(&self) -> Option<ReplayOutcome> {
         let mut outcome = self.outcome.clone();
-        outcome.wait_for(Option::is_some).await.ok().and_then(|value| *value)
+        outcome
+            .wait_for(Option::is_some)
+            .await
+            .ok()
+            .and_then(|value| *value)
     }
 }
 
@@ -262,7 +274,8 @@ impl ChildRowHold {
                 .collect();
             {
                 let _lane = self.lane.lock().await;
-                sink.emit(request.replay.marker(provider, child, events, coverage)).await?;
+                sink.emit(request.replay.marker(provider, child, events, coverage))
+                    .await?;
             }
             Ok::<_, anyhow::Error>((request.replay.outcome().await, snapshot))
         }
@@ -291,10 +304,19 @@ impl SubagentHistoryRequest {
     /// The coverage a replay may claim: a source read completely, of a child
     /// recorded as finished. Rows are marked to agree.
     pub fn settle(&self, events: &mut [Value], read: HistoryCoverage) -> HistoryCoverage {
-        let finished = matches!(self.status.as_str(), Some("completed" | "failed" | "canceled"));
-        let coverage = if finished { read } else { HistoryCoverage::Unverified };
+        let finished = matches!(
+            self.status.as_str(),
+            Some("completed" | "failed" | "canceled")
+        );
+        let coverage = if finished {
+            read
+        } else {
+            HistoryCoverage::Unverified
+        };
         for event in events.iter_mut() {
-            if event["event"]["type"] == "timeline" && event["event"]["id"] == self.child_id.as_str() {
+            if event["event"]["type"] == "timeline"
+                && event["event"]["id"] == self.child_id.as_str()
+            {
                 event["event"]["historyComplete"] =
                     Value::Bool(coverage == HistoryCoverage::Complete);
             }
@@ -387,7 +409,9 @@ pub trait AgentProvider: Send + Sync {
     fn capabilities(&self) -> &Value;
     /// Whether the provider has paired native archive/restore operations.
     /// Paseo's own archive metadata remains supported for every provider.
-    fn supports_native_archive(&self) -> bool { false }
+    fn supports_native_archive(&self) -> bool {
+        false
+    }
     /// None delegates to the registry's generic creation policy, matching the
     /// original optional provider hook rather than overriding it with defaults.
     fn resolve_create_config(&self, _input: &Value) -> Option<Result<Value>> {

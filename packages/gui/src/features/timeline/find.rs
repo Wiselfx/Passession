@@ -32,7 +32,11 @@ pub enum Phase {
 pub enum Request {
     /// After 120ms, call `search_due(token)`.
     Debounce { token: u64 },
-    Search { token: u64, query: String, cursor: Option<i64> },
+    Search {
+        token: u64,
+        query: String,
+        cursor: Option<i64>,
+    },
     /// Load older history until `seq` is loaded (session.reveal).
     Load { token: u64, seq: i64 },
     /// Wait for the loaded target up to 5s; then `wait_expired(token)`.
@@ -61,8 +65,16 @@ enum Pending {
     Debounce,
     Search,
     /// Navigation: resolving `index` going `direction`, `remaining` tries left.
-    Load { index: usize, direction: i32, remaining: usize },
-    Wait { index: usize, direction: i32, remaining: usize },
+    Load {
+        index: usize,
+        direction: i32,
+        remaining: usize,
+    },
+    Wait {
+        index: usize,
+        direction: i32,
+        remaining: usize,
+    },
 }
 
 pub struct FindController {
@@ -96,7 +108,9 @@ pub fn row_match_count(row: &Value, query: &str) -> usize {
     let text = str_of(get(item, "text"));
     match str_of(get(item, "type")) {
         "assistant_message" => find_match_count(text, query),
-        "user_message" => find_pattern(query).map(|p| p.find_iter(text).count()).unwrap_or(0),
+        "user_message" => find_pattern(query)
+            .map(|p| p.find_iter(text).count())
+            .unwrap_or(0),
         _ => 0,
     }
 }
@@ -129,7 +143,8 @@ impl FindController {
     /// The occurrence to highlight in `selected_row`.
     pub fn highlight(&self) -> Option<(String, i64, usize)> {
         (self.open && self.highlighted).then_some(())?;
-        self.selected_row.map(|row| (self.query.clone(), row, self.in_message.0))
+        self.selected_row
+            .map(|row| (self.query.clone(), row, self.in_message.0))
     }
 
     fn cancel(&mut self) {
@@ -172,7 +187,11 @@ impl FindController {
         self.current = None;
         self.in_message = (0, 0);
         self.query = value.to_owned();
-        self.phase = if value.trim().is_empty() { Phase::Idle } else { Phase::Searching };
+        self.phase = if value.trim().is_empty() {
+            Phase::Idle
+        } else {
+            Phase::Searching
+        };
         self.selected_row = None;
         self.occurrence = 0;
         self.count = 0;
@@ -189,7 +208,11 @@ impl FindController {
             return;
         }
         self.pending = Pending::Search;
-        self.requests.push(Request::Search { token, query: self.query.clone(), cursor: None });
+        self.requests.push(Request::Search {
+            token,
+            query: self.query.clone(),
+            cursor: None,
+        });
     }
 
     fn fail(&mut self, failure: Failure) {
@@ -200,7 +223,13 @@ impl FindController {
     }
 
     /// One `agent.timeline.search.response` page (or its failure).
-    pub fn on_search(&mut self, token: u64, result: Result<Value, String>, loaded_epoch: Option<&str>, rows: &[Rc<Value>]) {
+    pub fn on_search(
+        &mut self,
+        token: u64,
+        result: Result<Value, String>,
+        loaded_epoch: Option<&str>,
+        rows: &[Rc<Value>],
+    ) {
         if token != self.token || !matches!(self.pending, Pending::Search) {
             return;
         }
@@ -209,7 +238,9 @@ impl FindController {
             return;
         };
         let epoch = str_of(get(&page, "epoch")).to_owned();
-        if loaded_epoch.is_some_and(|e| e != epoch) || self.result_epoch.as_deref().is_some_and(|e| e != epoch) {
+        if loaded_epoch.is_some_and(|e| e != epoch)
+            || self.result_epoch.as_deref().is_some_and(|e| e != epoch)
+        {
             self.fail(Failure::HistoryChanged);
             return;
         }
@@ -219,11 +250,18 @@ impl FindController {
                 seq: int_of(get(location, "seq")),
                 role: str_or(get(location, "role"), "assistant").to_owned(),
                 // COMPAT(timelineSearchCount): hosts before v0.9.0 send no count.
-                count: get(location, "count").as_u64().map(|c| c as usize).unwrap_or(1),
+                count: get(location, "count")
+                    .as_u64()
+                    .map(|c| c as usize)
+                    .unwrap_or(1),
             });
         }
         if let Some(cursor) = get(&page, "nextCursor").as_i64() {
-            self.requests.push(Request::Search { token, query: self.query.clone(), cursor: Some(cursor) });
+            self.requests.push(Request::Search {
+                token,
+                query: self.query.clone(),
+                cursor: Some(cursor),
+            });
             return;
         }
         self.pending = Pending::None;
@@ -240,7 +278,11 @@ impl FindController {
             self.fail(Failure::HistoryChanged);
             return;
         }
-        if let Pending::Wait { index, direction, remaining } = self.pending.clone()
+        if let Pending::Wait {
+            index,
+            direction,
+            remaining,
+        } = self.pending.clone()
             && let Some(location) = self.locations.get(index).cloned()
             && let Some(target) = self.target(&location, false, epoch, rows)
         {
@@ -262,18 +304,35 @@ impl FindController {
         if token != self.token {
             return;
         }
-        let Pending::Load { index, direction, remaining } = self.pending.clone() else { return };
+        let Pending::Load {
+            index,
+            direction,
+            remaining,
+        } = self.pending.clone()
+        else {
+            return;
+        };
         if !ok {
             self.fail(Failure::Connection);
             return;
         }
-        self.pending = Pending::Wait { index, direction, remaining };
+        self.pending = Pending::Wait {
+            index,
+            direction,
+            remaining,
+        };
         self.requests.push(Request::WaitDeadline { token });
         self.history_changed(epoch, rows);
     }
 
     /// model.ts target: the loaded row of the location's role holding it.
-    fn target(&self, location: &Location, exact: bool, epoch: Option<&str>, rows: &[Rc<Value>]) -> Option<Target> {
+    fn target(
+        &self,
+        location: &Location,
+        exact: bool,
+        epoch: Option<&str>,
+        rows: &[Rc<Value>],
+    ) -> Option<Target> {
         if epoch != self.result_epoch.as_deref() {
             return None;
         }
@@ -287,7 +346,11 @@ impl FindController {
             }
             let kind = str_of(get(get(row, "item"), "type"));
             if kind == format!("{}_message", location.role) && (!exact || start <= location.seq) {
-                return Some(Target { id: start, seq, before });
+                return Some(Target {
+                    id: start,
+                    seq,
+                    before,
+                });
             }
             if kind == "user_message" {
                 return None;
@@ -296,7 +359,14 @@ impl FindController {
         None
     }
 
-    fn navigate(&mut self, mut index: usize, direction: i32, mut remaining: usize, epoch: Option<&str>, rows: &[Rc<Value>]) {
+    fn navigate(
+        &mut self,
+        mut index: usize,
+        direction: i32,
+        mut remaining: usize,
+        epoch: Option<&str>,
+        rows: &[Rc<Value>],
+    ) {
         if self.result_epoch.is_none() {
             return;
         }
@@ -307,8 +377,15 @@ impl FindController {
             let len = self.locations.len() as i64;
             index = (((index as i64) % len + len) % len) as usize;
             let location = self.locations[index].clone();
-            let cached = self.resolved.iter().find(|(seq, _)| *seq == location.seq).map(|(_, t)| *t);
-            let still_loaded = cached.filter(|t| rows.iter().any(|r| int_of(get(r, "seqStart")) == t.id && row_seq(r) == t.seq));
+            let cached = self
+                .resolved
+                .iter()
+                .find(|(seq, _)| *seq == location.seq)
+                .map(|(_, t)| *t);
+            let still_loaded = cached.filter(|t| {
+                rows.iter()
+                    .any(|r| int_of(get(r, "seqStart")) == t.id && row_seq(r) == t.seq)
+            });
             match still_loaded.or_else(|| self.target(&location, true, epoch, rows)) {
                 Some(target) => match self.resolved_target(index, direction, target, rows) {
                     Ok(()) => return,
@@ -316,8 +393,15 @@ impl FindController {
                     Err(next) => index = next,
                 },
                 None => {
-                    self.pending = Pending::Load { index, direction, remaining };
-                    self.requests.push(Request::Load { token: self.token, seq: location.seq });
+                    self.pending = Pending::Load {
+                        index,
+                        direction,
+                        remaining,
+                    };
+                    self.requests.push(Request::Load {
+                        token: self.token,
+                        seq: location.seq,
+                    });
                     return;
                 }
             }
@@ -332,15 +416,27 @@ impl FindController {
     /// A location resolved to a loaded row: collapse duplicate hits and reveal
     /// the row. Err carries the index to continue from when the row holds no
     /// rendered match (the location is dropped).
-    fn resolved_target(&mut self, index: usize, direction: i32, target: Target, rows: &[Rc<Value>]) -> Result<(), usize> {
+    fn resolved_target(
+        &mut self,
+        index: usize,
+        direction: i32,
+        target: Target,
+        rows: &[Rc<Value>],
+    ) -> Result<(), usize> {
         let location = self.locations[index].clone();
         self.resolved.retain(|(seq, _)| *seq != location.seq);
         self.resolved.push((location.seq, target));
         // Several host hits may belong to one displayed message.
         let keep_seq = location.seq;
         let role = location.role.clone();
-        self.locations.retain(|c| c.seq == keep_seq || c.role != role || !(c.seq > target.before && c.seq <= target.seq));
-        let index = self.locations.iter().position(|c| c.seq == keep_seq).unwrap_or(0);
+        self.locations.retain(|c| {
+            c.seq == keep_seq || c.role != role || !(c.seq > target.before && c.seq <= target.seq)
+        });
+        let index = self
+            .locations
+            .iter()
+            .position(|c| c.seq == keep_seq)
+            .unwrap_or(0);
         if self.selected_row != Some(target.id) {
             self.highlighted = false;
         }
@@ -353,7 +449,11 @@ impl FindController {
             return Ok(());
         }
         self.locations.remove(index);
-        let next = if direction == -1 { index as i64 - 1 } else { index as i64 };
+        let next = if direction == -1 {
+            index as i64 - 1
+        } else {
+            index as i64
+        };
         let len = self.locations.len().max(1) as i64;
         Err((((next % len) + len) % len) as usize)
     }
@@ -361,14 +461,20 @@ impl FindController {
     /// viewport.web.ts reveal: the row's rendered occurrence count; a negative
     /// occurrence names the last one.
     fn reveal(&mut self, row: i64, occurrence: i64, rows: &[Rc<Value>]) -> (usize, usize) {
-        let Some(entry) = rows.iter().find(|r| int_of(get(r, "seqStart")) == row) else { return (0, 0) };
+        let Some(entry) = rows.iter().find(|r| int_of(get(r, "seqStart")) == row) else {
+            return (0, 0);
+        };
         self.requests.push(Request::ScrollTo { row });
         let count = row_match_count(entry, &self.query);
         if count == 0 {
             return (0, 0);
         }
         self.highlighted = true;
-        let occurrence = if occurrence < 0 { count - 1 } else { (occurrence as usize).min(count - 1) };
+        let occurrence = if occurrence < 0 {
+            count - 1
+        } else {
+            (occurrence as usize).min(count - 1)
+        };
         (occurrence, count)
     }
 
@@ -406,7 +512,10 @@ impl FindController {
                 return;
             }
         }
-        let start = self.current.map(|c| c as i64 + direction as i64).unwrap_or(0);
+        let start = self
+            .current
+            .map(|c| c as i64 + direction as i64)
+            .unwrap_or(0);
         let len = self.locations.len().max(1) as i64;
         let start = ((start % len) + len) % len;
         self.navigate(start as usize, direction, self.locations.len(), epoch, rows);

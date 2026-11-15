@@ -71,13 +71,20 @@ fn spawn(sender: ToUISender<Done>, key: String, revision: u64, text: Arc<str>, f
                         .enumerate()
                         .map(|(index, tokens)| {
                             let line = raw.get(index).copied().unwrap_or("");
-                            let runs = tokens.iter().map(|token| (token.text.len(), token.style)).collect();
+                            let runs = tokens
+                                .iter()
+                                .map(|token| (token.text.len(), token.style))
+                                .collect();
                             (line_fingerprint(line), runs)
                         })
                         .collect()
                 })
                 .map_err(|error| error.to_string());
-            let _ = sender.send(Done { key, revision, result });
+            let _ = sender.send(Done {
+                key,
+                revision,
+                result,
+            });
         })
         .ok();
 }
@@ -104,7 +111,13 @@ pub fn request(key: &str, revision: u64, text: &str, filename: &str) {
 }
 
 pub fn result(key: &str) -> Option<Rc<Highlighted>> {
-    WORKER.with(|worker| worker.borrow().docs.get(key).and_then(|doc| doc.result.clone()))
+    WORKER.with(|worker| {
+        worker
+            .borrow()
+            .docs
+            .get(key)
+            .and_then(|doc| doc.result.clone())
+    })
 }
 
 pub fn forget(key: &str) {
@@ -120,11 +133,16 @@ pub fn poll() -> bool {
         let sender = worker.receiver.sender();
         let mut any = false;
         while let Ok(done) = worker.receiver.try_recv() {
-            let Some(doc) = worker.docs.get_mut(&done.key) else { continue };
+            let Some(doc) = worker.docs.get_mut(&done.key) else {
+                continue;
+            };
             any = true;
             doc.running = false;
             if let Ok(lines) = done.result {
-                doc.result = Some(Rc::new(Highlighted { revision: done.revision, lines }));
+                doc.result = Some(Rc::new(Highlighted {
+                    revision: done.revision,
+                    lines,
+                }));
             }
             if let Some((revision, text, filename)) = doc.next.take() {
                 doc.running = true;
@@ -138,7 +156,11 @@ pub fn poll() -> bool {
 /// The role colours of the `syntaxTheme` preference (default `one`) for the app brightness.
 pub fn colors(theme: &str, dark: bool) -> [Vec4; 20] {
     let id = SyntaxThemeId::from_name(theme).unwrap_or(SyntaxThemeId::One);
-    let scheme = if dark { ColorScheme::Dark } else { ColorScheme::Light };
+    let scheme = if dark {
+        ColorScheme::Dark
+    } else {
+        ColorScheme::Light
+    };
     let palette = resolve_syntax_colors(id, scheme);
     let mut out = [Vec4::default(); 20];
     for role in HighlightStyle::ALL {

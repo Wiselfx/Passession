@@ -84,10 +84,9 @@ impl ProjectService {
             .await?
             .update_workspace(id, |current| {
                 let mut next = current.clone();
-                if needs_generated_title(current, prompt_title.as_deref())
-                    && !title.is_empty() {
-                        next["title"] = json!(title);
-                    }
+                if needs_generated_title(current, prompt_title.as_deref()) && !title.is_empty() {
+                    next["title"] = json!(title);
+                }
                 next["updatedAt"] = json!(now());
                 Ok(next)
             })

@@ -4,8 +4,8 @@
 //! The operation journal (native-update.json) belongs to
 //! `daemon_admin::update_operation`; the selection here is not a second journal.
 use super::{
-    DaemonInstance, StopOptions, error, identity, lock, read_daemon_instance,
-    same_daemon_instance, stop_daemon_instance,
+    DaemonInstance, StopOptions, error, identity, lock, read_daemon_instance, same_daemon_instance,
+    stop_daemon_instance,
 };
 use crate::daemon_admin::update_operation::RuntimeIdentity;
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -61,13 +61,19 @@ fn read_pointer(home: &Path) -> Result<Option<PathBuf>> {
     );
     let value: Value = serde_json::from_slice(&fs::read(&path)?)
         .context("Corrupt managed installation pointer")?;
-    ensure!(value["schemaVersion"] == 1, "Unsupported installation pointer");
+    ensure!(
+        value["schemaVersion"] == 1,
+        "Unsupported installation pointer"
+    );
     let root = PathBuf::from(
         value["root"]
             .as_str()
             .context("Installation pointer has no root")?,
     );
-    ensure!(root.is_absolute(), "Installation pointer root must be absolute");
+    ensure!(
+        root.is_absolute(),
+        "Installation pointer root must be absolute"
+    );
     Ok(Some(root))
 }
 
@@ -75,7 +81,7 @@ fn read_pointer(home: &Path) -> Result<Option<PathBuf>> {
 /// location (loader and linked libraries resolve without its runtime tree).
 pub(crate) fn probe_report() -> Value {
     json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::VERSION,
         "sourceSha": option_env!("PASEO_BUILD_SOURCE_SHA").unwrap_or(""),
         "controlProtocol": CONTROL_PROTOCOL,
     })
@@ -92,9 +98,9 @@ async fn probe_executable(path: &Path) -> Result<Value> {
     #[cfg(windows)]
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW: this probe has no interactive UI.
     let output = tokio::time::timeout(Duration::from_secs(20), command.output())
-    .await
-    .map_err(|_| anyhow!("{} did not answer its startup probe", path.display()))?
-    .with_context(|| format!("Cannot execute {}", path.display()))?;
+        .await
+        .map_err(|_| anyhow!("{} did not answer its startup probe", path.display()))?
+        .with_context(|| format!("Cannot execute {}", path.display()))?;
     ensure!(
         output.status.success(),
         "{} cannot run outside its runtime tree ({}): {}",
@@ -260,8 +266,198 @@ fn pinned_image(pid: u32, birth: &str) -> Result<(PathBuf, String)> {
     Ok((path, digest))
 }
 
+/// Canonical Windows paths cross the Rust/Go protocol without Win32's extended
+/// prefix. This changes representation only, never resolves links or `..`.
+pub(crate) fn desktop_protocol_path(path: &Path) -> std::borrow::Cow<'_, Path> {
+    #[cfg(windows)]
+    if let Some(text) = path.to_str() {
+        if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+            return std::borrow::Cow::Owned(PathBuf::from(format!(r"\\{unc}")));
+        }
+        if let Some(disk) = text.strip_prefix(r"\\?\")
+            && disk.as_bytes().get(1) == Some(&b':')
+            && disk.as_bytes().get(2) == Some(&b'\\')
+        {
+            return std::borrow::Cow::Borrowed(Path::new(disk));
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
+}
+
+/// The GUI/helper protocol uses the OS birth token without our internal prefix.
+pub(crate) fn verify_desktop_process(pid: u32, token: &str, executable: &Path) -> Result<()> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+    let pids = [
+        sysinfo::Pid::from_u32(pid),
+        sysinfo::Pid::from_u32(std::process::id()),
+    ];
+    let mut processes = sysinfo::System::new();
+    processes.refresh_processes_specifics(
+        // sysinfo removes a duplicate PID during the same refresh pass.
+        ProcessesToUpdate::Some(if pids[0] == pids[1] {
+            &pids[..1]
+        } else {
+            &pids
+        }),
+        true,
+        ProcessRefreshKind::nothing().with_user(UpdateKind::Always),
+    );
+    let user = processes
+        .process(pids[1])
+        .and_then(|p| p.user_id())
+        .context("Cannot verify current process user")?;
+    ensure!(
+        processes.process(pids[0]).and_then(|p| p.user_id()) == Some(user),
+        "Desktop owner belongs to another user"
+    );
+    let identity = if cfg!(target_os = "linux") {
+        format!("linux:{token}")
+    } else if cfg!(target_os = "macos") {
+        format!("darwin:{token}")
+    } else if cfg!(windows) {
+        let ticks = token.parse::<u64>().context("Invalid GUI birth token")?;
+        format!(
+            "win32:{}",
+            ticks
+                .checked_add(504_911_232_000_000_000)
+                .context("Invalid GUI birth token")?
+        )
+    } else {
+        bail!("Desktop process identity is unsupported");
+    };
+    ensure!(
+        identity::start_identity(pid)?.as_deref() == Some(identity.as_str()),
+        "Desktop owner process changed"
+    );
+    ensure!(
+        executable.is_absolute()
+            && desktop_protocol_path(&image_path(pid)?) == desktop_protocol_path(executable),
+        "Desktop owner executable changed"
+    );
+    ensure!(
+        identity::start_identity(pid)?.as_deref() == Some(identity.as_str()),
+        "Desktop owner process changed"
+    );
+    Ok(())
+}
+
+fn desktop_process_binding(pid: u32, executable: &Path) -> Result<Value> {
+    let birth = identity::start_identity(pid)?.context("Desktop runtime process disappeared")?;
+    let token = if let Some(ticks) = birth.strip_prefix("win32:") {
+        ticks
+            .parse::<u64>()?
+            .checked_sub(504_911_232_000_000_000)
+            .context("Invalid Windows process birth")?
+            .to_string()
+    } else {
+        birth
+            .split_once(':')
+            .context("Invalid process birth identity")?
+            .1
+            .to_owned()
+    };
+    verify_desktop_process(pid, &token, executable)?;
+    Ok(
+        json!({"process":{"pid":pid,"birthToken":token},"executable":desktop_protocol_path(executable)}),
+    )
+}
+
+pub(crate) fn desktop_host_process() -> Result<Value> {
+    let executable = std::env::current_exe()?.canonicalize()?;
+    Ok(json!([desktop_process_binding(
+        std::process::id(),
+        &executable
+    )?]))
+}
+
+/// A failed worker startup still leaves an owned supervisor to stop. Only its
+/// direct same-image worker child is admitted; unrelated runtime images are not.
+pub(crate) fn desktop_partial_runtime_processes(
+    instance: &DaemonInstance,
+    executable: &Path,
+) -> Result<Value> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
+    ensure!(
+        identity::verified(instance)?,
+        "Desktop supervisor identity changed"
+    );
+    let host_pid = std::process::id();
+    ensure!(
+        instance.pid != host_pid
+            && process_facts(instance.pid, false)?.and_then(|facts| facts.parent) == Some(host_pid),
+        "Desktop supervisor is not owned by this host"
+    );
+    let mut processes = sysinfo::System::new();
+    processes.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    let mut result = vec![
+        desktop_process_binding(host_pid, executable)?,
+        desktop_process_binding(instance.pid, executable)?,
+    ];
+    for (pid, process) in processes.processes() {
+        if process.parent().map(|parent| parent.as_u32()) != Some(instance.pid) {
+            continue;
+        }
+        let pid = pid.as_u32();
+        let facts = process_facts(pid, false)?.context("Desktop worker changed during snapshot")?;
+        ensure!(
+            result.len() == 2
+                && facts.parent == Some(instance.pid)
+                && facts.cmd.iter().any(|argument| argument == "__worker"),
+            "Unrecognized child of the owned desktop supervisor"
+        );
+        result.push(desktop_process_binding(pid, executable)?);
+    }
+    ensure!(
+        identity::verified(instance)?,
+        "Desktop supervisor changed during snapshot"
+    );
+    Ok(json!(result))
+}
+
+/// Read-only, birth-pinned snapshot of the exact owned host/supervisor/worker cohort.
+pub(crate) fn desktop_runtime_processes(
+    instance: &DaemonInstance,
+    worker_pid: u32,
+    executable: &Path,
+) -> Result<Value> {
+    ensure!(
+        identity::verified(instance)?,
+        "Desktop supervisor identity changed"
+    );
+    let host_pid = std::process::id();
+    ensure!(
+        worker_pid > 1
+            && worker_pid != instance.pid
+            && worker_pid != host_pid
+            && instance.pid != host_pid,
+        "Invalid desktop runtime process family"
+    );
+    ensure!(
+        process_facts(instance.pid, false)?.and_then(|facts| facts.parent) == Some(host_pid)
+            && process_facts(worker_pid, false)?.and_then(|facts| facts.parent)
+                == Some(instance.pid),
+        "Desktop runtime process ancestry changed"
+    );
+    let mut result = Vec::with_capacity(3);
+    for pid in [host_pid, instance.pid, worker_pid] {
+        result.push(desktop_process_binding(pid, executable)?);
+    }
+    ensure!(
+        identity::verified(instance)?
+            && process_facts(worker_pid, false)?.and_then(|facts| facts.parent)
+                == Some(instance.pid),
+        "Desktop runtime changed during process snapshot"
+    );
+    Ok(json!(result))
+}
+
 fn is_paseo_run(cmd: &[String]) -> bool {
-    cmd.windows(2).any(|pair| pair[0] == "daemon" && pair[1] == "run")
+    cmd.windows(2)
+        .any(|pair| pair[0] == "daemon" && pair[1] == "run")
         || cmd.iter().any(|arg| arg == "__launcher")
 }
 
@@ -348,7 +544,10 @@ fn parse_properties(text: &str) -> BTreeMap<String, String> {
 
 async fn unit_properties(unit: &str, properties: &[&str]) -> Result<BTreeMap<String, String>> {
     let mut args = vec!["show", unit];
-    let flags: Vec<String> = properties.iter().map(|p| format!("--property={p}")).collect();
+    let flags: Vec<String> = properties
+        .iter()
+        .map(|p| format!("--property={p}"))
+        .collect();
     args.extend(flags.iter().map(String::as_str));
     Ok(parse_properties(&systemctl(&args, TOOL_TIMEOUT).await?))
 }
@@ -517,8 +716,7 @@ pub(crate) async fn discover_owner(home: &Path) -> Result<LaunchOwner> {
         }
         _ => return Err(error("DAEMON_NOT_READY", "Daemon is not ready")),
     };
-    if instance.uid != identity::uid() || instance.hostname != hostname::get()?.to_string_lossy()
-    {
+    if instance.uid != identity::uid() || instance.hostname != hostname::get()?.to_string_lossy() {
         return Err(unsupported("Daemon belongs to another user or host"));
     }
     let checked = instance.clone();
@@ -602,7 +800,13 @@ async fn service_owner(
     };
     let properties = unit_properties(
         &unit,
-        &["MainPID", "ControlGroup", "FragmentPath", "LoadState", "ExecStart"],
+        &[
+            "MainPID",
+            "ControlGroup",
+            "FragmentPath",
+            "LoadState",
+            "ExecStart",
+        ],
     )
     .await?;
     let main_pid: u32 = properties
@@ -633,11 +837,12 @@ async fn service_owner(
         )));
     }
     if let Some(configured) = home_argument(&main.cmd[1..])
-        && Path::new(configured).canonicalize().ok().as_deref() != Some(home) {
-            return Err(unsupported(format!(
-                "systemd unit {unit} launches a different daemon home"
-            )));
-        }
+        && Path::new(configured).canonicalize().ok().as_deref() != Some(home)
+    {
+        return Err(unsupported(format!(
+            "systemd unit {unit} launches a different daemon home"
+        )));
+    }
     Ok(Some(ServiceOwner {
         unit,
         control_group,
@@ -645,7 +850,12 @@ async fn service_owner(
         main_pid,
         main_start_identity: identity::start_identity(main_pid)?,
         exec_path: image_path(main_pid)?,
-        exec_start_paths: exec_start_paths(properties.get("ExecStart").map(String::as_str).unwrap_or("")),
+        exec_start_paths: exec_start_paths(
+            properties
+                .get("ExecStart")
+                .map(String::as_str)
+                .unwrap_or(""),
+        ),
         launch_args: main.cmd[1..].to_vec(),
     }))
 }
@@ -683,7 +893,9 @@ async fn standalone_owner(instance: &DaemonInstance, facts: &ProcessFacts) -> Re
             .lines()
             .any(|line| line.split_whitespace().next() == Some(pid.as_str()))
         {
-            return Err(unsupported("Daemon is a launchd job; launchd updates are unsupported"));
+            return Err(unsupported(
+                "Daemon is a launchd job; launchd updates are unsupported",
+            ));
         }
     }
     #[cfg(not(unix))]
@@ -764,7 +976,10 @@ impl Installation {
         let base = match std::env::var_os("PASEO_INSTALLATIONS_DIR") {
             Some(base) => {
                 let base = PathBuf::from(base);
-                ensure!(base.is_absolute(), "PASEO_INSTALLATIONS_DIR must be absolute");
+                ensure!(
+                    base.is_absolute(),
+                    "PASEO_INSTALLATIONS_DIR must be absolute"
+                );
                 base
             }
             None => dirs::data_local_dir()
@@ -989,10 +1204,7 @@ impl Installation {
             !source.starts_with(&self.home) && !source.starts_with(&self.root),
             "Running runtime overlaps the daemon home or installation store"
         );
-        let staging = self.staging_path(&format!(
-            "adopt-{}",
-            uuid::Uuid::new_v4().simple()
-        ))?;
+        let staging = self.staging_path(&format!("adopt-{}", uuid::Uuid::new_v4().simple()))?;
         let runtimes = self.private_child("runtimes")?;
         let expected_sha = owner.executable_sha256.clone();
         let (from, to) = (source.clone(), staging.clone());
@@ -1075,9 +1287,11 @@ impl Installation {
     }
 
     fn control_intact(&self, selection: &Selection) -> Result<bool> {
-        Ok(selection.control.path == self.root.join("bin").join(EXECUTABLE)
-            && sha256_file(&selection.control.path).ok().as_deref()
-                == Some(selection.control.sha256.as_str()))
+        Ok(
+            selection.control.path == self.root.join("bin").join(EXECUTABLE)
+                && sha256_file(&selection.control.path).ok().as_deref()
+                    == Some(selection.control.sha256.as_str()),
+        )
     }
 
     /// Installs the fixed control entry from this executable by rename, never by
@@ -1085,13 +1299,10 @@ impl Installation {
     /// proven it starts outside any runtime tree.
     async fn install_control(&self) -> Result<ControlEntry> {
         let target = self.private_child("bin")?.join(EXECUTABLE);
-        let (digest, report) = install_image(
-            std::env::current_exe()?.canonicalize()?,
-            target.clone(),
-        )
-        .await?;
+        let (digest, report) =
+            install_image(std::env::current_exe()?.canonicalize()?, target.clone()).await?;
         ensure!(
-            report["version"].as_str() == Some(env!("CARGO_PKG_VERSION")),
+            report["version"].as_str() == Some(crate::VERSION),
             "Installed control entry reports another build"
         );
         Ok(ControlEntry {
@@ -1118,7 +1329,13 @@ impl Installation {
         let name: String = staged
             .version
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .take(48)
             .collect();
         let destination = runtimes.join(format!(
@@ -1273,8 +1490,8 @@ impl Installation {
                     if !metadata.is_dir() || metadata.file_type().is_symlink() {
                         continue;
                     }
-                    let retained = keep.contains(&path)
-                        || (area != "runtimes" && retain.contains(&name));
+                    let retained =
+                        keep.contains(&path) || (area != "runtimes" && retain.contains(&name));
                     if !retained {
                         fs::remove_dir_all(&path)?;
                         removed.push(path);
@@ -1371,7 +1588,10 @@ fn ensure_capacity(destination: &Path, required: u64) -> Result<()> {
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     ensure!(!destination.exists(), "Copy destination already exists");
     let mut directories = Vec::new();
-    for entry in walkdir::WalkDir::new(source).follow_links(false).sort_by_file_name() {
+    for entry in walkdir::WalkDir::new(source)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
         let entry = entry?;
         let relative = entry.path().strip_prefix(source)?;
         let target = destination.join(relative);
@@ -1418,12 +1638,21 @@ async fn verify_service_ownership(
     let changed = |reason: &str| {
         error(
             "OWNER_CHANGED",
-            format!("systemd unit {}: {reason}; refusing to stop it", service.unit),
+            format!(
+                "systemd unit {}: {reason}; refusing to stop it",
+                service.unit
+            ),
         )
     };
     let properties = unit_properties(
         &service.unit,
-        &["MainPID", "ControlGroup", "FragmentPath", "LoadState", "ExecStart"],
+        &[
+            "MainPID",
+            "ControlGroup",
+            "FragmentPath",
+            "LoadState",
+            "ExecStart",
+        ],
     )
     .await?;
     if properties.get("LoadState").map(String::as_str) != Some("loaded")
@@ -1432,13 +1661,20 @@ async fn verify_service_ownership(
     {
         return Err(changed("unit definition changed"));
     }
-    let control = installation
-        .load()?
-        .map(|selection| selection.control.path);
+    let control = installation.load()?.map(|selection| selection.control.path);
     let mut entries: Vec<String> = service.exec_start_paths.clone();
     entries.push(service.exec_path.to_string_lossy().into_owned());
-    entries.extend(control.iter().map(|path| path.to_string_lossy().into_owned()));
-    let named = exec_start_paths(properties.get("ExecStart").map(String::as_str).unwrap_or(""));
+    entries.extend(
+        control
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned()),
+    );
+    let named = exec_start_paths(
+        properties
+            .get("ExecStart")
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
     if named.is_empty() || named.iter().any(|path| !entries.contains(path)) {
         return Err(changed("ExecStart no longer launches this installation"));
     }
@@ -1479,7 +1715,9 @@ async fn verify_service_ownership(
         })
         .await?;
         if !owned {
-            return Err(changed("its main process is not this installation's daemon"));
+            return Err(changed(
+                "its main process is not this installation's daemon",
+            ));
         }
     }
     if let Some(instance) = read_daemon_instance(&owner.home).await? {
@@ -1506,7 +1744,11 @@ pub(crate) async fn stop_owner(
     match &owner.service {
         Some(service) => {
             verify_service_ownership(installation, owner, service).await?;
-            systemctl(&["stop", service.unit.as_str()], deadline + Duration::from_secs(10)).await?;
+            systemctl(
+                &["stop", service.unit.as_str()],
+                deadline + Duration::from_secs(10),
+            )
+            .await?;
             let properties = unit_properties(&service.unit, &["ActiveState"]).await?;
             if !matches!(
                 properties.get("ActiveState").map(String::as_str),
@@ -1614,9 +1856,7 @@ pub(crate) async fn bind_service(
         })
         .await?;
     }
-    if fs::read(&path).ok().as_deref() == Some(content.as_bytes())
-        && selection.service.is_some()
-    {
+    if fs::read(&path).ok().as_deref() == Some(content.as_bytes()) && selection.service.is_some() {
         return Ok(false);
     }
     let binding = ServiceBinding {
@@ -1740,7 +1980,11 @@ pub(crate) async fn start_owner(
     assert_legacy_bootable(&owner.home)?;
     match &owner.service {
         Some(service) => {
-            systemctl(&["start", service.unit.as_str()], deadline + Duration::from_secs(10)).await?;
+            systemctl(
+                &["start", service.unit.as_str()],
+                deadline + Duration::from_secs(10),
+            )
+            .await?;
             Ok(())
         }
         None => {
@@ -1792,7 +2036,12 @@ pub(crate) async fn start_owner(
             #[cfg(windows)]
             command.creation_flags(0x08000000); // CREATE_NO_WINDOW
             #[cfg(target_os = "linux")]
-            if scope.is_some() && !launch.environment.iter().any(|(key, _)| key == "XDG_RUNTIME_DIR") {
+            if scope.is_some()
+                && !launch
+                    .environment
+                    .iter()
+                    .any(|(key, _)| key == "XDG_RUNTIME_DIR")
+            {
                 command.env("XDG_RUNTIME_DIR", format!("/run/user/{}", identity::uid()));
             }
             if let Some(directory) = &launch.working_directory {
@@ -1825,7 +2074,12 @@ pub(crate) fn original_runtime(owner: &LaunchOwner, adopted: &RuntimeIdentity) -
             .service
             .as_ref()
             .and_then(|service| service.exec_path.parent())
-            .unwrap_or_else(|| owner.executable.parent().unwrap_or(owner.executable.as_path()))
+            .unwrap_or_else(|| {
+                owner
+                    .executable
+                    .parent()
+                    .unwrap_or(owner.executable.as_path())
+            })
             .to_owned(),
         ..adopted.clone()
     }
@@ -1911,7 +2165,10 @@ async fn observe_ready(
     );
     // Image digest already binds the build; sourceSha is cross-checked whenever
     // the runtime reports it and the expected identity records one.
-    if let Some(source) = status["sourceSha"].as_str().filter(|source| !source.is_empty()) {
+    if let Some(source) = status["sourceSha"]
+        .as_str()
+        .filter(|source| !source.is_empty())
+    {
         ensure!(
             expected.source_sha.is_empty() || source == expected.source_sha,
             "Daemon reports source {source} instead of {}",
@@ -1932,21 +2189,30 @@ async fn observe_ready(
     let (worker_birth, supervisor_parent) = blocking(move || {
         let check = |pid: u32, birth: &str, role: &str| -> Result<()> {
             let (image, digest) = pinned_image(pid, birth)?;
-            ensure!(image == path, "{role} executes {} instead of {}", image.display(), path.display());
-            ensure!(digest == sha, "{role} image digest does not match the expected runtime");
+            ensure!(
+                image == path,
+                "{role} executes {} instead of {}",
+                image.display(),
+                path.display()
+            );
+            ensure!(
+                digest == sha,
+                "{role} image digest does not match the expected runtime"
+            );
             Ok(())
         };
         check(supervisor_pid, &birth, "Supervisor")?;
         let worker_birth =
             identity::start_identity(worker_pid)?.context("Worker exited during verification")?;
-        let worker = process_facts(worker_pid, false)?.context("Worker exited during verification")?;
+        let worker =
+            process_facts(worker_pid, false)?.context("Worker exited during verification")?;
         ensure!(
             worker.parent == Some(supervisor_pid),
             "Reported worker is not a child of the published supervisor"
         );
         check(worker_pid, &worker_birth, "Worker")?;
-        let supervisor =
-            process_facts(supervisor_pid, false)?.context("Supervisor exited during verification")?;
+        let supervisor = process_facts(supervisor_pid, false)?
+            .context("Supervisor exited during verification")?;
         Ok((worker_birth, supervisor.parent))
     })
     .await?;
@@ -2032,7 +2298,10 @@ fn stage_image(source: &Path, target: &Path) -> Result<(Option<tempfile::TempPat
     temporary.as_file().sync_all()?;
     // Closing the write handle lets the copy execute for its startup probe.
     let staged = temporary.into_temp_path();
-    ensure!(sha256_file(&staged)? == digest, "Copied image digest mismatch");
+    ensure!(
+        sha256_file(&staged)? == digest,
+        "Copied image digest mismatch"
+    );
     Ok((Some(staged), digest))
 }
 
@@ -2081,7 +2350,10 @@ pub(crate) async fn spawn_executor(
     executable: &Path,
 ) -> Result<ExecutorHandle> {
     let installation = Installation::for_home(home)?;
-    ensure!(installation.home == owner.home, "Launch owner manages another home");
+    ensure!(
+        installation.home == owner.home,
+        "Launch owner manages another home"
+    );
     // Every later process (transient unit, launcher) resolves this same root
     // through the home pointer, whatever its XDG/user environment.
     installation.ensure_root()?;
@@ -2090,8 +2362,7 @@ pub(crate) async fn spawn_executor(
     // Copied so neither runtime cleanup nor control refresh can replace the
     // file it executes; the probe rejects images needing their runtime tree.
     let helper = directory.join(EXECUTABLE);
-    let (helper_sha256, _) =
-        install_image(executable.canonicalize()?, helper.clone()).await?;
+    let (helper_sha256, _) = install_image(executable.canonicalize()?, helper.clone()).await?;
     let helper = helper.canonicalize()?;
     #[cfg(target_os = "linux")]
     {
@@ -2243,7 +2514,10 @@ fn spawn_detached(program: &Path, args: &[std::ffi::OsString], cwd: &Path) -> Re
         .spawn()
         .context("Cannot launch the update executor")?
         .wait()?;
-    ensure!(status.success(), "Update executor launcher failed: {status}");
+    ensure!(
+        status.success(),
+        "Update executor launcher failed: {status}"
+    );
     Ok(())
 }
 
@@ -2305,10 +2579,9 @@ pub(crate) async fn run_executor(home: &Path, operation_id: &str) -> Result<i32>
 /// active, then previous.
 fn launch_order(selection: &Selection, executor_alive: bool) -> Vec<&RuntimeIdentity> {
     let mut order = Vec::new();
-    if executor_alive
-        && let Some(trial) = &selection.trial {
-            order.push(&trial.runtime);
-        }
+    if executor_alive && let Some(trial) = &selection.trial {
+        order.push(&trial.runtime);
+    }
     order.push(&selection.active);
     order.extend(selection.previous.iter());
     order
@@ -2368,7 +2641,10 @@ pub(crate) async fn run_launcher(home: &Path, standalone: bool) -> Result<i32> {
             }
         }
     }
-    bail!("No managed runtime could be launched: {}", failures.join("; "))
+    bail!(
+        "No managed runtime could be launched: {}",
+        failures.join("; ")
+    )
 }
 
 #[cfg(test)]
@@ -2388,7 +2664,12 @@ mod tests {
         }
     }
 
-    fn fixture() -> (tempfile::TempDir, Installation, InstallationLease, Selection) {
+    fn fixture() -> (
+        tempfile::TempDir,
+        Installation,
+        InstallationLease,
+        Selection,
+    ) {
         let base = tempfile::tempdir().unwrap();
         let home = base.path().join("home");
         fs::create_dir(&home).unwrap();
@@ -2432,32 +2713,70 @@ mod tests {
         let (_base, installation, lease, selection) = fixture();
         let candidate = runtime(&installation.runtimes().join("new"), "1.1.0");
         let other = runtime(&installation.runtimes().join("other"), "1.2.0");
-        installation.select_trial(&lease, "op-1", &candidate).await.unwrap();
-        installation.select_trial(&lease, "op-1", &candidate).await.unwrap();
-        assert!(installation.select_trial(&lease, "op-2", &other).await.is_err());
-        assert!(installation.abandon_trial(&lease, Some("op-2")).await.is_err());
+        installation
+            .select_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
+        installation
+            .select_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
+        assert!(
+            installation
+                .select_trial(&lease, "op-2", &other)
+                .await
+                .is_err()
+        );
+        assert!(
+            installation
+                .abandon_trial(&lease, Some("op-2"))
+                .await
+                .is_err()
+        );
 
-        let committed = installation.commit_trial(&lease, "op-1", &candidate).await.unwrap();
+        let committed = installation
+            .commit_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
         assert_eq!(committed.active.root, candidate.root);
         assert_eq!(committed.previous.unwrap().root, selection.active.root);
         assert!(committed.trial.is_none());
         // A retried commit after the selection was already written is a no-op.
-        let again = installation.commit_trial(&lease, "op-1", &candidate).await.unwrap();
+        let again = installation
+            .commit_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
         assert_eq!(again.active.root, candidate.root);
-        assert!(installation.select_trial(&lease, "op-3", &candidate).await.is_err());
+        assert!(
+            installation
+                .select_trial(&lease, "op-3", &candidate)
+                .await
+                .is_err()
+        );
 
-        installation.select_trial(&lease, "op-4", &other).await.unwrap();
+        installation
+            .select_trial(&lease, "op-4", &other)
+            .await
+            .unwrap();
         let abandoned = installation.abandon_trial(&lease, None).await.unwrap();
         assert!(abandoned.trial.is_none());
         assert_eq!(abandoned.active.root, candidate.root);
-        installation.abandon_trial(&lease, Some("op-4")).await.unwrap();
+        installation
+            .abandon_trial(&lease, Some("op-4"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn selection_rejects_runtimes_outside_the_store() {
         let (base, installation, lease, _) = fixture();
         let outside = runtime(&base.path().join("elsewhere"), "9.9.9");
-        assert!(installation.select_trial(&lease, "op-1", &outside).await.is_err());
+        assert!(
+            installation
+                .select_trial(&lease, "op-1", &outside)
+                .await
+                .is_err()
+        );
         assert!(installation.load().unwrap().unwrap().trial.is_none());
     }
 
@@ -2477,9 +2796,19 @@ mod tests {
                 .map(|runtime| runtime.root.clone())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(roots(true), [trial.root.clone(), selection.active.root.clone(), previous.root.clone()]);
+        assert_eq!(
+            roots(true),
+            [
+                trial.root.clone(),
+                selection.active.root.clone(),
+                previous.root.clone()
+            ]
+        );
         // Orphaned trial (executor died, e.g. power loss): known-good first.
-        assert_eq!(roots(false), [selection.active.root.clone(), previous.root.clone()]);
+        assert_eq!(
+            roots(false),
+            [selection.active.root.clone(), previous.root.clone()]
+        );
     }
 
     #[tokio::test]
@@ -2490,7 +2819,10 @@ mod tests {
             fs::create_dir_all(runtimes.join(name)).unwrap();
         }
         let candidate = runtime(&runtimes.join("new"), "1.1.0");
-        installation.select_trial(&lease, "op-1", &candidate).await.unwrap();
+        installation
+            .select_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
         installation.staging_path("op-1").unwrap();
         installation.staging_path("op-0").unwrap();
         // A process still running from a store entry keeps it.
@@ -2516,7 +2848,11 @@ mod tests {
             busy.wait().unwrap();
         }
         for kept in ["old", "new", "failed", "busy"] {
-            assert_eq!(runtimes.join(kept).exists(), kept != "busy" || cfg!(unix), "{kept}");
+            assert_eq!(
+                runtimes.join(kept).exists(),
+                kept != "busy" || cfg!(unix),
+                "{kept}"
+            );
         }
         assert!(!runtimes.join("stale").exists());
         assert!(installation.root().join("staging/op-1").exists());
@@ -2557,15 +2893,28 @@ mod tests {
                 "paseo.service".into()
             ))
         );
-        assert_eq!(user_service_cgroup("0::/user.slice/user-1000.slice/session-2.scope\n"), None);
-        assert_eq!(user_service_cgroup("0::/system.slice/paseo.service\n"), None);
+        assert_eq!(
+            user_service_cgroup("0::/user.slice/user-1000.slice/session-2.scope\n"),
+            None
+        );
+        assert_eq!(
+            user_service_cgroup("0::/system.slice/paseo.service\n"),
+            None
+        );
         let args: Vec<String> = ["/opt/paseo", "--home", "/h", "daemon", "run"]
             .map(String::from)
             .into();
         assert!(is_paseo_run(&args));
         assert_eq!(home_argument(&args[1..]), Some("/h"));
-        assert_eq!(home_argument(&["daemon".into(), "--home=/x".into()]), Some("/x"));
-        assert!(!is_paseo_run(&["/opt/paseo".into(), "daemon".into(), "start".into()]));
+        assert_eq!(
+            home_argument(&["daemon".into(), "--home=/x".into()]),
+            Some("/x")
+        );
+        assert!(!is_paseo_run(&[
+            "/opt/paseo".into(),
+            "daemon".into(),
+            "start".into()
+        ]));
         assert_eq!(
             parse_properties("MainPID=42\nControlGroup=/a=b\n").get("ControlGroup"),
             Some(&"/a=b".to_owned())
@@ -2576,7 +2925,10 @@ mod tests {
     fn drop_in_overrides_only_exec_start_with_escaped_paths() {
         let content = drop_in_content(Path::new("/i/b in/paseo"), Path::new("/h/100%$x"));
         assert!(content.starts_with(DROP_IN_HEADER));
-        let directives: Vec<_> = content.lines().filter(|line| !line.starts_with('#')).collect();
+        let directives: Vec<_> = content
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .collect();
         assert_eq!(
             directives,
             [
@@ -2592,10 +2944,17 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         assert!(assert_legacy_bootable(home.path()).is_ok());
         let record = home.path().join(LEGACY_UPDATE_RECORD);
-        fs::write(&record, br#"{"schemaVersion":2,"operationId":"op","phase":"staged"}"#).unwrap();
+        fs::write(
+            &record,
+            br#"{"schemaVersion":2,"operationId":"op","phase":"staged"}"#,
+        )
+        .unwrap();
         let refused = assert_legacy_bootable(home.path()).unwrap_err();
         assert_eq!(
-            refused.downcast_ref::<super::super::DaemonInstanceError>().unwrap().code,
+            refused
+                .downcast_ref::<super::super::DaemonInstanceError>()
+                .unwrap()
+                .code,
             "LEGACY_BOOT_BLOCKED"
         );
         fs::write(&record, b"not json").unwrap();

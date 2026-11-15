@@ -90,7 +90,16 @@ impl<'a> Ui<'a> {
     /// Original `PaseoChromeButton` / icon-button chrome: `extent` square, `radius` corners,
     /// muted glyph, `interactionHighlight` while hovered/pressed.
     #[allow(clippy::too_many_arguments)]
-    pub fn icon_button(&mut self, cx: &mut Cx2d, r: Rect, id: &str, icon: &str, icon_size: f64, radius: f64, tooltip: &str) {
+    pub fn icon_button(
+        &mut self,
+        cx: &mut Cx2d,
+        r: Rect,
+        id: &str,
+        icon: &str,
+        icon_size: f64,
+        radius: f64,
+        tooltip: &str,
+    ) {
         self.icon_button_with(cx, r, id, icon, icon_size, radius, tooltip, None, true);
     }
 
@@ -113,22 +122,46 @@ impl<'a> Ui<'a> {
             self.fill(cx, r, highlight, radius);
         }
         let color = color.unwrap_or(self.p.muted);
-        self.icon(cx, r, icon, icon_size, if enabled { color } else { fade(color, 0.5) });
+        self.icon(
+            cx,
+            r,
+            icon,
+            icon_size,
+            if enabled { color } else { fade(color, 0.5) },
+        );
         if enabled {
             self.hit_tip(r, id, tooltip);
         }
     }
 
     /// Natural width of a [`button`](Self::button).
-    pub fn button_width(&mut self, cx: &mut Cx, label: &str, icon: Option<&str>, size: ControlSize) -> f64 {
+    pub fn button_width(
+        &mut self,
+        cx: &mut Cx,
+        label: &str,
+        icon: Option<&str>,
+        size: ControlSize,
+    ) -> f64 {
         let pad = match size {
             ControlSize::Xs | ControlSize::Sm => 12.0,
             ControlSize::Md => 16.0,
             ControlSize::Lg => 24.0,
         };
-        let spec = self.spec(Font::Regular, if size == ControlSize::Xs { 12.0 } else { 14.0 }, self.p.foreground);
-        let text = if label.is_empty() { 0.0 } else { self.measure(cx, spec, label) };
-        let icon_w = if icon.is_some() { control_icon_size(size) + if label.is_empty() { 0.0 } else { 8.0 } } else { 0.0 };
+        let spec = self.spec(
+            Font::Regular,
+            if size == ControlSize::Xs { 12.0 } else { 14.0 },
+            self.p.foreground,
+        );
+        let text = if label.is_empty() {
+            0.0
+        } else {
+            self.measure(cx, spec, label)
+        };
+        let icon_w = if icon.is_some() {
+            control_icon_size(size) + if label.is_empty() { 0.0 } else { 8.0 }
+        } else {
+            0.0
+        };
         text + icon_w + pad * 2.0
     }
 
@@ -151,24 +184,67 @@ impl<'a> Ui<'a> {
             Variant::Primary => (p.accent, p.accent, p.on_tertiary),
             Variant::Secondary => (p.surface3, p.surface3, p.foreground),
             Variant::Outline => (Vec4::default(), p.border_accent, p.foreground),
-            Variant::Ghost => (Vec4::default(), Vec4::default(), if hovered { p.foreground } else { p.muted }),
-            Variant::Destructive => (p.destructive, p.destructive, if p.is_dark { vec4(1.0, 1.0, 1.0, 1.0) } else { p.surface0 }),
+            Variant::Ghost => (
+                Vec4::default(),
+                Vec4::default(),
+                if hovered { p.foreground } else { p.muted },
+            ),
+            Variant::Destructive => (
+                p.destructive,
+                p.destructive,
+                if p.is_dark {
+                    vec4(1.0, 1.0, 1.0, 1.0)
+                } else {
+                    p.surface0
+                },
+            ),
         };
-        let opacity = if !enabled { 0.5 } else if self.is_pressed(id) { 0.85 } else { 1.0 };
+        let opacity = if !enabled {
+            0.5
+        } else if self.is_pressed(id) {
+            0.85
+        } else {
+            1.0
+        };
         let radius = match size {
             ControlSize::Xs | ControlSize::Sm => 12.0,
             _ => 16.0,
         }
         .min(r.size.y * 0.5);
-        self.painter.outline(cx, r, fade(bg, opacity), fade(border, opacity), 1.0, radius);
+        self.painter
+            .outline(cx, r, fade(bg, opacity), fade(border, opacity), 1.0, radius);
         let fg = fade(fg, opacity);
-        let spec = self.spec(Font::Regular, if size == ControlSize::Xs { 12.0 } else { 14.0 }, fg);
+        let spec = self.spec(
+            Font::Regular,
+            if size == ControlSize::Xs { 12.0 } else { 14.0 },
+            fg,
+        );
         let icon_size = control_icon_size(size);
-        let text_w = if label.is_empty() { 0.0 } else { self.measure(cx, spec, label) };
-        let content = text_w + if icon.is_some() { icon_size + if label.is_empty() { 0.0 } else { 8.0 } } else { 0.0 };
+        let text_w = if label.is_empty() {
+            0.0
+        } else {
+            self.measure(cx, spec, label)
+        };
+        let content = text_w
+            + if icon.is_some() {
+                icon_size + if label.is_empty() { 0.0 } else { 8.0 }
+            } else {
+                0.0
+            };
         let mut x = r.pos.x + ((r.size.x - content) * 0.5).max(8.0);
         if let Some(icon) = icon {
-            self.icon(cx, rect(x, r.pos.y + (r.size.y - icon_size) * 0.5, icon_size, icon_size), icon, icon_size, fg);
+            self.icon(
+                cx,
+                rect(
+                    x,
+                    r.pos.y + (r.size.y - icon_size) * 0.5,
+                    icon_size,
+                    icon_size,
+                ),
+                icon,
+                icon_size,
+                fg,
+            );
             x += icon_size + 8.0;
         }
         if !label.is_empty() {
@@ -203,15 +279,31 @@ impl<'a> Ui<'a> {
             self.fill(cx, body, p.surface2, 6.0);
         }
         let muted = muted && enabled;
-        let opacity = if !enabled { 0.5 } else if muted { 0.72 } else { 1.0 };
-        let fg = fade(if muted { p.muted } else if destructive { p.danger } else { p.foreground }, opacity);
+        let opacity = if !enabled {
+            0.5
+        } else if muted {
+            0.72
+        } else {
+            1.0
+        };
+        let fg = fade(
+            if muted {
+                p.muted
+            } else if destructive {
+                p.danger
+            } else {
+                p.foreground
+            },
+            opacity,
+        );
         let mut x = body.pos.x + 8.0;
         let mid = body.pos.y + body.size.y * 0.5;
         let glyph_color = fade(if destructive { p.danger } else { p.muted }, opacity);
         match lead {
             RowLead::None => {}
             RowLead::Dot(color) => {
-                self.painter.dot(cx, dvec2(x + 8.0, mid), 8.0, fade(color, opacity));
+                self.painter
+                    .dot(cx, dvec2(x + 8.0, mid), 8.0, fade(color, opacity));
                 x += 24.0;
             }
             RowLead::Glyph(icon) => {
@@ -219,13 +311,27 @@ impl<'a> Ui<'a> {
                 x += 24.0;
             }
             RowLead::Svg(svg) => {
-                crate::common::provider_icon::ProviderIcon::paint(self.painter, self.draw_icon, cx, rect(x, mid - 8.0, 16.0, 16.0), "", Some(svg), glyph_color);
+                crate::common::provider_icon::ProviderIcon::paint(
+                    self.painter,
+                    self.draw_icon,
+                    cx,
+                    rect(x, mid - 8.0, 16.0, 16.0),
+                    "",
+                    Some(svg),
+                    glyph_color,
+                );
                 x += 24.0;
             }
         }
         let mut right = body.pos.x + body.size.x - 8.0;
         if checked {
-            self.icon(cx, rect(right - 16.0, mid - 8.0, 16.0, 16.0), "check", 16.0, fade(p.muted, opacity));
+            self.icon(
+                cx,
+                rect(right - 16.0, mid - 8.0, 16.0, 16.0),
+                "check",
+                16.0,
+                fade(p.muted, opacity),
+            );
             right -= 24.0;
         }
         if let Some(hint) = hint.filter(|h| !h.is_empty()) {
@@ -235,7 +341,12 @@ impl<'a> Ui<'a> {
             right -= w + 8.0;
         }
         let spec = self.spec(Font::Regular, 14.0, fg);
-        self.text(cx, rect(x, body.pos.y, (right - x).max(0.0), body.size.y), spec, label);
+        self.text(
+            cx,
+            rect(x, body.pos.y, (right - x).max(0.0), body.size.y),
+            spec,
+            label,
+        );
         if enabled {
             self.hit(r, id);
         }
@@ -292,20 +403,35 @@ pub enum Press {
 impl Pointer {
     /// Resolves hover and clicks on `area` against `hits`. Returns redraw-needed and an
     /// optional press.
-    pub fn handle(&mut self, cx: &mut Cx, event: &Event, area: Area, hits: &HitMap<String>) -> (bool, Option<Press>) {
+    pub fn handle(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        area: Area,
+        hits: &HitMap<String>,
+    ) -> (bool, Option<Press>) {
         let hit = event.hits(cx, area);
         self.handle_hit(cx, hit, hits)
     }
 
     /// [`Pointer::handle`] for a hit the caller already resolved (the overlay layer hits its
     /// area through its own sweep lock).
-    pub fn handle_hit(&mut self, cx: &mut Cx, hit: Hit, hits: &HitMap<String>) -> (bool, Option<Press>) {
+    pub fn handle_hit(
+        &mut self,
+        cx: &mut Cx,
+        hit: Hit,
+        hits: &HitMap<String>,
+    ) -> (bool, Option<Press>) {
         let mut redraw = false;
         let mut press = None;
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
                 let hover = hits.at(e.abs);
-                cx.set_cursor(if hover.is_some() { MouseCursor::Hand } else { MouseCursor::Default });
+                cx.set_cursor(if hover.is_some() {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
                 if hover != self.hover {
                     self.hover = hover;
                     redraw = true;

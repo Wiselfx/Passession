@@ -26,18 +26,31 @@ thread_local! {
 /// `system`, `en` or `ko`; region/script variants keep their language, anything else is
 /// English. The stored value is never rewritten.
 pub fn language_preference(stored: Option<&Value>) -> &'static str {
-    let Some(Value::String(value)) = stored else { return "system" };
+    let Some(Value::String(value)) = stored else {
+        return "system";
+    };
     let value = value.trim();
     if value.is_empty() || value == "system" || value == "auto" {
         return "system";
     }
-    let language = value.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
+    let language = value
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if language == "ko" { "ko" } else { "en" }
 }
 
 fn system_lang() -> Lang {
     match sys_locale::get_locale() {
-        Some(tag) if tag.split(['-', '_']).next().is_some_and(|l| l.eq_ignore_ascii_case("ko")) => Lang::Ko,
+        Some(tag)
+            if tag
+                .split(['-', '_'])
+                .next()
+                .is_some_and(|l| l.eq_ignore_ascii_case("ko")) =>
+        {
+            Lang::Ko
+        }
         _ => Lang::En,
     }
 }
@@ -68,7 +81,9 @@ pub fn locale_tag() -> &'static str {
 /// A short calendar date without the year in the active language: "Jan 5" / "1월 5일".
 /// `month0` is 0-based (chrono `month0`).
 pub fn month_day(month0: u32, day: u32) -> String {
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     match LANG.with(Cell::get) {
         Lang::Ko => format!("{}월 {day}일", month0 + 1),
         Lang::En => format!("{} {day}", MONTHS[month0 as usize % 12]),

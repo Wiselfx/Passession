@@ -2,8 +2,8 @@
 //! and `promptText` (title, initial value, optional multi-line), answered through
 //! [`WaDialogRef::confirmed`] / [`WaDialogRef::submitted`] with the caller's token.
 
+use super::kit::WaModalWidgetExt;
 use makepad_widgets::*;
-use super::kit::{WaModalWidgetExt};
 
 use super::kit::{WaButtonWidgetExt, WaInputWidgetExt};
 
@@ -81,7 +81,12 @@ pub struct WaDialog {
 }
 
 impl WaDialog {
-    fn finish(&mut self, cx: &mut Cx, scope: &mut Scope, action: impl FnOnce(String, String) -> WaDialogAction) {
+    fn finish(
+        &mut self,
+        cx: &mut Cx,
+        scope: &mut Scope,
+        action: impl FnOnce(String, String) -> WaDialogAction,
+    ) {
         if !self.open {
             return;
         }
@@ -103,13 +108,20 @@ impl Widget for WaDialog {
             self.finish(cx, scope, |token, _| WaDialogAction::Cancelled { token });
             return;
         }
-        let Event::Actions(actions) = event else { return };
+        let Event::Actions(actions) = event else {
+            return;
+        };
         let input = self.view.wa_input(id!(input));
         let submit = |this: &mut Self, cx: &mut Cx, scope: &mut Scope| match this.kind {
             Kind::Confirm => this.finish(cx, scope, |token, _| WaDialogAction::Confirmed { token }),
-            _ => this.finish(cx, scope, |token, value| WaDialogAction::Submitted { token, value }),
+            _ => this.finish(cx, scope, |token, value| WaDialogAction::Submitted {
+                token,
+                value,
+            }),
         };
-        if self.view.wa_button(id!(confirm)).clicked(actions) || self.view.wa_button(id!(destructive)).clicked(actions) {
+        if self.view.wa_button(id!(confirm)).clicked(actions)
+            || self.view.wa_button(id!(destructive)).clicked(actions)
+        {
             submit(self, cx, scope);
             return;
         }
@@ -137,8 +149,16 @@ impl Widget for WaDialog {
 
 impl WaDialogRef {
     fn show(&self, cx: &mut Cx, token: &str, kind: Kind, content: Content<'_>) {
-        let Content { title, message, confirm, destructive, value } = content;
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Content {
+            title,
+            message,
+            confirm,
+            destructive,
+            value,
+        } = content;
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.token = token.to_owned();
         inner.kind = kind;
         inner.open = true;
@@ -146,12 +166,16 @@ impl WaDialogRef {
         let view = &inner.view;
         view.widget(id!(sheet.header.title)).set_text(cx, title);
         super::kit::set_optional(cx, &view.widget(id!(message)), message);
-        view.widget(id!(input_wrap)).set_visible(cx, kind != Kind::Confirm);
-        view.wa_input(id!(input)).set_multiline(cx, kind == Kind::PromptMultiline);
+        view.widget(id!(input_wrap))
+            .set_visible(cx, kind != Kind::Confirm);
+        view.wa_input(id!(input))
+            .set_multiline(cx, kind == Kind::PromptMultiline);
         view.wa_input(id!(input)).set_text(cx, value);
-        view.wa_button(id!(cancel)).set_text(cx, super::i18n::l("Cancel"));
+        view.wa_button(id!(cancel))
+            .set_text(cx, super::i18n::l("Cancel"));
         view.wa_button(id!(confirm)).set_visible(cx, !destructive);
-        view.wa_button(id!(destructive)).set_visible(cx, destructive);
+        view.wa_button(id!(destructive))
+            .set_visible(cx, destructive);
         view.wa_button(id!(confirm)).set_text(cx, confirm);
         view.wa_button(id!(destructive)).set_text(cx, confirm);
         view.wa_modal(id!(modal)).open(cx);
@@ -159,14 +183,48 @@ impl WaDialogRef {
     }
 
     /// `confirmAction`.
-    pub fn confirm(&self, cx: &mut Cx, token: &str, title: &str, message: &str, confirm: &str, destructive: bool) {
-        self.show(cx, token, Kind::Confirm, Content { title, message, confirm, destructive, value: "" });
+    pub fn confirm(
+        &self,
+        cx: &mut Cx,
+        token: &str,
+        title: &str,
+        message: &str,
+        confirm: &str,
+        destructive: bool,
+    ) {
+        self.show(
+            cx,
+            token,
+            Kind::Confirm,
+            Content {
+                title,
+                message,
+                confirm,
+                destructive,
+                value: "",
+            },
+        );
     }
 
     /// `promptText`.
     pub fn prompt(&self, cx: &mut Cx, token: &str, title: &str, initial: &str, multiline: bool) {
-        let kind = if multiline { Kind::PromptMultiline } else { Kind::Prompt };
-        self.show(cx, token, kind, Content { title, message: "", confirm: super::i18n::l("OK"), destructive: false, value: initial });
+        let kind = if multiline {
+            Kind::PromptMultiline
+        } else {
+            Kind::Prompt
+        };
+        self.show(
+            cx,
+            token,
+            kind,
+            Content {
+                title,
+                message: "",
+                confirm: super::i18n::l("OK"),
+                destructive: false,
+                value: initial,
+            },
+        );
     }
 
     pub fn is_open(&self) -> bool {
@@ -174,23 +232,29 @@ impl WaDialogRef {
     }
 
     pub fn confirmed(&self, actions: &Actions) -> Option<String> {
-        actions.filter_widget_actions(self.widget_uid()).find_map(|action| match action.cast() {
-            WaDialogAction::Confirmed { token } => Some(token),
-            _ => None,
-        })
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|action| match action.cast() {
+                WaDialogAction::Confirmed { token } => Some(token),
+                _ => None,
+            })
     }
 
     pub fn submitted(&self, actions: &Actions) -> Option<(String, String)> {
-        actions.filter_widget_actions(self.widget_uid()).find_map(|action| match action.cast() {
-            WaDialogAction::Submitted { token, value } => Some((token, value)),
-            _ => None,
-        })
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|action| match action.cast() {
+                WaDialogAction::Submitted { token, value } => Some((token, value)),
+                _ => None,
+            })
     }
 
     pub fn cancelled(&self, actions: &Actions) -> Option<String> {
-        actions.filter_widget_actions(self.widget_uid()).find_map(|action| match action.cast() {
-            WaDialogAction::Cancelled { token } => Some(token),
-            _ => None,
-        })
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|action| match action.cast() {
+                WaDialogAction::Cancelled { token } => Some(token),
+                _ => None,
+            })
     }
 }

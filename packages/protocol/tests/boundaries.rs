@@ -4,6 +4,270 @@ use paseo_protocol::{
 use serde_json::{Value, json};
 
 #[test]
+fn daemon_release_check_preserves_unknown_latest_and_rejects_path_pins() {
+    let request = json!({"type":"daemon.update.check.request","requestId":"check"});
+    let response = json!({"type":"daemon.update.check.response","payload":{
+        "requestId":"check","serverId":"host","current":{"version":"1.0.0","sourceSha":""},
+        "latest":null,"supported":false,"updateAvailable":false,"owner":null,
+        "supportError":"Not an owned standalone runtime","checkError":"Release unavailable"
+    }});
+    for (message, direction) in [
+        (request, Direction::Inbound),
+        (response, Direction::Outbound),
+    ] {
+        let parsed = SessionMessage::parse(message.clone(), direction).unwrap();
+        let bytes = encode_envelope(&parsed.into_envelope(), direction).unwrap();
+        assert!(parse_envelope(&bytes, direction).is_ok());
+    }
+    let mut submit = json!({"type":"daemon.update.submit.request","requestId":"submit",
+        "operationId":"0f8b6c5e-2a71-4c5b-9a43-7f2a1d0c9e11","source":"release",
+        "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)}});
+    assert!(validate_session(&submit, Direction::Inbound).is_ok());
+    submit["expectedRelease"]["path"] = json!("/tmp/runtime");
+    assert!(validate_session(&submit, Direction::Inbound).is_err());
+    submit["expectedRelease"] = json!({"version":"2.0.0","manifestSha512":"short"});
+    assert!(validate_session(&submit, Direction::Inbound).is_err());
+    submit["expectedRelease"] = Value::Null;
+    assert!(validate_session(&submit, Direction::Inbound).is_ok());
+}
+
+#[test]
+fn desktop_app_update_roundtrips_pinned_target_and_authorization_status() {
+    let mut submit = json!({"type":"daemon.update.submit.request","requestId":"submit",
+        "operationId":"0f8b6c5e-2a71-4c5b-9a43-7f2a1d0c9e11","source":"release",
+        "targetKind":"app","forceRunning":false,"idleTimeoutMs":300_000,
+        "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)}});
+    let parsed = SessionMessage::parse(submit.clone(), Direction::Inbound).unwrap();
+    let bytes = encode_envelope(&parsed.into_envelope(), Direction::Inbound).unwrap();
+    assert!(parse_envelope(&bytes, Direction::Inbound).is_ok());
+    submit["expectedRelease"] = Value::Null;
+    assert!(validate_session(&submit, Direction::Inbound).is_err());
+    submit.as_object_mut().unwrap().remove("expectedRelease");
+    assert!(validate_session(&submit, Direction::Inbound).is_err());
+    submit["targetKind"] = json!("flutter");
+    assert!(validate_session(&submit, Direction::Inbound).is_err());
+
+    for response_type in [
+        "daemon.update.submit.response",
+        "daemon.update.status.response",
+    ] {
+        for phase in [
+            "admitted",
+            "draining",
+            "preparation",
+            "waitingForParent",
+            "waitingForAuthorization",
+            "installing",
+            "starting",
+            "checking",
+            "committed",
+            "failed",
+            "rolledBack",
+        ] {
+            let terminal = matches!(phase, "committed" | "failed" | "rolledBack");
+            let outcome = match phase {
+                "committed" => json!("committed"),
+                "failed" => json!("failed"),
+                "rolledBack" => json!("rolled_back"),
+                _ => Value::Null,
+            };
+            let mut response = json!({"type":response_type,"payload":{"requestId":"status",
+                "operation":{"operationId":"op","serverId":"host","targetKind":"app",
+                    "phase":phase,"terminal":terminal,"accepted":true,"outcome":outcome,
+                    "candidate":{"version":"2.0.0","sourceSha":"abc"},
+                    "message":null,"error":null,"recoveryRequired":false,
+                    "actionRequired":if phase == "waitingForAuthorization" {json!("osAuthorization")} else {Value::Null}}}});
+            let parsed = SessionMessage::parse(response.clone(), Direction::Outbound).unwrap();
+            let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+            assert!(
+                parse_envelope(&bytes, Direction::Outbound).is_ok(),
+                "{phase}"
+            );
+            response["payload"]["operation"]["currentRoot"] = json!("/private/app");
+            assert!(validate_session(&response, Direction::Outbound).is_err());
+            response["payload"]["operation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("currentRoot");
+            response["payload"]["operation"]["candidate"]["path"] = json!("/private/app");
+            assert!(validate_session(&response, Direction::Outbound).is_err());
+        }
+    }
+}
+
+#[test]
+fn desktop_app_check_has_bounded_owner_without_runtime_paths() {
+    let mut response = json!({"type":"daemon.update.check.response","payload":{
+        "requestId":"check","serverId":"host","targetKind":"app",
+        "current":{"version":"1.0.0","sourceSha":"abc"},
+        "latest":{"version":"2.0.0","manifestSha512":"A".repeat(88)},
+        "supported":true,"updateAvailable":true,"owner":{"kind":"desktopApp"},
+        "supportError":null,"checkError":null}});
+    let parsed = SessionMessage::parse(response.clone(), Direction::Outbound).unwrap();
+    let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+    assert!(parse_envelope(&bytes, Direction::Outbound).is_ok());
+    response["payload"]["owner"]["path"] = json!("/private/app");
+    assert!(validate_session(&response, Direction::Outbound).is_err());
+    response["payload"]["owner"] = Value::Null;
+    response["payload"]["supported"] = json!(false);
+    response["payload"]["latest"] = Value::Null;
+    response["payload"]["current"] = Value::Null;
+    response["payload"]["supportError"] = json!("Owning app unavailable");
+    assert!(validate_session(&response, Direction::Outbound).is_ok());
+    let parsed = SessionMessage::parse(response, Direction::Outbound).unwrap();
+    let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+    assert!(parse_envelope(&bytes, Direction::Outbound).is_ok());
+}
+
+#[test]
+fn desktop_app_local_drain_roundtrips_and_requires_owner_token() {
+    for (kind, release) in [
+        ("daemon.appUpdate.drain", false),
+        ("daemon.appUpdate.drain.release", true),
+    ] {
+        let mut request = json!({"type":format!("{kind}.request"),"requestId":"drain",
+            "operationId":"op","ownerToken":"a".repeat(64)});
+        if !release {
+            request["forceRunning"] = json!(false);
+            request["idleTimeoutMs"] = json!(300_000);
+        }
+        let parsed = SessionMessage::parse(request.clone(), Direction::Inbound).unwrap();
+        let bytes = encode_envelope(&parsed.into_envelope(), Direction::Inbound).unwrap();
+        assert!(parse_envelope(&bytes, Direction::Inbound).is_ok());
+        request.as_object_mut().unwrap().remove("ownerToken");
+        assert!(validate_session(&request, Direction::Inbound).is_err());
+        let mut payload = json!({"requestId":"drain","operationId":"op"});
+        if release {
+            payload["released"] = json!(true);
+        } else {
+            payload["ready"] = json!(true);
+            payload["forced"] = json!(false);
+        }
+        let response = json!({"type":format!("{kind}.response"),"payload":payload});
+        let parsed = SessionMessage::parse(response, Direction::Outbound).unwrap();
+        let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+        assert!(parse_envelope(&bytes, Direction::Outbound).is_ok());
+    }
+}
+
+fn component_identity(index: usize) -> Value {
+    json!({"version":format!("1.0.{index}"),"sourceSha":format!("{index:040x}"),
+        "inputHash":format!("{index:064x}"),"abiVersion":1})
+}
+
+fn component_identities() -> Value {
+    let mut identities = json!({});
+    for (index, id) in ["app", "daemon", "tailnet", "update-helper"].iter().enumerate() {
+        identities[*id] = component_identity(index);
+    }
+    identities
+}
+
+#[test]
+fn desktop_component_submit_roundtrips_exact_selection_and_pinned_collection() {
+    let request = json!({"type":"daemon.update.submit.request","requestId":"submit",
+        "operationId":"0f8b6c5e-2a71-4c5b-9a43-7f2a1d0c9e11","source":"release",
+        "targetKind":"app","selectedComponents":["daemon","update-helper"],
+        "forceRunning":false,"idleTimeoutMs":300_000,
+        "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)}});
+    let parsed = SessionMessage::parse(request.clone(), Direction::Inbound).unwrap();
+    let bytes = encode_envelope(&parsed.into_envelope(), Direction::Inbound).unwrap();
+    assert!(parse_envelope(&bytes, Direction::Inbound).is_ok());
+    for selection in [
+        json!([]), json!(["daemon","daemon"]), json!(["desktop-host"]),
+        json!(["app","daemon","tailnet","update-helper","daemon"]), json!(null),
+        json!([{"id":"daemon","path":"/private/runtime"}]),
+    ] {
+        let mut invalid = request.clone();
+        invalid["selectedComponents"] = selection;
+        assert!(validate_session(&invalid, Direction::Inbound).is_err());
+    }
+    let mut all_changed = request;
+    all_changed.as_object_mut().unwrap().remove("selectedComponents");
+    assert!(validate_session(&all_changed, Direction::Inbound).is_ok());
+}
+
+#[test]
+fn desktop_component_check_roundtrips_independent_identities_dependency_and_atomic_plan() {
+    let identities = component_identities();
+    let response = json!({"type":"daemon.update.check.response","payload":{
+        "requestId":"check","serverId":"host","targetKind":"app",
+        "current":{"version":"1.0.0","sourceSha":"0".repeat(40)},
+        "latest":{"version":"2.0.0","manifestSha512":"A".repeat(88)},
+        "supported":true,"updateAvailable":true,"owner":{"kind":"desktopApp"},
+        "supportError":null,"checkError":null,"components":identities,
+        "componentRequirements":{"app":{"tailnet":1},"daemon":{},"tailnet":{},"update-helper":{}},
+        "availableComponents":[{"id":"tailnet","current":identities["tailnet"],
+            "target":component_identity(9),"downloadSize":1024,"requires":{},
+            "artifactSha256":"a".repeat(64),"activationOnly":false}],
+        "restartGroup":"gui","atomicGroups":[["app","tailnet"]] }});
+    let parsed = SessionMessage::parse(response.clone(), Direction::Outbound).unwrap();
+    let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+    assert!(parse_envelope(&bytes, Direction::Outbound).is_ok());
+    for (pointer, value) in [
+        ("/payload/components/app/sourceSha", json!("short")),
+        ("/payload/components/daemon/inputHash", json!("short")),
+        ("/payload/availableComponents/0/requires", json!({"tailnet":0})),
+        ("/payload/availableComponents/0/target/abiVersion", json!(-1)),
+        ("/payload/restartGroup", json!("installer")),
+    ] {
+        let mut invalid = response.clone();
+        *invalid.pointer_mut(pointer).unwrap_or_else(|| panic!("missing {pointer}")) = value;
+        assert!(validate_session(&invalid, Direction::Outbound).is_err(), "{pointer}");
+    }
+    for parent in ["/payload", "/payload/current", "/payload/components/app",
+        "/payload/availableComponents/0", "/payload/availableComponents/0/target"] {
+        let mut invalid = response.clone();
+        invalid.pointer_mut(parent).unwrap()["path"] = json!("/private/runtime");
+        assert!(validate_session(&invalid, Direction::Outbound).is_err(), "{parent}");
+    }
+    let mut no_change = response;
+    no_change["payload"]["updateAvailable"] = json!(false);
+    no_change["payload"]["availableComponents"] = json!([]);
+    no_change["payload"]["restartGroup"] = json!("none");
+    assert!(validate_session(&no_change, Direction::Outbound).is_ok());
+}
+
+#[test]
+fn desktop_component_operation_roundtrips_restart_groups_and_observed_selection_without_paths() {
+    for (selected, restart) in [
+        (vec!["update-helper"], "none"), (vec!["daemon"], "daemon"),
+        (vec!["app"], "gui"), (vec!["tailnet"], "gui"), (vec![], "none"),
+    ] {
+        for kind in ["daemon.update.submit.response", "daemon.update.status.response"] {
+            let response = json!({"type":kind,"payload":{"requestId":"status",
+                "operation":{"operationId":"op","serverId":"host","targetKind":"app",
+                    "phase":"committed","terminal":true,"accepted":true,"outcome":"committed",
+                    "candidate":{"version":"2.0.0","sourceSha":"a".repeat(40)},
+                    "expectedRelease":{"version":"2.0.0","manifestSha512":"A".repeat(88)},
+                    "selectedComponents":selected,"targetComponents":component_identities(),
+                    "observedComponents":component_identities(),"restartGroup":restart,
+                    "message":null,"error":null,"recoveryRequired":false,"actionRequired":null}}});
+            let parsed = SessionMessage::parse(response.clone(), Direction::Outbound).unwrap();
+            let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+            assert!(parse_envelope(&bytes, Direction::Outbound).is_ok(), "{restart}");
+            for parent in ["/payload/operation", "/payload/operation/targetComponents/app",
+                "/payload/operation/observedComponents/daemon", "/payload/operation/expectedRelease"] {
+                let mut invalid = response.clone();
+                invalid.pointer_mut(parent).unwrap()["ownerToken"] = json!("a".repeat(64));
+                assert!(validate_session(&invalid, Direction::Outbound).is_err(), "{parent}");
+            }
+            let mut waiting = response;
+            waiting["payload"]["operation"]["terminal"] = json!(false);
+            waiting["payload"]["operation"]["phase"] = json!("waitingForAuthorization");
+            waiting["payload"]["operation"]["outcome"] = Value::Null;
+            waiting["payload"]["operation"]["observedComponents"] = Value::Null;
+            waiting["payload"]["operation"]["actionRequired"] = json!("osAuthorization");
+            assert!(validate_session(&waiting, Direction::Outbound).is_ok());
+            waiting["payload"]["operation"]["selectedComponents"] = Value::Null;
+            let parsed = SessionMessage::parse(waiting, Direction::Outbound).unwrap();
+            let bytes = encode_envelope(&parsed.into_envelope(), Direction::Outbound).unwrap();
+            assert!(parse_envelope(&bytes, Direction::Outbound).is_ok());
+        }
+    }
+}
+
+#[test]
 fn terminal_wire_bytes_and_borrowed_demultiplexing() {
     let bytes = encode_terminal_frame(TerminalOpcode::Input, 255, b"\x1b[A");
     assert_eq!(bytes, [2, 255, 27, 91, 65]);
@@ -370,10 +634,13 @@ fn selected_commit_rpc_validates_session_and_websocket_boundaries() {
         let mut invalid = request.clone();
         invalid[field] = value;
         assert!(validate_session(&invalid, Direction::Inbound).is_err());
-        assert!(parse_envelope(
-            &serde_json::to_vec(&json!({"type":"session","message":invalid})).unwrap(),
-            Direction::Inbound,
-        ).is_err());
+        assert!(
+            parse_envelope(
+                &serde_json::to_vec(&json!({"type":"session","message":invalid})).unwrap(),
+                Direction::Inbound,
+            )
+            .is_err()
+        );
     }
     let success = json!({
         "type":"checkout.commit_selected.response",
@@ -381,16 +648,25 @@ fn selected_commit_rpc_validates_session_and_websocket_boundaries() {
     });
     assert_valid(success.clone(), Direction::Outbound);
     let mut missing_sha = success;
-    missing_sha["payload"].as_object_mut().unwrap().remove("commitSha");
+    missing_sha["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("commitSha");
     assert!(validate_session(&missing_sha, Direction::Outbound).is_err());
-    assert_valid(json!({
-        "type":"checkout.commit_selected.response",
-        "payload":{"cwd":"/repo","success":false,"error":{"code":"UNKNOWN","message":"Select at least one changed file"},"requestId":"selected-1"},
-    }), Direction::Outbound);
+    assert_valid(
+        json!({
+            "type":"checkout.commit_selected.response",
+            "payload":{"cwd":"/repo","success":false,"error":{"code":"UNKNOWN","message":"Select at least one changed file"},"requestId":"selected-1"},
+        }),
+        Direction::Outbound,
+    );
     // The new operation does not narrow the legacy message/generation contract.
-    assert_valid(json!({
-        "type":"checkout_commit_request","cwd":"/repo","requestId":"legacy",
-    }), Direction::Inbound);
+    assert_valid(
+        json!({
+            "type":"checkout_commit_request","cwd":"/repo","requestId":"legacy",
+        }),
+        Direction::Inbound,
+    );
 }
 
 #[test]
@@ -399,7 +675,12 @@ fn retired_worktree_requests_and_refusals_remain_wire_compatible() {
         "type":"create_paseo_worktree_request","requestId":"old-client",
         "cwd":"/existing/repo","action":"branch-off","worktreeSlug":"feature","refName":"main"
     });
-    assert_eq!(SessionMessage::parse(request.clone(), Direction::Inbound).unwrap().into_value(), request);
+    assert_eq!(
+        SessionMessage::parse(request.clone(), Direction::Inbound)
+            .unwrap()
+            .into_value(),
+        request
+    );
     for response in [
         json!({"type":"create_paseo_worktree_response","payload":{
             "requestId":"old-client","workspace":null,"setupTerminalId":null,
@@ -414,6 +695,11 @@ fn retired_worktree_requests_and_refusals_remain_wire_compatible() {
             "error":{"code":"UNKNOWN","message":"Managed worktrees are no longer supported"}
         }}),
     ] {
-        assert_eq!(SessionMessage::parse(response.clone(), Direction::Outbound).unwrap().into_value(), response);
+        assert_eq!(
+            SessionMessage::parse(response.clone(), Direction::Outbound)
+                .unwrap()
+                .into_value(),
+            response
+        );
     }
 }

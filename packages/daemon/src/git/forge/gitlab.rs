@@ -41,9 +41,9 @@ impl Context<'_> {
             .iter()
             .find(|v| state(s(v, "state")) == "open")
             .or_else(|| {
-                candidates.iter().find(|v| {
-                    !s(input, "headSha").is_empty() && s(v, "sha") == s(input, "headSha")
-                })
+                candidates
+                    .iter()
+                    .find(|v| !s(input, "headSha").is_empty() && s(v, "sha") == s(input, "headSha"))
             });
         let Some(selected) = selected else {
             return Ok(Value::Null);

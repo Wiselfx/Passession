@@ -279,7 +279,9 @@ fn supplement_notices(
             None => string(entry, "revision")?,
         };
         ensure!(
-            is_sha(pin, 40) && url.starts_with("https://") && url.split('/').any(|part| part == pin),
+            is_sha(pin, 40)
+                && url.starts_with("https://")
+                && url.split('/').any(|part| part == pin),
             "Supplement URL is not revision-pinned: {url}"
         );
         notices.push(Notice {
@@ -303,9 +305,12 @@ fn lock_checksums(workspace: &Path) -> Result<BTreeMap<(String, String, String),
         .context("Cargo.lock has no packages")?
     {
         let field = |key: &str| package.get(key).and_then(toml::Value::as_str);
-        if let (Some(name), Some(version), Some(source), Some(checksum)) =
-            (field("name"), field("version"), field("source"), field("checksum"))
-        {
+        if let (Some(name), Some(version), Some(source), Some(checksum)) = (
+            field("name"),
+            field("version"),
+            field("source"),
+            field("checksum"),
+        ) {
             checksums.insert(
                 (name.to_owned(), version.to_owned(), source.to_owned()),
                 checksum.to_owned(),
@@ -335,6 +340,8 @@ fn collect_document(
     } else {
         BTreeMap::new()
     };
+    static COMMENTS: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"(?s)/\*.*?\*/").expect("valid comment regex"));
     for pkg in dependency_closure(metadata, root)? {
         let name = string(pkg, "name")?;
         let version = string(pkg, "version")?;
@@ -378,8 +385,7 @@ fn collect_document(
         if name == "libsqlite3-sys" {
             let source = text(&directory.join("sqlite3/sqlite3.c"))?;
             let prefix: String = source.chars().take(4096).collect();
-            let comments = Regex::new(r"(?s)/\*.*?\*/")?;
-            let dedication = comments
+            let dedication = COMMENTS
                 .find_iter(&prefix)
                 .find(|m| m.as_str().contains("disclaims copyright"))
                 .context("Missing SQLite public-domain dedication")?;
@@ -530,6 +536,10 @@ fn validate_embedded_inventory(directory: &Path, inventory: &Value) -> Result<()
         "Both retained OpenCode ABI assets must be attributed"
     );
     let mut declared_packages = BTreeSet::new();
+    static VERSION_PATTERN: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^var version = \{\n  major: (\d+),\n  minor: (\d+),\n  patch: (\d+)\n\};$")
+            .expect("valid embedded version regex")
+    });
     for package in array(inventory, "packages")? {
         let name = string(package, "name")?;
         ensure!(
@@ -572,10 +582,7 @@ fn validate_embedded_inventory(directory: &Path, inventory: &Value) -> Result<()
                     source.contains(&section),
                     "Missing exact embedded version declaration for {name}"
                 );
-                let version_pattern = Regex::new(
-                    r"^var version = \{\n  major: (\d+),\n  minor: (\d+),\n  patch: (\d+)\n\};$",
-                )?;
-                let version = version_pattern
+                let version = VERSION_PATTERN
                     .captures(declaration)
                     .context("Malformed embedded Zod version declaration")?;
                 let version = format!("{}.{}.{}", &version[1], &version[2], &version[3]);
@@ -683,7 +690,10 @@ fn native_document(metadata: &Value, root: &str, manifest: &Value) -> Result<Val
             for notice in notices {
                 let source = string(notice, "source")?;
                 let hash = string(notice, "sha256")?;
-                ensure!(pinned(notice)?, "Native notice is not revision-pinned: {source}");
+                ensure!(
+                    pinned(notice)?,
+                    "Native notice is not revision-pinned: {source}"
+                );
                 let value = texts
                     .get(hash)
                     .and_then(Value::as_str)
@@ -694,7 +704,9 @@ fn native_document(metadata: &Value, root: &str, manifest: &Value) -> Result<Val
             packages.push(json!({"name": work_name, "version": string(work, "version")?, "source": format!("native build of {name}@{version}"), "license": work["license"], "notices": notices}));
         }
     }
-    Ok(json!({"schemaVersion": 1, "boundary": manifest["boundary"], "packages": packages, "texts": used}))
+    Ok(
+        json!({"schemaVersion": 1, "boundary": manifest["boundary"], "packages": packages, "texts": used}),
+    )
 }
 
 pub fn host_triple() -> Result<&'static str> {
@@ -733,10 +745,12 @@ fn supplements(root: &Path) -> Result<Vec<Value>> {
 pub fn collect(directory: &Path) -> Result<()> {
     let root = root()?;
     let metadata = cargo_metadata(host_triple()?)?;
-    let mut document =
-        collect_document(&metadata, "paseo-daemon", BOUNDARY, &supplements(&root)?)?;
-    document["nativeBuilds"] =
-        native_document(&metadata, "paseo-daemon", &read_json(&root.join(NATIVE_NOTICES))?)?;
+    let mut document = collect_document(&metadata, "paseo-daemon", BOUNDARY, &supplements(&root)?)?;
+    document["nativeBuilds"] = native_document(
+        &metadata,
+        "paseo-daemon",
+        &read_json(&root.join(NATIVE_NOTICES))?,
+    )?;
     document["embeddedAbi"] = embedded_inventory(&root)?;
     let rendered = render_native_document(&root, &document)?;
     fs::create_dir_all(directory)?;
@@ -814,7 +828,11 @@ fn pinned(notice: &Value) -> Result<bool> {
 }
 
 /// Font and vendored-component attribution, bound to the exact packaged bytes.
-fn resource_document(manifest: &Value, packaged: &[PackagedResource], platform: &str) -> Result<Value> {
+fn resource_document(
+    manifest: &Value,
+    packaged: &[PackagedResource],
+    platform: &str,
+) -> Result<Value> {
     ensure!(
         manifest["schemaVersion"] == 1,
         "Unsupported resource notice schema"
@@ -830,12 +848,18 @@ fn resource_document(manifest: &Value, packaged: &[PackagedResource], platform: 
         for notice in notices {
             let source = string(notice, "source")?;
             let hash = string(notice, "sha256")?;
-            ensure!(pinned(notice)?, "Resource notice is not revision-pinned: {source}");
+            ensure!(
+                pinned(notice)?,
+                "Resource notice is not revision-pinned: {source}"
+            );
             let value = texts
                 .get(hash)
                 .and_then(Value::as_str)
                 .with_context(|| format!("Missing notice text for {name}: {source}"))?;
-            ensure!(digest(value) == hash, "Corrupt resource notice text: {hash}");
+            ensure!(
+                digest(value) == hash,
+                "Corrupt resource notice text: {hash}"
+            );
             used.insert(hash.to_owned(), json!(value));
         }
         packages.push(json!({"name": name, "version": version, "source": "packaged resource", "license": entry["license"], "notices": notices}));
@@ -878,11 +902,21 @@ fn resource_document(manifest: &Value, packaged: &[PackagedResource], platform: 
             .any(|value| value == platform)
         {
             let path = root()?.join(string(component, "path")?);
-            ensure!(path.exists(), "Missing vendored component {}", path.display());
-            attach(component, string(component, "name")?.to_owned(), "vendored".into())?;
+            ensure!(
+                path.exists(),
+                "Missing vendored component {}",
+                path.display()
+            );
+            attach(
+                component,
+                string(component, "name")?.to_owned(),
+                "vendored".into(),
+            )?;
         }
     }
-    Ok(json!({"schemaVersion": 1, "boundary": manifest["boundary"], "packages": packages, "texts": used}))
+    Ok(
+        json!({"schemaVersion": 1, "boundary": manifest["boundary"], "packages": packages, "texts": used}),
+    )
 }
 
 /// A third-party resource deliberately left out of every package. It is bound
@@ -940,7 +974,11 @@ const CLIENT_SOURCES: [(&str, &str); 3] = [
 
 /// `crate://<crate>/resources/<file>` references in one source text that name
 /// no staged resource, as `line: reference`.
-fn missing_references(source: &str, package: &str, packaged: &[PackagedResource]) -> Result<Vec<String>> {
+fn missing_references(
+    source: &str,
+    package: &str,
+    packaged: &[PackagedResource],
+) -> Result<Vec<String>> {
     let reference = Regex::new(r#"crate://([A-Za-z0-9_]+)/resources/([^"'\s)]+)"#)?;
     let mut missing = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -950,11 +988,14 @@ fn missing_references(source: &str, package: &str, packaged: &[PackagedResource]
                 name => name.to_owned(),
             };
             let file = &capture[2];
-            if !packaged
-                .iter()
-                .any(|resource| resource.package.replace('-', "_") == owner && resource.file == file)
-            {
-                missing.push(format!("{}: crate://{}/resources/{file}", index + 1, &capture[1]));
+            if !packaged.iter().any(|resource| {
+                resource.package.replace('-', "_") == owner && resource.file == file
+            }) {
+                missing.push(format!(
+                    "{}: crate://{}/resources/{file}",
+                    index + 1,
+                    &capture[1]
+                ));
             }
         }
     }
@@ -972,10 +1013,16 @@ pub fn ensure_references_staged(packaged: &[PackagedResource]) -> Result<()> {
         if !directory.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(&directory).follow_links(false).sort_by_file_name() {
+        for entry in WalkDir::new(&directory)
+            .follow_links(false)
+            .sort_by_file_name()
+        {
             let entry = entry?;
             if !entry.file_type().is_file()
-                || entry.path().extension().is_none_or(|extension| extension != "rs")
+                || entry
+                    .path()
+                    .extension()
+                    .is_none_or(|extension| extension != "rs")
             {
                 continue;
             }
@@ -997,17 +1044,106 @@ pub fn ensure_references_staged(packaged: &[PackagedResource]) -> Result<()> {
 
 /// Complete application notices: GUI Cargo closure, natively built libraries,
 /// packaged fonts and vendored platform components.
-pub fn render_app(metadata: &Value, packaged: &[PackagedResource], platform: &str) -> Result<String> {
+pub fn render_app(
+    metadata: &Value,
+    packaged: &[PackagedResource],
+    platform: &str,
+) -> Result<String> {
     let root = root()?;
     let gui = collect_document(metadata, "paseo-gui", GUI_BOUNDARY, &supplements(&root)?)?;
-    let native = native_document(metadata, "paseo-gui", &read_json(&root.join(NATIVE_NOTICES))?)?;
-    let resources = resource_document(&read_json(&root.join(RESOURCE_NOTICES))?, packaged, platform)?;
+    let native = native_document(
+        metadata,
+        "paseo-gui",
+        &read_json(&root.join(NATIVE_NOTICES))?,
+    )?;
+    let resources = resource_document(
+        &read_json(&root.join(RESOURCE_NOTICES))?,
+        packaged,
+        platform,
+    )?;
     Ok(format!(
         "{}{}{}",
         render(&gui)?,
         render_section(&native)?,
         render_section(&resources)?
     ))
+}
+
+/// Go modules are selected by `go list -deps` for the exact native target,
+/// not by all entries in go.sum (which also contains test/tool dependencies).
+pub fn render_go(
+    modules: &BTreeMap<String, PathBuf>,
+    source: &Path,
+    goroot: &Path,
+    toolchain: &str,
+) -> Result<String> {
+    render_go_component(
+        modules,
+        source,
+        goroot,
+        toolchain,
+        "Embedded Tailscale native runtime",
+        "Paseo libtailscale integration",
+    )
+}
+
+pub fn render_go_helper(goroot: &Path, toolchain: &str) -> Result<String> {
+    render_go_helper_at(&root()?, goroot, toolchain)
+}
+
+fn render_go_helper_at(workspace: &Path, goroot: &Path, toolchain: &str) -> Result<String> {
+    // This standard-library-only module inherits the project license. Walking
+    // the workspace would collect unrelated dependencies and generated assets.
+    let mut output = format!(
+        "\nPassession update helper\n================================\n\
+         \nPassession update helper (standard-library Go)\n\
+         \n--- workspace-root/LICENSE ---\n{}\n",
+        text(&workspace.join("LICENSE"))?
+    );
+    append_go_toolchain_notices(&mut output, goroot, toolchain)?;
+    Ok(output)
+}
+
+fn render_go_component(
+    modules: &BTreeMap<String, PathBuf>,
+    source: &Path,
+    goroot: &Path,
+    toolchain: &str,
+    title: &str,
+    main: &str,
+) -> Result<String> {
+    let mut output = format!("\n{title}\n================================\n");
+    for (name, directory) in std::iter::once((main.to_owned(), source.to_owned())).chain(
+        modules
+            .iter()
+            .map(|(name, directory)| (name.clone(), directory.clone())),
+    ) {
+        let entries = package_notices(&directory, None)?;
+        ensure!(
+            entries.iter().any(|notice| notice.license),
+            "Go dependency {name} contains no license text; preserve its pinned upstream license before packaging"
+        );
+        output.push_str(&format!("\n{name}\n"));
+        for notice in entries {
+            output.push_str(&format!("\n--- {} ---\n{}\n", notice.source, notice.text));
+        }
+    }
+    append_go_toolchain_notices(&mut output, goroot, toolchain)?;
+    Ok(output)
+}
+
+fn append_go_toolchain_notices(output: &mut String, goroot: &Path, toolchain: &str) -> Result<()> {
+    output.push_str(&format!(
+        "\nGo toolchain {toolchain}\n\n{}\n",
+        text(&goroot.join("LICENSE"))?
+    ));
+    for notice in package_notices(&goroot.join("src/vendor"), None)? {
+        output.push_str(&format!(
+            "\n--- Go src/vendor/{} ---\n{}\n",
+            notice.source, notice.text
+        ));
+    }
+    Ok(())
 }
 
 fn date_notice(source: &str) -> Result<&str> {
@@ -1174,6 +1310,34 @@ mod tests {
     }
 
     #[test]
+    fn helper_license_excludes_unrelated_workspace_and_generated_payloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let goroot = directory.path().join("go");
+        fs::create_dir_all(workspace.join(".dev/android/assets")).unwrap();
+        fs::create_dir_all(workspace.join("packages/unrelated")).unwrap();
+        fs::create_dir_all(goroot.join("src/vendor/library")).unwrap();
+        fs::write(workspace.join("LICENSE"), "Project license").unwrap();
+        fs::write(workspace.join(".dev/android/assets/LICENSE.jar"), [0xff, 0]).unwrap();
+        fs::write(
+            workspace.join("packages/unrelated/LICENSE"),
+            "Unrelated license",
+        )
+        .unwrap();
+        fs::write(goroot.join("LICENSE"), "Go compiler license").unwrap();
+        fs::write(
+            goroot.join("src/vendor/library/LICENSE"),
+            "Go vendored license",
+        )
+        .unwrap();
+        let rendered = render_go_helper_at(&workspace, &goroot, "go1.27.4").unwrap();
+        assert!(rendered.contains("Project license"));
+        assert!(rendered.contains("Go compiler license"));
+        assert!(rendered.contains("Go vendored license"));
+        assert!(!rendered.contains("Unrelated license"));
+    }
+
+    #[test]
     fn renderer_verifies_hashes_and_source_attribution() {
         let hash = digest("license text");
         let mut document = json!({"schemaVersion":1,"boundary":BOUNDARY,"packages":[{"name":"crate","version":"1","source":"registry","notices":[{"source":"LICENSE","sha256":hash}]}],"texts":{}});
@@ -1279,15 +1443,25 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            supplement_notices(&pkg, dir.path(), &[supplement.clone(), supplement.clone()], None)
-                .is_err()
+            supplement_notices(
+                &pkg,
+                dir.path(),
+                &[supplement.clone(), supplement.clone()],
+                None
+            )
+            .is_err()
         );
         let upstream = "2223456789012345678901234567890123456789";
         let mut fork = supplement.clone();
         fork["upstreamRevision"] = json!(upstream);
         assert!(supplement_notices(&pkg, dir.path(), &[fork.clone()], None).is_err());
         fork["url"] = json!(format!("https://example.com/upstream/{upstream}/LICENSE"));
-        assert_eq!(supplement_notices(&pkg, dir.path(), &[fork.clone()], None).unwrap().len(), 1);
+        assert_eq!(
+            supplement_notices(&pkg, dir.path(), &[fork.clone()], None)
+                .unwrap()
+                .len(),
+            1
+        );
         // Without VCS information the registry checksum binds the published
         // bytes; the upstream revision still pins the license URL.
         let checksum = "c".repeat(64);
@@ -1301,9 +1475,20 @@ mod tests {
                 .len(),
             1
         );
-        assert!(supplement_notices(&pkg, empty.path(), &[unversioned.clone()], Some(&"d".repeat(64))).is_err());
+        assert!(
+            supplement_notices(
+                &pkg,
+                empty.path(),
+                &[unversioned.clone()],
+                Some(&"d".repeat(64))
+            )
+            .is_err()
+        );
         assert!(supplement_notices(&pkg, empty.path(), &[unversioned.clone()], None).is_err());
-        unversioned.as_object_mut().unwrap().remove("upstreamRevision");
+        unversioned
+            .as_object_mut()
+            .unwrap()
+            .remove("upstreamRevision");
         assert!(supplement_notices(&pkg, empty.path(), &[unversioned], Some(&checksum)).is_err());
         supplement["revision"] = json!("1123456789012345678901234567890123456789");
         assert!(supplement_notices(&pkg, dir.path(), &[supplement], None).is_err());
@@ -1323,10 +1508,17 @@ mod tests {
             file: file.into(),
             sha256: sha256.into(),
         };
-        let document =
-            resource_document(&manifest, &[resource("Font.ttf", "11"), resource("icons/a.svg", "22")], "linux")
-                .unwrap();
-        assert!(render(&document).unwrap().contains("makepad-widgets/resources/Font.ttf@1.0.0"));
+        let document = resource_document(
+            &manifest,
+            &[resource("Font.ttf", "11"), resource("icons/a.svg", "22")],
+            "linux",
+        )
+        .unwrap();
+        assert!(
+            render(&document)
+                .unwrap()
+                .contains("makepad-widgets/resources/Font.ttf@1.0.0")
+        );
         assert!(resource_document(&manifest, &[resource("Font.ttf", "12")], "linux").is_err());
         assert!(resource_document(&manifest, &[resource("Other.ttf.2", "11")], "linux").is_err());
         let mut unpinned = manifest.clone();
@@ -1338,7 +1530,11 @@ mod tests {
     fn native_builds_require_reviewed_version_pin_and_pinned_licenses() {
         let dir = tempfile::tempdir().unwrap();
         let commit = "a".repeat(40);
-        fs::write(dir.path().join("build.rs"), format!("const SOURCE_COMMIT: &str = \"{commit}\";\n")).unwrap();
+        fs::write(
+            dir.path().join("build.rs"),
+            format!("const SOURCE_COMMIT: &str = \"{commit}\";\n"),
+        )
+        .unwrap();
         let license = "native license";
         let manifest = json!({"schemaVersion":1,"boundary":"Native","builds":[{"crate":"native-sys","version":"1",
             "pin":{"file":"build.rs","constant":"SOURCE_COMMIT","value":commit},
@@ -1356,9 +1552,12 @@ mod tests {
             ]}
         });
         let document = native_document(&metadata, "paseo-daemon", &manifest).unwrap();
-        assert!(render(&document).unwrap().contains(&format!("native@{commit} (MIT): https://example.com/{commit}/LICENSE")));
+        assert!(render(&document).unwrap().contains(&format!(
+            "native@{commit} (MIT): https://example.com/{commit}/LICENSE"
+        )));
         let mut unpinned = manifest.clone();
-        unpinned["builds"][0]["works"][0]["notices"][0]["source"] = json!("https://example.com/main/LICENSE");
+        unpinned["builds"][0]["works"][0]["notices"][0]["source"] =
+            json!("https://example.com/main/LICENSE");
         assert!(native_document(&metadata, "paseo-daemon", &unpinned).is_err());
         let mut moved = manifest.clone();
         moved["builds"][0]["pin"]["value"] = json!("b".repeat(40));
@@ -1398,13 +1597,49 @@ mod tests {
             file: "LiberationMono-Regular.ttf".into(),
             sha256: "aa".into(),
         }];
-        assert!(is_excluded(&excluded, "makepad-widgets", "1.0.0", "LiberationMono-Regular.ttf", "aa").unwrap());
+        assert!(
+            is_excluded(
+                &excluded,
+                "makepad-widgets",
+                "1.0.0",
+                "LiberationMono-Regular.ttf",
+                "aa"
+            )
+            .unwrap()
+        );
         // Another version or crate is a different, unreviewed file: it is packaged
         // and must pass the font license check instead.
-        assert!(!is_excluded(&excluded, "makepad-widgets", "1.0.1", "LiberationMono-Regular.ttf", "aa").unwrap());
-        assert!(!is_excluded(&excluded, "paseo-gui", "1.0.0", "LiberationMono-Regular.ttf", "aa").unwrap());
+        assert!(
+            !is_excluded(
+                &excluded,
+                "makepad-widgets",
+                "1.0.1",
+                "LiberationMono-Regular.ttf",
+                "aa"
+            )
+            .unwrap()
+        );
+        assert!(
+            !is_excluded(
+                &excluded,
+                "paseo-gui",
+                "1.0.0",
+                "LiberationMono-Regular.ttf",
+                "aa"
+            )
+            .unwrap()
+        );
         // Changed bytes under the reviewed name need a new review.
-        assert!(is_excluded(&excluded, "makepad-widgets", "1.0.0", "LiberationMono-Regular.ttf", "bb").is_err());
+        assert!(
+            is_excluded(
+                &excluded,
+                "makepad-widgets",
+                "1.0.0",
+                "LiberationMono-Regular.ttf",
+                "bb"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1429,6 +1664,38 @@ mod tests {
             ["4: crate://makepad_fonts_chinese_regular/resources/LXGWWenKaiRegular.ttf"]
         );
         // `self` resolves to the crate whose sources reference it.
-        assert_eq!(missing_references(source, "paseo-gui-platform", &packaged).unwrap().len(), 2);
+        assert_eq!(
+            missing_references(source, "paseo-gui-platform", &packaged)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn go_dependency_notices_require_real_license_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("native");
+        let goroot = directory.path().join("go");
+        let dependency = directory.path().join("dependency");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(goroot.join("src/vendor")).unwrap();
+        fs::create_dir_all(&dependency).unwrap();
+        fs::write(source.join("LICENSE"), "Native upstream license").unwrap();
+        fs::write(goroot.join("LICENSE"), "Go toolchain license").unwrap();
+        let modules = BTreeMap::from([("example.com/library@v1.0.0".into(), dependency.clone())]);
+        assert!(render_go(&modules, &source, &goroot, "go1.27.4").is_err());
+        fs::write(dependency.join("LICENSE"), "Dependency license").unwrap();
+        fs::write(dependency.join("NOTICE"), "Dependency attribution").unwrap();
+        let rendered = render_go(&modules, &source, &goroot, "go1.27.4").unwrap();
+        for required in [
+            "example.com/library@v1.0.0",
+            "Native upstream license",
+            "Dependency license",
+            "Dependency attribution",
+            "Go toolchain license",
+        ] {
+            assert!(rendered.contains(required));
+        }
     }
 }

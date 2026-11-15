@@ -129,7 +129,8 @@ fn line_cols(line: &str) -> usize {
     if line.is_ascii() && !line.contains('\t') {
         return line.len();
     }
-    line.chars().fold(0, |column, c| column + char_cols(c, column))
+    line.chars()
+        .fold(0, |column, c| column + char_cols(c, column))
 }
 
 /// Row starts of `line` wrapped at `cols` columns, breaking after whitespace when possible.
@@ -190,7 +191,10 @@ fn to_display(map: &[(usize, usize)], source: usize) -> usize {
     if map.is_empty() {
         return source;
     }
-    map.iter().find(|(s, _)| *s >= source).map(|(_, d)| *d).unwrap_or_else(|| map.last().unwrap().1)
+    map.iter()
+        .find(|(s, _)| *s >= source)
+        .map(|(_, d)| *d)
+        .unwrap_or_else(|| map.last().unwrap().1)
 }
 
 fn to_source(map: &[(usize, usize)], display: usize) -> usize {
@@ -209,7 +213,12 @@ fn to_source(map: &[(usize, usize)], display: usize) -> usize {
 }
 
 impl SourceEditor {
-    pub fn new(text: String, filename: &str, highlight_key: String, read_only: bool) -> SourceEditor {
+    pub fn new(
+        text: String,
+        filename: &str,
+        highlight_key: String,
+        read_only: bool,
+    ) -> SourceEditor {
         SourceEditor {
             buffer: TextBuffer::new(text),
             read_only,
@@ -256,7 +265,8 @@ impl SourceEditor {
         if self.buffer.text() != text {
             self.buffer.set_text(text.to_owned());
             self.ime_last = None;
-            self.buffer.set_selection(Selection::caret(self.buffer.selection.head));
+            self.buffer
+                .set_selection(Selection::caret(self.buffer.selection.head));
             self.drag = None;
             self.touch_caret = None;
             self.show_actions = false;
@@ -271,7 +281,8 @@ impl SourceEditor {
             cx.clear_text_selection(self.ime_area);
         }
         self.owns_selection = false;
-        self.buffer.set_selection(Selection::caret(self.buffer.selection.head));
+        self.buffer
+            .set_selection(Selection::caret(self.buffer.selection.head));
         self.drag = None;
         self.touch_caret = None;
         self.thumb_drag = None;
@@ -308,7 +319,10 @@ impl SourceEditor {
                 Some(end) if end > line => {
                     let start = self.buffer.offset_at(line, 1);
                     let end = self.buffer.offset_at(end, usize::MAX);
-                    self.buffer.set_selection(Selection { anchor: start, head: end });
+                    self.buffer.set_selection(Selection {
+                        anchor: start,
+                        head: end,
+                    });
                 }
                 _ => {
                     let offset = self.buffer.offset_at(line, column.max(1));
@@ -326,7 +340,10 @@ impl SourceEditor {
     /// Selects `start..end` and reveals it (find).
     pub fn select(&mut self, start: usize, end: usize) {
         self.touch_caret = None;
-        self.buffer.set_selection(Selection { anchor: start, head: end });
+        self.buffer.set_selection(Selection {
+            anchor: start,
+            head: end,
+        });
         self.reveal = Some(Reveal::Caret);
     }
 
@@ -335,7 +352,11 @@ impl SourceEditor {
     }
 
     fn padding(look: &EditorLook) -> (f64, f64, f64, f64) {
-        if look.compact { (0.0, 0.0, 0.0, 0.0) } else { (6.0, 16.0, 2.0, 16.0) }
+        if look.compact {
+            (0.0, 0.0, 0.0, 0.0)
+        } else {
+            (6.0, 16.0, 2.0, 16.0)
+        }
     }
 
     fn gutter(&self, look: &EditorLook) -> f64 {
@@ -348,14 +369,21 @@ impl SourceEditor {
 
     fn ensure_char_width(&mut self, cx: &mut Cx, kit: &mut Kit, size: f64) {
         if self.char_width_size != size || self.char_width <= 0.0 {
-            let width = kit.measure(cx, spec(Font::Mono, size, Vec4::default()), "0000000000").x / 10.0;
+            let width = kit
+                .measure(cx, spec(Font::Mono, size, Vec4::default()), "0000000000")
+                .x
+                / 10.0;
             self.char_width = width.max(1.0);
             self.char_width_size = size;
         }
     }
 
     fn ensure_geometry(&mut self, look: &EditorLook, text_width: f64) {
-        let cols = if look.wrap { ((text_width / self.char_width).floor() as usize).max(1) } else { 0 };
+        let cols = if look.wrap {
+            ((text_width / self.char_width).floor() as usize).max(1)
+        } else {
+            0
+        };
         let g = &self.geometry;
         if g.revision == self.buffer.revision
             && g.cols == cols
@@ -373,7 +401,11 @@ impl SourceEditor {
             let text = self.buffer.line(line);
             let width = line_cols(text);
             max_cols = max_cols.max(width);
-            total += if look.wrap && width > cols { wrap_line(text, cols).len() } else { 1 };
+            total += if look.wrap && width > cols {
+                wrap_line(text, cols).len()
+            } else {
+                1
+            };
         }
         prefix.push(total);
         self.geometry = Geometry {
@@ -447,7 +479,15 @@ impl SourceEditor {
         self.geometry.prefix[line] + row
     }
 
-    fn layout_row(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, line: usize, row: usize, highlighted: Option<&Highlighted>) -> (Rc<LaidoutText>, Vec<(usize, usize)>, usize) {
+    fn layout_row(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        line: usize,
+        row: usize,
+        highlighted: Option<&Highlighted>,
+    ) -> (Rc<LaidoutText>, Vec<(usize, usize)>, usize) {
         let (start, end) = self.row_range(line, row);
         let row_text = self.buffer.text()[start..end].to_owned();
         let (display_text, map) = display(&row_text);
@@ -475,18 +515,38 @@ impl SourceEditor {
                     let da = to_display(&map, a - start);
                     let db = to_display(&map, b - start);
                     let color = style.map(|s| look.syntax[s as usize]).unwrap_or(fg);
-                    spans.push(RichSpan { len: db - da, font: RichFont::Mono, size: look.font_size, color });
+                    spans.push(RichSpan {
+                        len: db - da,
+                        font: RichFont::Mono,
+                        size: look.font_size,
+                        color,
+                    });
                 }
                 let covered: usize = spans.iter().map(|s| s.len).sum();
                 if covered < display_text.len() {
-                    spans.push(RichSpan { len: display_text.len() - covered, font: RichFont::Mono, size: look.font_size, color: fg });
+                    spans.push(RichSpan {
+                        len: display_text.len() - covered,
+                        font: RichFont::Mono,
+                        size: look.font_size,
+                        color: fg,
+                    });
                 }
             }
-            None => spans.push(RichSpan { len: display_text.len(), font: RichFont::Mono, size: look.font_size, color: fg }),
+            None => spans.push(RichSpan {
+                len: display_text.len(),
+                font: RichFont::Mono,
+                size: look.font_size,
+                color: fg,
+            }),
         }
         if display_text.is_empty() {
             spans.clear();
-            spans.push(RichSpan { len: 0, font: RichFont::Mono, size: look.font_size, color: fg });
+            spans.push(RichSpan {
+                len: 0,
+                font: RichFont::Mono,
+                size: look.font_size,
+                color: fg,
+            });
         }
         let laid = kit.layout_rich(cx, &display_text, &spans, None, 1.0);
         self.layouts.insert((line, row), laid.clone());
@@ -495,37 +555,65 @@ impl SourceEditor {
 
     fn x_in_row(laid: &LaidoutText, map: &[(usize, usize)], within: usize) -> f64 {
         let display = to_display(map, within);
-        laid.rows.first().map(|row| row.index_to_x_in_lpxs(display.min(row.text.len())) as f64).unwrap_or(0.0)
+        laid.rows
+            .first()
+            .map(|row| row.index_to_x_in_lpxs(display.min(row.text.len())) as f64)
+            .unwrap_or(0.0)
     }
 
     fn index_at_x(laid: &LaidoutText, map: &[(usize, usize)], x: f64) -> usize {
-        let display = laid.rows.first().map(|row| row.x_in_lpxs_to_index(x.max(0.0) as f32)).unwrap_or(0);
+        let display = laid
+            .rows
+            .first()
+            .map(|row| row.x_in_lpxs_to_index(x.max(0.0) as f32))
+            .unwrap_or(0);
         to_source(map, display)
     }
 
     /// Offset under a window position (clamped into the text).
-    fn offset_at_point(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, abs: DVec2) -> usize {
+    fn offset_at_point(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        abs: DVec2,
+    ) -> usize {
         let line_height = self.line_height(look);
         let (_, top, _, _) = Self::padding(look);
         let rel_y = abs.y - self.content_rect.pos.y + self.scroll.y - top;
         let total = self.total_rows();
-        let row = if rel_y < 0.0 { 0 } else { ((rel_y / line_height) as usize).min(total.saturating_sub(1)) };
+        let row = if rel_y < 0.0 {
+            0
+        } else {
+            ((rel_y / line_height) as usize).min(total.saturating_sub(1))
+        };
         let (line, within_row) = self.row_to_line(row);
         let highlighted = highlight::result(&self.highlight_key);
-        let (laid, map, start) = self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
+        let (laid, map, start) =
+            self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
         let rel_x = abs.x - self.content_rect.pos.x + self.scroll.x;
         let index = Self::index_at_x(&laid, &map, rel_x);
         let (_, end) = self.row_range(line, within_row);
         (start + index).min(end)
     }
 
-    fn caret_point(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, offset: usize) -> DVec2 {
+    fn caret_point(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        offset: usize,
+    ) -> DVec2 {
         let line_height = self.line_height(look);
         let row = self.row_of(offset);
         let (line, within_row) = self.row_to_line(row);
         let highlighted = highlight::result(&self.highlight_key);
-        let (laid, map, start) = self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
-        dvec2(Self::x_in_row(&laid, &map, offset - start), row as f64 * line_height)
+        let (laid, map, start) =
+            self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
+        dvec2(
+            Self::x_in_row(&laid, &map, offset - start),
+            row as f64 * line_height,
+        )
     }
 
     fn scroll_bounds(&self, look: &EditorLook) -> DVec2 {
@@ -533,7 +621,11 @@ impl SourceEditor {
         let content_h = top + self.total_rows() as f64 * self.line_height(look) + bottom;
         let content_w = self.geometry.max_cols as f64 * self.char_width + 2.0;
         dvec2(
-            if look.wrap { 0.0 } else { (content_w - self.content_rect.size.x).max(0.0) },
+            if look.wrap {
+                0.0
+            } else {
+                (content_w - self.content_rect.size.x).max(0.0)
+            },
             (content_h - self.content_rect.size.y).max(0.0),
         )
     }
@@ -546,7 +638,14 @@ impl SourceEditor {
 
     /// Draws the editor into `area`. The caret does not blink, so an idle editor draws nothing.
     /// `ime_area` owns keyboard focus; the caret has separate IME avoidance geometry.
-    pub fn draw(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, look: &EditorLook, ime_area: Area) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        look: &EditorLook,
+        ime_area: Area,
+    ) {
         if self.selection_invalidated {
             self.cancel_selection_handles(cx);
             if self.owns_selection {
@@ -558,22 +657,33 @@ impl SourceEditor {
         self.ime_area = ime_area;
         self.owner_draw_pos = ime_area.rect(cx).pos;
         if (self.handles_revision != self.buffer.revision || !self.focused)
-            && let Some(handles) = self.handles.as_mut() {
-                handles.cancel(cx);
-            }
+            && let Some(handles) = self.handles.as_mut()
+        {
+            handles.cancel(cx);
+        }
         self.handles_revision = self.buffer.revision;
         let p = look.palette;
         self.ensure_char_width(cx, kit, look.font_size);
         let gutter = self.gutter(look);
         let (left, top, right, bottom) = Self::padding(look);
-        let content = rect(area.pos.x + gutter + left, area.pos.y, area.size.x - gutter - left - right, area.size.y);
+        let content = rect(
+            area.pos.x + gutter + left,
+            area.pos.y,
+            area.size.x - gutter - left - right,
+            area.size.y,
+        );
         self.content_rect = content;
         self.viewport = area;
         self.ensure_geometry(look, content.size.x);
         // Highlight the newest text (worker; debounced by one in-flight job per editor).
         if look.highlighting && self.highlight_requested != self.buffer.revision {
             self.highlight_requested = self.buffer.revision;
-            highlight::request(&self.highlight_key, self.buffer.revision, self.buffer.text(), &self.filename);
+            highlight::request(
+                &self.highlight_key,
+                self.buffer.revision,
+                self.buffer.text(),
+                &self.filename,
+            );
         }
         let highlighted = highlight::result(&self.highlight_key);
         let style_key = {
@@ -642,7 +752,8 @@ impl SourceEditor {
         for row in first..last {
             let (line, within_row) = self.row_to_line(row);
             let y = content.pos.y + top + row as f64 * line_height - self.scroll.y;
-            let (laid, map, start) = self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
+            let (laid, map, start) =
+                self.layout_row(cx, kit, look, line, within_row, highlighted.as_deref());
             let (_, end) = self.row_range(line, within_row);
             let x0 = content.pos.x - self.scroll.x;
             // Selection under the text.
@@ -656,8 +767,14 @@ impl SourceEditor {
                     xb += self.char_width * 0.5;
                 }
                 if xb > xa {
-                    kit.fill(cx, rect(x0 + xa, y, xb - xa, line_height), selection_color, 0.0);
-                    let visible = rect(x0 + xa, y, xb - xa, line_height).clip((content.pos, content.pos + content.size));
+                    kit.fill(
+                        cx,
+                        rect(x0 + xa, y, xb - xa, line_height),
+                        selection_color,
+                        0.0,
+                    );
+                    let visible = rect(x0 + xa, y, xb - xa, line_height)
+                        .clip((content.pos, content.pos + content.size));
                     if action_anchor.is_none() && visible.size.x > 0.0 && visible.size.y > 0.0 {
                         action_anchor = Some(visible);
                     }
@@ -688,14 +805,35 @@ impl SourceEditor {
             }
             // Keep KeyboardView avoidance local to the caret, not the entire pane.
             cx.add_aligned_rect_area(&mut self.ime_caret_area, caret);
-            cx.update_text_input(self.ime_area, self.ime_id, self.buffer.text(),
-                self.buffer.selection.anchor, self.buffer.selection.head, false, false, false);
-            cx.show_text_ime_caret(self.ime_caret_area, Rect { pos: dvec2(0.0, 0.0), size: caret.size });
+            cx.update_text_input(
+                self.ime_area,
+                self.ime_id,
+                self.buffer.text(),
+                self.buffer.selection.anchor,
+                self.buffer.selection.head,
+                false,
+                false,
+                false,
+            );
+            cx.show_text_ime_caret(
+                self.ime_caret_area,
+                Rect {
+                    pos: dvec2(0.0, 0.0),
+                    size: caret.size,
+                },
+            );
         }
-        if self.focused && !self.handles.as_ref().is_some_and(TextSelectionHandles::is_dragging)
-            && (self.show_actions || (self.owns_selection && cx.text_actions_active(self.ime_area))) {
+        if self.focused
+            && !self
+                .handles
+                .as_ref()
+                .is_some_and(TextSelectionHandles::is_dragging)
+            && (self.show_actions || (self.owns_selection && cx.text_actions_active(self.ime_area)))
+        {
             self.show_actions = false;
-            let anchor = action_anchor.or(caret_rect).map(|r| r.clip((content.pos, content.pos + content.size)));
+            let anchor = action_anchor
+                .or(caret_rect)
+                .map(|r| r.clip((content.pos, content.pos + content.size)));
             if let Some(anchor) = anchor.filter(|r| r.size.x > 0.0 && r.size.y > 0.0) {
                 cx.show_text_actions(self.ime_area, anchor, self.text_action_capabilities());
             } else {
@@ -704,18 +842,40 @@ impl SourceEditor {
             }
         }
         // Gutter over horizontally scrolled text.
-        kit.fill(cx, rect(area.pos.x, area.pos.y, gutter, area.size.y), p.surface0, 0.0);
+        kit.fill(
+            cx,
+            rect(area.pos.x, area.pos.y, gutter, area.size.y),
+            p.surface0,
+            0.0,
+        );
         if !look.compact {
-            kit.vline(cx, area.pos.x + gutter - 1.0, area.pos.y, area.size.y, p.border);
+            kit.vline(
+                cx,
+                area.pos.x + gutter - 1.0,
+                area.pos.y,
+                area.size.y,
+                p.border,
+            );
         }
         let number_padding = if look.compact { 12.0 } else { 3.0 };
-        let right_edge = area.pos.x + gutter - if look.compact { 0.0 } else { 1.0 } - number_padding;
+        let right_edge =
+            area.pos.x + gutter - if look.compact { 0.0 } else { 1.0 } - number_padding;
         for (line, y) in numbers {
-            let color = if !look.compact && line == active_line { p.foreground } else { p.muted };
+            let color = if !look.compact && line == active_line {
+                p.foreground
+            } else {
+                p.muted
+            };
             let label = (line + 1).to_string();
             let s = spec(Font::Mono, look.font_size, color);
             let width = kit.measure(cx, s, &label).x;
-            kit.text_in(cx, rect(right_edge - width, y, width + 1.0, line_height), s, &label, 0.0);
+            kit.text_in(
+                cx,
+                rect(right_edge - width, y, width + 1.0, line_height),
+                s,
+                &label,
+                0.0,
+            );
         }
         // Scroll thumb.
         let content_h = top + total as f64 * line_height + bottom;
@@ -723,35 +883,55 @@ impl SourceEditor {
             let ratio = area.size.y / content_h;
             let thumb_h = (area.size.y * ratio).max(24.0);
             let max_scroll = content_h - area.size.y;
-            let thumb_y = area.pos.y + (area.size.y - thumb_h) * (self.scroll.y / max_scroll).clamp(0.0, 1.0);
-            kit.fill(cx, rect(area.pos.x + area.size.x - 6.0, thumb_y, 4.0, thumb_h), with_alpha(p.muted, 0.35), 2.0);
+            let thumb_y =
+                area.pos.y + (area.size.y - thumb_h) * (self.scroll.y / max_scroll).clamp(0.0, 1.0);
+            kit.fill(
+                cx,
+                rect(area.pos.x + area.size.x - 6.0, thumb_y, 4.0, thumb_h),
+                with_alpha(p.muted, 0.35),
+                2.0,
+            );
         }
         cx.end_turtle();
         if self.focused && self.touch_handles {
             let anchor = self.caret_point(cx, kit, look, sel.anchor);
             let cursor = self.caret_point(cx, kit, look, sel.head);
             let origin = content.pos + dvec2(0.0, top) - self.scroll;
-            self.handles.get_or_insert_with(|| TextSelectionHandles::new(cx)).draw(
-                cx, self.ime_area, content,
-                rect(origin.x + anchor.x, origin.y + anchor.y, 2.0, line_height),
-                rect(origin.x + cursor.x, origin.y + cursor.y, 2.0, line_height),
-                sel.is_empty(), !self.read_only,
-            );
+            self.handles
+                .get_or_insert_with(|| TextSelectionHandles::new(cx))
+                .draw(
+                    cx,
+                    self.ime_area,
+                    content,
+                    rect(origin.x + anchor.x, origin.y + anchor.y, 2.0, line_height),
+                    rect(origin.x + cursor.x, origin.y + cursor.y, 2.0, line_height),
+                    sel.is_empty(),
+                    !self.read_only,
+                );
         }
     }
 
     pub fn scroll_by(&mut self, look: &EditorLook, delta: DVec2) {
         let max = self.scroll_bounds(look);
         self.scroll.x = (self.scroll.x + delta.x).clamp(0.0, max.x);
-        self.touch_scroll.apply_delta(&mut self.scroll.y, delta.y, max.y);
+        self.touch_scroll
+            .apply_delta(&mut self.scroll.y, delta.y, max.y);
     }
 
-    pub fn animate_scroll(&mut self, cx: &mut Cx, event: &Event, look: &EditorLook, enabled: bool) -> bool {
+    pub fn animate_scroll(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        look: &EditorLook,
+        enabled: bool,
+    ) -> bool {
         if !enabled {
             self.touch_scroll.reset();
             return false;
         }
-        let Some(delta) = self.touch_scroll.frame(cx, event) else { return false };
+        let Some(delta) = self.touch_scroll.frame(cx, event) else {
+            return false;
+        };
         let before = self.scroll;
         self.scroll_by(look, dvec2(0.0, delta));
         self.scroll != before
@@ -767,8 +947,12 @@ impl SourceEditor {
         }
         let thumb_h = (area.size.y * area.size.y / content_h).max(24.0);
         let max_scroll = content_h - area.size.y;
-        let thumb_y = area.pos.y + (area.size.y - thumb_h) * (self.scroll.y / max_scroll).clamp(0.0, 1.0);
-        Some((rect(area.pos.x + area.size.x - 10.0, thumb_y, 10.0, thumb_h), max_scroll / (area.size.y - thumb_h).max(1.0)))
+        let thumb_y =
+            area.pos.y + (area.size.y - thumb_h) * (self.scroll.y / max_scroll).clamp(0.0, 1.0);
+        Some((
+            rect(area.pos.x + area.size.x - 10.0, thumb_y, 10.0, thumb_h),
+            max_scroll / (area.size.y - thumb_h).max(1.0),
+        ))
     }
 
     pub fn cancel_selection_handles(&mut self, cx: &mut Cx) {
@@ -778,12 +962,25 @@ impl SourceEditor {
         self.touch_handles = false;
     }
 
-    pub fn handle_selection_handles(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, event: &Event) -> bool {
-        if self.selection_invalidated || !self.focused || self.handles_revision != self.buffer.revision {
+    pub fn handle_selection_handles(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        event: &Event,
+    ) -> bool {
+        if self.selection_invalidated
+            || !self.focused
+            || self.handles_revision != self.buffer.revision
+        {
             self.cancel_selection_handles(cx);
             return false;
         }
-        let Some(action) = self.handles.as_mut().and_then(|handles| handles.handle_event(cx, event, self.ime_area)) else {
+        let Some(action) = self
+            .handles
+            .as_mut()
+            .and_then(|handles| handles.handle_event(cx, event, self.ime_area))
+        else {
             return false;
         };
         self.touch_scroll.reset();
@@ -802,8 +999,16 @@ impl SourceEditor {
             self.buffer.move_selection_handle(action.endpoint, offset);
             self.blink.restart(cx);
             if !self.read_only {
-                cx.update_text_input(self.ime_area, self.ime_id, self.buffer.text(),
-                    self.buffer.selection.anchor, self.buffer.selection.head, false, false, false);
+                cx.update_text_input(
+                    self.ime_area,
+                    self.ime_id,
+                    self.buffer.text(),
+                    self.buffer.selection.anchor,
+                    self.buffer.selection.head,
+                    false,
+                    false,
+                    false,
+                );
             }
             self.show_actions = action.phase == TextHandlePhase::End && cfg!(target_os = "android");
         }
@@ -816,10 +1021,16 @@ impl SourceEditor {
 
     pub fn wants_touch_focus(&self, hit: &Hit) -> bool {
         match hit {
-            Hit::FingerUp(fe) => self.touch_caret == Some((fe.digit_id, self.buffer.revision))
-                && fe.is_over && fe.was_tap() && self.viewport.contains(fe.abs),
-            Hit::FingerLongPress(fe) => self.touch_caret == Some((fe.digit_id, self.buffer.revision))
-                && self.viewport.contains(fe.abs),
+            Hit::FingerUp(fe) => {
+                self.touch_caret == Some((fe.digit_id, self.buffer.revision))
+                    && fe.is_over
+                    && fe.was_tap()
+                    && self.viewport.contains(fe.abs)
+            }
+            Hit::FingerLongPress(fe) => {
+                self.touch_caret == Some((fe.digit_id, self.buffer.revision))
+                    && self.viewport.contains(fe.abs)
+            }
             _ => false,
         }
     }
@@ -838,7 +1049,13 @@ impl SourceEditor {
     }
 
     /// Pointer and keyboard input already routed to the editor.
-    pub fn handle_hit(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, hit: &Hit) -> EditorResult {
+    pub fn handle_hit(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        hit: &Hit,
+    ) -> EditorResult {
         if self.selection_invalidated {
             self.cancel_selection_handles(cx);
             if self.owns_selection {
@@ -861,11 +1078,12 @@ impl SourceEditor {
                     return result;
                 }
                 if let Some((thumb, ratio)) = self.thumb(look)
-                    && thumb.contains(fe.abs) {
-                        self.thumb_drag = Some((fe.abs.y, self.scroll.y));
-                        let _ = ratio;
-                        return result;
-                    }
+                    && thumb.contains(fe.abs)
+                {
+                    self.thumb_drag = Some((fe.abs.y, self.scroll.y));
+                    let _ = ratio;
+                    return result;
+                }
                 self.touch_scroll.handle_hit(hit);
                 if fe.device.is_touch() {
                     self.touch_caret = Some((fe.digit_id, self.buffer.revision));
@@ -890,7 +1108,11 @@ impl SourceEditor {
                     }
                     _ => {
                         self.buffer.move_head(offset, fe.modifiers.shift);
-                        self.drag = Some((DragUnit::Char, self.buffer.selection.anchor, self.buffer.selection.anchor));
+                        self.drag = Some((
+                            DragUnit::Char,
+                            self.buffer.selection.anchor,
+                            self.buffer.selection.anchor,
+                        ));
                     }
                 }
             }
@@ -920,10 +1142,27 @@ impl SourceEditor {
                     }
                     let offset = self.offset_at_point(cx, kit, look, fe.abs);
                     let selection = match unit {
-                        DragUnit::Char => Selection { anchor: a, head: offset },
+                        DragUnit::Char => Selection {
+                            anchor: a,
+                            head: offset,
+                        },
                         DragUnit::Word | DragUnit::Line => {
-                            let (wa, wb) = if unit == DragUnit::Word { self.buffer.word_at(offset) } else { self.buffer.line_range_at(offset) };
-                            if offset < a { Selection { anchor: b, head: wa } } else { Selection { anchor: a, head: wb.max(b) } }
+                            let (wa, wb) = if unit == DragUnit::Word {
+                                self.buffer.word_at(offset)
+                            } else {
+                                self.buffer.line_range_at(offset)
+                            };
+                            if offset < a {
+                                Selection {
+                                    anchor: b,
+                                    head: wa,
+                                }
+                            } else {
+                                Selection {
+                                    anchor: a,
+                                    head: wb.max(b),
+                                }
+                            }
                         }
                     };
                     self.buffer.set_selection(selection);
@@ -1006,7 +1245,11 @@ impl SourceEditor {
                         }
                         None => {
                             let start = self.buffer.selection.start();
-                            let kind = if te.was_paste || text.chars().count() > 1 { EditKind::Other } else { EditKind::Insert };
+                            let kind = if te.was_paste || text.chars().count() > 1 {
+                                EditKind::Other
+                            } else {
+                                EditKind::Insert
+                            };
                             self.buffer.insert(&text, kind);
                             start
                         }
@@ -1041,13 +1284,28 @@ impl SourceEditor {
             self.blink.restart(cx);
         }
         if self.focused && !self.read_only {
-            cx.update_text_input(self.ime_area, self.ime_id, self.buffer.text(),
-                self.buffer.selection.anchor, self.buffer.selection.head, false, false, false);
+            cx.update_text_input(
+                self.ime_area,
+                self.ime_id,
+                self.buffer.text(),
+                self.buffer.selection.anchor,
+                self.buffer.selection.head,
+                false,
+                false,
+                false,
+            );
         }
         result
     }
 
-    fn row_move(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, rows: isize, extend: bool) {
+    fn row_move(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &EditorLook,
+        rows: isize,
+        extend: bool,
+    ) {
         let head = self.buffer.selection.head;
         let point = self.caret_point(cx, kit, look, head);
         let x = *self.preferred_x.get_or_insert(point.x);
@@ -1060,7 +1318,8 @@ impl SourceEditor {
         } else {
             let (line, within) = self.row_to_line(row as usize);
             let highlighted = highlight::result(&self.highlight_key);
-            let (laid, map, start) = self.layout_row(cx, kit, look, line, within, highlighted.as_deref());
+            let (laid, map, start) =
+                self.layout_row(cx, kit, look, line, within, highlighted.as_deref());
             let (_, end) = self.row_range(line, within);
             (start + Self::index_at_x(&laid, &map, x)).min(end)
         };
@@ -1072,7 +1331,11 @@ impl SourceEditor {
     fn handle_key(&mut self, cx: &mut Cx, kit: &mut Kit, look: &EditorLook, ke: &KeyEvent) {
         let m = ke.modifiers;
         let primary = m.is_primary();
-        let word = if cfg!(target_vendor = "apple") { m.alt } else { m.control };
+        let word = if cfg!(target_vendor = "apple") {
+            m.alt
+        } else {
+            m.control
+        };
         let line_jump = cfg!(target_vendor = "apple") && m.logo;
         let extend = m.shift;
         let head = self.buffer.selection.head;
@@ -1123,27 +1386,48 @@ impl SourceEditor {
                 }
             }
             KeyCode::Home => {
-                let target = if primary { 0 } else { self.buffer.line_start(self.buffer.line_of(head)) };
+                let target = if primary {
+                    0
+                } else {
+                    self.buffer.line_start(self.buffer.line_of(head))
+                };
                 self.buffer.move_head(target, extend);
             }
             KeyCode::End => {
-                let target = if primary { self.buffer.len() } else { self.buffer.line_end(self.buffer.line_of(head)) };
+                let target = if primary {
+                    self.buffer.len()
+                } else {
+                    self.buffer.line_end(self.buffer.line_of(head))
+                };
                 self.buffer.move_head(target, extend);
             }
             KeyCode::PageUp | KeyCode::PageDown => {
-                let rows = (self.content_rect.size.y / self.line_height(look)).floor().max(1.0) as isize;
-                let rows = if ke.key_code == KeyCode::PageUp { -rows } else { rows };
+                let rows = (self.content_rect.size.y / self.line_height(look))
+                    .floor()
+                    .max(1.0) as isize;
+                let rows = if ke.key_code == KeyCode::PageUp {
+                    -rows
+                } else {
+                    rows
+                };
                 self.scroll_by(look, dvec2(0.0, rows as f64 * self.line_height(look)));
                 self.row_move(cx, kit, look, rows, extend);
                 keep_preferred = true;
             }
             KeyCode::KeyA if primary => {
                 let len = self.buffer.len();
-                self.buffer.set_selection(Selection { anchor: 0, head: len });
+                self.buffer.set_selection(Selection {
+                    anchor: 0,
+                    head: len,
+                });
                 return;
             }
             KeyCode::KeyZ if primary && editable => {
-                if m.shift { self.buffer.redo(); } else { self.buffer.undo(); }
+                if m.shift {
+                    self.buffer.redo();
+                } else {
+                    self.buffer.undo();
+                }
             }
             KeyCode::KeyY if primary && editable && !cfg!(target_vendor = "apple") => {
                 self.buffer.redo();
@@ -1170,7 +1454,8 @@ impl SourceEditor {
         if self.read_only || text.is_empty() {
             return false;
         }
-        self.buffer.insert(&text.replace("\r\n", "\n"), EditKind::Other);
+        self.buffer
+            .insert(&text.replace("\r\n", "\n"), EditKind::Other);
         self.reveal = Some(Reveal::Caret);
         true
     }
@@ -1188,7 +1473,10 @@ impl SourceEditor {
     pub fn select_all(&mut self) {
         self.touch_caret = None;
         let len = self.buffer.len();
-        self.buffer.set_selection(Selection { anchor: 0, head: len });
+        self.buffer.set_selection(Selection {
+            anchor: 0,
+            head: len,
+        });
     }
 
     pub fn forget(&self) {
@@ -1205,11 +1493,16 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let mut kit = Kit::new(&mut cx);
         let look = EditorLook {
-            font_size: 14.0, compact: true, wrap: false, highlighting: false,
-            syntax: [Vec4::default(); 20], palette: crate::theme::current_palette(),
+            font_size: 14.0,
+            compact: true,
+            wrap: false,
+            highlighting: false,
+            syntax: [Vec4::default(); 20],
+            palette: crate::theme::current_palette(),
         };
         for transition in 0..8 {
-            let mut editor = SourceEditor::new("한글 text".into(), "test.txt", "touch".into(), false);
+            let mut editor =
+                SourceEditor::new("한글 text".into(), "test.txt", "touch".into(), false);
             editor.viewport = rect(0.0, 0.0, 100.0, 100.0);
             editor.select(0, "한글".len());
             let selected = editor.buffer.selection;
@@ -1220,10 +1513,15 @@ mod tests {
             let mut release = up();
             match transition {
                 0 => release.abs.x = -1.0,
-                1 => { editor.handle_hit(&mut cx, &mut kit, &look, &moved_out()); }
+                1 => {
+                    editor.handle_hit(&mut cx, &mut kit, &look, &moved_out());
+                }
                 2 => editor.observe_event(&cancel()),
                 3 => editor.sync_text("new model"),
-                4 => editor.observe_event(&Event::KeyFocus(KeyFocusEvent { prev: Area::Empty, focus: Area::Empty })),
+                4 => editor.observe_event(&Event::KeyFocus(KeyFocusEvent {
+                    prev: Area::Empty,
+                    focus: Area::Empty,
+                })),
                 5 => editor.viewport.pos.x = 20.0,
                 6 => release.tap_cancelled = true,
                 _ => editor.buffer.insert("model edit", EditKind::Other),
@@ -1236,10 +1534,10 @@ mod tests {
         }
     }
 
-
     #[test]
     fn native_text_actions_respect_read_only_and_empty_selection() {
-        let mut editor = SourceEditor::new("한글 text".into(), "test.txt", "text-actions".into(), true);
+        let mut editor =
+            SourceEditor::new("한글 text".into(), "test.txt", "text-actions".into(), true);
         editor.select(0, "한글".len());
         let actions = editor.text_action_capabilities();
         assert!(actions.copy && actions.select_all);
@@ -1262,7 +1560,8 @@ mod tests {
 
     #[test]
     fn model_replacement_invalidates_selection_without_breaking_unicode() {
-        let mut editor = SourceEditor::new("한글 text".into(), "test.txt", "replacement".into(), false);
+        let mut editor =
+            SourceEditor::new("한글 text".into(), "test.txt", "replacement".into(), false);
         editor.select(0, "한글".len());
         editor.show_actions = true;
         editor.sync_text("한글 text");

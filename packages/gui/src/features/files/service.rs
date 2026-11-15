@@ -50,7 +50,10 @@ impl Stash {
 
 fn contents_from_download(file: paseo_client::DownloadedFile) -> FileContents {
     let mime = file.metadata.mime.clone();
-    let text = matches!(file.metadata.encoding, paseo_protocol::binary_frames::FileEncoding::Utf8);
+    let text = matches!(
+        file.metadata.encoding,
+        paseo_protocol::binary_frames::FileEncoding::Utf8
+    );
     let kind = if mime.starts_with("image/") {
         "image"
     } else if text {
@@ -143,7 +146,10 @@ pub fn write(
 /// details (original `DaemonException` with `payload.result.status`).
 pub fn write_result(payload: &Value) -> Option<Value> {
     let result = payload.get("result")?;
-    result.get("status").and_then(Value::as_str).map(|_| result.clone())
+    result
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|_| result.clone())
 }
 
 /// `fs.file.subscribe.request` as an owned, reconnect-restoring core observation.
@@ -284,7 +290,13 @@ pub fn upload_bytes(
             ..Default::default()
         };
         let response = client
-            .upload_file(&file_name, &mime_type, &modified_at, bytes.as_slice(), options)
+            .upload_file(
+                &file_name,
+                &mime_type,
+                &modified_at,
+                bytes.as_slice(),
+                options,
+            )
             .await?;
         match response.get("file") {
             Some(file) if !file.is_null() && response.get("error").is_none_or(Value::is_null) => {

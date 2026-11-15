@@ -86,9 +86,10 @@ impl AgentManager {
             .flatten();
         let caller_id = text(&input, "callerAgentId").or(actor_agent);
         if let (Some(bound), Some(requested)) = (actor_agent, caller_id)
-            && bound != requested {
-                bail!("Caller agent does not match authenticated agent");
-            }
+            && bound != requested
+        {
+            bail!("Caller agent does not match authenticated agent");
+        }
         let parent = if let Some(id) = caller_id {
             self.authorize(actor, id).await?;
             let parent = self
@@ -381,10 +382,10 @@ impl AgentManager {
         if let Some(thinking) = text(input, "thinkingOptionId").filter(|option| {
             !option.is_empty()
                 && !selected.is_some_and(|model| {
-                array(model, "thinkingOptions")
-                    .iter()
-                    .any(|candidate| text(candidate, "id") == Some(*option))
-            })
+                    array(model, "thinkingOptions")
+                        .iter()
+                        .any(|candidate| text(candidate, "id") == Some(*option))
+                })
         }) {
             issues.push(issue(
                 "thinkingOptionId",
@@ -479,7 +480,9 @@ impl AgentManager {
         let result = self
             .create_command(owner, command, None, Some(&cancel))
             .await?;
-        Ok(json!({"executionId":execution_id,"agent":snapshot_payload(&result["liveSnapshot"]),"created":true}))
+        Ok(
+            json!({"executionId":execution_id,"agent":snapshot_payload(&result["liveSnapshot"]),"created":true}),
+        )
     }
 
     pub async fn hub_cleanup_created(&self, created: &Value, owner: &Value) -> Result<()> {
@@ -497,11 +500,11 @@ impl AgentManager {
                 bail!("Hub execution owner does not match created agent");
             }
         } else if let Some(agent) = self.storage()?.get(id).await?
-            && agent["owner"] != *owner {
-                bail!("Hub execution owner does not match created agent");
-            }
-        self.cleanup_creation(owner, Some(id))
-            .await
+            && agent["owner"] != *owner
+        {
+            bail!("Hub execution owner does not match created agent");
+        }
+        self.cleanup_creation(owner, Some(id)).await
     }
 
     fn archive_after_creation_turn(
@@ -545,20 +548,17 @@ impl AgentManager {
         Ok(())
     }
 
-    async fn cleanup_creation(
-        &self,
-        actor: &Value,
-        agent_id: Option<&str>,
-    ) -> Result<()> {
+    async fn cleanup_creation(&self, actor: &Value, agent_id: Option<&str>) -> Result<()> {
         let mut failure = None;
         if let Some(id) = agent_id {
             if let Err(error) = self.control(actor, id, "delete", json!({})).await {
                 failure = Some(error);
             }
             if let Err(error) = self.storage()?.remove(id).await
-                && failure.is_none() {
-                    failure = Some(error);
-                }
+                && failure.is_none()
+            {
+                failure = Some(error);
+            }
         }
         if let Some(error) = failure {
             Err(error)
@@ -752,14 +752,16 @@ impl CreationHooks for AgentManager {
     }
     async fn validate_completed(&self, snapshot: &Value) -> Result<()> {
         if let Some(id) = text(snapshot, "agentId")
-            && !self.exists("agent", id).await? {
-                bail!("Previously created agent no longer exists");
-            }
+            && !self.exists("agent", id).await?
+        {
+            bail!("Previously created agent no longer exists");
+        }
         if snapshot["kind"] == "workspace"
             && let Some(id) = text(snapshot, "workspaceId")
-                && !self.exists("workspace", id).await? {
-                    bail!("Previously created workspace no longer exists");
-                }
+            && !self.exists("workspace", id).await?
+        {
+            bail!("Previously created workspace no longer exists");
+        }
         Ok(())
     }
 }
@@ -958,9 +960,19 @@ mod tests {
     #[test]
     fn public_create_rejects_worktrees_and_preserves_local_directory_intent() {
         assert!(validate_public_intent(&json!({"config":{"cwd":"/repo"}})).is_ok());
-        for worktree in [json!({"mode":"branch-off"}), json!({"worktreeName":"feature"}), json!({"branchName":"feature"})] {
+        for worktree in [
+            json!({"mode":"branch-off"}),
+            json!({"worktreeName":"feature"}),
+            json!({"branchName":"feature"}),
+        ] {
             let error = validate_public_intent(&json!({"worktree":worktree})).unwrap_err();
-            assert_eq!(error.downcast_ref::<crate::projects::RequestError>().unwrap().code, "unsupported");
+            assert_eq!(
+                error
+                    .downcast_ref::<crate::projects::RequestError>()
+                    .unwrap()
+                    .code,
+                "unsupported"
+            );
         }
         assert!(validate_public_intent(&json!({"worktreeName":"legacy"})).is_err());
         assert!(validate_public_intent(&json!({"git":{}})).is_err());

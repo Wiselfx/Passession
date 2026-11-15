@@ -33,6 +33,44 @@ pub(crate) fn text<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
     config[key].as_str()
 }
 
+pub(crate) fn uses_tailnet(config: &Value) -> bool {
+    config["networkMode"] == "tailnet"
+}
+
+/// Classifies an auxiliary resource against the host's normalized WebSocket authority.
+/// This is the daemon-credential boundary; a tailnet hostname may use other HTTP ports.
+pub(crate) fn http_route(config: &Value, resource: &str) -> Result<(bool, bool), CoreError> {
+    let resource = url::Url::parse(resource).map_err(|_| invalid())?;
+    if !matches!(resource.scheme(), "http" | "https")
+        || !resource.username().is_empty()
+        || resource.password().is_some()
+        || resource.fragment().is_some()
+        || resource.host_str().is_none()
+    {
+        return Err(CoreError::new(
+            "HOST_HTTP_URL",
+            "Resource URL must be HTTP(S) without credentials or a fragment",
+            false,
+        ));
+    }
+    let resolved = resolve(config)?;
+    if resolved.is_relay() {
+        return Ok((false, false));
+    }
+    let Endpoint::Socket { url, ipc: None } = resolved.target.endpoint else {
+        return Ok((false, false));
+    };
+    let endpoint = url::Url::parse(&url).map_err(|_| invalid())?;
+    let same_host = endpoint.host_str() == resource.host_str();
+    let same = same_host
+        && endpoint.port_or_known_default() == resource.port_or_known_default()
+        && matches!(
+            (endpoint.scheme(), resource.scheme()),
+            ("ws", "http") | ("wss", "https")
+        );
+    Ok((same, uses_tailnet(config) && same_host))
+}
+
 fn invalid() -> CoreError {
     // Parser errors can contain the endpoint, which can contain a password.
     CoreError::new(
@@ -43,22 +81,45 @@ fn invalid() -> CoreError {
 }
 
 pub(crate) fn resolve(config: &Value) -> Result<ResolvedHost, CoreError> {
+    if !matches!(config.get("networkMode"), None | Some(Value::Null))
+        && !matches!(text(config, "networkMode"), Some("normal" | "tailnet"))
+    {
+        return Err(CoreError::new(
+            "invalid_connection",
+            "Unknown host network mode",
+            false,
+        ));
+    }
     let endpoint = text(config, "endpoint").unwrap_or_default().trim();
-    let pairing =
-        endpoint.starts_with("relay://") || endpoint.contains("#connect=") || endpoint.contains("#offer=");
-    if !pairing && (endpoint.starts_with("ws://") || endpoint.starts_with("wss://") || endpoint.starts_with("tcp://"))
+    let pairing = endpoint.starts_with("relay://")
+        || endpoint.contains("#connect=")
+        || endpoint.contains("#offer=");
+    if !pairing
+        && (endpoint.starts_with("ws://")
+            || endpoint.starts_with("wss://")
+            || endpoint.starts_with("tcp://"))
         && let Ok(url) = url::Url::parse(endpoint)
-            && url
-                .query_pairs()
-                .any(|(key, value)| (key == "role" && value == "client") || key == "serverId")
-            {
-                return Err(CoreError::new(
-                    "invalid_connection",
-                    "A relay pairing offer with its daemon public key is required",
-                    false,
-                ));
-            }
+        && url
+            .query_pairs()
+            .any(|(key, value)| (key == "role" && value == "client") || key == "serverId")
+    {
+        return Err(CoreError::new(
+            "invalid_connection",
+            "A relay pairing offer with its daemon public key is required",
+            false,
+        ));
+    }
     let mut target = Target::parse(endpoint).map_err(|_| invalid())?;
+    if uses_tailnet(config)
+        && (target.security.is_some()
+            || !matches!(&target.endpoint, Endpoint::Socket { ipc: None, .. }))
+    {
+        return Err(CoreError::new(
+            "invalid_connection",
+            "Embedded Tailscale requires a direct ws:// or wss:// host; IPC, SSH and relay connections are not supported.",
+            false,
+        ));
+    }
     let ssh = matches!(target.endpoint, Endpoint::Ssh { .. });
     let mut relay_key = None;
     let mut require_protected = false;
@@ -109,9 +170,10 @@ pub(crate) fn resolve(config: &Value) -> Result<ResolvedHost, CoreError> {
 
 fn expand_home(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir() {
-            return home.join(rest).to_string_lossy().into_owned();
-        }
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().into_owned();
+    }
     path.to_owned()
 }
 
@@ -160,12 +222,21 @@ pub(crate) fn valid_credential(token: &str) -> bool {
 /// Flutter `PaseoClient._authentication`: a credential file is used only while the daemon that
 /// owns it (its sibling `paseo.pid`) listens on the selected socket.
 pub(crate) async fn authentication(config: &Value, resolved: &ResolvedHost) -> Option<Value> {
+    // Desktop discovery credentials never leave this device through an embedded node.
+    if uses_tailnet(config) {
+        return resolved
+            .password
+            .as_ref()
+            .map(|password| json!({"kind":"password","password":password}));
+    }
     let mut token = text(config, "localCredential").map(str::to_owned);
     if let Some(path) = text(config, "localCredentialPath")
-        && !resolved.is_relay() && !resolved.ssh
-            && let Some(found) = credential_for(Path::new(path), config).await {
-                token = Some(found);
-            }
+        && !resolved.is_relay()
+        && !resolved.ssh
+        && let Some(found) = credential_for(Path::new(path), config).await
+    {
+        token = Some(found);
+    }
     if let Some(token) = token.filter(|token| !token.is_empty()) {
         return Some(json!({"kind": "localCredential", "token": token}));
     }
@@ -209,7 +280,9 @@ pub fn inspect_host_config(config: &Value) -> Result<HostConfigInfo, CoreError> 
     let resolved = resolve(config)?;
     let (scheme, host, port) = match &resolved.target.endpoint {
         Endpoint::Ssh { host, port, .. } => ("ssh".to_owned(), host.clone(), *port),
-        Endpoint::Socket { ipc: Some(path), .. } => {
+        Endpoint::Socket {
+            ipc: Some(path), ..
+        } => {
             let scheme = if resolved.target.description.starts_with("pipe://") {
                 "pipe"
             } else {
@@ -269,7 +342,8 @@ mod tests {
 
     #[test]
     fn config_password_overrides_the_endpoint_password() {
-        let resolved = resolve(&json!({"endpoint":"tcp://host:1?password=url","password":"mine"})).unwrap();
+        let resolved =
+            resolve(&json!({"endpoint":"tcp://host:1?password=url","password":"mine"})).unwrap();
         assert_eq!(resolved.password.as_deref(), Some("mine"));
         let resolved = resolve(&json!({"endpoint":"tcp://host:1?password=url"})).unwrap();
         assert_eq!(resolved.password.as_deref(), Some("url"));
@@ -277,7 +351,61 @@ mod tests {
 
     #[test]
     fn relay_ids_without_a_key_are_rejected() {
-        assert!(resolve(&json!({"endpoint":"ws://relay:443/ws?serverId=srv&role=client"})).is_err());
+        assert!(
+            resolve(&json!({"endpoint":"ws://relay:443/ws?serverId=srv&role=client"})).is_err()
+        );
         assert!(resolve(&json!({"endpoint":"not a host"})).is_err());
+    }
+
+    #[test]
+    fn tailnet_host_validation_rejects_other_transport_modes() {
+        for endpoint in ["ssh://host", "unix:///tmp/daemon.sock", "pipe://daemon"] {
+            assert!(resolve(&json!({"endpoint":endpoint,"networkMode":"tailnet"})).is_err());
+        }
+        assert!(resolve(&json!({"endpoint":"ws://host:6767/ws","networkMode":"tailnet"})).is_ok());
+        assert!(
+            resolve(&json!({"endpoint":"wss://host.example.ts.net/ws","networkMode":"tailnet"}))
+                .is_ok()
+        );
+        assert!(resolve(&json!({"endpoint":"ws://host:6767/ws","networkMode":"typo"})).is_err());
+        assert!(!uses_tailnet(&json!({"endpoint":"ws://host:6767/ws"})));
+    }
+
+    #[test]
+    fn tailnet_http_separates_network_routing_from_credential_authority() {
+        let config = json!({"endpoint":"wss://Peer.example.ts.net/ws","networkMode":"tailnet"});
+        assert_eq!(
+            http_route(&config, "https://peer.example.ts.net:443/image").unwrap(),
+            (true, true)
+        );
+        assert_eq!(
+            http_route(&config, "http://peer.example.ts.net/image").unwrap(),
+            (false, true)
+        );
+        assert_eq!(
+            http_route(&config, "https://peer.example.ts.net:444/image").unwrap(),
+            (false, true)
+        );
+        assert_eq!(
+            http_route(&config, "https://external.example/image").unwrap(),
+            (false, false)
+        );
+        let normal = json!({"endpoint":"wss://peer.example.ts.net/ws"});
+        assert_eq!(
+            http_route(&normal, "https://peer.example.ts.net/image").unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            http_route(&config, "https://external.example/image").unwrap(),
+            (false, false)
+        );
+        assert!(http_route(&config, "https://user:password@peer.example.ts.net/image").is_err());
+    }
+
+    #[tokio::test]
+    async fn tailnet_does_not_export_local_daemon_credentials() {
+        let config = json!({"endpoint":"ws://peer:6767/ws","networkMode":"tailnet","localCredential":"private-device-token"});
+        let resolved = resolve(&config).unwrap();
+        assert_eq!(authentication(&config, &resolved).await, None);
     }
 }

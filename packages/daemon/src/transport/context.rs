@@ -122,12 +122,17 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
-    pub(crate) fn attach(
-        config: SourceConfig,
-    ) -> (Self, mpsc::Receiver<QueuedFrame>) {
+    pub(crate) fn attach(config: SourceConfig) -> (Self, mpsc::Receiver<QueuedFrame>) {
         let SourceConfig {
-            id, session_id, client_id, capabilities, principal, permissions,
-            routed, app_version, cancel,
+            id,
+            session_id,
+            client_id,
+            capabilities,
+            principal,
+            permissions,
+            routed,
+            app_version,
+            cancel,
         } = config;
         let modern = has_capability(&capabilities, "owned_subscriptions");
         let (sender, receiver) = mpsc::channel(256);
@@ -570,9 +575,10 @@ impl RequestContext {
                     .get(&bytes[1])
                     .ok_or_else(|| anyhow!("Terminal slot is not owned by physical source"))?;
                 if let Owner::Subscription(s) = &self.owner
-                    && owner != &s.id {
-                        bail!("Terminal slot belongs to another subscription");
-                    }
+                    && owner != &s.id
+                {
+                    bail!("Terminal slot belongs to another subscription");
+                }
             }
             0x10..=0x12 => {
                 if !self.allows(if inbound {
@@ -789,9 +795,10 @@ impl OwnedSubscription {
         }
         let mut slots = self.context.source.slots.lock().unwrap();
         if let Some(prior) = slots.get(&slot)
-            && prior != &self.state.id {
-                bail!("Terminal slot already owned");
-            }
+            && prior != &self.state.id
+        {
+            bail!("Terminal slot already owned");
+        }
         slots.insert(slot, self.state.id.clone());
         Ok(())
     }

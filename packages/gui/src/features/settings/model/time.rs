@@ -5,7 +5,9 @@ use chrono::{DateTime, Utc};
 use crate::features::settings::i18n::{t, ta};
 
 pub fn parse_iso(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.trim()).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 /// `settingsRelativeTime`: `None` when unparsable; `Some("")` for a future
@@ -15,7 +17,11 @@ pub fn relative(iso: Option<&str>, ago: bool) -> Option<String> {
     let now = Utc::now();
     let diff = if ago { now - at } else { at - now };
     let unit = |key: &str, value: i64| {
-        let base = if ago { "providerUsage.timing" } else { "providerUsage.duration" };
+        let base = if ago {
+            "providerUsage.timing"
+        } else {
+            "providerUsage.duration"
+        };
         ta(&format!("{base}.{key}"), &[("value", &value.to_string())])
     };
     if ago && diff.num_seconds() < 60 {
@@ -28,9 +34,15 @@ pub fn relative(iso: Option<&str>, ago: bool) -> Option<String> {
         return Some(unit(if ago { "daysAgo" } else { "days" }, diff.num_days()));
     }
     if diff.num_hours() > 0 {
-        return Some(unit(if ago { "hoursAgo" } else { "hours" }, diff.num_hours()));
+        return Some(unit(
+            if ago { "hoursAgo" } else { "hours" },
+            diff.num_hours(),
+        ));
     }
-    Some(unit(if ago { "minutesAgo" } else { "minutes" }, diff.num_minutes()))
+    Some(unit(
+        if ago { "minutesAgo" } else { "minutes" },
+        diff.num_minutes(),
+    ))
 }
 
 pub fn is_after(a: &str, b: &str) -> bool {

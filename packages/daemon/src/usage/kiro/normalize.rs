@@ -78,12 +78,15 @@ struct Quotas {
     details: Vec<Value>,
 }
 impl Quotas {
-    fn pool(
-        &mut self,
-        pool: CreditPool<'_>,
-        now: DateTime<Utc>,
-    ) -> Result<(f64, f64)> {
-        let CreditPool { id, label, source, expiry, summary, expired } = pool;
+    fn pool(&mut self, pool: CreditPool<'_>, now: DateTime<Utc>) -> Result<(f64, f64)> {
+        let CreditPool {
+            id,
+            label,
+            source,
+            expiry,
+            summary,
+            expired,
+        } = pool;
         let source = object(source)?;
         let used = precise(source, "currentUsage", "currentUsageWithPrecision")?;
         let limit = precise(source, "usageLimit", "usageLimitWithPrecision")?;
@@ -126,7 +129,8 @@ impl Quotas {
         Ok((used, limit))
     }
     fn detail(&mut self, id: String, label: String, value: String) {
-        self.details.push(json!({"id": id, "label": label, "value": value}));
+        self.details
+            .push(json!({"id": id, "label": label, "value": value}));
     }
     fn charge(&mut self, id: String, label: String, used: f64, unit: &str, resets_at: &str) {
         self.balances.push(json!({

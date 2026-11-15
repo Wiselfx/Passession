@@ -84,7 +84,8 @@ impl Style {
                         break;
                     }
                     let expected = root_chars[matched];
-                    let same = c == expected || (self.is_separator(c) && self.is_separator(expected));
+                    let same =
+                        c == expected || (self.is_separator(c) && self.is_separator(expected));
                     if !same {
                         break;
                     }
@@ -147,7 +148,11 @@ impl Style {
     pub fn basename(self, path: &str) -> String {
         let trimmed = path.trim_end_matches(|c| self.is_separator(c));
         if trimmed.is_empty() {
-            return if path.is_empty() { String::new() } else { self.separator().to_string() };
+            return if path.is_empty() {
+                String::new()
+            } else {
+                self.separator().to_string()
+            };
         }
         match trimmed.rfind(|c| self.is_separator(c)) {
             Some(index) => trimmed[index + 1..].to_owned(),
@@ -267,7 +272,8 @@ pub fn safe_local_name(name: &str) -> String {
     let cleaned: String = base
         .chars()
         .map(|c| {
-            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (c as u32) < 0x20
+            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                || (c as u32) < 0x20
             {
                 '_'
             } else {
@@ -315,7 +321,11 @@ pub fn parse_file_location(path: &str) -> (String, Option<FileLocation>) {
     let Some(line) = number(&mut chars) else {
         return (path.to_owned(), None);
     };
-    let mut location = FileLocation { line: line.max(1), line_end: None, column: None };
+    let mut location = FileLocation {
+        line: line.max(1),
+        line_end: None,
+        column: None,
+    };
     if chars.peek().map(|(_, c)| *c) == Some('-') {
         chars.next();
         if chars.peek().map(|(_, c)| *c) == Some('L') {
@@ -364,7 +374,10 @@ mod tests {
         assert_eq!(remote_absolute("/repo", "src/a.rs"), "/repo/src/a.rs");
         assert_eq!(remote_absolute("/repo", "../other/a.rs"), "/other/a.rs");
         assert_eq!(remote_absolute("/repo", "/etc/hosts"), "/etc/hosts");
-        assert_eq!(remote_absolute("C:\\repo", "src/a.rs"), "C:\\repo\\src\\a.rs");
+        assert_eq!(
+            remote_absolute("C:\\repo", "src/a.rs"),
+            "C:\\repo\\src\\a.rs"
+        );
         assert_eq!(remote_relative("/repo", "/repo/src/a.rs"), "src/a.rs");
         assert_eq!(remote_relative("/repo", "/other/b"), "../other/b");
         assert_eq!(remote_relative("C:\\Repo", "c:\\repo\\x.txt"), "x.txt");
@@ -373,7 +386,10 @@ mod tests {
         assert_eq!(remote_basename("src\\a.rs", Some("C:\\repo")), "a.rs");
         assert_eq!(remote_parent("/repo/src/a.rs"), "/repo/src");
         assert_eq!(remote_parent("/a"), "/");
-        assert_eq!(remote_absolute("\\\\server\\share\\dir", "x"), "\\\\server\\share\\dir\\x");
+        assert_eq!(
+            remote_absolute("\\\\server\\share\\dir", "x"),
+            "\\\\server\\share\\dir\\x"
+        );
     }
 
     #[test]
@@ -394,11 +410,25 @@ mod tests {
         assert_eq!(parse_file_location("src/a.rs"), ("src/a.rs".into(), None));
         assert_eq!(
             parse_file_location("src/a.rs#L12"),
-            ("src/a.rs".into(), Some(FileLocation { line: 12, line_end: None, column: None }))
+            (
+                "src/a.rs".into(),
+                Some(FileLocation {
+                    line: 12,
+                    line_end: None,
+                    column: None
+                })
+            )
         );
         assert_eq!(
             parse_file_location("a#b.rs#L3-7:2"),
-            ("a#b.rs".into(), Some(FileLocation { line: 3, line_end: Some(7), column: Some(2) }))
+            (
+                "a#b.rs".into(),
+                Some(FileLocation {
+                    line: 3,
+                    line_end: Some(7),
+                    column: Some(2)
+                })
+            )
         );
         assert_eq!(parse_file_location("a.rs#Lx"), ("a.rs#Lx".into(), None));
         assert_eq!(parse_link_fragment("L10:4"), Some((10, Some(4))));

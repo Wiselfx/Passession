@@ -22,9 +22,9 @@
 //! original native input.
 
 use makepad_widgets::{KeyCode, KeyModifiers};
+use paseo_terminal::{Key, Modes, Modifiers};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-use paseo_terminal::{Key, Modes, Modifiers};
 
 /// What one `KeyDown` does in the terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,7 +39,12 @@ pub enum KeyCommand {
 }
 
 pub fn modifiers(m: KeyModifiers) -> Modifiers {
-    Modifiers { shift: m.shift, control: m.control, alt: m.alt, logo: m.logo }
+    Modifiers {
+        shift: m.shift,
+        control: m.control,
+        alt: m.alt,
+        logo: m.logo,
+    }
 }
 
 /// A key with its own terminal encoding, independent of the text it types.
@@ -133,8 +138,22 @@ fn character(code: KeyCode) -> Option<Key> {
 
 /// The terminal meaning of a `KeyDown` on a platform (`apple`: Cmd is the command key;
 /// `android`: Ctrl+A is the text toolbar's synthetic Select all).
-pub fn key_command(code: KeyCode, m: KeyModifiers, has_selection: bool, apple: bool, android: bool) -> KeyCommand {
-    if matches!(code, KeyCode::Control | KeyCode::Alt | KeyCode::Shift | KeyCode::Logo | KeyCode::Capslock | KeyCode::Unknown) {
+pub fn key_command(
+    code: KeyCode,
+    m: KeyModifiers,
+    has_selection: bool,
+    apple: bool,
+    android: bool,
+) -> KeyCommand {
+    if matches!(
+        code,
+        KeyCode::Control
+            | KeyCode::Alt
+            | KeyCode::Shift
+            | KeyCode::Logo
+            | KeyCode::Capslock
+            | KeyCode::Unknown
+    ) {
         return KeyCommand::Ignore;
     }
     let mods = modifiers(m);
@@ -149,7 +168,11 @@ pub fn key_command(code: KeyCode, m: KeyModifiers, has_selection: bool, apple: b
     }
     if m.control && !m.alt && code == KeyCode::KeyV {
         // Only the platform's terminal paste shortcut was consumed by the clipboard.
-        return if paste_shortcut(m, apple) { KeyCommand::Ignore } else { KeyCommand::Send(Key::Char('v'), mods) };
+        return if paste_shortcut(m, apple) {
+            KeyCommand::Ignore
+        } else {
+            KeyCommand::Send(Key::Char('v'), mods)
+        };
     }
     if !apple && m.control && !m.alt {
         match code {
@@ -170,7 +193,12 @@ pub fn key_command(code: KeyCode, m: KeyModifiers, has_selection: bool, apple: b
 
 /// Whether the native clipboard shortcut belongs to the terminal rather than the PTY.
 pub fn paste_shortcut(m: KeyModifiers, apple: bool) -> bool {
-    !m.alt && if apple { m.logo && !m.control } else { m.control && m.shift && !m.logo }
+    !m.alt
+        && if apple {
+            m.logo && !m.control
+        } else {
+            m.control && m.shift && !m.logo
+        }
 }
 
 /// Where wheel and touch scrolling go.
@@ -194,7 +222,6 @@ pub fn wheel_route(modes: Modes) -> WheelRoute {
     }
 }
 
-
 /// Whole rows scrolled by `delta` pixels plus the carried remainder, which keeps slow
 /// trackpad scrolling from being lost: (rows, negative = up; the new remainder).
 pub fn wheel_rows(carry: f64, delta: f64, row_height: f64) -> (i64, f64) {
@@ -214,13 +241,22 @@ pub fn text_bytes(text: &str) -> Vec<u8> {
 /// A single typed character combined with sticky key-bar modifiers, as an encodable key.
 pub fn sticky_key(text: &str, mods: Modifiers) -> Option<(Key, Modifiers)> {
     let mut chars = text.chars();
-    let (Some(ch), None) = (chars.next(), chars.next()) else { return None };
+    let (Some(ch), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
     if ch == ' ' {
         return Some((Key::Space, mods));
     }
     let lower = ch.to_ascii_lowercase();
-    let mappable = lower.is_ascii_lowercase() || lower.is_ascii_digit() || "-=[]\\;',./`".contains(lower);
-    mappable.then_some((Key::Char(lower), Modifiers { shift: mods.shift || ch.is_ascii_uppercase(), ..mods }))
+    let mappable =
+        lower.is_ascii_lowercase() || lower.is_ascii_digit() || "-=[]\\;',./`".contains(lower);
+    mappable.then_some((
+        Key::Char(lower),
+        Modifiers {
+            shift: mods.shift || ch.is_ascii_uppercase(),
+            ..mods
+        },
+    ))
 }
 
 /// The hidden editor Android's input method edits. Each snapshot's committed text (the
@@ -257,7 +293,9 @@ pub struct ImeEdit {
 
 impl Default for ImeBridge {
     fn default() -> Self {
-        Self { base: IME_SENTINEL.to_owned() }
+        Self {
+            base: IME_SENTINEL.to_owned(),
+        }
     }
 }
 
@@ -289,13 +327,24 @@ impl ImeBridge {
             }
             None => text.to_owned(),
         };
-        let prefix = self.base.chars().zip(committed.chars()).take_while(|(a, b)| a == b).count();
+        let prefix = self
+            .base
+            .chars()
+            .zip(committed.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
         let removed = self.base.chars().count() - prefix;
         let inserted: String = committed.chars().skip(prefix).collect();
         let reset = composing.is_none()
-            && (text.is_empty() || inserted.contains('\n') || committed.chars().count() > IME_RESET_AFTER);
+            && (text.is_empty()
+                || inserted.contains('\n')
+                || committed.chars().count() > IME_RESET_AFTER);
         self.base = committed;
-        ImeEdit { removed, inserted, reset }
+        ImeEdit {
+            removed,
+            inserted,
+            reset,
+        }
     }
 }
 
@@ -310,7 +359,9 @@ pub fn composing_text(text: &str, composing: Option<(usize, usize)>) -> &str {
 
 /// The graphemes of composing text with the terminal cells each takes (wide CJK is two).
 pub fn preedit_cells(text: &str) -> Vec<(&str, usize)> {
-    text.graphemes(true).map(|grapheme| (grapheme, grapheme.width().clamp(1, 2))).collect()
+    text.graphemes(true)
+        .map(|grapheme| (grapheme, grapheme.width().clamp(1, 2)))
+        .collect()
 }
 
 /// iOS input: the previous input is replaced (`replace_last`) while a Korean syllable is
@@ -323,7 +374,11 @@ pub struct ReplaceTracker {
 impl ReplaceTracker {
     /// The DEL count and the text for one `TextInput`.
     pub fn apply(&mut self, input: &str, replace_last: bool) -> usize {
-        let removed = if replace_last { self.last.chars().count() } else { 0 };
+        let removed = if replace_last {
+            self.last.chars().count()
+        } else {
+            0
+        };
         self.last.clear();
         self.last.push_str(input);
         removed
@@ -340,42 +395,185 @@ mod tests {
     use super::*;
 
     fn m(control: bool, shift: bool, alt: bool, logo: bool) -> KeyModifiers {
-        KeyModifiers { shift, control, alt, logo }
+        KeyModifiers {
+            shift,
+            control,
+            alt,
+            logo,
+        }
     }
 
     #[test]
     fn printable_keys_wait_for_text_and_combos_encode() {
-        assert_eq!(key_command(KeyCode::KeyA, m(false, false, false, false), false, false, false), KeyCommand::Ignore);
-        assert_eq!(key_command(KeyCode::KeyA, m(false, true, false, false), false, false, false), KeyCommand::Ignore);
-        assert!(matches!(key_command(KeyCode::KeyA, m(true, false, false, false), false, false, false), KeyCommand::Send(Key::Char('a'), _)));
-        assert!(matches!(key_command(KeyCode::KeyB, m(false, false, true, false), false, true, false), KeyCommand::Send(Key::Char('b'), _)));
-        assert!(matches!(key_command(KeyCode::ArrowUp, m(false, true, false, false), false, false, false), KeyCommand::Send(Key::Up, _)));
-        assert_eq!(key_command(KeyCode::Control, m(true, false, false, false), false, false, false), KeyCommand::Ignore);
+        assert_eq!(
+            key_command(
+                KeyCode::KeyA,
+                m(false, false, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Ignore
+        );
+        assert_eq!(
+            key_command(
+                KeyCode::KeyA,
+                m(false, true, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Ignore
+        );
+        assert!(matches!(
+            key_command(
+                KeyCode::KeyA,
+                m(true, false, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Send(Key::Char('a'), _)
+        ));
+        assert!(matches!(
+            key_command(
+                KeyCode::KeyB,
+                m(false, false, true, false),
+                false,
+                true,
+                false
+            ),
+            KeyCommand::Send(Key::Char('b'), _)
+        ));
+        assert!(matches!(
+            key_command(
+                KeyCode::ArrowUp,
+                m(false, true, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Send(Key::Up, _)
+        ));
+        assert_eq!(
+            key_command(
+                KeyCode::Control,
+                m(true, false, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Ignore
+        );
     }
 
     #[test]
     fn ctrl_c_interrupts_unless_copying() {
         let ctrl = m(true, false, false, false);
-        assert!(matches!(key_command(KeyCode::KeyC, ctrl, false, false, false), KeyCommand::Send(Key::Char('c'), _)));
-        assert_eq!(key_command(KeyCode::KeyC, ctrl, true, false, false), KeyCommand::Copy);
-        assert_eq!(key_command(KeyCode::KeyC, m(true, true, false, false), false, false, false), KeyCommand::Copy);
+        assert!(matches!(
+            key_command(KeyCode::KeyC, ctrl, false, false, false),
+            KeyCommand::Send(Key::Char('c'), _)
+        ));
+        assert_eq!(
+            key_command(KeyCode::KeyC, ctrl, true, false, false),
+            KeyCommand::Copy
+        );
+        assert_eq!(
+            key_command(
+                KeyCode::KeyC,
+                m(true, true, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Copy
+        );
         // macOS: Ctrl+C is always ^C, Cmd+C copies.
-        assert!(matches!(key_command(KeyCode::KeyC, ctrl, true, true, false), KeyCommand::Send(Key::Char('c'), _)));
-        assert_eq!(key_command(KeyCode::KeyC, m(false, false, false, true), true, true, false), KeyCommand::Copy);
-        assert_eq!(key_command(KeyCode::KeyW, m(false, false, false, true), false, true, false), KeyCommand::Ignore);
-        assert!(matches!(key_command(KeyCode::KeyV, ctrl, false, false, false), KeyCommand::Send(Key::Char('v'), _)));
-        assert!(matches!(key_command(KeyCode::KeyV, ctrl, false, true, false), KeyCommand::Send(Key::Char('v'), _)));
-        assert_eq!(key_command(KeyCode::KeyV, m(true, true, false, false), false, false, false), KeyCommand::Ignore);
-        assert_eq!(key_command(KeyCode::KeyV, m(false, false, false, true), false, true, false), KeyCommand::Ignore);
-        assert!(matches!(key_command(KeyCode::KeyV, m(true, true, false, false), false, true, false), KeyCommand::Send(Key::Char('v'), _)));
-        assert_eq!(key_command(KeyCode::KeyA, ctrl, false, false, true), KeyCommand::SelectAll);
+        assert!(matches!(
+            key_command(KeyCode::KeyC, ctrl, true, true, false),
+            KeyCommand::Send(Key::Char('c'), _)
+        ));
+        assert_eq!(
+            key_command(
+                KeyCode::KeyC,
+                m(false, false, false, true),
+                true,
+                true,
+                false
+            ),
+            KeyCommand::Copy
+        );
+        assert_eq!(
+            key_command(
+                KeyCode::KeyW,
+                m(false, false, false, true),
+                false,
+                true,
+                false
+            ),
+            KeyCommand::Ignore
+        );
+        assert!(matches!(
+            key_command(KeyCode::KeyV, ctrl, false, false, false),
+            KeyCommand::Send(Key::Char('v'), _)
+        ));
+        assert!(matches!(
+            key_command(KeyCode::KeyV, ctrl, false, true, false),
+            KeyCommand::Send(Key::Char('v'), _)
+        ));
+        assert_eq!(
+            key_command(
+                KeyCode::KeyV,
+                m(true, true, false, false),
+                false,
+                false,
+                false
+            ),
+            KeyCommand::Ignore
+        );
+        assert_eq!(
+            key_command(
+                KeyCode::KeyV,
+                m(false, false, false, true),
+                false,
+                true,
+                false
+            ),
+            KeyCommand::Ignore
+        );
+        assert!(matches!(
+            key_command(
+                KeyCode::KeyV,
+                m(true, true, false, false),
+                false,
+                true,
+                false
+            ),
+            KeyCommand::Send(Key::Char('v'), _)
+        ));
+        assert_eq!(
+            key_command(KeyCode::KeyA, ctrl, false, false, true),
+            KeyCommand::SelectAll
+        );
     }
 
     #[test]
     fn sticky_modifiers_map_typed_characters() {
-        let ctrl = Modifiers { control: true, ..Modifiers::default() };
+        let ctrl = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
         assert_eq!(sticky_key("c", ctrl), Some((Key::Char('c'), ctrl)));
-        assert_eq!(sticky_key("C", ctrl), Some((Key::Char('c'), Modifiers { shift: true, ..ctrl })));
+        assert_eq!(
+            sticky_key("C", ctrl),
+            Some((
+                Key::Char('c'),
+                Modifiers {
+                    shift: true,
+                    ..ctrl
+                }
+            ))
+        );
         assert_eq!(sticky_key("한", ctrl), None);
         assert_eq!(sticky_key("ab", ctrl), None);
         assert_eq!(text_bytes("a\nb"), b"a\rb");
@@ -385,17 +583,65 @@ mod tests {
     fn android_composition_is_sent_only_when_committed() {
         let mut ime = ImeBridge::default();
         let s = IME_SENTINEL;
-        assert_eq!(ime.apply(&format!("{s}ㅎ"), Some((1, 2))), ImeEdit::default());
-        assert_eq!(ime.apply(&format!("{s}한"), Some((1, 2))), ImeEdit::default());
-        assert_eq!(ime.apply(&format!("{s}한ㄱ"), Some((2, 3))), ImeEdit { removed: 0, inserted: "한".into(), reset: false });
-        assert_eq!(ime.apply(&format!("{s}한글 "), None), ImeEdit { removed: 0, inserted: "글 ".into(), reset: false });
+        assert_eq!(
+            ime.apply(&format!("{s}ㅎ"), Some((1, 2))),
+            ImeEdit::default()
+        );
+        assert_eq!(
+            ime.apply(&format!("{s}한"), Some((1, 2))),
+            ImeEdit::default()
+        );
+        assert_eq!(
+            ime.apply(&format!("{s}한ㄱ"), Some((2, 3))),
+            ImeEdit {
+                removed: 0,
+                inserted: "한".into(),
+                reset: false
+            }
+        );
+        assert_eq!(
+            ime.apply(&format!("{s}한글 "), None),
+            ImeEdit {
+                removed: 0,
+                inserted: "글 ".into(),
+                reset: false
+            }
+        );
         // Later snapshots continue from the editor's text, never from an assumed reset.
-        assert_eq!(ime.apply(&format!("{s}한글 ab"), Some((5, 6))), ImeEdit { removed: 0, inserted: "a".into(), reset: false });
-        assert_eq!(ime.apply(&format!("{s}한글 a"), None), ImeEdit { removed: 0, inserted: String::new(), reset: false });
+        assert_eq!(
+            ime.apply(&format!("{s}한글 ab"), Some((5, 6))),
+            ImeEdit {
+                removed: 0,
+                inserted: "a".into(),
+                reset: false
+            }
+        );
+        assert_eq!(
+            ime.apply(&format!("{s}한글 a"), None),
+            ImeEdit {
+                removed: 0,
+                inserted: String::new(),
+                reset: false
+            }
+        );
         // Backspacing past the sentinel rubs out the shell's text and asks for a reset.
-        assert_eq!(ime.apply("", None), ImeEdit { removed: 5, inserted: String::new(), reset: true });
+        assert_eq!(
+            ime.apply("", None),
+            ImeEdit {
+                removed: 5,
+                inserted: String::new(),
+                reset: true
+            }
+        );
         ime.reset();
-        assert_eq!(ime.apply(&format!("{s}ls\n"), None), ImeEdit { removed: 0, inserted: "ls\n".into(), reset: true });
+        assert_eq!(
+            ime.apply(&format!("{s}ls\n"), None),
+            ImeEdit {
+                removed: 0,
+                inserted: "ls\n".into(),
+                reset: true
+            }
+        );
     }
 
     #[test]
@@ -429,7 +675,11 @@ mod tests {
 
     #[test]
     fn wheel_goes_to_full_screen_programs() {
-        let modes = |alternate_screen, mouse_tracking| Modes { alternate_screen, mouse_tracking, ..Modes::default() };
+        let modes = |alternate_screen, mouse_tracking| Modes {
+            alternate_screen,
+            mouse_tracking,
+            ..Modes::default()
+        };
         assert_eq!(wheel_route(modes(false, false)), WheelRoute::Scrollback);
         assert_eq!(wheel_route(modes(true, false)), WheelRoute::Arrows);
         assert_eq!(wheel_route(modes(true, true)), WheelRoute::Mouse);

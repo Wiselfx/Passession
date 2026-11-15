@@ -2,7 +2,7 @@
 //! remembered `createAgentPreferences`). Pure functions over provider snapshot JSON.
 
 use super::json::*;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// create-agent-preferences: the remembered new-agent selection, stored in the app
 /// preferences under this key.
@@ -126,7 +126,10 @@ pub fn selectable_models(entry: &Value) -> Vec<Value> {
 }
 
 /// model-catalog.ts findModelByReference: by id, then by alias.
-pub fn find_model_by_reference<'a>(models: Option<&'a [Value]>, model_id: &str) -> Option<&'a Value> {
+pub fn find_model_by_reference<'a>(
+    models: Option<&'a [Value]>,
+    model_id: &str,
+) -> Option<&'a Value> {
     let id = model_id.trim();
     let models = models?;
     if models.is_empty() || id.is_empty() {
@@ -167,9 +170,15 @@ fn canonical_model_id(models: Option<&[Value]>, model_id: &str) -> String {
 }
 
 /// resolve-agent-form.ts resolveThinkingOptionId.
-pub fn resolve_thinking_option_id(models: Option<&[Value]>, model_id: &str, requested: &str) -> String {
+pub fn resolve_thinking_option_id(
+    models: Option<&[Value]>,
+    model_id: &str,
+    requested: &str,
+) -> String {
     let model = find_model_by_reference(models, model_id);
-    let options = model.map(|m| maps(get(m, "thinkingOptions"))).unwrap_or_default();
+    let options = model
+        .map(|m| maps(get(m, "thinkingOptions")))
+        .unwrap_or_default();
     if options.is_empty() {
         return String::new();
     }
@@ -204,7 +213,12 @@ fn preferred_thinking(models: Option<&[Value]>, provider_prefs: &Value, model_id
 }
 
 /// resolve-agent-form.ts resolvePreferredModeId.
-fn preferred_mode_id(providers: &[Value], provider: &str, initial: &str, preferred: &str) -> String {
+fn preferred_mode_id(
+    providers: &[Value],
+    provider: &str,
+    initial: &str,
+    preferred: &str,
+) -> String {
     if !initial.trim().is_empty() {
         return initial.trim().to_owned();
     }
@@ -225,10 +239,19 @@ fn preferred_mode_id(providers: &[Value], provider: &str, initial: &str, preferr
     {
         return default_mode.to_owned();
     }
-    modes.first().map(|mode| owned(get(mode, "id"))).unwrap_or_default()
+    modes
+        .first()
+        .map(|mode| owned(get(mode, "id")))
+        .unwrap_or_default()
 }
 
-fn config(provider: Option<&str>, model: &str, mode_id: &str, thinking: &str, features: &Value) -> Value {
+fn config(
+    provider: Option<&str>,
+    model: &str,
+    mode_id: &str,
+    thinking: &str,
+    features: &Value,
+) -> Value {
     let mut out = Map::new();
     if let Some(provider) = provider.filter(|p| !p.is_empty()) {
         out.insert("provider".into(), Value::String(provider.into()));
@@ -253,7 +276,11 @@ fn provider_prefs<'a>(preferences: &'a Value, provider: &str) -> &'a Value {
 }
 
 /// resolve-agent-form.ts resolveFormStateFromProviderModels with nothing user-modified.
-pub fn resolve_initial_agent_config(initial: &Value, preferences: &Value, providers: &[Value]) -> Value {
+pub fn resolve_initial_agent_config(
+    initial: &Value,
+    preferences: &Value,
+    providers: &[Value],
+) -> Value {
     let provider = s_or(get(initial, "provider"), s(get(preferences, "provider"))).to_owned();
     if provider.is_empty() {
         return config(None, "", "", "", &Value::Null);
@@ -261,19 +288,50 @@ pub fn resolve_initial_agent_config(initial: &Value, preferences: &Value, provid
     let prefs = provider_prefs(preferences, &provider);
     let models = ready_models(providers, &provider);
     let models_ref = models.as_deref();
-    let mode_id = preferred_mode_id(providers, &provider, s(get(initial, "modeId")), s(get(prefs, "mode")));
+    let mode_id = preferred_mode_id(
+        providers,
+        &provider,
+        s(get(initial, "modeId")),
+        s(get(prefs, "mode")),
+    );
     let initial_model = s(get(initial, "model")).trim().to_owned();
     let preferred_model = s(get(prefs, "model")).trim().to_owned();
-    let chosen = if initial_model.is_empty() { &preferred_model } else { &initial_model };
+    let chosen = if initial_model.is_empty() {
+        &preferred_model
+    } else {
+        &initial_model
+    };
     let model = if chosen == "default" && models_ref.is_some_and(|m| !m.is_empty()) {
-        let found = find_model_by_reference(models_ref, "default").map(|m| owned(get(m, "id"))).unwrap_or_default();
-        if found.is_empty() { resolve_default_model_id(models_ref) } else { found }
+        let found = find_model_by_reference(models_ref, "default")
+            .map(|m| owned(get(m, "id")))
+            .unwrap_or_default();
+        if found.is_empty() {
+            resolve_default_model_id(models_ref)
+        } else {
+            found
+        }
     } else if !initial_model.is_empty() {
-        let id = if models_ref.is_none() { initial_model.clone() } else { canonical_model_id(models_ref, &initial_model) };
-        if id.is_empty() { initial_model.clone() } else { id }
+        let id = if models_ref.is_none() {
+            initial_model.clone()
+        } else {
+            canonical_model_id(models_ref, &initial_model)
+        };
+        if id.is_empty() {
+            initial_model.clone()
+        } else {
+            id
+        }
     } else if !preferred_model.is_empty() {
-        let id = if models_ref.is_none() { preferred_model.clone() } else { canonical_model_id(models_ref, &preferred_model) };
-        if id.is_empty() { preferred_model.clone() } else { id }
+        let id = if models_ref.is_none() {
+            preferred_model.clone()
+        } else {
+            canonical_model_id(models_ref, &preferred_model)
+        };
+        if id.is_empty() {
+            preferred_model.clone()
+        } else {
+            id
+        }
     } else {
         String::new()
     };
@@ -286,7 +344,13 @@ pub fn resolve_initial_agent_config(initial: &Value, preferences: &Value, provid
     if models_ref.is_some() {
         thinking = resolve_thinking_option_id(models_ref, &model, &thinking);
     }
-    config(Some(&provider), &model, &mode_id, &thinking, get(initial, "featureValues"))
+    config(
+        Some(&provider),
+        &model,
+        &mode_id,
+        &thinking,
+        get(initial, "featureValues"),
+    )
 }
 
 /// resolve-agent-form.ts SET_PROVIDER_AND_MODEL_FROM_USER / SET_MODEL_FROM_USER.
@@ -304,21 +368,25 @@ pub fn apply_user_model_choice(
     if model.is_empty() {
         model = resolve_default_model_id(models_ref);
     }
-    let same_provider = s(get(previous, "provider")) == provider && get(previous, "provider").is_string();
-    let requested_thinking = if same_provider
-        && canonical_model_id(models_ref, s(get(previous, "model"))) == model
-    {
-        owned(get(previous, "thinkingOptionId"))
-    } else {
-        preferred_thinking(models_ref, prefs, &model)
-    };
+    let same_provider =
+        s(get(previous, "provider")) == provider && get(previous, "provider").is_string();
+    let requested_thinking =
+        if same_provider && canonical_model_id(models_ref, s(get(previous, "model"))) == model {
+            owned(get(previous, "thinkingOptionId"))
+        } else {
+            preferred_thinking(models_ref, prefs, &model)
+        };
     let current_mode = s(get(previous, "modeId")).trim().to_owned();
     let mode = if same_provider && !current_mode.is_empty() {
         current_mode
     } else {
         preferred_mode_id(providers, provider, "", s(get(prefs, "mode")))
     };
-    let features = if same_provider { get(previous, "featureValues").clone() } else { Value::Null };
+    let features = if same_provider {
+        get(previous, "featureValues").clone()
+    } else {
+        Value::Null
+    };
     config(
         Some(provider),
         &model,
@@ -341,10 +409,17 @@ pub fn apply_profile_choice(profile: &Value, preferences: &Value, providers: &[V
     }
     let entry = entry(providers, &provider);
     let mode_ids: Vec<String> = entry
-        .map(|e| maps(get(e, "modes")).iter().map(|m| owned(get(m, "id"))).collect())
+        .map(|e| {
+            maps(get(e, "modes"))
+                .iter()
+                .map(|m| owned(get(m, "id")))
+                .collect()
+        })
         .unwrap_or_default();
     let preferred_mode = s_or(get(profile, "modeId"), s(get(prefs, "mode"))).to_owned();
-    let default_mode = entry.map(|e| owned(get(e, "defaultModeId"))).unwrap_or_default();
+    let default_mode = entry
+        .map(|e| owned(get(e, "defaultModeId")))
+        .unwrap_or_default();
     let mode_id = if mode_ids.contains(&preferred_mode) {
         preferred_mode
     } else if mode_ids.contains(&default_mode) {
@@ -354,11 +429,21 @@ pub fn apply_profile_choice(profile: &Value, preferences: &Value, providers: &[V
     };
     let profile_thinking = owned(get(profile, "thinkingOptionId"));
     let thinking = if profile_thinking.is_empty() {
-        resolve_thinking_option_id(models_ref, &model, &preferred_thinking(models_ref, prefs, &model))
+        resolve_thinking_option_id(
+            models_ref,
+            &model,
+            &preferred_thinking(models_ref, prefs, &model),
+        )
     } else {
         profile_thinking
     };
-    config(Some(&provider), &model, &mode_id, &thinking, get(profile, "featureValues"))
+    config(
+        Some(&provider),
+        &model,
+        &mode_id,
+        &thinking,
+        get(profile, "featureValues"),
+    )
 }
 
 fn single(model: &str, thinking: &str) -> Map<String, Value> {
@@ -378,17 +463,36 @@ pub fn remember_user_selection(preferences: &Value, previous: &Value, next: &Val
         return preferences.clone();
     }
     let model = s(get(next, "model"));
-    if get(previous, "provider") != get(next, "provider") || get(previous, "model") != get(next, "model") {
-        return merge_provider_preferences(preferences, provider, ProviderPrefsUpdate { model: opt(model), ..Default::default() });
+    if get(previous, "provider") != get(next, "provider")
+        || get(previous, "model") != get(next, "model")
+    {
+        return merge_provider_preferences(
+            preferences,
+            provider,
+            ProviderPrefsUpdate {
+                model: opt(model),
+                ..Default::default()
+            },
+        );
     }
     if get(previous, "modeId") != get(next, "modeId") {
-        return merge_provider_preferences(preferences, provider, ProviderPrefsUpdate { mode: opt(s(get(next, "modeId"))), ..Default::default() });
+        return merge_provider_preferences(
+            preferences,
+            provider,
+            ProviderPrefsUpdate {
+                mode: opt(s(get(next, "modeId"))),
+                ..Default::default()
+            },
+        );
     }
     if get(previous, "thinkingOptionId") != get(next, "thinkingOptionId") && !model.is_empty() {
         return merge_provider_preferences(
             preferences,
             provider,
-            ProviderPrefsUpdate { thinking_by_model: Some(single(model, s(get(next, "thinkingOptionId")))), ..Default::default() },
+            ProviderPrefsUpdate {
+                thinking_by_model: Some(single(model, s(get(next, "thinkingOptionId")))),
+                ..Default::default()
+            },
         );
     }
     let before = obj(get(previous, "featureValues"));
@@ -401,14 +505,24 @@ pub fn remember_user_selection(preferences: &Value, previous: &Value, next: &Val
         }
     }
     if !changed.is_empty() {
-        return merge_provider_preferences(preferences, provider, ProviderPrefsUpdate { feature_values: Some(changed), ..Default::default() });
+        return merge_provider_preferences(
+            preferences,
+            provider,
+            ProviderPrefsUpdate {
+                feature_values: Some(changed),
+                ..Default::default()
+            },
+        );
     }
     preferences.clone()
 }
 
 /// The feature values remembered for `provider`.
 pub fn remembered_feature_values(preferences: &Value, provider: &str) -> Value {
-    Value::Object(obj(get(provider_prefs(preferences, provider), "featureValues")))
+    Value::Object(obj(get(
+        provider_prefs(preferences, provider),
+        "featureValues",
+    )))
 }
 
 /// feature-preferences.ts resolveFeatureValues.
@@ -452,10 +566,22 @@ pub fn remember_profile_selection(
     if !previous_provider.is_empty() {
         let previous_mode = owned(get(provider_prefs(&result, previous_provider), "mode"));
         let offered: Vec<String> = entry(providers, previous_provider)
-            .map(|e| maps(get(e, "modes")).iter().map(|m| owned(get(m, "id"))).collect())
+            .map(|e| {
+                maps(get(e, "modes"))
+                    .iter()
+                    .map(|m| owned(get(m, "id")))
+                    .collect()
+            })
             .unwrap_or_default();
         if !previous_mode.is_empty() && !offered.contains(&previous_mode) {
-            result = merge_provider_preferences(&result, previous_provider, ProviderPrefsUpdate { clear_mode: true, ..Default::default() });
+            result = merge_provider_preferences(
+                &result,
+                previous_provider,
+                ProviderPrefsUpdate {
+                    clear_mode: true,
+                    ..Default::default()
+                },
+            );
         }
     }
     let model = s(get(config, "model"));
@@ -468,14 +594,19 @@ pub fn remember_profile_selection(
             model: opt(model),
             mode: opt(mode),
             clear_mode: mode.is_empty(),
-            thinking_by_model: (!model.is_empty() && !thinking.is_empty()).then(|| single(model, thinking)),
+            thinking_by_model: (!model.is_empty() && !thinking.is_empty())
+                .then(|| single(model, thinking)),
             feature_values: Some(obj(profile_feature_values)),
         },
     )
 }
 
 /// use-agent-form-state.ts persistProviderPreferences, on submit.
-pub fn remember_submitted_selection(preferences: &Value, config: &Value, providers: &[Value]) -> Value {
+pub fn remember_submitted_selection(
+    preferences: &Value,
+    config: &Value,
+    providers: &[Value],
+) -> Value {
     let provider = s(get(config, "provider"));
     if provider.is_empty() {
         return preferences.clone();
@@ -487,7 +618,9 @@ pub fn remember_submitted_selection(preferences: &Value, config: &Value, provide
     } else {
         find_model_by_reference(models.as_deref(), typed)
     };
-    let model = resolved.map(|m| s_or(get(m, "id"), typed).to_owned()).unwrap_or_else(|| typed.to_owned());
+    let model = resolved
+        .map(|m| s_or(get(m, "id"), typed).to_owned())
+        .unwrap_or_else(|| typed.to_owned());
     let mode = s(get(config, "modeId"));
     let thinking = s(get(config, "thinkingOptionId"));
     merge_provider_preferences(
@@ -496,7 +629,8 @@ pub fn remember_submitted_selection(preferences: &Value, config: &Value, provide
         ProviderPrefsUpdate {
             model: opt(&model),
             mode: opt(mode),
-            thinking_by_model: (!model.is_empty() && !thinking.is_empty()).then(|| single(&model, thinking)),
+            thinking_by_model: (!model.is_empty() && !thinking.is_empty())
+                .then(|| single(&model, thinking)),
             ..Default::default()
         },
     )
@@ -519,7 +653,12 @@ pub fn effective_submit_config(config: &Value, providers: &[Value]) -> Value {
     let loading = entry.is_none_or(|e| s(get(e, "status")) == "loading");
     let selected_mode = s(get(config, "modeId")).trim().to_owned();
     let mode_ids: Vec<String> = entry
-        .map(|e| maps(get(e, "modes")).iter().map(|m| owned(get(m, "id"))).collect())
+        .map(|e| {
+            maps(get(e, "modes"))
+                .iter()
+                .map(|m| owned(get(m, "id")))
+                .collect()
+        })
         .unwrap_or_default();
     let mode_id = if loading || mode_ids.contains(&selected_mode) {
         selected_mode
@@ -569,7 +708,9 @@ pub fn draft_submission_blocker(
     if provider.is_empty() {
         return Some("providerSelection.selectModel");
     }
-    if catalog_loading || entry(providers, provider).is_some_and(|e| s(get(e, "status")) == "loading") {
+    if catalog_loading
+        || entry(providers, provider).is_some_and(|e| s(get(e, "status")) == "loading")
+    {
         return Some("providerSelection.readiness.modelDefaultsLoading");
     }
     None
@@ -580,7 +721,10 @@ pub fn draft_submission_blocker(
 pub fn provider_entries(payload: &Value) -> Vec<Value> {
     let compact = get(payload, "compactSnapshot");
     if !non_empty_obj(compact) {
-        return list_ref(get(payload, "entries")).iter().map(|e| Value::Object(obj(e))).collect();
+        return list_ref(get(payload, "entries"))
+            .iter()
+            .map(|e| Value::Object(obj(e)))
+            .collect();
     }
     let sets = list_ref(get(compact, "thinkingSets"));
     list_ref(get(compact, "entries"))
@@ -597,7 +741,10 @@ pub fn provider_entries(payload: &Value) -> Vec<Value> {
                         && index >= 0
                         && (index as usize) < sets.len()
                     {
-                        model.insert("thinkingOptions".into(), get(&sets[index as usize], "options").clone());
+                        model.insert(
+                            "thinkingOptions".into(),
+                            get(&sets[index as usize], "options").clone(),
+                        );
                     }
                     Value::Object(model)
                 })

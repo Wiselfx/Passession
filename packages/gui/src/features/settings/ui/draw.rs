@@ -223,7 +223,11 @@ pub const PROFILE_ICONS: &[(&str, Icon)] = &[
 ];
 
 pub fn profile_icon(name: &str) -> Icon {
-    PROFILE_ICONS.iter().find(|(key, _)| *key == name).map(|(_, icon)| *icon).unwrap_or(Icon::Star)
+    PROFILE_ICONS
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, icon)| *icon)
+        .unwrap_or(Icon::Star)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -250,4 +254,3 @@ pub struct Draws {
     #[live]
     pub code: DrawText,
 }
-

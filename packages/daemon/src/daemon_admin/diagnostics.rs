@@ -58,7 +58,7 @@ pub async fn collect(app: &AppState, started: Instant) -> Result<String> {
                     .unwrap_or("unknown")
                     .into(),
             ),
-            ("Daemon version", env!("CARGO_PKG_VERSION").into()),
+            ("Daemon version", crate::VERSION.into()),
         ]),
     )];
     let home = app.home.clone();

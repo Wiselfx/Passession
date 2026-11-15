@@ -71,7 +71,13 @@ impl FieldSpec {
     }
 
     /// Selectable read-only text of `text` (see [`Plain`]); `size` in px.
-    pub fn selectable(id: impl Into<String>, text: impl Into<String>, font: Font, size: f64, color: Vec4) -> Self {
+    pub fn selectable(
+        id: impl Into<String>,
+        text: impl Into<String>,
+        font: Font,
+        size: f64,
+        color: Vec4,
+    ) -> Self {
         let mut spec = Self::new(id, text);
         spec.font_px = size;
         spec.enabled = false;
@@ -164,7 +170,10 @@ impl FieldHost {
         if let Some(text) = self.pending_text.get(id) {
             return text.clone();
         }
-        self.entries.get(id).map(|entry| entry.widget.text()).unwrap_or_default()
+        self.entries
+            .get(id)
+            .map(|entry| entry.widget.text())
+            .unwrap_or_default()
     }
 
     pub fn exists(&self, id: &str) -> bool {
@@ -215,7 +224,14 @@ impl FieldHost {
         });
     }
 
-    pub fn draw(&mut self, cx: &mut Cx2d, pal: &Palette, (layer, depth): (Layer, usize), spec: FieldSpec, rect: Rect) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        pal: &Palette,
+        (layer, depth): (Layer, usize),
+        spec: FieldSpec,
+        rect: Rect,
+    ) {
         let id = spec.id.clone();
         self.drawn.insert(id.clone());
         let template = match spec.plain.map(|p| p.font) {
@@ -224,7 +240,10 @@ impl FieldHost {
             Some(Font::Medium) => self.plain_templates[1],
             Some(Font::Code) => self.plain_templates[2],
         };
-        let initial = self.pending_text.remove(&id).unwrap_or(spec.initial.clone());
+        let initial = self
+            .pending_text
+            .remove(&id)
+            .unwrap_or(spec.initial.clone());
         let created = !self.entries.contains_key(&id);
         let entry = self.entries.entry(id.clone()).or_insert_with(|| Entry {
             widget: WidgetRef::new_from_ptr(cx, template),
@@ -255,7 +274,10 @@ impl FieldHost {
                 input.set_is_read_only(cx, true);
             }
             let epoch = crate::theme::epoch();
-            if entry.epoch != Some(epoch) || entry.font_px != spec.font_px || entry.styled_color != Some(plain.color) {
+            if entry.epoch != Some(epoch)
+                || entry.font_px != spec.font_px
+                || entry.styled_color != Some(plain.color)
+            {
                 entry.epoch = Some(epoch);
                 entry.font_px = spec.font_px;
                 entry.styled_color = Some(plain.color);
@@ -273,11 +295,15 @@ impl FieldHost {
                         }
                     },
                 );
-                entry.widget.apply_over(cx, &crate::theme::text_selection(selection));
+                entry
+                    .widget
+                    .apply_over(cx, &crate::theme::text_selection(selection));
             }
-            entry
-                .widget
-                .draw_walk_all(cx, &mut Scope::empty(), Walk::fixed(rect.size.x, rect.size.y).with_abs_pos(rect.pos));
+            entry.widget.draw_walk_all(
+                cx,
+                &mut Scope::empty(),
+                Walk::fixed(rect.size.x, rect.size.y).with_abs_pos(rect.pos),
+            );
             return;
         }
         if created {
@@ -294,16 +320,34 @@ impl FieldHost {
             input.set_is_read_only(cx, !spec.enabled);
         }
         let epoch = crate::theme::epoch();
-        if entry.epoch != Some(epoch) || entry.font_px != spec.font_px || entry.styled_enabled != spec.enabled {
+        if entry.epoch != Some(epoch)
+            || entry.font_px != spec.font_px
+            || entry.styled_enabled != spec.enabled
+        {
             entry.epoch = Some(epoch);
             entry.font_px = spec.font_px;
             entry.styled_enabled = spec.enabled;
             let font = crate::theme::current_typography().ui_size(spec.font_px) * 0.75;
-            let fill = if spec.bare { pal.transparent } else if spec.enabled { pal.surface2 } else { pal.surface1 };
-            let (border, focus, fg, hint) = (pal.border, pal.border_accent, pal.foreground, pal.muted);
-            let (border, focus) = if spec.bare { (pal.transparent, pal.transparent) } else { (border, focus) };
+            let fill = if spec.bare {
+                pal.transparent
+            } else if spec.enabled {
+                pal.surface2
+            } else {
+                pal.surface1
+            };
+            let (border, focus, fg, hint) =
+                (pal.border, pal.border_accent, pal.foreground, pal.muted);
+            let (border, focus) = if spec.bare {
+                (pal.transparent, pal.transparent)
+            } else {
+                (border, focus)
+            };
             let selection = super::theme::alpha(pal.accent, 0.4);
-            let (pad_x, pad_y, border_size) = if spec.bare { (0.0, 0.0, 0.0) } else { (12.0, 9.0, 1.0) };
+            let (pad_x, pad_y, border_size) = if spec.bare {
+                (0.0, 0.0, 0.0)
+            } else {
+                (12.0, 9.0, 1.0)
+            };
             entry.widget.apply_over(
                 cx,
                 live! {
@@ -328,11 +372,15 @@ impl FieldHost {
                     draw_cursor: { color: (fg) }
                 },
             );
-            entry.widget.apply_over(cx, &crate::theme::text_selection(selection));
+            entry
+                .widget
+                .apply_over(cx, &crate::theme::text_selection(selection));
         }
-        entry
-            .widget
-            .draw_walk_all(cx, &mut Scope::empty(), Walk::fixed(rect.size.x, rect.size.y).with_abs_pos(rect.pos));
+        entry.widget.draw_walk_all(
+            cx,
+            &mut Scope::empty(),
+            Walk::fixed(rect.size.x, rect.size.y).with_abs_pos(rect.pos),
+        );
         if entry.focus_pending {
             entry.focus_pending = false;
             entry.widget.set_key_focus(cx);
@@ -342,14 +390,21 @@ impl FieldHost {
     /// Forwards `event` to the fields of the topmost layer (`layer` at
     /// `depth`; pointer events never reach fields under a menu or a higher
     /// sheet) and reports edits, submits and blurs.
-    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event, (layer, depth): (Layer, usize)) -> FieldOutcome {
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        (layer, depth): (Layer, usize),
+    ) -> FieldOutcome {
         let mut outcome = FieldOutcome::default();
         for entry in self.entries.values_mut() {
-            if (entry.layer != layer || entry.depth != depth) && crate::common::is_user_input(event) {
+            if (entry.layer != layer || entry.depth != depth) && crate::common::is_user_input(event)
+            {
                 continue;
             }
             let widget = entry.widget.clone();
-            let actions = cx.capture_actions(|cx| widget.handle_event(cx, event, &mut Scope::empty()));
+            let actions =
+                cx.capture_actions(|cx| widget.handle_event(cx, event, &mut Scope::empty()));
             if actions.is_empty() {
                 continue;
             }
@@ -362,7 +417,8 @@ impl FieldHost {
             {
                 outcome.run.push(handler.clone());
             }
-            for action in actions.filter_widget_actions_cast::<TextInputAction>(widget.widget_uid()) {
+            for action in actions.filter_widget_actions_cast::<TextInputAction>(widget.widget_uid())
+            {
                 if let TextInputAction::KeyFocusLost = action
                     && let Some(handler) = &entry.on_blur
                 {

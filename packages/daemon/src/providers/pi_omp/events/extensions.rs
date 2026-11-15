@@ -25,9 +25,10 @@ impl Extensions {
     }
     fn child(&mut self, id: &str, file: Option<&str>) {
         if let Some(file) = file.filter(|s| !s.trim().is_empty())
-            && self.seen_files.insert(file.into()) {
-                self.children.push(json!({"id":id,"file":file}));
-            }
+            && self.seen_files.insert(file.into())
+        {
+            self.children.push(json!({"id":id,"file":file}));
+        }
     }
     pub fn tool(
         &mut self,
@@ -79,9 +80,10 @@ impl Extensions {
                     && (d["asyncId"].is_string() || args["async"] == true)
                 {
                     if status != "failed"
-                        && let Some(dir) = first(&[&d["asyncDir"]]) {
-                            self.async_runs.insert(dir.into(), (id.into(), true));
-                        }
+                        && let Some(dir) = first(&[&d["asyncDir"]])
+                    {
+                        self.async_runs.insert(dir.into(), (id.into(), true));
+                    }
                     let mut v = base;
                     v["status"] = json!(if status == "failed" {
                         "failed"
@@ -108,14 +110,13 @@ impl Extensions {
             }
         } else if matches!(name, "get_subagent_result" | "steer_subagent") && status != "running" {
             if let Some((owner, tintin)) = self.agents.get(string(&args["agent_id"])).cloned()
-                && let Some(state) = d["status"].as_str().filter(|_| d["agentId"].is_string()) {
-                    if !tintin {
-                        self.child(&owner, d["transcriptPath"].as_str());
-                    }
-                    out.push(
-                        json!({"type":"upsert","id":owner,"status":agent_status(state,tintin)}),
-                    );
+                && let Some(state) = d["status"].as_str().filter(|_| d["agentId"].is_string())
+            {
+                if !tintin {
+                    self.child(&owner, d["transcriptPath"].as_str());
                 }
+                out.push(json!({"type":"upsert","id":owner,"status":agent_status(state,tintin)}));
+            }
         } else if name == "bg_wait" && status != "running" {
             for c in array(&d["completions"]) {
                 if let Some(owner) = self.runs.get(string(&c["runId"])).cloned() {
@@ -195,9 +196,10 @@ impl Extensions {
                             out.push(json!({"type":"upsert","id":id,"status":status}));
                         }
                     } else if let Some(file) = line.strip_prefix("Session file: ")
-                        && let Some(id) = owner.take() {
-                            self.child(&id, Some(file));
-                        }
+                        && let Some(id) = owner.take()
+                    {
+                        self.child(&id, Some(file));
+                    }
                 }
             }
         }
@@ -278,7 +280,9 @@ impl Extensions {
         let details = &result["details"];
         for (rows, terminal) in [(&details["results"], true), (&details["progress"], false)] {
             for row in array(rows) {
-                let Some(id) = first(&[&row["id"]]) else { continue };
+                let Some(id) = first(&[&row["id"]]) else {
+                    continue;
+                };
                 // A queued tool result may arrive after a newer native lifecycle event.
                 // It discovers missing children, but cannot regress those already observed.
                 if let Some(state) = self.states.get(id) {
@@ -307,7 +311,9 @@ impl Extensions {
     pub fn omp_custom(&mut self, message: &Value) -> Vec<Value> {
         let mut out = Vec::new();
         for (id, status) in super::omp_task_completions(message) {
-            let Some(state) = self.states.get_mut(id) else { continue };
+            let Some(state) = self.states.get_mut(id) else {
+                continue;
+            };
             // Native lifecycle is authoritative once terminal; a late delivery is
             // only needed when that lifecycle event was missed.
             if state["status"] != "running" {
@@ -468,7 +474,11 @@ impl Extensions {
         }
     }
     pub fn finish_card(&mut self, id: &str) {
-        if !self.states.values().any(|state| state["toolCallId"] == id && state["status"] == "running") {
+        if !self
+            .states
+            .values()
+            .any(|state| state["toolCallId"] == id && state["status"] == "running")
+        {
             self.cards.remove(id);
         }
     }

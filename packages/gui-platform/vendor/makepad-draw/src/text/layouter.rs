@@ -48,6 +48,10 @@ impl Layouter {
         self.loader.rasterizer()
     }
 
+    pub fn set_fallback_requests(&mut self, requests: Option<Arc<super::fallback::FallbackRequests>>) {
+        self.loader.set_fallback_requests(requests);
+    }
+
     pub fn is_font_family_known(&self, id: FontFamilyId) -> bool {
         self.loader.is_font_family_known(id)
     }

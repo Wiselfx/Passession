@@ -239,19 +239,16 @@ impl Projection {
             if let Some(session) = s(frame, "session_id")
                 .or_else(|| s(frame, "sessionId"))
                 .or_else(|| s(&frame["session"], "id"))
-                && self.session.as_deref() != Some(session) {
-                    if let Some(previous) = self.session.as_deref() {
-                        let text =
-                            format!("Claude switched to a new session: {previous} -> {session}");
-                        events.push(
-                            self.timeline(json!({"type":"assistant_message","text":text}), None),
-                        );
-                    }
-                    self.session = Some(session.to_owned());
-                    events.push(
-                        self.event(json!({"type":"thread_started","sessionId":session}), None),
-                    );
+                && self.session.as_deref() != Some(session)
+            {
+                if let Some(previous) = self.session.as_deref() {
+                    let text = format!("Claude switched to a new session: {previous} -> {session}");
+                    events
+                        .push(self.timeline(json!({"type":"assistant_message","text":text}), None));
                 }
+                self.session = Some(session.to_owned());
+                events.push(self.event(json!({"type":"thread_started","sessionId":session}), None));
+            }
         }
         match s(frame, "type").unwrap_or("") {
             "system" if owner.is_none() => self.system(frame, &mut events),
@@ -285,9 +282,10 @@ impl Projection {
             _ => {}
         }
         if !self.replaying
-            && let Some(id) = owner.as_deref() {
-                self.enrich_child_card(id, &mut events);
-            }
+            && let Some(id) = owner.as_deref()
+        {
+            self.enrich_child_card(id, &mut events);
+        }
         stamp(&mut events, frame);
         events
     }
@@ -803,16 +801,17 @@ impl Projection {
                     }
                     if s(frame, "subtype") == Some("task_notification")
                         && self.tasks.get(&id).is_some_and(|c| c.workflow)
-                        && let Some(text) = s(frame, "output_file").and_then(read_workflow_result) {
-                            let child = self.tasks.get_mut(&id).expect("declared child");
-                            if child.last_result.as_deref() != Some(&text) {
-                                child.last_result = Some(text.clone());
-                                events.push(self.timeline(
-                                    json!({"type":"assistant_message","text":text}),
-                                    Some(&id),
-                                ));
-                            }
+                        && let Some(text) = s(frame, "output_file").and_then(read_workflow_result)
+                    {
+                        let child = self.tasks.get_mut(&id).expect("declared child");
+                        if child.last_result.as_deref() != Some(&text) {
+                            child.last_result = Some(text.clone());
+                            events.push(self.timeline(
+                                json!({"type":"assistant_message","text":text}),
+                                Some(&id),
+                            ));
                         }
+                    }
                     self.subtitle(&id, events);
                     if let Some(status) = s(&frame["patch"], "status")
                         .or_else(|| s(frame, "status"))
@@ -1000,12 +999,14 @@ impl Projection {
             }
         }
         if s(frame, "subtype") == Some("success") {
-            if !self.assistant_text && number(&frame["usage"], "output_tokens") == Some(0.0)
-                && let Some(text) = s(frame, "result") {
-                    let mut item = json!({"type":"assistant_message","text":text});
-                    copy(frame, "uuid", &mut item, "messageId");
-                    events.push(self.timeline(item, None));
-                }
+            if !self.assistant_text
+                && number(&frame["usage"], "output_tokens") == Some(0.0)
+                && let Some(text) = s(frame, "result")
+            {
+                let mut item = json!({"type":"assistant_message","text":text});
+                copy(frame, "uuid", &mut item, "messageId");
+                events.push(self.timeline(item, None));
+            }
             let mut event = json!({"type":"turn_completed"});
             if let Some(usage) = usage {
                 event["usage"] = usage;
@@ -1068,23 +1069,24 @@ impl Projection {
             .collect();
         for id in tools {
             if let Some(tool) = self.tools.remove(&id)
-                && tool.name != "SubagentHandback" {
-                    let mut event = self.timeline(
-                        tool_call(
-                            &tool.name,
-                            &id,
-                            &tool.input,
-                            &Value::Null,
-                            if failed { "failed" } else { "canceled" },
-                            &json!({"message":reason}),
-                        ),
-                        tool.owner.as_deref(),
-                    );
-                    if let Some(turn) = tool.turn {
-                        event["turnId"] = json!(turn);
-                    }
-                    events.push(event);
+                && tool.name != "SubagentHandback"
+            {
+                let mut event = self.timeline(
+                    tool_call(
+                        &tool.name,
+                        &id,
+                        &tool.input,
+                        &Value::Null,
+                        if failed { "failed" } else { "canceled" },
+                        &json!({"message":reason}),
+                    ),
+                    tool.owner.as_deref(),
+                );
+                if let Some(turn) = tool.turn {
+                    event["turnId"] = json!(turn);
                 }
+                events.push(event);
+            }
         }
         if self.turn.is_some() {
             events.push(self.event(
@@ -1565,11 +1567,13 @@ fn tool_detail(name: &str, input: &Value, output: &Value) -> Value {
             {
                 detail["filePaths"] = files.clone();
             }
-            if kind == "grep" && detail.get("content").is_none()
-                && let Some(text) = s(parsed, "output") {
-                    detail["content"] = json!(text);
-                    detail["numFiles"] = json!(0);
-                }
+            if kind == "grep"
+                && detail.get("content").is_none()
+                && let Some(text) = s(parsed, "output")
+            {
+                detail["content"] = json!(text);
+                detail["numFiles"] = json!(0);
+            }
             if let Some(results) = parsed["results"].as_array() {
                 let web: Vec<_> = results
                     .iter()
@@ -1752,22 +1756,23 @@ pub fn permission_request(
         if let Some(question) = input["questions"]
             .as_array()
             .and_then(|v| v.iter().find(|v| v.is_object()))
-            && let Some(title) = s(question, "question") {
-                request["title"] = json!(title.trim());
-                let labels: Vec<_> = question["options"]
-                    .as_array()
-                    .map(|v| {
-                        v.iter()
-                            .filter_map(|o| o.as_str().or_else(|| s(o, "label")))
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if !labels.is_empty() {
-                    request["description"] = json!(labels.join(" / "));
-                }
+            && let Some(title) = s(question, "question")
+        {
+            request["title"] = json!(title.trim());
+            let labels: Vec<_> = question["options"]
+                .as_array()
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|o| o.as_str().or_else(|| s(o, "label")))
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !labels.is_empty() {
+                request["description"] = json!(labels.join(" / "));
             }
+        }
     }
     if let Some(suggestions) = native
         .get("permission_suggestions")
@@ -2276,9 +2281,16 @@ pub fn project_subagent(
     let owner = s(source, "parent");
     let outcome = source["failed"].as_bool();
     let started = source.get("started").cloned().unwrap_or(Value::Null);
-    if let Some(facts) =
-        projection.replay_child(id, owner, &input, &started, child, outcome, true, &mut events)
-    {
+    if let Some(facts) = projection.replay_child(
+        id,
+        owner,
+        &input,
+        &started,
+        child,
+        outcome,
+        true,
+        &mut events,
+    ) {
         projection.replay_subagents(vec![(Some(id.to_owned()), facts)], others, &mut events);
     }
     child_rows(events, id, complete)
@@ -2310,9 +2322,10 @@ pub fn project_workflow(
         let mapped = projection.history_entry(&row, Some(id));
         for event in &mapped {
             if event["event"]["item"]["type"] == "assistant_message"
-                && let Some(text) = s(&event["event"]["item"], "text") {
-                    texts.insert(text.trim().to_owned());
-                }
+                && let Some(text) = s(&event["event"]["item"], "text")
+            {
+                texts.insert(text.trim().to_owned());
+            }
         }
         events.extend(mapped);
     }
@@ -2344,7 +2357,12 @@ fn child_rows(mut events: Vec<Value>, id: &str, complete: bool) -> Vec<Value> {
 }
 
 fn workflow_status(workflow: &Value) -> &'static str {
-    match s(workflow, "status").unwrap_or("").trim().to_lowercase().as_str() {
+    match s(workflow, "status")
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
         "completed" => "completed",
         "canceled" | "cancelled" | "killed" | "stopped" => "canceled",
         _ => "failed",
@@ -2368,10 +2386,13 @@ impl ReplayFacts {
                 for block in blocks {
                     if block["type"] == "tool_use"
                         && matches!(s(block, "name"), Some("Task" | "Agent" | "Workflow"))
-                        && let Some(id) = s(block, "id") {
-                            facts.tools.insert(id.to_owned(), block.clone());
-                            facts.started.insert(id.to_owned(), entry["timestamp"].clone());
-                        }
+                        && let Some(id) = s(block, "id")
+                    {
+                        facts.tools.insert(id.to_owned(), block.clone());
+                        facts
+                            .started
+                            .insert(id.to_owned(), entry["timestamp"].clone());
+                    }
                 }
             }
         }
@@ -2405,13 +2426,13 @@ impl ReplayFacts {
                             .lines()
                             .find_map(|line| line.strip_prefix("Run ID:").map(str::trim))
                             .filter(|id| id.starts_with("wf_"))
-                        {
-                            let run: String = run
-                                .chars()
-                                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-                                .collect();
-                            facts.workflows.insert(run, id.to_owned());
-                        }
+                    {
+                        let run: String = run
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                            .collect();
+                        facts.workflows.insert(run, id.to_owned());
+                    }
                 }
             }
         }
@@ -2687,17 +2708,16 @@ impl Projection {
         if let Some(owner) = owner {
             frame["parent_tool_use_id"] = json!(owner);
         }
-        if row["type"] == "assistant"
-            && !self.live_identity {
-                if let Some(id) = s(row, "uuid") {
-                    frame["message_id"] = json!(id);
-                }
-                // History UUIDs are independent rows, not consecutive partial snapshots.
-                self.lanes
-                    .entry(owner.unwrap_or("").to_owned())
-                    .or_default()
-                    .active = None;
+        if row["type"] == "assistant" && !self.live_identity {
+            if let Some(id) = s(row, "uuid") {
+                frame["message_id"] = json!(id);
             }
+            // History UUIDs are independent rows, not consecutive partial snapshots.
+            self.lanes
+                .entry(owner.unwrap_or("").to_owned())
+                .or_default()
+                .active = None;
+        }
         let mut events = self.project(&frame);
         events.retain(|e| matches!(s(e, "type"), Some("timeline" | "provider_subagent")));
         for event in &mut events {
@@ -2706,15 +2726,17 @@ impl Projection {
             } else {
                 &mut event["event"]["item"]
             };
-            if item["type"] == "tool_call" && matches!(s(item, "name"), Some("Task" | "Agent"))
+            if item["type"] == "tool_call"
+                && matches!(s(item, "name"), Some("Task" | "Agent"))
                 && let Some(id) = s(item, "callId")
-                    && let Some(tool) = self.tools.get(id) {
-                        item["detail"] = subagent_detail(
-                            first(&tool.input, &["name", "subagent_type"]),
-                            s(&tool.input, "description"),
-                            "",
-                        );
-                    }
+                && let Some(tool) = self.tools.get(id)
+            {
+                item["detail"] = subagent_detail(
+                    first(&tool.input, &["name", "subagent_type"]),
+                    s(&tool.input, "description"),
+                    "",
+                );
+            }
         }
         events
     }
@@ -2922,18 +2944,19 @@ fn read_output_text(value: &Value, depth: usize) -> Option<String> {
         if trimmed.starts_with("<path>") {
             let lower = trimmed.to_ascii_lowercase();
             if let (Some(start), Some(end)) = (lower.find("<content>"), lower.rfind("</content>"))
-                && end >= start + 9 {
-                    let content = &trimmed[start + 9..end];
-                    let content = content
-                        .strip_prefix("\r\n")
-                        .or_else(|| content.strip_prefix('\n'))
-                        .unwrap_or(content);
-                    let content = content
-                        .strip_suffix("\r\n")
-                        .or_else(|| content.strip_suffix('\n'))
-                        .unwrap_or(content);
-                    return Some(decode_xml(content));
-                }
+                && end >= start + 9
+            {
+                let content = &trimmed[start + 9..end];
+                let content = content
+                    .strip_prefix("\r\n")
+                    .or_else(|| content.strip_prefix('\n'))
+                    .unwrap_or(content);
+                let content = content
+                    .strip_suffix("\r\n")
+                    .or_else(|| content.strip_suffix('\n'))
+                    .unwrap_or(content);
+                return Some(decode_xml(content));
+            }
         }
         return Some(text.to_owned());
     }

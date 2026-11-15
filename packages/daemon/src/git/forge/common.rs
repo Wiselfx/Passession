@@ -221,12 +221,10 @@ pub(super) fn created_url(text: &str, gitlab: bool) -> Option<(String, Option<u6
     static GITLAB_URL: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r"https?://\S+/-/merge_requests/\d+").expect("valid MR URL regex")
     });
-    static GITLAB_NUMBER: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"/merge_requests/(\d+)").expect("valid MR iid regex")
-    });
-    static GITEA_URL: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"https?://\S+/pulls/\d+").expect("valid PR URL regex")
-    });
+    static GITLAB_NUMBER: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"/merge_requests/(\d+)").expect("valid MR iid regex"));
+    static GITEA_URL: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"https?://\S+/pulls/\d+").expect("valid PR URL regex"));
     static GITEA_NUMBER: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(r"/pulls/(\d+)").expect("valid PR index regex"));
     let (url, number) = if gitlab {

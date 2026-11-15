@@ -2,10 +2,10 @@
 //! spacing.ts, layout.ts footer hosts and tool-calls/detail-level grouping).
 
 use super::json::*;
+use makepad_widgets::makepad_draw::text::substr::Substr;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
-use makepad_widgets::makepad_draw::text::substr::Substr;
 
 /// One rendered stream row: a timeline entry, or (overview detail level) a
 /// run of consecutive tool calls hosted by its latest call.
@@ -32,7 +32,9 @@ impl StreamRow {
 }
 
 pub fn stream_kind(entry: Option<&Value>) -> &str {
-    entry.map(|e| str_of(get(get(e, "item"), "type"))).unwrap_or("")
+    entry
+        .map(|e| str_of(get(get(e, "item"), "type")))
+        .unwrap_or("")
 }
 
 /// projection.ts visibleToolCallItems: approval UI owns pending plans.
@@ -51,7 +53,8 @@ pub fn is_groupable_tool_call(entry: &Value) -> bool {
     if get(item, "type") != "tool_call" {
         return false;
     }
-    get(get(item, "detail"), "type") != "plan" && str_of(get(item, "name")).trim().to_lowercase() != "speak"
+    get(get(item, "detail"), "type") != "plan"
+        && str_of(get(item, "name")).trim().to_lowercase() != "speak"
 }
 
 /// stream.ts reduceTimelineToolCall: a Claude `TodoWrite` call becomes a task
@@ -80,7 +83,11 @@ fn todo_write_as_todo(entry: &Rc<Value>, fallback_provider: &str) -> Option<Rc<V
         return Some(entry.clone());
     }
     let detail = get(item, "detail");
-    let input = if get(detail, "type") == "unknown" { get(detail, "input") } else { &Value::Null };
+    let input = if get(detail, "type") == "unknown" {
+        get(detail, "input")
+    } else {
+        &Value::Null
+    };
     let todos = get(input, "todos").as_array()?;
     let mut tasks = Vec::new();
     for todo in todos {
@@ -89,13 +96,27 @@ fn todo_write_as_todo(entry: &Rc<Value>, fallback_provider: &str) -> Option<Rc<V
         if !matches!(status, "pending" | "in_progress" | "completed") {
             return None;
         }
-        let active = get(todo, "activeForm").as_str().map(str::trim).unwrap_or("");
-        let text = if !active.is_empty() { active.to_owned() } else { content.trim().to_owned() };
-        let text = if text.is_empty() { content.to_owned() } else { text };
+        let active = get(todo, "activeForm")
+            .as_str()
+            .map(str::trim)
+            .unwrap_or("");
+        let text = if !active.is_empty() {
+            active.to_owned()
+        } else {
+            content.trim().to_owned()
+        };
+        let text = if text.is_empty() {
+            content.to_owned()
+        } else {
+            text
+        };
         tasks.push(json!({"text": text, "completed": status == "completed"}));
     }
     let mut next = map(entry).clone();
-    next.insert("item".into(), json!({"type": "todo", "provider": provider, "items": tasks}));
+    next.insert(
+        "item".into(),
+        json!({"type": "todo", "provider": provider, "items": tasks}),
+    );
     Some(Rc::new(Value::Object(next)))
 }
 
@@ -109,10 +130,15 @@ pub fn build_stream_rows(entries: &[Rc<Value>], overview: bool, provider: &str) 
             return;
         }
         let group = std::mem::take(pending);
-        rows.push(StreamRow { entry: group.last().expect("non-empty").clone(), group: Some(group) });
+        rows.push(StreamRow {
+            entry: group.last().expect("non-empty").clone(),
+            group: Some(group),
+        });
     };
     for source in entries {
-        let Some(entry) = todo_write_as_todo(source, provider) else { continue };
+        let Some(entry) = todo_write_as_todo(source, provider) else {
+            continue;
+        };
         if !is_visible_stream_entry(&entry) {
             continue;
         }
@@ -133,7 +159,9 @@ pub fn is_tool_sequence_entry(entry: Option<&Value>) -> bool {
 
 /// turn-membership.ts continuesTurn.
 pub fn continues_turn(previous: Option<&Value>, next: Option<&Value>) -> bool {
-    let (Some(previous), Some(next)) = (previous, next) else { return false };
+    let (Some(previous), Some(next)) = (previous, next) else {
+        return false;
+    };
     if !get(previous, "turnId").is_null() && !get(next, "turnId").is_null() {
         return get(previous, "turnId") == get(next, "turnId");
     }
@@ -142,7 +170,9 @@ pub fn continues_turn(previous: Option<&Value>, next: Option<&Value>) -> bool {
 
 /// A visible response spans turns whose prompts are absent from the timeline.
 pub fn continues_response(previous: Option<&Value>, next: Option<&Value>) -> bool {
-    let (Some(_), Some(n)) = (previous, next) else { return false };
+    let (Some(_), Some(n)) = (previous, next) else {
+        return false;
+    };
     continues_turn(previous, next) || stream_kind(Some(n)) != "user_message"
 }
 
@@ -205,28 +235,40 @@ pub struct ResponseCopyCache {
 impl ResponseCopyCache {
     pub fn text(&mut self, rows: &Rc<Vec<StreamRow>>, host: usize) -> Substr {
         let snapshot = Rc::downgrade(rows);
-        if self.host == host && Weak::ptr_eq(&self.snapshot, &snapshot)
+        if self.host == host
+            && Weak::ptr_eq(&self.snapshot, &snapshot)
             && let Some(text) = &self.text
         {
             return text.clone();
         }
         let response = if host < rows.len() {
             let mut first = host;
-            while first > 0 && continues_response(Some(&rows[first - 1].entry), Some(&rows[first].entry)) {
+            while first > 0
+                && continues_response(Some(&rows[first - 1].entry), Some(&rows[first].entry))
+            {
                 first -= 1;
             }
             &rows[first..=host]
         } else {
             &rows[..0]
         };
-        let entries = response.iter().filter(|row| row.kind() == "assistant_message").map(|row| &row.entry);
+        let entries = response
+            .iter()
+            .filter(|row| row.kind() == "assistant_message")
+            .map(|row| &row.entry);
         let mut previous = self.sources.iter();
-        let unchanged = entries.clone().all(|entry| previous.next().is_some_and(|old| Rc::ptr_eq(old, entry)))
+        let unchanged = entries
+            .clone()
+            .all(|entry| previous.next().is_some_and(|old| Rc::ptr_eq(old, entry)))
             && previous.next().is_none();
         if !unchanged || self.text.is_none() {
             self.sources.clear();
             self.sources.extend(entries.cloned());
-            let bytes = self.sources.iter().map(|entry| str_of(get(get(entry, "item"), "text")).len()).sum::<usize>()
+            let bytes = self
+                .sources
+                .iter()
+                .map(|entry| str_of(get(get(entry, "item"), "text")).len())
+                .sum::<usize>()
                 + self.sources.len().saturating_sub(1) * 2;
             let mut text = String::with_capacity(bytes);
             for (index, entry) in self.sources.iter().enumerate() {
@@ -239,15 +281,25 @@ impl ResponseCopyCache {
         }
         self.snapshot = snapshot;
         self.host = host;
-        self.text.as_ref().expect("response text initialized above").clone()
+        self.text
+            .as_ref()
+            .expect("response text initialized above")
+            .clone()
     }
 }
 
 /// layout.ts resolveCompletedFooter.
-pub fn completed_footer_host(rows: &[StreamRow], index: usize, auxiliary_host: Option<usize>) -> Option<usize> {
+pub fn completed_footer_host(
+    rows: &[StreamRow],
+    index: usize,
+    auxiliary_host: Option<usize>,
+) -> Option<usize> {
     let row = &rows[index];
     let below = rows.get(index + 1).map(|r| &*r.entry);
-    if row.kind() == "user_message" || below.is_none() || continues_response(Some(&row.entry), below) {
+    if row.kind() == "user_message"
+        || below.is_none()
+        || continues_response(Some(&row.entry), below)
+    {
         return None;
     }
     let host = latest_assistant_in_response(rows, index)?;
@@ -287,13 +339,22 @@ pub fn derive_turn_timing(rows: &[StreamRow], turn_active: bool) -> HashMap<usiz
     let mut user_at: Option<i64> = None;
     let mut last_item_at: Option<i64> = None;
     let mut assistants: Vec<usize> = Vec::new();
-    let close = |timing: &mut HashMap<usize, TurnTiming>, user_at: Option<i64>, last: Option<i64>, assistants: &[usize]| {
+    let close = |timing: &mut HashMap<usize, TurnTiming>,
+                 user_at: Option<i64>,
+                 last: Option<i64>,
+                 assistants: &[usize]| {
         let Some(completed_at) = last else { return };
         if assistants.is_empty() {
             return;
         }
         for &index in assistants {
-            timing.insert(index, TurnTiming { started_at: user_at, completed_at });
+            timing.insert(
+                index,
+                TurnTiming {
+                    started_at: user_at,
+                    completed_at,
+                },
+            );
         }
     };
     let mut previous: Option<&Value> = None;
@@ -302,7 +363,11 @@ pub fn derive_turn_timing(rows: &[StreamRow], turn_active: bool) -> HashMap<usiz
         let at = parse_time(get(entry, "timestamp"));
         if previous.is_none() || !continues_turn(previous, Some(entry)) {
             close(&mut timing, user_at, last_item_at, &assistants);
-            user_at = if stream_kind(Some(entry)) == "user_message" { at } else { None };
+            user_at = if stream_kind(Some(entry)) == "user_message" {
+                at
+            } else {
+                None
+            };
             last_item_at = None;
             assistants.clear();
         }
@@ -323,7 +388,10 @@ mod response_copy_tests {
     use super::*;
 
     fn row(kind: &str, text: &str, turn: &str) -> StreamRow {
-        StreamRow { entry: Rc::new(json!({"turnId": turn, "item": {"type": kind, "text": text}})), group: None }
+        StreamRow {
+            entry: Rc::new(json!({"turnId": turn, "item": {"type": kind, "text": text}})),
+            group: None,
+        }
     }
 
     #[test]

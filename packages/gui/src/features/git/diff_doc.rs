@@ -11,10 +11,12 @@ use super::paint::{Font, GitPaint, Hits, hex, rect, with_alpha};
 use super::text::t;
 use crate::common::paint::intersect;
 use crate::features::timeline::canvas::{floor_char_boundary, range_rects};
-use makepad_widgets::*;
 use makepad_widgets::makepad_draw::text::layouter::LaidoutText;
 use makepad_widgets::makepad_draw::text::shaper::TAB_STOP_IN_SPACES;
-use paseo_highlight::{ColorScheme, HighlightStyle, SyntaxThemeId, highlight_code, resolve_syntax_colors};
+use makepad_widgets::*;
+use paseo_highlight::{
+    ColorScheme, HighlightStyle, SyntaxThemeId, highlight_code, resolve_syntax_colors,
+};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -71,8 +73,8 @@ struct FileModel {
     heights: Option<RowHeights>,
 }
 
-/// (split, wrap, text width).
-type HeightKey = (bool, bool, i64);
+/// (split, wrap, text width, typography epoch).
+type HeightKey = (bool, bool, i64, u64);
 /// Cache key, row tops relative to the body, total body height.
 type RowHeights = (HeightKey, Vec<f64>, f64);
 
@@ -82,7 +84,9 @@ impl FileModel {
         let mut max_line = 0;
         let mut max_columns = 0;
         for line in &lines {
-            max_line = max_line.max(line.old_number.unwrap_or(0)).max(line.new_number.unwrap_or(0));
+            max_line = max_line
+                .max(line.old_number.unwrap_or(0))
+                .max(line.new_number.unwrap_or(0));
             max_columns = max_columns.max(display_columns(&line.content));
         }
         Self {
@@ -161,20 +165,22 @@ impl FileModel {
         self.heights = None;
     }
 
-
     /// Highlights each hunk's old and new sides as whole sequences so
     /// multi-line comments and strings keep their state, then splits per line.
     fn runs(&mut self, path: &str) -> &HashMap<usize, Vec<Run>> {
         if self.runs.is_none() {
             let mut result = HashMap::new();
-            if self.lines.len() <= HIGHLIGHT_LINE_LIMIT && self.max_columns <= HIGHLIGHT_WIDTH_LIMIT {
+            if self.lines.len() <= HIGHLIGHT_LINE_LIMIT && self.max_columns <= HIGHLIGHT_WIDTH_LIMIT
+            {
                 let mut hunks: Vec<(usize, Vec<usize>, Vec<usize>)> = Vec::new();
                 for (index, line) in self.lines.iter().enumerate() {
                     if line.kind == LineKind::Header {
                         hunks.push((line.hunk, Vec::new(), Vec::new()));
                         continue;
                     }
-                    let Some(entry) = hunks.last_mut() else { continue };
+                    let Some(entry) = hunks.last_mut() else {
+                        continue;
+                    };
                     if line.kind != LineKind::Add {
                         entry.1.push(index);
                     }
@@ -187,7 +193,11 @@ impl FileModel {
                         if side.is_empty() {
                             continue;
                         }
-                        let code = side.iter().map(|&i| self.lines[i].content.as_str()).collect::<Vec<_>>().join("\n");
+                        let code = side
+                            .iter()
+                            .map(|&i| self.lines[i].content.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         let Ok(tokens) = highlight_code(&code, path) else {
                             continue;
                         };
@@ -199,7 +209,10 @@ impl FileModel {
                             }
                             result.insert(
                                 index,
-                                line_tokens.into_iter().map(|token| (token.text.to_owned(), token.style)).collect(),
+                                line_tokens
+                                    .into_iter()
+                                    .map(|token| (token.text.to_owned(), token.style))
+                                    .collect(),
                             );
                         }
                     }
@@ -215,10 +228,19 @@ impl FileModel {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocHit {
     Header(String),
-    Expand { path: String, start: usize },
+    Expand {
+        path: String,
+        start: usize,
+    },
     /// Opens the file at the numbered line.
-    Gutter { path: String, line: usize },
-    LineMenu { path: String, line: usize },
+    Gutter {
+        path: String,
+        line: usize,
+    },
+    LineMenu {
+        path: String,
+        line: usize,
+    },
     Retry(String),
 }
 
@@ -368,7 +390,13 @@ fn line_height() -> f64 {
 /// every other character counts one.
 fn display_columns(line: &str) -> usize {
     let stop = TAB_STOP_IN_SPACES as usize;
-    line.chars().fold(0, |column, c| if c == '\t' { column + stop - column % stop } else { column + 1 })
+    line.chars().fold(0, |column, c| {
+        if c == '\t' {
+            column + stop - column % stop
+        } else {
+            column + 1
+        }
+    })
 }
 
 fn char_width() -> f64 {
@@ -381,7 +409,10 @@ fn gutter_width(max_line: i64) -> f64 {
 
 /// A hidden-context row's label (selectable text of the expand row).
 fn hidden_label(start: usize, end: usize) -> String {
-    super::text::tr("workspace.git.diff.expandUnchanged", &[("count", (end - start - 6).to_string())])
+    super::text::tr(
+        "workspace.git.diff.expandUnchanged",
+        &[("count", (end - start - 6).to_string())],
+    )
 }
 
 /// The gutter number a cell shows.
@@ -399,8 +430,18 @@ fn gutter_number(line: &DiffLine, side: &str) -> Option<i64> {
 fn word_bounds(text: &str, offset: usize) -> (usize, usize) {
     let offset = floor_char_boundary(text, offset.min(text.len()));
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    let start = text[..offset].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map(|(i, _)| i).unwrap_or(offset);
-    let end = text[offset..].char_indices().find(|(_, c)| !is_word(*c)).map(|(i, _)| offset + i).unwrap_or(text.len());
+    let start = text[..offset]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_word(*c))
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(offset);
+    let end = text[offset..]
+        .char_indices()
+        .find(|(_, c)| !is_word(*c))
+        .map(|(i, _)| offset + i)
+        .unwrap_or(text.len());
     (start, end)
 }
 
@@ -435,20 +476,36 @@ impl DiffDoc {
     }
 
     /// The selected byte range of a piece of `len` bytes.
-    fn piece_span(selection: (TextPos, TextPos), key: PieceKey, len: usize) -> Option<(usize, usize)> {
+    fn piece_span(
+        selection: (TextPos, TextPos),
+        key: PieceKey,
+        len: usize,
+    ) -> Option<(usize, usize)> {
         let (start, end) = selection;
         if key < start.piece || key > end.piece {
             return None;
         }
-        let a = if key == start.piece { start.offset.min(len) } else { 0 };
-        let b = if key == end.piece { end.offset.min(len) } else { len };
+        let a = if key == start.piece {
+            start.offset.min(len)
+        } else {
+            0
+        };
+        let b = if key == end.piece {
+            end.offset.min(len)
+        } else {
+            len
+        };
         (b > a).then_some((a, b))
     }
 
     /// The text position nearest to `abs` among this frame's pieces; inside a
     /// sticky header only that header's texts count.
     pub fn pos_at(&self, abs: DVec2) -> Option<TextPos> {
-        let in_header = self.pieces.iter().find(|p| p.header && p.clip.contains(abs)).map(|p| p.key.0);
+        let in_header = self
+            .pieces
+            .iter()
+            .find(|p| p.header && p.clip.contains(abs))
+            .map(|p| p.key.0);
         let mut best: Option<(f64, TextPos)> = None;
         for piece in &self.pieces {
             match in_header {
@@ -456,43 +513,104 @@ impl DiffDoc {
                 None if piece.header => continue,
                 _ => {}
             }
-            let size = dvec2(piece.laid.size_in_lpxs.width as f64, piece.laid.size_in_lpxs.height as f64);
+            let size = dvec2(
+                piece.laid.size_in_lpxs.width as f64,
+                piece.laid.size_in_lpxs.height as f64,
+            );
             let local = abs - piece.origin;
-            let dy = if local.y < 0.0 { -local.y } else if local.y > size.y { local.y - size.y } else { 0.0 };
-            let dx = if local.x < 0.0 { -local.x } else if local.x > size.x { local.x - size.x } else { 0.0 };
+            let dy = if local.y < 0.0 {
+                -local.y
+            } else if local.y > size.y {
+                local.y - size.y
+            } else {
+                0.0
+            };
+            let dx = if local.x < 0.0 {
+                -local.x
+            } else if local.x > size.x {
+                local.x - size.x
+            } else {
+                0.0
+            };
             let distance = dy * 1000.0 + dx;
             if best.is_some_and(|(d, _)| d <= distance) {
                 continue;
             }
-            let point = makepad_widgets::makepad_draw::text::geom::Point::new(local.x.clamp(0.0, size.x) as f32, local.y.clamp(0.0, size.y) as f32);
-            let offset = piece.laid.point_in_lpxs_to_cursor(point).index.min(piece.laid.text.len());
-            best = Some((distance, TextPos { piece: piece.key, offset }));
+            let point = makepad_widgets::makepad_draw::text::geom::Point::new(
+                local.x.clamp(0.0, size.x) as f32,
+                local.y.clamp(0.0, size.y) as f32,
+            );
+            let offset = piece
+                .laid
+                .point_in_lpxs_to_cursor(point)
+                .index
+                .min(piece.laid.text.len());
+            best = Some((
+                distance,
+                TextPos {
+                    piece: piece.key,
+                    offset,
+                },
+            ));
         }
         best.map(|(_, pos)| pos)
     }
 
     fn drawn_text(&self, key: PieceKey) -> Option<&str> {
-        self.pieces.iter().find(|p| p.key == key).map(|p| p.laid.text.as_str())
+        self.pieces
+            .iter()
+            .find(|p| p.key == key)
+            .map(|p| p.laid.text.as_str())
     }
 
     /// The word around `pos` (double click / long press).
     pub fn word_at(&self, pos: TextPos) -> (TextPos, TextPos) {
-        let (a, b) = self.drawn_text(pos.piece).map(|text| word_bounds(text, pos.offset)).unwrap_or((pos.offset, pos.offset));
-        (TextPos { piece: pos.piece, offset: a }, TextPos { piece: pos.piece, offset: b })
+        let (a, b) = self
+            .drawn_text(pos.piece)
+            .map(|text| word_bounds(text, pos.offset))
+            .unwrap_or((pos.offset, pos.offset));
+        (
+            TextPos {
+                piece: pos.piece,
+                offset: a,
+            },
+            TextPos {
+                piece: pos.piece,
+                offset: b,
+            },
+        )
     }
 
     /// The whole text under `pos` (triple click selects the paragraph).
     pub fn paragraph_at(&self, pos: TextPos) -> (TextPos, TextPos) {
-        let len = self.drawn_text(pos.piece).map(str::len).unwrap_or(pos.offset);
-        (TextPos { piece: pos.piece, offset: 0 }, TextPos { piece: pos.piece, offset: len })
+        let len = self
+            .drawn_text(pos.piece)
+            .map(str::len)
+            .unwrap_or(pos.offset);
+        (
+            TextPos {
+                piece: pos.piece,
+                offset: 0,
+            },
+            TextPos {
+                piece: pos.piece,
+                offset: len,
+            },
+        )
     }
 
     /// Selects every text of the document (Ctrl/Cmd+A).
     pub fn select_all(&mut self) {
         let last = self.order.len().saturating_sub(1);
         self.selection = Some((
-            TextPos { piece: (0, 0, 0), offset: 0 },
-            TextPos { piece: (last, usize::MAX, u8::MAX), offset: usize::MAX },
+            TextPos {
+                piece: (0, 0, 0),
+                offset: 0,
+            },
+            TextPos {
+                piece: (last, usize::MAX, u8::MAX),
+                offset: usize::MAX,
+            },
         ));
     }
 
@@ -505,7 +623,9 @@ impl DiffDoc {
         let mut out = String::new();
         let last = end.piece.0.min(self.order.len().saturating_sub(1));
         for file in start.piece.0..=last {
-            let Some(path) = self.order.get(file).cloned() else { break };
+            let Some(path) = self.order.get(file).cloned() else {
+                break;
+            };
             let mut texts: Vec<(PieceKey, String)> = Vec::new();
             let (directory, name) = match path.rfind('/') {
                 Some(slash) => (&path[..slash], &path[slash + 1..]),
@@ -522,18 +642,30 @@ impl DiffDoc {
                 let rows = model.rows(split).to_vec();
                 let lines = &model.lines;
                 // A cell's gutter number then its code.
-                let cell = |texts: &mut Vec<(PieceKey, String)>, row_key: usize, side_index: u8, line: usize, side: &str| {
+                let cell = |texts: &mut Vec<(PieceKey, String)>,
+                            row_key: usize,
+                            side_index: u8,
+                            line: usize,
+                            side: &str| {
                     let line = &lines[line];
-                    let number = gutter_number(line, side).map(|n| n.to_string()).unwrap_or_default();
+                    let number = gutter_number(line, side)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
                     texts.push(((file, row_key, side_index * 2), number));
                     texts.push(((file, row_key, side_index * 2 + 1), line.content.clone()));
                 };
                 for (index, row) in rows.into_iter().enumerate() {
                     let row_key = index + 1;
                     match row {
-                        Row::Hidden { start, end } => texts.push(((file, row_key, 0), hidden_label(start, end))),
+                        Row::Hidden { start, end } => {
+                            texts.push(((file, row_key, 0), hidden_label(start, end)))
+                        }
                         Row::Line(line) => {
-                            let side = if lines[line].kind == LineKind::Remove { "old" } else { "new" };
+                            let side = if lines[line].kind == LineKind::Remove {
+                                "old"
+                            } else {
+                                "new"
+                            };
                             cell(&mut texts, row_key, 0, line, side);
                         }
                         Row::Pair(left, right) => {
@@ -549,7 +681,9 @@ impl DiffDoc {
             }
             for (key, text) in texts {
                 if let Some((a, b)) = Self::piece_span(selection, key, text.len()) {
-                    out.push_str(&text[floor_char_boundary(&text, a)..floor_char_boundary(&text, b)]);
+                    out.push_str(
+                        &text[floor_char_boundary(&text, a)..floor_char_boundary(&text, b)],
+                    );
                 }
             }
         }
@@ -559,12 +693,18 @@ impl DiffDoc {
     /// Highlights the selected parts of this frame's pieces of one layer
     /// (Material's default selection colour: `colorScheme.primary` at 40%).
     fn draw_selection(&self, cx: &mut Cx2d, paint: &mut GitPaint, header: bool) {
-        let Some(selection) = self.ordered_selection() else { return };
+        let Some(selection) = self.ordered_selection() else {
+            return;
+        };
         let color = with_alpha(palette().primary, 0.4);
         for piece in self.pieces.iter().filter(|p| p.header == header) {
-            let Some((a, b)) = Self::piece_span(selection, piece.key, piece.laid.text.len()) else { continue };
+            let Some((a, b)) = Self::piece_span(selection, piece.key, piece.laid.text.len()) else {
+                continue;
+            };
             for r in range_rects(&piece.laid, a, b) {
-                let r = r.translate(piece.origin).clip((piece.clip.pos, piece.clip.pos + piece.clip.size));
+                let r = r
+                    .translate(piece.origin)
+                    .clip((piece.clip.pos, piece.clip.pos + piece.clip.size));
                 paint.fill(cx, r, color);
             }
         }
@@ -609,7 +749,9 @@ impl DiffDoc {
     /// A press on a scrollbar: on the thumb it starts a drag, elsewhere on the
     /// track it pages toward the pointer. Returns false off the scrollbars.
     pub fn press_bar(&mut self, point: DVec2) -> bool {
-        let Some(axis) = self.bar_at(point) else { return false };
+        let Some(axis) = self.bar_at(point) else {
+            return false;
+        };
         let bar = self.bars[axis.index()];
         let start = *self.scroll_of(axis);
         if bar.thumb.contains(point) {
@@ -630,7 +772,9 @@ impl DiffDoc {
 
     /// Moves the dragged thumb with the pointer; returns true while dragging.
     pub fn drag_bar(&mut self, point: DVec2) -> bool {
-        let Some((axis, origin, start)) = self.bar_drag else { return false };
+        let Some((axis, origin, start)) = self.bar_drag else {
+            return false;
+        };
         let bar = self.bars[axis.index()];
         let (track, thumb) = match axis {
             Axis::Vertical => (bar.track.size.y, bar.thumb.size.y),
@@ -639,7 +783,8 @@ impl DiffDoc {
         let travel = track - thumb;
         let max = self.max_scroll(axis);
         if travel > 0.0 {
-            *self.scroll_of(axis) = (start + (axis.along(point) - origin) * max / travel).clamp(0.0, max);
+            *self.scroll_of(axis) =
+                (start + (axis.along(point) - origin) * max / travel).clamp(0.0, max);
         }
         true
     }
@@ -654,36 +799,77 @@ impl DiffDoc {
     fn draw_scrollbars(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, area: Rect, wrap: bool) {
         let colors = palette();
         let max_y = (self.content_height - area.size.y).max(0.0);
-        let max_x = if wrap { 0.0 } else { (self.content_width - area.size.x).max(0.0) };
+        let max_x = if wrap {
+            0.0
+        } else {
+            (self.content_width - area.size.x).max(0.0)
+        };
         let (show_v, show_h) = (max_y > 0.5, max_x > 0.5);
         // Each track leaves the shared corner to the other.
         let corner = |other: bool| if other { BAR_ZONE } else { 0.0 };
         self.bars = [ScrollBar::default(); 2];
         if show_v {
-            let track = rect(area.pos.x + area.size.x - BAR_ZONE, area.pos.y, BAR_ZONE, area.size.y - corner(show_h));
+            let track = rect(
+                area.pos.x + area.size.x - BAR_ZONE,
+                area.pos.y,
+                BAR_ZONE,
+                area.size.y - corner(show_h),
+            );
             let (offset, length) = thumb_span(track.size.y, area.size.y, max_y, self.scroll_y);
-            self.bars[0] = ScrollBar { track, thumb: rect(track.pos.x, track.pos.y + offset, BAR_ZONE, length) };
+            self.bars[0] = ScrollBar {
+                track,
+                thumb: rect(track.pos.x, track.pos.y + offset, BAR_ZONE, length),
+            };
         }
         if show_h {
-            let track = rect(area.pos.x, area.pos.y + area.size.y - BAR_ZONE, area.size.x - corner(show_v), BAR_ZONE);
+            let track = rect(
+                area.pos.x,
+                area.pos.y + area.size.y - BAR_ZONE,
+                area.size.x - corner(show_v),
+                BAR_ZONE,
+            );
             let (offset, length) = thumb_span(track.size.x, area.size.x, max_x, self.scroll_x);
-            self.bars[1] = ScrollBar { track, thumb: rect(track.pos.x + offset, track.pos.y, length, BAR_ZONE) };
+            self.bars[1] = ScrollBar {
+                track,
+                thumb: rect(track.pos.x + offset, track.pos.y, length, BAR_ZONE),
+            };
         }
         for axis in [Axis::Vertical, Axis::Horizontal] {
             let bar = self.bars[axis.index()];
             if bar.track.size.x <= 0.0 || bar.track.size.y <= 0.0 {
                 continue;
             }
-            let active = self.bar_hovered == Some(axis) || self.bar_drag.is_some_and(|(dragged, _, _)| dragged == axis);
-            let thickness = if active { BAR_ACTIVE_THICKNESS } else { BAR_THICKNESS };
+            let active = self.bar_hovered == Some(axis)
+                || self.bar_drag.is_some_and(|(dragged, _, _)| dragged == axis);
+            let thickness = if active {
+                BAR_ACTIVE_THICKNESS
+            } else {
+                BAR_THICKNESS
+            };
             if active {
                 paint.fill(cx, bar.track, with_alpha(colors.muted, 0.08));
             }
             let thumb = match axis {
-                Axis::Vertical => rect(bar.thumb.pos.x + BAR_ZONE - 2.0 - thickness, bar.thumb.pos.y + 2.0, thickness, bar.thumb.size.y - 4.0),
-                Axis::Horizontal => rect(bar.thumb.pos.x + 2.0, bar.thumb.pos.y + BAR_ZONE - 2.0 - thickness, bar.thumb.size.x - 4.0, thickness),
+                Axis::Vertical => rect(
+                    bar.thumb.pos.x + BAR_ZONE - 2.0 - thickness,
+                    bar.thumb.pos.y + 2.0,
+                    thickness,
+                    bar.thumb.size.y - 4.0,
+                ),
+                Axis::Horizontal => rect(
+                    bar.thumb.pos.x + 2.0,
+                    bar.thumb.pos.y + BAR_ZONE - 2.0 - thickness,
+                    bar.thumb.size.x - 4.0,
+                    thickness,
+                ),
             };
-            paint.rounded(cx, thumb, with_alpha(colors.muted, if active { 0.6 } else { 0.35 }), thickness / 2.0, None);
+            paint.rounded(
+                cx,
+                thumb,
+                with_alpha(colors.muted, if active { 0.6 } else { 0.35 }),
+                thickness / 2.0,
+                None,
+            );
         }
     }
 
@@ -705,7 +891,8 @@ impl DiffDoc {
     fn model(&mut self, path: &str, patch: &Value, revision: u64) -> &mut FileModel {
         let stale = self.models.get(path).is_none_or(|m| m.revision != revision);
         if stale {
-            self.models.insert(path.to_owned(), FileModel::new(patch, revision));
+            self.models
+                .insert(path.to_owned(), FileModel::new(patch, revision));
         }
         self.models.get_mut(path).unwrap()
     }
@@ -713,14 +900,27 @@ impl DiffDoc {
     fn cell_text_height(cx: &mut Cx2d, paint: &mut GitPaint, content: &str, width: f64) -> f64 {
         let lh = line_height();
         let size = typography().code_font_size;
-        paint.measure_wrapped(cx, Font::Mono, size, content, width.max(20.0)).max(lh)
+        paint
+            .measure_wrapped(cx, Font::Mono, size, content, width.max(20.0))
+            .max(lh)
     }
 
     /// Row tops of a loaded body, cached per layout; returns the total height.
-    fn ensure_heights(cx: &mut Cx2d, paint: &mut GitPaint, input: &DocInput<'_>, model: &mut FileModel, column_width: f64) -> f64 {
+    fn ensure_heights(
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        input: &DocInput<'_>,
+        model: &mut FileModel,
+        column_width: f64,
+    ) -> f64 {
         let lh = line_height();
         let gutter = gutter_width(model.max_line);
-        let key = (input.split, input.wrap, column_width.round() as i64);
+        let key = (
+            input.split,
+            input.wrap,
+            column_width.round() as i64,
+            crate::theme::epoch(),
+        );
         if let Some((cached, _, total)) = &model.heights
             && *cached == key
         {
@@ -749,7 +949,11 @@ impl DiffDoc {
                     for cell in [left, right] {
                         let Some(index) = cell else { continue };
                         let line = &lines[index];
-                        let base = if input.wrap { Self::cell_text_height(cx, paint, &line.content, text_width) } else { lh };
+                        let base = if input.wrap {
+                            Self::cell_text_height(cx, paint, &line.content, text_width)
+                        } else {
+                            lh
+                        };
                         height = height.max(base);
                     }
                     height
@@ -762,13 +966,22 @@ impl DiffDoc {
     }
 
     /// The height of a file's body (without header and closing rule).
-    fn body_height(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, input: &DocInput<'_>, file: &Value, column_width: f64) -> f64 {
+    fn body_height(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        input: &DocInput<'_>,
+        file: &Value,
+        column_width: f64,
+    ) -> f64 {
         let path = text(file, "path");
         let lh = line_height();
         let message = lh + 24.0;
         match input.patches.get(path) {
             None if input.patch_errors.contains_key(path) => message,
-            None => ((int(file, "additions") + int(file, "deletions") + 2).clamp(2, 400)) as f64 * lh,
+            None => {
+                ((int(file, "additions") + int(file, "deletions") + 2).clamp(2, 400)) as f64 * lh
+            }
             Some(patch) => {
                 let status = text(patch, "status");
                 if status == "binary" || status == "too_large" {
@@ -799,7 +1012,9 @@ impl DiffDoc {
         files.sort_by(|a, b| compare_diff_paths(text(a, "path"), text(b, "path")));
         let live: HashSet<&str> = files.iter().map(|f| text(f, "path")).collect();
         self.models.retain(|path, model| {
-            live.contains(path.as_str()) && input.patches.contains_key(path) && model.revision == input.patch_revision
+            live.contains(path.as_str())
+                && input.patches.contains_key(path)
+                && model.revision == input.patch_revision
         });
         self.spinning = false;
         // Selection context of this frame: pieces register as they are drawn.
@@ -832,10 +1047,18 @@ impl DiffDoc {
         let content_width = if input.wrap {
             area.size.x
         } else {
-            area.size.x.max(if input.split { column * 2.0 + 1.0 } else { column })
+            area.size.x.max(if input.split {
+                column * 2.0 + 1.0
+            } else {
+                column
+            })
         };
         self.content_width = content_width;
-        let column_width = if input.split { (content_width - 1.0) / 2.0 } else { content_width };
+        let column_width = if input.split {
+            (content_width - 1.0) / 2.0
+        } else {
+            content_width
+        };
         // Block layout.
         let mut blocks: Vec<(String, f64, f64)> = Vec::with_capacity(files.len());
         let mut y = 0.0;
@@ -886,18 +1109,27 @@ impl DiffDoc {
         self.scroll_x = if input.wrap {
             0.0
         } else {
-            self.scroll_x.clamp(0.0, (content_width - area.size.x).max(0.0))
+            self.scroll_x
+                .clamp(0.0, (content_width - area.size.x).max(0.0))
         };
         let view_top = self.scroll_y;
         let view_bottom = self.scroll_y + area.size.y;
         let syntax = SyntaxThemeId::from_name(input.syntax_theme).unwrap_or(SyntaxThemeId::One);
-        let syntax_colors = resolve_syntax_colors(syntax, if colors.is_dark { ColorScheme::Dark } else { ColorScheme::Light });
+        let syntax_colors = resolve_syntax_colors(
+            syntax,
+            if colors.is_dark {
+                ColorScheme::Dark
+            } else {
+                ColorScheme::Light
+            },
+        );
         paint.begin_clip(cx, area);
         let origin = dvec2(area.pos.x - self.scroll_x, area.pos.y - self.scroll_y);
         for (file_index, (path, top, height)) in blocks.iter().enumerate() {
             if top + height < view_top || *top > view_bottom {
                 // Placeholders just below the viewport preload.
-                if *top > view_bottom && *top < view_bottom + area.size.y
+                if *top > view_bottom
+                    && *top < view_bottom + area.size.y
                     && !input.collapsed.contains(path)
                     && !input.patches.contains_key(path)
                     && !input.patch_errors.contains_key(path)
@@ -911,20 +1143,51 @@ impl DiffDoc {
             }
             let body_top = origin.y + top + HEADER_HEIGHT;
             let body_height = height - HEADER_HEIGHT - 1.0;
-            self.draw_body(cx, paint, input, file_index, path, dvec2(origin.x, body_top), body_height, column_width, area, &syntax_colors);
-            paint.fill(cx, rect(area.pos.x, body_top + body_height, area.size.x.max(content_width), 1.0), colors.border);
+            self.draw_body(
+                cx,
+                paint,
+                input,
+                file_index,
+                path,
+                dvec2(origin.x, body_top),
+                body_height,
+                column_width,
+                area,
+                &syntax_colors,
+            );
+            paint.fill(
+                cx,
+                rect(
+                    area.pos.x,
+                    body_top + body_height,
+                    area.size.x.max(content_width),
+                    1.0,
+                ),
+                colors.border,
+            );
         }
         // Selection beneath the body glyphs (the box batch precedes the text batch).
         self.draw_selection(cx, paint, false);
         // Sticky headers paint over the rows.
         paint.new_layer(cx);
-        for (file_index, (file, (path, top, height))) in files.iter().zip(blocks.iter()).enumerate() {
+        for (file_index, (file, (path, top, height))) in files.iter().zip(blocks.iter()).enumerate()
+        {
             if top + height < view_top || *top > view_bottom {
                 continue;
             }
             let natural = area.pos.y + top - self.scroll_y;
-            let pinned = natural.max(area.pos.y).min(area.pos.y + top + height - self.scroll_y - HEADER_HEIGHT);
-            self.draw_header(cx, paint, file_index, file, path, rect(area.pos.x, pinned, area.size.x, HEADER_HEIGHT), area);
+            let pinned = natural
+                .max(area.pos.y)
+                .min(area.pos.y + top + height - self.scroll_y - HEADER_HEIGHT);
+            self.draw_header(
+                cx,
+                paint,
+                file_index,
+                file,
+                path,
+                rect(area.pos.x, pinned, area.size.x, HEADER_HEIGHT),
+                area,
+            );
         }
         self.draw_selection(cx, paint, true);
         self.draw_scrollbars(cx, paint, area, input.wrap);
@@ -934,7 +1197,9 @@ impl DiffDoc {
             if let Some(pointer) = self.drag_pointer {
                 let inside = dvec2(
                     pointer.x.clamp(area.pos.x, area.pos.x + area.size.x),
-                    pointer.y.clamp(area.pos.y + 1.0, area.pos.y + area.size.y - 1.0),
+                    pointer
+                        .y
+                        .clamp(area.pos.y + 1.0, area.pos.y + area.size.y - 1.0),
                 );
                 if let (Some(pos), Some((anchor, _))) = (self.pos_at(inside), self.selection) {
                     self.selection = Some((anchor, pos));
@@ -945,18 +1210,53 @@ impl DiffDoc {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_header(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, file_index: usize, file: &Value, path: &str, header: Rect, clip: Rect) {
+    fn draw_header(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        file_index: usize,
+        file: &Value,
+        path: &str,
+        header: Rect,
+        clip: Rect,
+    ) {
         let colors = palette();
         let hit = DocHit::Header(path.to_owned());
         let hovered = self.hovered.as_ref() == Some(&hit);
-        paint.fill(cx, header, if hovered { colors.surface1 } else { colors.surface0 });
-        paint.fill(cx, rect(header.pos.x, header.pos.y + header.size.y - 1.0, header.size.x, 1.0), colors.border_accent);
+        paint.fill(
+            cx,
+            header,
+            if hovered {
+                colors.surface1
+            } else {
+                colors.surface0
+            },
+        );
+        paint.fill(
+            cx,
+            rect(
+                header.pos.x,
+                header.pos.y + header.size.y - 1.0,
+                header.size.x,
+                1.0,
+            ),
+            colors.border_accent,
+        );
         let center_y = header.pos.y + (HEADER_HEIGHT - 1.0) / 2.0;
         let right = header.pos.x + header.size.x - 8.0;
         change_icon(cx, paint, dvec2(right - 7.0, center_y), change_kind(file));
         let stat_right = right - 14.0 - 8.0;
-        let stat_width = measure_diff_stat(cx, paint, int(file, "additions"), int(file, "deletions"));
-        diff_stat(cx, paint, stat_right, center_y, int(file, "additions"), int(file, "deletions"), true);
+        let stat_width =
+            measure_diff_stat(cx, paint, int(file, "additions"), int(file, "deletions"));
+        diff_stat(
+            cx,
+            paint,
+            stat_right,
+            center_y,
+            int(file, "additions"),
+            int(file, "deletions"),
+            true,
+        );
         let size = ui(14.0);
         let name_left = header.pos.x + 12.0;
         let available = (stat_right - stat_width - 4.0 - name_left).max(0.0);
@@ -965,31 +1265,115 @@ impl DiffDoc {
             None => ("", path),
         };
         let piece_clip = intersect(header, clip);
-        let drawn = paint.text_centered(cx, Font::Regular, size, colors.foreground, name_left, header.pos.y, HEADER_HEIGHT - 1.0, name, available);
-        if let Some((laid, origin)) = paint.line_layout(cx, Font::Regular, size, name_left, header.pos.y, HEADER_HEIGHT - 1.0, name, available) {
-            self.pieces.push(Piece { key: (file_index, 0, 0), laid, origin, clip: piece_clip, header: true });
+        let drawn = paint.text_centered(
+            cx,
+            Font::Regular,
+            size,
+            colors.foreground,
+            name_left,
+            header.pos.y,
+            HEADER_HEIGHT - 1.0,
+            name,
+            available,
+        );
+        if let Some((laid, origin)) = paint.line_layout(
+            cx,
+            Font::Regular,
+            size,
+            name_left,
+            header.pos.y,
+            HEADER_HEIGHT - 1.0,
+            name,
+            available,
+        ) {
+            self.pieces.push(Piece {
+                key: (file_index, 0, 0),
+                laid,
+                origin,
+                clip: piece_clip,
+                header: true,
+            });
         }
         if !directory.is_empty() && drawn + 4.0 < available {
             let x = name_left + drawn + 4.0;
-            paint.text_centered(cx, Font::Regular, size, colors.muted, x, header.pos.y, HEADER_HEIGHT - 1.0, directory, available - drawn - 4.0);
-            if let Some((laid, origin)) = paint.line_layout(cx, Font::Regular, size, x, header.pos.y, HEADER_HEIGHT - 1.0, directory, available - drawn - 4.0) {
-                self.pieces.push(Piece { key: (file_index, 0, 1), laid, origin, clip: piece_clip, header: true });
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                size,
+                colors.muted,
+                x,
+                header.pos.y,
+                HEADER_HEIGHT - 1.0,
+                directory,
+                available - drawn - 4.0,
+            );
+            if let Some((laid, origin)) = paint.line_layout(
+                cx,
+                Font::Regular,
+                size,
+                x,
+                header.pos.y,
+                HEADER_HEIGHT - 1.0,
+                directory,
+                available - drawn - 4.0,
+            ) {
+                self.pieces.push(Piece {
+                    key: (file_index, 0, 1),
+                    laid,
+                    origin,
+                    clip: piece_clip,
+                    header: true,
+                });
             }
         }
         self.hits.push_clipped(header, clip, hit);
     }
 
-    fn draw_message(cx: &mut Cx2d, paint: &mut GitPaint, origin: DVec2, width: f64, message: &str, action: Option<&str>) -> Option<Rect> {
+    fn draw_message(
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        origin: DVec2,
+        width: f64,
+        message: &str,
+        action: Option<&str>,
+    ) -> Option<Rect> {
         let colors = palette();
         let lh = line_height();
         let band = rect(origin.x, origin.y, width, lh + 24.0);
         paint.fill(cx, band, colors.surface0);
         let size = typography().code_font_size;
-        let action_width = action.map(|a| paint.measure(cx, Font::Medium, ui(12.0), a).x + 16.0).unwrap_or(0.0);
-        let drawn = paint.text_centered(cx, Font::Mono, size, colors.muted, origin.x + 12.0, band.pos.y, band.size.y, message, (width - 24.0 - action_width - 8.0).max(0.0));
+        let action_width = action
+            .map(|a| paint.measure(cx, Font::Medium, ui(12.0), a).x + 16.0)
+            .unwrap_or(0.0);
+        let drawn = paint.text_centered(
+            cx,
+            Font::Mono,
+            size,
+            colors.muted,
+            origin.x + 12.0,
+            band.pos.y,
+            band.size.y,
+            message,
+            (width - 24.0 - action_width - 8.0).max(0.0),
+        );
         let action = action?;
-        let button = rect(origin.x + 12.0 + drawn + 8.0, band.pos.y + (band.size.y - 24.0) / 2.0, action_width, 24.0);
-        paint.text_centered(cx, Font::Medium, ui(12.0), colors.muted, button.pos.x + 8.0, button.pos.y, 24.0, action, action_width);
+        let button = rect(
+            origin.x + 12.0 + drawn + 8.0,
+            band.pos.y + (band.size.y - 24.0) / 2.0,
+            action_width,
+            24.0,
+        );
+        paint.text_centered(
+            cx,
+            Font::Medium,
+            ui(12.0),
+            colors.muted,
+            button.pos.x + 8.0,
+            button.pos.y,
+            24.0,
+            action,
+            action_width,
+        );
         Some(button)
     }
 
@@ -1008,29 +1392,69 @@ impl DiffDoc {
         syntax: &paseo_highlight::SyntaxColors,
     ) {
         let colors = palette();
-        let width = column_width * if input.split { 2.0 } else { 1.0 } + if input.split { 1.0 } else { 0.0 };
+        let width = column_width * if input.split { 2.0 } else { 1.0 }
+            + if input.split { 1.0 } else { 0.0 };
         let Some(patch) = input.patches.get(path) else {
             if let Some(error) = input.patch_errors.get(path) {
                 let retry = t("common.actions.retry");
-                if let Some(button) = Self::draw_message(cx, paint, dvec2(clip.pos.x, origin.y), clip.size.x, error, Some(&retry)) {
-                    self.hits.push_clipped(button, clip, DocHit::Retry(path.to_owned()));
+                if let Some(button) = Self::draw_message(
+                    cx,
+                    paint,
+                    dvec2(clip.pos.x, origin.y),
+                    clip.size.x,
+                    error,
+                    Some(&retry),
+                ) {
+                    self.hits
+                        .push_clipped(button, clip, DocHit::Retry(path.to_owned()));
                 }
                 return;
             }
             // Placeholder sized like the expected patch; requests it once drawn.
             let lh = line_height();
-            paint.fill(cx, rect(clip.pos.x, origin.y, clip.size.x, body_height), colors.surface0);
+            paint.fill(
+                cx,
+                rect(clip.pos.x, origin.y, clip.size.x, body_height),
+                colors.surface0,
+            );
             let band = rect(clip.pos.x + 12.0, origin.y + 8.0, clip.size.x - 24.0, lh);
-            paint.spinner(cx, dvec2(band.pos.x + 6.0, band.pos.y + lh / 2.0), 12.0, colors.muted, cx.seconds_since_app_start());
-            paint.text_centered(cx, Font::Regular, ui(12.0), colors.muted, band.pos.x + 12.0 + 8.0, band.pos.y, lh, "Loading patch", band.size.x - 20.0);
+            paint.spinner(
+                cx,
+                dvec2(band.pos.x + 6.0, band.pos.y + lh / 2.0),
+                12.0,
+                colors.muted,
+                cx.seconds_since_app_start(),
+            );
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                ui(12.0),
+                colors.muted,
+                band.pos.x + 12.0 + 8.0,
+                band.pos.y,
+                lh,
+                "Loading patch",
+                band.size.x - 20.0,
+            );
             self.spinning = true;
             self.wanted.push(path.to_owned());
             return;
         };
         let status = text(patch, "status");
         if status == "binary" || status == "too_large" {
-            let key = if status == "binary" { "workspace.git.diff.binaryFile" } else { "workspace.git.diff.tooLarge" };
-            Self::draw_message(cx, paint, dvec2(clip.pos.x, origin.y), clip.size.x, &t(key), None);
+            let key = if status == "binary" {
+                "workspace.git.diff.binaryFile"
+            } else {
+                "workspace.git.diff.tooLarge"
+            };
+            Self::draw_message(
+                cx,
+                paint,
+                dvec2(clip.pos.x, origin.y),
+                clip.size.x,
+                &t(key),
+                None,
+            );
             return;
         }
         let mut model = {
@@ -1039,7 +1463,14 @@ impl DiffDoc {
         };
         if model.rows(input.split).is_empty() {
             self.models.insert(path.to_owned(), model);
-            Self::draw_message(cx, paint, dvec2(clip.pos.x, origin.y), clip.size.x, "No textual changes.", None);
+            Self::draw_message(
+                cx,
+                paint,
+                dvec2(clip.pos.x, origin.y),
+                clip.size.x,
+                "No textual changes.",
+                None,
+            );
             return;
         }
         Self::ensure_heights(cx, paint, input, &mut model, column_width);
@@ -1050,12 +1481,19 @@ impl DiffDoc {
         let visible: Vec<(usize, Row, f64, f64)> = {
             let tops = &model.heights.as_ref().expect("heights ensured above").1;
             let rows = &model.rows.as_ref().expect("rows computed above").1;
-            let first = tops.partition_point(|top| origin.y + top < view_top).saturating_sub(1);
-            let last = tops.partition_point(|top| origin.y + top <= view_bottom).min(rows.len());
+            let first = tops
+                .partition_point(|top| origin.y + top < view_top)
+                .saturating_sub(1);
+            let last = tops
+                .partition_point(|top| origin.y + top <= view_bottom)
+                .min(rows.len());
             (first..last.max(first))
                 .map(|index| {
                     let top = origin.y + tops[index];
-                    let bottom = tops.get(index + 1).map(|next| origin.y + next).unwrap_or(origin.y + body_height);
+                    let bottom = tops
+                        .get(index + 1)
+                        .map(|next| origin.y + next)
+                        .unwrap_or(origin.y + body_height);
                     (index, rows[index], top, bottom)
                 })
                 .collect()
@@ -1069,36 +1507,120 @@ impl DiffDoc {
             match row {
                 Row::Hidden { start, end } => {
                     let band = rect(origin.x, top, width, lh);
-                    let hit = DocHit::Expand { path: path.to_owned(), start };
+                    let hit = DocHit::Expand {
+                        path: path.to_owned(),
+                        start,
+                    };
                     if self.hovered.as_ref() == Some(&hit) {
                         paint.fill(cx, band, colors.surface1);
                     }
                     let x = origin.x + gutter + 9.0;
-                    paint.icon(cx, "chevrons-up-down", 14.0, colors.muted, dvec2(x + 7.0, top + lh / 2.0));
+                    paint.icon(
+                        cx,
+                        "chevrons-up-down",
+                        14.0,
+                        colors.muted,
+                        dvec2(x + 7.0, top + lh / 2.0),
+                    );
                     let label = hidden_label(start, end);
                     let code = typography().code_font_size;
-                    paint.text_centered(cx, Font::Mono, code, colors.muted, x + 14.0 + 8.0, top, lh, &label, width);
-                    if let Some((laid, origin)) = paint.line_layout(cx, Font::Mono, code, x + 14.0 + 8.0, top, lh, &label, width) {
-                        self.pieces.push(Piece { key: (file_index, row_key, 0), laid, origin, clip: intersect(band, clip), header: false });
+                    paint.text_centered(
+                        cx,
+                        Font::Mono,
+                        code,
+                        colors.muted,
+                        x + 14.0 + 8.0,
+                        top,
+                        lh,
+                        &label,
+                        width,
+                    );
+                    if let Some((laid, origin)) = paint.line_layout(
+                        cx,
+                        Font::Mono,
+                        code,
+                        x + 14.0 + 8.0,
+                        top,
+                        lh,
+                        &label,
+                        width,
+                    ) {
+                        self.pieces.push(Piece {
+                            key: (file_index, row_key, 0),
+                            laid,
+                            origin,
+                            clip: intersect(band, clip),
+                            header: false,
+                        });
                     }
                     self.hits.push_clipped(band, clip, hit);
                 }
                 Row::Line(index) => {
                     let runs = Self::cell_runs(&mut model, path, index, input.wrap);
                     let line = &model.lines[index];
-                    let side = if line.kind == LineKind::Remove { "old" } else { "new" };
+                    let side = if line.kind == LineKind::Remove {
+                        "old"
+                    } else {
+                        "new"
+                    };
                     let cell = rect(origin.x, top, width, bottom - top);
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), Some((index, line)), runs, side, cell, gutter, clip, syntax);
+                    self.draw_cell(
+                        cx,
+                        paint,
+                        input,
+                        path,
+                        (file_index, row_key, 0),
+                        Some((index, line)),
+                        runs,
+                        side,
+                        cell,
+                        gutter,
+                        clip,
+                        syntax,
+                    );
                 }
                 Row::Pair(left, right) => {
-                    let left_runs = left.and_then(|i| Self::cell_runs(&mut model, path, i, input.wrap));
-                    let right_runs = right.and_then(|i| Self::cell_runs(&mut model, path, i, input.wrap));
+                    let left_runs =
+                        left.and_then(|i| Self::cell_runs(&mut model, path, i, input.wrap));
+                    let right_runs =
+                        right.and_then(|i| Self::cell_runs(&mut model, path, i, input.wrap));
                     let left_cell = rect(origin.x, top, column_width, bottom - top);
-                    let right_cell = rect(origin.x + column_width + 1.0, top, column_width, bottom - top);
+                    let right_cell = rect(
+                        origin.x + column_width + 1.0,
+                        top,
+                        column_width,
+                        bottom - top,
+                    );
                     let left_line = left.map(|i| (i, &model.lines[i]));
                     let right_line = right.map(|i| (i, &model.lines[i]));
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), left_line, left_runs, "old", left_cell, gutter, clip, syntax);
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 1), right_line, right_runs, "new", right_cell, gutter, clip, syntax);
+                    self.draw_cell(
+                        cx,
+                        paint,
+                        input,
+                        path,
+                        (file_index, row_key, 0),
+                        left_line,
+                        left_runs,
+                        "old",
+                        left_cell,
+                        gutter,
+                        clip,
+                        syntax,
+                    );
+                    self.draw_cell(
+                        cx,
+                        paint,
+                        input,
+                        path,
+                        (file_index, row_key, 1),
+                        right_line,
+                        right_runs,
+                        "new",
+                        right_cell,
+                        gutter,
+                        clip,
+                        syntax,
+                    );
                 }
             }
         }
@@ -1159,29 +1681,104 @@ impl DiffDoc {
             let label = number.to_string();
             let label_width = paint.measure(cx, Font::Mono, code_size, &label).x;
             let x = gutter_rect.pos.x + gutter - 7.0 - label_width;
-            paint.text_centered(cx, Font::Mono, code_size, number_color, x, cell.pos.y, lh, &label, label_width + 1.0);
-            if let Some((laid, origin)) = paint.line_layout(cx, Font::Mono, code_size, x, cell.pos.y, lh, &label, label_width + 1.0) {
-                self.pieces.push(Piece { key: (file_index, row_key, side_index * 2), laid, origin, clip: piece_clip, header: false });
+            paint.text_centered(
+                cx,
+                Font::Mono,
+                code_size,
+                number_color,
+                x,
+                cell.pos.y,
+                lh,
+                &label,
+                label_width + 1.0,
+            );
+            if let Some((laid, origin)) = paint.line_layout(
+                cx,
+                Font::Mono,
+                code_size,
+                x,
+                cell.pos.y,
+                lh,
+                &label,
+                label_width + 1.0,
+            ) {
+                self.pieces.push(Piece {
+                    key: (file_index, row_key, side_index * 2),
+                    laid,
+                    origin,
+                    clip: piece_clip,
+                    header: false,
+                });
             }
-            self.hits.push_clipped(gutter_rect, clip, DocHit::Gutter { path: path.to_owned(), line: index });
+            self.hits.push_clipped(
+                gutter_rect,
+                clip,
+                DocHit::Gutter {
+                    path: path.to_owned(),
+                    line: index,
+                },
+            );
         }
-        paint.fill(cx, rect(cell.pos.x + gutter, cell.pos.y, 1.0, line_box.size.y), colors.border);
+        paint.fill(
+            cx,
+            rect(cell.pos.x + gutter, cell.pos.y, 1.0, line_box.size.y),
+            colors.border,
+        );
         let text_x = cell.pos.x + gutter + 1.0 + 8.0;
-        let text_width = (cell.size.x - gutter - 1.0 - 8.0 - 4.0 - if header { 0.0 } else { 24.0 }).max(0.0);
-        let foreground = if header { colors.muted } else { colors.foreground };
+        let text_width =
+            (cell.size.x - gutter - 1.0 - 8.0 - 4.0 - if header { 0.0 } else { 24.0 }).max(0.0);
+        let foreground = if header {
+            colors.muted
+        } else {
+            colors.foreground
+        };
         let code_key = (file_index, row_key, side_index * 2 + 1);
         if input.wrap && !header {
             let origin = dvec2(text_x, cell.pos.y + (lh - code_size * 1.2) / 2.0);
-            paint.text_wrapped(cx, Font::Mono, code_size, foreground, origin, &line.content, text_width);
+            paint.text_wrapped(
+                cx,
+                Font::Mono,
+                code_size,
+                foreground,
+                origin,
+                &line.content,
+                text_width,
+            );
             if !line.content.is_empty() {
-                let laid = paint.wrapped_layout(cx, Font::Mono, code_size, &line.content, text_width);
-                self.pieces.push(Piece { key: code_key, laid, origin, clip: piece_clip, header: false });
+                let laid =
+                    paint.wrapped_layout(cx, Font::Mono, code_size, &line.content, text_width);
+                self.pieces.push(Piece {
+                    key: code_key,
+                    laid,
+                    origin,
+                    clip: piece_clip,
+                    header: false,
+                });
             }
         } else {
             // One layout of the whole line gives the run geometry (monospace).
-            let max_width = if input.wrap { text_width } else { f64::MAX / 4.0 };
-            if let Some((laid, origin)) = paint.line_layout(cx, Font::Mono, code_size, text_x, cell.pos.y, lh, &line.content, max_width) {
-                self.pieces.push(Piece { key: code_key, laid, origin, clip: piece_clip, header: false });
+            let max_width = if input.wrap {
+                text_width
+            } else {
+                f64::MAX / 4.0
+            };
+            if let Some((laid, origin)) = paint.line_layout(
+                cx,
+                Font::Mono,
+                code_size,
+                text_x,
+                cell.pos.y,
+                lh,
+                &line.content,
+                max_width,
+            ) {
+                self.pieces.push(Piece {
+                    key: code_key,
+                    laid,
+                    origin,
+                    clip: piece_clip,
+                    header: false,
+                });
             }
             match runs {
                 Some(runs) => {
@@ -1191,11 +1788,36 @@ impl DiffDoc {
                             break;
                         }
                         let color = style.map(|s| hex(syntax.color(s))).unwrap_or(foreground);
-                        x = paint.line_run(cx, Font::Mono, code_size, color, text_x, x, cell.pos.y, lh, &run, clip.pos.x);
+                        x = paint.line_run(
+                            cx,
+                            Font::Mono,
+                            code_size,
+                            color,
+                            text_x,
+                            x,
+                            cell.pos.y,
+                            lh,
+                            &run,
+                            clip.pos.x,
+                        );
                     }
                 }
                 None => {
-                    paint.text_centered(cx, Font::Mono, code_size, foreground, text_x, cell.pos.y, lh, &line.content, if input.wrap { text_width } else { f64::MAX / 4.0 });
+                    paint.text_centered(
+                        cx,
+                        Font::Mono,
+                        code_size,
+                        foreground,
+                        text_x,
+                        cell.pos.y,
+                        lh,
+                        &line.content,
+                        if input.wrap {
+                            text_width
+                        } else {
+                            f64::MAX / 4.0
+                        },
+                    );
                 }
             }
         }
@@ -1203,8 +1825,16 @@ impl DiffDoc {
             // Anchored to the visible end of the cell: with long unwrapped lines the cell
             // reaches past the viewport, and the button stays on screen with the line.
             let right = (piece_clip.pos.x + piece_clip.size.x).min(cell.pos.x + cell.size.x);
-            let button = rect((right - 4.0 - 24.0).max(cell.pos.x + gutter + 1.0), cell.pos.y, 24.0, lh);
-            let hit = DocHit::LineMenu { path: path.to_owned(), line: index };
+            let button = rect(
+                (right - 4.0 - 24.0).max(cell.pos.x + gutter + 1.0),
+                cell.pos.y,
+                24.0,
+                lh,
+            );
+            let hit = DocHit::LineMenu {
+                path: path.to_owned(),
+                line: index,
+            };
             if !input.wrap {
                 // Unwrapped code runs under the button; mask it.
                 paint.fill(cx, button, colors.surface0);
@@ -1242,7 +1872,13 @@ mod tests {
         let point = dvec2(104.0, 30.0);
         let mut doc = DiffDoc {
             viewport,
-            bars: [ScrollBar { track, thumb: rect(98.0, 20.0, 12.0, 24.0) }, ScrollBar::default()],
+            bars: [
+                ScrollBar {
+                    track,
+                    thumb: rect(98.0, 20.0, 12.0, 24.0),
+                },
+                ScrollBar::default(),
+            ],
             ..DiffDoc::default()
         };
         assert!(doc.contains(point));

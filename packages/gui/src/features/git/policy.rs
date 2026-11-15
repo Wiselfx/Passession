@@ -118,13 +118,24 @@ pub fn parse_forge_host(remote_url: Option<&str>) -> Option<String> {
     }
     let after_scheme = url.split_once("://").map(|(_, rest)| rest)?;
     let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let host = if host_port.starts_with('[') {
-        host_port.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+        host_port
+            .split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default()
     } else {
         host_port.split(':').next().unwrap_or("").to_owned()
     };
-    if host.is_empty() { None } else { Some(host.to_lowercase()) }
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
 }
 
 /// Original `computeForgeSetupAction` + `buildForgeSetupMessage`.
@@ -145,7 +156,9 @@ pub fn forge_setup_message(
     };
     let presentation = forge_presentation(Some(&normalized));
     let Some(cli) = presentation.sign_in_cli else {
-        return Some(Msg::new("workspace.git.forgeSetup.generic").arg("brand", &presentation.brand_label));
+        return Some(
+            Msg::new("workspace.git.forgeSetup.generic").arg("brand", &presentation.brand_label),
+        );
     };
     if install {
         return Some(
@@ -168,7 +181,13 @@ pub fn forge_setup_message(
 /// Original `normalizeCheckoutPrStatusPayload`: the legacy GitHub boolean maps
 /// to an auth state for daemons that predate `authState`.
 pub fn normalize_pr_status_payload(payload: &Value) -> Value {
-    const KNOWN: [&str; 5] = ["authenticated", "unauthenticated", "cli_missing", "no_remote", "error"];
+    const KNOWN: [&str; 5] = [
+        "authenticated",
+        "unauthenticated",
+        "cli_missing",
+        "no_remote",
+        "error",
+    ];
     let mut normalized = match payload {
         Value::Object(map) => map.clone(),
         _ => Map::new(),
@@ -301,7 +320,10 @@ fn opt_num(facts: &Value, key: &str) -> Result<(), SchemaMismatch> {
 /// Original `deriveMergeCapability`: the forge facts arm, the legacy
 /// `status.github` facts when `forgeSpecific` is absent, and `None` for an
 /// unknown or schema-mismatched family.
-pub fn derive_merge_capability(forge_specific: Option<&Value>, legacy_github: Option<&Value>) -> Option<MergeCapability> {
+pub fn derive_merge_capability(
+    forge_specific: Option<&Value>,
+    legacy_github: Option<&Value>,
+) -> Option<MergeCapability> {
     match forge_specific {
         None | Some(Value::Null) => match legacy_github {
             Some(Value::Object(map)) => {
@@ -357,7 +379,9 @@ fn forge_capability(facts: &Value) -> Result<Option<MergeCapability>, SchemaMism
                 || opt_bool(facts, "isInMergeQueue")?.unwrap_or(false);
             Ok(Some(MergeCapability {
                 direct_merge_ready: matches!(merge_state, Some("CLEAN" | "HAS_HOOKS")),
-                can_enable_auto_merge: merge_state == Some("BLOCKED") && auto_merge_allowed && viewer_can_enable,
+                can_enable_auto_merge: merge_state == Some("BLOCKED")
+                    && auto_merge_allowed
+                    && viewer_can_enable,
                 auto_merge_enabled: auto_merge_request.is_some(),
                 can_disable_auto_merge: viewer_can_disable,
                 merge_blocked_by_queue: queue,
@@ -376,7 +400,8 @@ fn forge_capability(facts: &Value) -> Result<Option<MergeCapability>, SchemaMism
             opt_num(facts, "approvalsRequired")?;
             opt_num(facts, "approvalsGiven")?;
             let auto_merge_enabled = opt_bool(facts, "mergeWhenPipelineSucceeds")?.unwrap_or(false);
-            let active = pipeline_status.is_some_and(|s| GITLAB_ACTIVE_PIPELINE_STATUSES.contains(&s));
+            let active =
+                pipeline_status.is_some_and(|s| GITLAB_ACTIVE_PIPELINE_STATUSES.contains(&s));
             Ok(Some(MergeCapability {
                 direct_merge_ready: match detailed {
                     Some(detailed) => detailed == "mergeable",
@@ -595,7 +620,10 @@ pub fn build_git_actions(input: &ActionsInput) -> GitActions {
     all.insert("commit", simple("commit", false, None));
     all.insert("pull", simple("pull", false, pull_unavailable(input)));
     all.insert("push", simple("push", false, push_unavailable(input)));
-    all.insert("pull-and-push", simple("pull-and-push", false, pull_and_push_unavailable(input)));
+    all.insert(
+        "pull-and-push",
+        simple("pull-and-push", false, pull_and_push_unavailable(input)),
+    );
     all.insert("pr", pr_action(input));
     for (id, _, starts_group) in DIRECT_MERGE_MODELS {
         let runtime = input.runtime_of(id);
@@ -606,7 +634,11 @@ pub fn build_git_actions(input: &ActionsInput) -> GitActions {
                 disabled: runtime.disabled || !can_merge_pr(input),
                 status: runtime.status,
                 starts_group,
-                unavailable: if runtime.disabled { None } else { merge_pr_unavailable(input) },
+                unavailable: if runtime.disabled {
+                    None
+                } else {
+                    merge_pr_unavailable(input)
+                },
             },
         );
     }
@@ -642,7 +674,10 @@ pub fn build_git_actions(input: &ActionsInput) -> GitActions {
             },
         },
     );
-    all.insert("merge-branch", simple("merge-branch", false, merge_branch_unavailable(input)));
+    all.insert(
+        "merge-branch",
+        simple("merge-branch", false, merge_branch_unavailable(input)),
+    );
     all.insert(
         "merge-from-base",
         simple("merge-from-base", true, merge_from_base_unavailable(input)),
@@ -703,7 +738,9 @@ fn primary_action_id(input: &ActionsInput) -> Option<&'static str> {
         return Some("push");
     }
     if can_merge_pr(input) {
-        return Some(preferred(input, &DIRECT_MERGE_MODELS).map_or(DIRECT_MERGE_MODELS[0].0, |m| m.0));
+        return Some(
+            preferred(input, &DIRECT_MERGE_MODELS).map_or(DIRECT_MERGE_MODELS[0].0, |m| m.0),
+        );
     }
     if can_enable_pr_auto_merge(input) {
         return Some(preferred(input, &AUTO_MERGE_MODELS).map_or(AUTO_MERGE_MODELS[0].0, |m| m.0));
@@ -737,7 +774,10 @@ fn allowed<'a>(
     input: &ActionsInput,
     models: &'a [(&'static str, &'static str, bool)],
 ) -> Vec<&'a (&'static str, &'static str, bool)> {
-    models.iter().filter(|m| method_allowed(input, m.1)).collect()
+    models
+        .iter()
+        .filter(|m| method_allowed(input, m.1))
+        .collect()
 }
 
 fn preferred<'a>(
@@ -745,7 +785,10 @@ fn preferred<'a>(
     models: &'a [(&'static str, &'static str, bool)],
 ) -> Option<&'a (&'static str, &'static str, bool)> {
     let allowed = allowed(input, models);
-    let preferred = input.merge_capability.as_ref().and_then(|c| c.preferred_method);
+    let preferred = input
+        .merge_capability
+        .as_ref()
+        .and_then(|c| c.preferred_method);
     allowed
         .iter()
         .find(|m| Some(m.1) == preferred)
@@ -759,13 +802,20 @@ fn should_show_pull_request_action(input: &ActionsInput, id: &str) -> bool {
     }
     if id == "disable-pr-auto-merge" {
         return input.auto_merge_actions_enabled
-            && input.merge_capability.as_ref().is_some_and(|c| c.auto_merge_enabled);
+            && input
+                .merge_capability
+                .as_ref()
+                .is_some_and(|c| c.auto_merge_enabled);
     }
     if id.starts_with("merge-pr-") {
-        return can_merge_pr(input) && allowed(input, &DIRECT_MERGE_MODELS).iter().any(|m| m.0 == id);
+        return can_merge_pr(input)
+            && allowed(input, &DIRECT_MERGE_MODELS)
+                .iter()
+                .any(|m| m.0 == id);
     }
     if id.starts_with("enable-pr-auto-merge-") {
-        return can_enable_pr_auto_merge(input) && allowed(input, &AUTO_MERGE_MODELS).iter().any(|m| m.0 == id);
+        return can_enable_pr_auto_merge(input)
+            && allowed(input, &AUTO_MERGE_MODELS).iter().any(|m| m.0 == id);
     }
     false
 }
@@ -848,7 +898,10 @@ fn has_enabled_pr_auto_merge(input: &ActionsInput) -> bool {
     input.github_features_enabled
         && input.has_pull_request
         && input.pull_request_url.is_some()
-        && input.merge_capability.as_ref().is_some_and(|c| c.auto_merge_enabled)
+        && input
+            .merge_capability
+            .as_ref()
+            .is_some_and(|c| c.auto_merge_enabled)
 }
 
 fn pull_unavailable(input: &ActionsInput) -> Option<Msg> {
@@ -1000,12 +1053,17 @@ pub fn actions_input_from(
     }
     ActionsInput {
         is_git,
-        github_features_enabled: pr_payload.is_none_or(|p| flag_or(p, "githubFeaturesEnabled", true)),
+        github_features_enabled: pr_payload
+            .is_none_or(|p| flag_or(p, "githubFeaturesEnabled", true)),
         forge_brand_label: forge.brand_label.clone(),
         forge_change_request_noun: forge.change_request_abbrev.to_owned(),
         auto_merge_actions_enabled: context.auto_merge_actions_enabled,
         has_pull_request: !pr_url.is_empty(),
-        pull_request_url: if pr_url.is_empty() { None } else { Some(pr_url.to_owned()) },
+        pull_request_url: if pr_url.is_empty() {
+            None
+        } else {
+            Some(pr_url.to_owned())
+        },
         pull_request_state: narrow_pull_request_state(pr.get("state").and_then(Value::as_str)),
         pull_request_is_draft: flag(pr, "isDraft"),
         pull_request_is_merged: flag(pr, "isMerged"),
@@ -1060,7 +1118,10 @@ pub fn action_label_keys(id: &str, has_pull_request: bool, base_ref_label: &str)
             Msg::new("workspace.git.actions.mergeFromBase.success"),
         ],
         id if id.starts_with("merge-pr-") => [
-            Msg::new(format!("workspace.git.actions.mergePr.{}", &id["merge-pr-".len()..])),
+            Msg::new(format!(
+                "workspace.git.actions.mergePr.{}",
+                &id["merge-pr-".len()..]
+            )),
             Msg::new("workspace.git.actions.mergePr.pending"),
             Msg::new("workspace.git.actions.mergePr.success"),
         ],
@@ -1072,14 +1133,15 @@ pub fn action_label_keys(id: &str, has_pull_request: bool, base_ref_label: &str)
                 None => String::new(),
             };
             [
-                Msg::new(format!("workspace.git.actions.autoMerge.enable{capitalized}")),
+                Msg::new(format!(
+                    "workspace.git.actions.autoMerge.enable{capitalized}"
+                )),
                 Msg::new("workspace.git.actions.autoMerge.enabling"),
                 Msg::new("workspace.git.actions.autoMerge.enabled"),
             ]
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1094,18 +1156,31 @@ mod tests {
 
     #[test]
     fn dirty_checkout_promotes_commit_and_clean_behind_promotes_pull() {
-        let dirty = ActionsInput { has_uncommitted_changes: true, ..input() };
+        let dirty = ActionsInput {
+            has_uncommitted_changes: true,
+            ..input()
+        };
         assert_eq!(build_git_actions(&dirty).primary.unwrap().id, "commit");
-        let behind = ActionsInput { has_remote: true, behind_of_origin: Some(2), ahead_of_origin: Some(0), ..input() };
+        let behind = ActionsInput {
+            has_remote: true,
+            behind_of_origin: Some(2),
+            ahead_of_origin: Some(0),
+            ..input()
+        };
         assert_eq!(build_git_actions(&behind).primary.unwrap().id, "pull");
     }
 
-
     #[test]
     fn unavailable_pull_explains_itself_instead_of_being_hidden() {
-        let actions = build_git_actions(&ActionsInput { has_remote: false, ..input() });
+        let actions = build_git_actions(&ActionsInput {
+            has_remote: false,
+            ..input()
+        });
         let pull = actions.secondary.iter().find(|a| a.id == "pull").unwrap();
-        assert_eq!(pull.unavailable.as_ref().unwrap().key, "workspace.git.actions.unavailable.pullNoRemote");
+        assert_eq!(
+            pull.unavailable.as_ref().unwrap().key,
+            "workspace.git.actions.unavailable.pullNoRemote"
+        );
     }
 
     #[test]
@@ -1133,7 +1208,10 @@ mod tests {
 
     #[test]
     fn merged_pr_keeps_its_navigation_action() {
-        let mut runtime = |_: &'static str, disabled: bool| ActionRuntime { disabled, status: ActionStatus::Idle };
+        let mut runtime = |_: &'static str, disabled: bool| ActionRuntime {
+            disabled,
+            status: ActionStatus::Idle,
+        };
         let built = actions_input_from(
             Some(&json!({"isGit": true, "currentBranch": "feat", "baseRef": "main"})),
             Some(&json!({"status": {"url": "https://github.com/a/b/pull/1", "isMerged": true}})),
@@ -1150,7 +1228,10 @@ mod tests {
 
     #[test]
     fn non_git_checkout_has_no_actions() {
-        assert_eq!(build_git_actions(&ActionsInput::default()), GitActions::default());
+        assert_eq!(
+            build_git_actions(&ActionsInput::default()),
+            GitActions::default()
+        );
     }
 
     #[test]
@@ -1161,30 +1242,64 @@ mod tests {
         )
         .unwrap();
         assert!(gitlab.direct_merge_ready && gitlab.can_enable_auto_merge);
-        assert_eq!(derive_merge_capability(Some(&json!({"forge": "github", "mergeStateStatus": 3})), None), None);
-        assert_eq!(derive_merge_capability(Some(&json!({"forge": "other"})), None), None);
+        assert_eq!(
+            derive_merge_capability(
+                Some(&json!({"forge": "github", "mergeStateStatus": 3})),
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            derive_merge_capability(Some(&json!({"forge": "other"})), None),
+            None
+        );
     }
 
     #[test]
     fn pr_hint_parses_forge_urls_and_prefers_merged() {
         let hint = select_pr_hint(Some(&json!({"forge": "gitlab", "status": {"url": "https://gitlab.com/a/b/-/merge_requests/7", "state": "open", "isMerged": true}}))).unwrap();
-        assert_eq!((hint.number, hint.state, hint.forge.as_str()), (7, "merged", "gitlab"));
-        assert!(select_pr_hint(Some(&json!({"status": {"url": "https://github.com/a/b/issues/7"}}))).is_none());
+        assert_eq!(
+            (hint.number, hint.state, hint.forge.as_str()),
+            (7, "merged", "gitlab")
+        );
+        assert!(
+            select_pr_hint(Some(
+                &json!({"status": {"url": "https://github.com/a/b/issues/7"}})
+            ))
+            .is_none()
+        );
         assert_eq!(select_pr_hint(Some(&json!({"status": {"url": "https://codeberg.org/a/b/pulls/3/files", "state": "closed"}}))).unwrap().number, 3);
     }
 
-
     #[test]
     fn legacy_auth_state_maps_from_features_flag() {
-        assert_eq!(normalize_pr_status_payload(&json!({"githubFeaturesEnabled": true}))["authState"], "authenticated");
-        assert_eq!(normalize_pr_status_payload(&json!({"authState": "cli_missing"}))["authState"], "cli_missing");
-        assert_eq!(normalize_pr_status_payload(&json!({}))["authState"], "unauthenticated");
+        assert_eq!(
+            normalize_pr_status_payload(&json!({"githubFeaturesEnabled": true}))["authState"],
+            "authenticated"
+        );
+        assert_eq!(
+            normalize_pr_status_payload(&json!({"authState": "cli_missing"}))["authState"],
+            "cli_missing"
+        );
+        assert_eq!(
+            normalize_pr_status_payload(&json!({}))["authState"],
+            "unauthenticated"
+        );
     }
 
     #[test]
     fn sign_in_host_from_remote_urls() {
-        assert_eq!(parse_forge_host(Some("git@gitlab.example.com:a/b.git")).as_deref(), Some("gitlab.example.com"));
-        assert_eq!(parse_forge_host(Some("https://user@Gitlab.Example.com:8443/a/b")).as_deref(), Some("gitlab.example.com"));
-        assert_eq!(forge_sign_in_command(Some("gitlab"), Some("h")).as_deref(), Some("glab auth login --hostname h"));
+        assert_eq!(
+            parse_forge_host(Some("git@gitlab.example.com:a/b.git")).as_deref(),
+            Some("gitlab.example.com")
+        );
+        assert_eq!(
+            parse_forge_host(Some("https://user@Gitlab.Example.com:8443/a/b")).as_deref(),
+            Some("gitlab.example.com")
+        );
+        assert_eq!(
+            forge_sign_in_command(Some("gitlab"), Some("h")).as_deref(),
+            Some("glab auth login --hostname h")
+        );
     }
 }

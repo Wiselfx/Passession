@@ -31,14 +31,32 @@ pub fn live_design(cx: &mut makepad_widgets::Cx) {
 /// sheet on top: `profile` edits that stored profile; otherwise `seed`
 /// (`{"provider", "model" | "modelId", "name"}`, all optional) pre-fills a new
 /// profile (Flutter `ProfileEditor(seed:)` from the composer model rows).
-pub fn open_profile_editor(ui: &mut UiContext, host_id: &str, seed: Option<Value>, profile: Option<Value>) {
-    panel::queue_intent(panel::Intent::ProfileEditor { host: host_id.to_string(), seed, profile });
-    ui.push(crate::common::UiEffect::Navigate(Route::Settings { host_id: Some(host_id.to_string()), page: "host/agents".into() }));
+pub fn open_profile_editor(
+    ui: &mut UiContext,
+    host_id: &str,
+    seed: Option<Value>,
+    profile: Option<Value>,
+) {
+    panel::queue_intent(panel::Intent::ProfileEditor {
+        host: host_id.to_string(),
+        seed,
+        profile,
+    });
+    ui.push(crate::common::UiEffect::Navigate(Route::Settings {
+        host_id: Some(host_id.to_string()),
+        page: "host/agents".into(),
+    }));
 }
 
 /// Opens Settings › Host › Providers for `host_id` with `provider`'s settings
 /// sheet (models, configure, diagnostic, refresh) on top.
 pub fn open_provider_settings(ui: &mut UiContext, host_id: &str, provider: &str) {
-    panel::queue_intent(panel::Intent::ProviderSheet { host: host_id.to_string(), provider: provider.to_string() });
-    ui.push(crate::common::UiEffect::Navigate(Route::Settings { host_id: Some(host_id.to_string()), page: "host/providers".into() }));
+    panel::queue_intent(panel::Intent::ProviderSheet {
+        host: host_id.to_string(),
+        provider: provider.to_string(),
+    });
+    ui.push(crate::common::UiEffect::Navigate(Route::Settings {
+        host_id: Some(host_id.to_string()),
+        page: "host/providers".into(),
+    }));
 }

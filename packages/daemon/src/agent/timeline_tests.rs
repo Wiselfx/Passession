@@ -485,7 +485,10 @@ fn failed_sqlite_commit_rolls_back_rows_metadata_and_memory() {
                 .is_err()
         );
         assert_eq!(timeline.fetch(&json!({"limit":0})), before);
-        assert_eq!(Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(), before);
+        assert_eq!(
+            Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(),
+            before
+        );
         assert_eq!(
             Timeline::load(&path, "agent")
                 .unwrap()
@@ -500,7 +503,10 @@ fn failed_sqlite_commit_rolls_back_rows_metadata_and_memory() {
             .is_err()
     );
     assert_eq!(timeline.fetch(&json!({"limit":0})), before);
-    assert_eq!(Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(), before);
+    assert_eq!(
+        Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(),
+        before
+    );
     database
         .execute_batch("DROP TRIGGER fail_metadata")
         .unwrap();
@@ -553,7 +559,10 @@ fn full_history_replacement_is_atomic_with_an_existing_connection() {
             .fetch(&json!({"limit":0})),
         before
     );
-    assert_eq!(Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(), before);
+    assert_eq!(
+        Timeline::fetch_saved(&path, "agent", &json!({"limit":0})).unwrap(),
+        before
+    );
     database
         .execute_batch("DROP TRIGGER fail_replacement")
         .unwrap();
@@ -667,11 +676,28 @@ fn assert_saved_pages(path: &Path, timeline: &Timeline) {
     for direction in ["tail", "before", "after"] {
         for limit in [0, 1, 2, 200] {
             let options = json!({"direction":direction,"limit":limit});
-            assert_eq!(Timeline::fetch_saved(path, "agent", &options).unwrap(), timeline.fetch(&options), "{options}");
+            assert_eq!(
+                Timeline::fetch_saved(path, "agent", &options).unwrap(),
+                timeline.fetch(&options),
+                "{options}"
+            );
             for epoch in [timeline.epoch(), "stale"] {
-                for seq in [-1, 0, 1, 2, 3, timeline.next_seq() - 1, timeline.next_seq(), timeline.next_seq() + 1] {
+                for seq in [
+                    -1,
+                    0,
+                    1,
+                    2,
+                    3,
+                    timeline.next_seq() - 1,
+                    timeline.next_seq(),
+                    timeline.next_seq() + 1,
+                ] {
                     let options = json!({"direction":direction,"limit":limit,"cursor":{"epoch":epoch,"seq":seq}});
-                    assert_eq!(Timeline::fetch_saved(path, "agent", &options).unwrap(), timeline.fetch(&options), "{options}");
+                    assert_eq!(
+                        Timeline::fetch_saved(path, "agent", &options).unwrap(),
+                        timeline.fetch(&options),
+                        "{options}"
+                    );
                 }
             }
         }
@@ -681,8 +707,9 @@ fn assert_saved_pages(path: &Path, timeline: &Timeline) {
 fn legacy_timeline_database(path: &Path, timeline: &Timeline) {
     let mut database = rusqlite::Connection::open(path).unwrap();
     let transaction = database.transaction().unwrap();
-    transaction.execute_batch(
-        "CREATE TABLE timeline_metadata (
+    transaction
+        .execute_batch(
+            "CREATE TABLE timeline_metadata (
             id INTEGER PRIMARY KEY CHECK(id = 1),
             version INTEGER NOT NULL,
             agent_id TEXT NOT NULL,
@@ -694,16 +721,21 @@ fn legacy_timeline_database(path: &Path, timeline: &Timeline) {
             position INTEGER PRIMARY KEY CHECK(position >= 0),
             row_json TEXT NOT NULL
         );",
-    ).unwrap();
-    transaction.execute(
-        "INSERT INTO timeline_metadata VALUES (1, 1, 'agent', ?1, ?2, ?3)",
-        rusqlite::params![timeline.epoch, timeline.next_seq, timeline.min_seq],
-    ).unwrap();
+        )
+        .unwrap();
+    transaction
+        .execute(
+            "INSERT INTO timeline_metadata VALUES (1, 1, 'agent', ?1, ?2, ?3)",
+            rusqlite::params![timeline.epoch, timeline.next_seq, timeline.min_seq],
+        )
+        .unwrap();
     for (position, row) in timeline.rows.iter().enumerate() {
-        transaction.execute(
-            "INSERT INTO timeline_rows(position, row_json) VALUES (?1, ?2)",
-            rusqlite::params![position as i64, row.to_string()],
-        ).unwrap();
+        transaction
+            .execute(
+                "INSERT INTO timeline_rows(position, row_json) VALUES (?1, ?2)",
+                rusqlite::params![position as i64, row.to_string()],
+            )
+            .unwrap();
     }
     transaction.commit().unwrap();
 }
@@ -731,7 +763,13 @@ fn saved_page_index_migrates_v1_without_changing_read_only_legacy_reads() {
     assert_eq!(loaded.rows(), timeline.rows());
     assert_saved_pages(&path, &timeline);
     let database = rusqlite::Connection::open(&path).unwrap();
-    assert_eq!(database.query_row("SELECT version FROM timeline_metadata", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(
+        database
+            .query_row("SELECT version FROM timeline_metadata", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
     assert_eq!(database.query_row(
         "SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name = 'timeline_rows_page'",
         [], |row| row.get::<_, i64>(0),
@@ -768,38 +806,51 @@ fn saved_page_index_tracks_legacy_v1_writers_and_transaction_rollback() {
     timeline.persist(&path, "agent").unwrap();
     let mut database = rusqlite::Connection::open(&path).unwrap();
     timeline.append(tool("failed"), &options());
-    timeline.append(json!({"type":"user_message","text":"legacy insert"}), &options());
+    timeline.append(
+        json!({"type":"user_message","text":"legacy insert"}),
+        &options(),
+    );
     {
         let transaction = database.transaction().unwrap();
         // Exact old-writer SQL: no explicit metadata-index writes.
         for (position, row) in timeline.rows.iter().enumerate() {
-            transaction.execute(
-                "INSERT INTO timeline_rows(position, row_json) VALUES (?1, ?2) \
+            transaction
+                .execute(
+                    "INSERT INTO timeline_rows(position, row_json) VALUES (?1, ?2) \
                  ON CONFLICT(position) DO UPDATE SET row_json = excluded.row_json",
-                rusqlite::params![position as i64, row.to_string()],
-            ).unwrap();
+                    rusqlite::params![position as i64, row.to_string()],
+                )
+                .unwrap();
         }
-        transaction.execute(
-            "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1",
-            rusqlite::params![timeline.epoch, timeline.next_seq, timeline.min_seq],
-        ).unwrap();
+        transaction
+            .execute(
+                "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1",
+                rusqlite::params![timeline.epoch, timeline.next_seq, timeline.min_seq],
+            )
+            .unwrap();
         transaction.commit().unwrap();
     }
     assert_saved_pages(&path, &timeline);
     {
         let transaction = database.transaction().unwrap();
-        transaction.execute("DELETE FROM timeline_rows", []).unwrap();
+        transaction
+            .execute("DELETE FROM timeline_rows", [])
+            .unwrap();
         transaction.rollback().unwrap();
     }
     assert_saved_pages(&path, &timeline);
     let empty = Timeline::new();
     {
         let transaction = database.transaction().unwrap();
-        transaction.execute("DELETE FROM timeline_rows", []).unwrap();
-        transaction.execute(
-            "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1",
-            rusqlite::params![empty.epoch, empty.next_seq, empty.min_seq],
-        ).unwrap();
+        transaction
+            .execute("DELETE FROM timeline_rows", [])
+            .unwrap();
+        transaction
+            .execute(
+                "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1",
+                rusqlite::params![empty.epoch, empty.next_seq, empty.min_seq],
+            )
+            .unwrap();
         transaction.commit().unwrap();
     }
     assert_saved_pages(&path, &empty);
@@ -824,29 +875,70 @@ fn saved_page_index_rejects_corrupt_metadata_and_rolls_back_migration() {
     ] {
         let mut corrupt = original.clone();
         corrupt[field] = invalid;
-        database.execute("UPDATE timeline_rows SET row_json = ?1 WHERE position = 0", [corrupt.to_string()]).unwrap();
-        assert!(Timeline::fetch_saved(&path, "agent", &json!({"direction":"after","cursor":{"epoch":"epoch","seq":3}})).is_err());
+        database
+            .execute(
+                "UPDATE timeline_rows SET row_json = ?1 WHERE position = 0",
+                [corrupt.to_string()],
+            )
+            .unwrap();
+        assert!(
+            Timeline::fetch_saved(
+                &path,
+                "agent",
+                &json!({"direction":"after","cursor":{"epoch":"epoch","seq":3}})
+            )
+            .is_err()
+        );
         assert!(Timeline::load(&path, "agent").is_err());
-        assert_eq!(database.query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE name = 'timeline_rows_page'",
-            [], |row| row.get::<_, i64>(0),
-        ).unwrap(), 0);
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT count(*) FROM sqlite_schema WHERE name = 'timeline_rows_page'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
     }
-    database.execute("UPDATE timeline_rows SET row_json = '{' WHERE position = 0", []).unwrap();
+    database
+        .execute(
+            "UPDATE timeline_rows SET row_json = '{' WHERE position = 0",
+            [],
+        )
+        .unwrap();
     assert!(Timeline::fetch_saved(&path, "agent", &json!({"limit":1})).is_err());
     assert!(Timeline::load(&path, "agent").is_err());
-    assert_eq!(database.query_row(
-        "SELECT count(*) FROM sqlite_schema WHERE name = 'timeline_rows_page'",
-        [], |row| row.get::<_, i64>(0),
-    ).unwrap(), 0);
-    database.execute("UPDATE timeline_rows SET row_json = ?1 WHERE position = 0", [original.to_string()]).unwrap();
+    assert_eq!(
+        database
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE name = 'timeline_rows_page'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    database
+        .execute(
+            "UPDATE timeline_rows SET row_json = ?1 WHERE position = 0",
+            [original.to_string()],
+        )
+        .unwrap();
     drop(Timeline::load(&path, "agent").unwrap());
     // Even an unselected corrupt row must not silently change page selection.
     database.execute(
         "UPDATE timeline_rows SET row_json = json_set(row_json, '$.sourceSeqRanges', json('[{}]')) WHERE position = 0",
         [],
     ).unwrap();
-    assert!(Timeline::fetch_saved(&path, "agent", &json!({"direction":"after","cursor":{"epoch":"epoch","seq":3}})).is_err());
+    assert!(
+        Timeline::fetch_saved(
+            &path,
+            "agent",
+            &json!({"direction":"after","cursor":{"epoch":"epoch","seq":3}})
+        )
+        .is_err()
+    );
     assert!(Timeline::load(&path, "agent").is_err());
     database.execute_batch("DROP INDEX timeline_rows_page; CREATE INDEX timeline_rows_page ON timeline_rows(position);").unwrap();
     assert!(Timeline::fetch_saved(&path, "agent", &json!({"limit":1})).is_err());

@@ -100,9 +100,10 @@ fn todo_data(v: &Value) -> Option<Value> {
         return Some(v.clone());
     }
     if let Some(v) = v.get("todos")
-        && v.is_array() {
-            return Some(v.clone());
-        }
+        && v.is_array()
+    {
+        return Some(v.clone());
+    }
     v.as_str()
         .and_then(|s| serde_json::from_str::<Value>(s).ok())
         .and_then(|v| todo_data(&v))
@@ -118,9 +119,10 @@ fn replay(item: Value, info: &Value, part: &Value) -> Value {
     .into_iter()
     .flatten()
     .find_map(Value::as_i64)
-        && let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms) {
-            e["timestamp"] = json!(time.to_rfc3339_opts(SecondsFormat::Millis, true));
-        }
+        && let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms)
+    {
+        e["timestamp"] = json!(time.to_rfc3339_opts(SecondsFormat::Millis, true));
+    }
     e
 }
 pub fn history_message(message: &Value) -> Vec<Value> {
@@ -171,25 +173,25 @@ pub fn history_message(message: &Value) -> Vec<Value> {
             out.push(replay(item, info, part));
         }
     }
-    if !has_text
-        && let Some(text) = structured(info) {
-            out.push(replay(
-                json!({"type":"assistant_message","text":text,"messageId":info["id"]}),
-                info,
-                &Value::Null,
-            ));
-        }
+    if !has_text && let Some(text) = structured(info) {
+        out.push(replay(
+            json!({"type":"assistant_message","text":text,"messageId":info["id"]}),
+            info,
+            &Value::Null,
+        ));
+    }
     out
 }
 pub fn filter_reverted(messages: &mut Vec<Value>, info: &Value) {
     let revert = &info["revert"];
-    if !s(&revert["messageID"]).is_empty() && revert["partID"].is_null()
+    if !s(&revert["messageID"]).is_empty()
+        && revert["partID"].is_null()
         && let Some(index) = messages
             .iter()
             .position(|m| m["info"]["id"] == revert["messageID"])
-        {
-            messages.truncate(index);
-        }
+    {
+        messages.truncate(index);
+    }
 }
 
 #[derive(Default)]
@@ -362,13 +364,15 @@ impl Track {
                         }
                         self.usage["contextWindowMaxTokens"] = json!(window);
                     }
-                    if !info["time"]["completed"].is_null() && !self.structured.contains(id)
-                        && let Some(text) = structured(info) {
-                            self.structured.insert(id.into());
-                            out.push(timeline(
-                                json!({"type":"assistant_message","text":text,"messageId":id}),
-                            ));
-                        }
+                    if !info["time"]["completed"].is_null()
+                        && !self.structured.contains(id)
+                        && let Some(text) = structured(info)
+                    {
+                        self.structured.insert(id.into());
+                        out.push(timeline(
+                            json!({"type":"assistant_message","text":text,"messageId":id}),
+                        ));
+                    }
                 }
             }
             "message.part.updated" => {
@@ -559,8 +563,12 @@ impl Projection {
         if id.is_empty() || id == self.id || !self.owns(parent) || self.children.contains_key(id) {
             return vec![];
         }
-        let (mut child, up) =
-            new_child(info, (parent != self.id).then_some(parent), status, &self.cwd);
+        let (mut child, up) = new_child(
+            info,
+            (parent != self.id).then_some(parent),
+            status,
+            &self.cwd,
+        );
         if let Some(track) = self.primed.remove(id) {
             child.track = track;
         }
@@ -581,16 +589,17 @@ impl Projection {
                 .map(|(id, _)| id.clone())
                 .collect();
             if waiting.len() == 1
-                && let Some(t) = track.tasks.get_mut(&waiting[0]) {
-                    t["detail"]["childSessionId"] = json!(id);
-                    let item = t.clone();
-                    let ev = if parent == self.id {
-                        timeline(item.clone())
-                    } else {
-                        subagent(json!({"type":"timeline","id":parent,"item":item}))
-                    };
-                    out.push(ev);
-                }
+                && let Some(t) = track.tasks.get_mut(&waiting[0])
+            {
+                t["detail"]["childSessionId"] = json!(id);
+                let item = t.clone();
+                let ev = if parent == self.id {
+                    timeline(item.clone())
+                } else {
+                    subagent(json!({"type":"timeline","id":parent,"item":item}))
+                };
+                out.push(ev);
+            }
         }
         out.extend(self.links());
         out
@@ -692,7 +701,12 @@ pub fn source(info: &Value, cwd: &str) -> Value {
 pub fn descriptor(info: &Value, parent: Option<&str>, status: Option<&str>, cwd: &str) -> Value {
     new_child(info, parent, status, cwd).1
 }
-fn new_child(info: &Value, parent: Option<&str>, status: Option<&str>, cwd: &str) -> (Child, Value) {
+fn new_child(
+    info: &Value,
+    parent: Option<&str>,
+    status: Option<&str>,
+    cwd: &str,
+) -> (Child, Value) {
     let mut child = Child {
         info: info.clone(),
         track: Track::default(),

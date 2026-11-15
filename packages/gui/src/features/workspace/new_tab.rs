@@ -9,36 +9,40 @@
 
 use std::collections::HashMap;
 
+use super::kit::WaModalWidgetExt;
 use base64::Engine;
 use makepad_widgets::*;
-use super::kit::{WaModalWidgetExt};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::dialog::WaDialogWidgetRefExt;
 use super::host::{self, Connection};
 use super::i18n::{l, lf, t, ta};
 use super::identity::project_view_key;
 use super::kit::{
-    set_optional, sync_input, TriggerLead, WaButtonWidgetExt, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt,
-    WaRepeatWidgetRefExt, WaTriggerWidgetRefExt,
+    TriggerLead, WaButtonWidgetExt, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt,
+    WaInputWidgetRefExt, WaRepeatWidgetRefExt, WaTriggerWidgetRefExt, set_optional, sync_input,
 };
 use super::new_tab_model as model;
 use super::observe::{ObsEvent, Observation};
-use super::rpc::{array_of, new_id, object_of, payload, require_success, str_of, str_or, Pending, RpcError};
-use super::select::{Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt};
-use crate::common::{PanelTarget, UiContext, UiEffect};
+use super::rpc::{
+    Pending, RpcError, array_of, new_id, object_of, payload, require_success, str_of, str_or,
+};
+use super::select::{
+    Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt,
+};
+use crate::common::clock;
 use crate::common::file_drop::FileDropZone;
 use crate::common::overlay::{self, MenuItem};
+use crate::common::paint::{Font, Painter, TextSpec, rect};
+use crate::common::provider_icon::ProviderIconWidgetRefExt;
+use crate::common::widgets::{PSegmentedWidgetRefExt, Segment, SurfaceWidgetRefExt};
+use crate::common::{PanelTarget, UiContext, UiEffect};
 use crate::features::composer::forge::ForgeAutoAttach;
+use crate::features::composer::ui::draw::DrawComposerImage;
 use crate::features::composer::{agent_form, attachments, controls_model, forge, ops};
 use crate::features::files::picker::{RemoteFolderPickerAction, RemoteFolderPickerWidgetExt};
-use crate::common::paint::{Font, Painter, TextSpec, rect};
-use crate::common::widgets::{PSegmentedWidgetRefExt, Segment, SurfaceWidgetRefExt};
-use crate::common::clock;
-use crate::common::provider_icon::ProviderIconWidgetRefExt;
-use crate::features::composer::ui::draw::DrawComposerImage;
 use crate::theme;
-use paseo_gui_platform::{platform, PickFilesOptions, PlatformAction, PlatformValue};
+use paseo_gui_platform::{PickFilesOptions, PlatformAction, PlatformValue, platform};
 
 live_design! {
     use link::theme::*;
@@ -220,7 +224,11 @@ pub enum PillBody {
     /// A 48px cover thumbnail of an inline `{data, mimeType}` image (composer image cache).
     Image(Value),
     /// `AttachmentLabel`: glyph, one-line title over the small muted subtitle.
-    Label { icon: &'static str, title: String, subtitle: String },
+    Label {
+        icon: &'static str,
+        title: String,
+        subtitle: String,
+    },
     /// An uploading file: spinner, file name and type label.
     Pending { title: String, subtitle: String },
 }
@@ -297,8 +305,18 @@ impl Widget for WaAttachmentPill {
                 self.disc_hovered = false;
                 self.redraw(cx);
             }
-            Hit::FingerUp(fe) if fe.is_over && fe.device.is_primary_hit() && self.enabled && self.disc_shown(cx) && (!fe.device.is_touch() || fe.was_tap()) => {
-                cx.widget_action(self.widget_uid(), &scope.path, WaAttachmentPillAction::Remove);
+            Hit::FingerUp(fe)
+                if fe.is_over
+                    && fe.device.is_primary_hit()
+                    && self.enabled
+                    && self.disc_shown(cx)
+                    && (!fe.device.is_touch() || fe.was_tap()) =>
+            {
+                cx.widget_action(
+                    self.widget_uid(),
+                    &scope.path,
+                    WaAttachmentPillAction::Remove,
+                );
             }
             _ => {}
         }
@@ -314,17 +332,30 @@ impl Widget for WaAttachmentPill {
         let sub_spec = TextSpec::new(Font::Regular, t.ui_size(12.0), p.muted);
         let body_w = match &self.body {
             PillBody::Image(_) => 48.0,
-            PillBody::Label { title, subtitle, .. } | PillBody::Pending { title, subtitle } => {
-                let text = self.painter.measure(cx, title_spec, title).x.max(self.painter.measure(cx, sub_spec, subtitle).x);
+            PillBody::Label {
+                title, subtitle, ..
+            }
+            | PillBody::Pending { title, subtitle } => {
+                let text = self
+                    .painter
+                    .measure(cx, title_spec, title)
+                    .x
+                    .max(self.painter.measure(cx, sub_spec, subtitle).x);
                 (12.0 + 18.0 + 8.0 + text + 12.0).min(260.0)
             }
             PillBody::Empty => 0.0,
         };
         let inset = if self.removable { PILL_OVERHANG } else { 0.0 };
-        let walk = Walk { width: Size::Fixed(body_w + 2.0 + inset), height: Size::Fixed(50.0 + inset), ..walk };
+        let walk = Walk {
+            width: Size::Fixed(body_w + 2.0 + inset),
+            height: Size::Fixed(50.0 + inset),
+            ..walk
+        };
         let outer = cx.walk_turtle(walk);
         let frame = rect(outer.pos.x + inset, outer.pos.y + inset, body_w + 2.0, 50.0);
-        self.area = self.painter.capture_box(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
+        self.area = self
+            .painter
+            .capture_box(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
         let body = rect(frame.pos.x + 1.0, frame.pos.y + 1.0, body_w, 48.0);
         match self.body.clone() {
             PillBody::Image(image) => {
@@ -336,12 +367,29 @@ impl Widget for WaAttachmentPill {
                     self.draw_image.paint(cx, body, &texture, size, 5.0, false);
                 }
             }
-            PillBody::Label { icon, title, subtitle } => {
-                self.painter.icon(cx, rect(body.pos.x + 12.0, body.pos.y + 17.0, 18.0, 14.0), icon, 14.0, p.muted);
+            PillBody::Label {
+                icon,
+                title,
+                subtitle,
+            } => {
+                self.painter.icon(
+                    cx,
+                    rect(body.pos.x + 12.0, body.pos.y + 17.0, 18.0, 14.0),
+                    icon,
+                    14.0,
+                    p.muted,
+                );
                 self.paint_texts(cx, body, title_spec, sub_spec, &title, &subtitle);
             }
             PillBody::Pending { title, subtitle } => {
-                self.painter.ring(cx, rect(body.pos.x + 12.0, body.pos.y + 15.0, 18.0, 18.0), p.muted, 2.0, 0.3, clock::phase(900));
+                self.painter.ring(
+                    cx,
+                    rect(body.pos.x + 12.0, body.pos.y + 15.0, 18.0, 18.0),
+                    p.muted,
+                    2.0,
+                    0.3,
+                    clock::phase(900),
+                );
                 clock::register(cx, self.area);
                 self.paint_texts(cx, body, title_spec, sub_spec, &title, &subtitle);
             }
@@ -350,7 +398,11 @@ impl Widget for WaAttachmentPill {
         if self.removable {
             let shown = self.disc_shown(cx);
             let disc = rect(outer.pos.x, outer.pos.y, 24.0, 24.0);
-            let (fill, border, glyph) = if shown { (p.surface2, p.border, p.muted) } else { (Vec4::default(), Vec4::default(), Vec4::default()) };
+            let (fill, border, glyph) = if shown {
+                (p.surface2, p.border, p.muted)
+            } else {
+                (Vec4::default(), Vec4::default(), Vec4::default())
+            };
             self.disc_area = self.disc.capture_box(cx, disc, fill, border, 1.0, 12.0);
             if shown {
                 self.disc.icon(cx, disc, "x", 12.0, glyph);
@@ -362,17 +414,35 @@ impl Widget for WaAttachmentPill {
 
 impl WaAttachmentPill {
     fn disc_shown(&self, cx: &Cx) -> bool {
-        crate::common::is_compact_layout(cx) || super::host::is_mobile() || self.body_hovered || self.disc_hovered
+        crate::common::is_compact_layout(cx)
+            || super::host::is_mobile()
+            || self.body_hovered
+            || self.disc_hovered
     }
 
-    fn paint_texts(&mut self, cx: &mut Cx2d, body: Rect, title_spec: TextSpec, sub_spec: TextSpec, title: &str, subtitle: &str) {
+    fn paint_texts(
+        &mut self,
+        cx: &mut Cx2d,
+        body: Rect,
+        title_spec: TextSpec,
+        sub_spec: TextSpec,
+        title: &str,
+        subtitle: &str,
+    ) {
         let x = body.pos.x + 12.0 + 18.0 + 8.0;
         let w = (body.pos.x + body.size.x - 12.0 - x).max(0.0);
         let title_h = self.painter.line_height(cx, title_spec);
         let sub_h = self.painter.line_height(cx, sub_spec);
         let top = body.pos.y + (body.size.y - title_h - sub_h) * 0.5;
-        self.painter.text_in(cx, rect(x, top, w, title_h), title_spec, title, 0.0);
-        self.painter.text_in(cx, rect(x, top + title_h, w, sub_h), sub_spec, subtitle, 0.0);
+        self.painter
+            .text_in(cx, rect(x, top, w, title_h), title_spec, title, 0.0);
+        self.painter.text_in(
+            cx,
+            rect(x, top + title_h, w, sub_h),
+            sub_spec,
+            subtitle,
+            0.0,
+        );
     }
 }
 
@@ -389,7 +459,12 @@ impl WaAttachmentPillRef {
     }
 
     pub fn removed(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|pill| matches!(actions.find_widget_action(pill.widget_uid()).cast_ref(), WaAttachmentPillAction::Remove))
+        self.borrow().is_some_and(|pill| {
+            matches!(
+                actions.find_widget_action(pill.widget_uid()).cast_ref(),
+                WaAttachmentPillAction::Remove
+            )
+        })
     }
 }
 
@@ -417,7 +492,11 @@ enum Req {
     SearchRepos,
     CreateFeatures,
     Submit,
-    ForgeSearch { lookup: u64, index: usize, cwd: String },
+    ForgeSearch {
+        lookup: u64,
+        index: usize,
+        cwd: String,
+    },
     AttachmentForge((String, String)),
     ForgePicker,
     Images,
@@ -425,7 +504,10 @@ enum Req {
     /// Dropped files were inspected off the GUI thread.
     Dropped,
     /// `create_terminal_request` of a Terminal launch.
-    CreateTerminal { workspace_id: String, cwd: String },
+    CreateTerminal {
+        workspace_id: String,
+        cwd: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -609,10 +691,19 @@ impl WaNewTabView {
     fn initialize(&mut self, ctx: &mut UiContext) {
         self.initialized = true;
         let data = self.target.data.clone();
-        self.path = if self.target.cwd.is_empty() { "~".into() } else { self.target.cwd.clone() };
+        self.path = if self.target.cwd.is_empty() {
+            "~".into()
+        } else {
+            self.target.cwd.clone()
+        };
         self.catalog_cwd = self.path.clone();
         self.existing = !self.target.workspace_id.is_empty();
-        self.source = str_or(&data, "source", self.target.source.as_deref().unwrap_or("directory")).to_owned();
+        self.source = str_or(
+            &data,
+            "source",
+            self.target.source.as_deref().unwrap_or("directory"),
+        )
+        .to_owned();
         self.clone_protocol = "https".into();
         let add_project = data.get("addProject") == Some(&Value::Bool(true));
         self.options_open = add_project;
@@ -628,7 +719,8 @@ impl WaNewTabView {
             && match str_of(draft, "launch") {
                 "" => {
                     let target = object_of(&Self::form_preferences(ctx), "launchTarget").clone();
-                    str_of(&target, "kind") == "terminal" && str_of(&target, "profileId") == BLANK_TERMINAL_PROFILE_ID
+                    str_of(&target, "kind") == "terminal"
+                        && str_of(&target, "profileId") == BLANK_TERMINAL_PROFILE_ID
                 }
                 launch => launch == "terminal",
             };
@@ -644,7 +736,9 @@ impl WaNewTabView {
         }
         self.connected = self.host(ctx).is_some_and(|h| h.connected());
         self.last_status = self.host(ctx).map(|h| h.status());
-        self.legacy_forge = self.host(ctx).is_some_and(|h| attachments::uses_legacy_forge(h.server_info()));
+        self.legacy_forge = self
+            .host(ctx)
+            .is_some_and(|h| attachments::uses_legacy_forge(h.server_info()));
         self.load_repository_status(ctx);
         self.load_providers(ctx);
         if self.intent.is_some() {
@@ -660,7 +754,6 @@ impl WaNewTabView {
         self.target.data.get("addProject") == Some(&Value::Bool(true))
     }
 
-
     /// Terminal is the launch choice (never for Add project, which has no launch field).
     fn terminal(&self) -> bool {
         self.launch_terminal && !self.add_project()
@@ -672,7 +765,11 @@ impl WaNewTabView {
         if self.add_project() {
             return preferences;
         }
-        let target = if self.terminal() { json!({ "kind": "terminal", "profileId": BLANK_TERMINAL_PROFILE_ID }) } else { json!({ "kind": "chat" }) };
+        let target = if self.terminal() {
+            json!({ "kind": "terminal", "profileId": BLANK_TERMINAL_PROFILE_ID })
+        } else {
+            json!({ "kind": "chat" })
+        };
         if let Some(map) = preferences.as_object_mut() {
             map.insert("launchTarget".into(), target);
         }
@@ -681,12 +778,21 @@ impl WaNewTabView {
 
     fn load_repository_status(&mut self, ctx: &UiContext) {
         let cwd = self.path.trim().to_owned();
-        if !self.connected || cwd.is_empty() || self.repository_status_cwd.as_deref() == Some(cwd.as_str()) {
+        if !self.connected
+            || cwd.is_empty()
+            || self.repository_status_cwd.as_deref() == Some(cwd.as_str())
+        {
             return;
         }
         self.repository_status_cwd = Some(cwd.clone());
         self.remote_url = None;
-        self.pending.send(&ctx.core, &self.target.host_id, "checkout_status_request", json!({ "cwd": cwd }), Req::RepositoryStatus(cwd));
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "checkout_status_request",
+            json!({ "cwd": cwd }),
+            Req::RepositoryStatus(cwd),
+        );
     }
 
     fn load_providers(&mut self, ctx: &UiContext) {
@@ -696,13 +802,27 @@ impl WaNewTabView {
             return;
         }
         let cwd = self.catalog_cwd.trim();
-        let fields = if cwd.is_empty() { json!({}) } else { json!({ "cwd": cwd }) };
+        let fields = if cwd.is_empty() {
+            json!({})
+        } else {
+            json!({ "cwd": cwd })
+        };
         self.providers_loading = true;
-        self.pending.send(&ctx.core, &self.target.host_id, "get_providers_snapshot_request", fields, Req::Providers(self.provider_generation));
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "get_providers_snapshot_request",
+            fields,
+            Req::Providers(self.provider_generation),
+        );
     }
 
     fn form_preferences(ctx: &UiContext) -> Value {
-        agent_form::parse_form_preferences(host::preferences(&ctx.state).get(agent_form::FORM_PREFERENCES_KEY).unwrap_or(&Value::Null))
+        agent_form::parse_form_preferences(
+            host::preferences(&ctx.state)
+                .get(agent_form::FORM_PREFERENCES_KEY)
+                .unwrap_or(&Value::Null),
+        )
     }
 
     fn remember(ctx: &mut UiContext, next: Value) {
@@ -711,7 +831,14 @@ impl WaNewTabView {
 
     /// Offered provider features for the current selection (`use-draft-agent-features`).
     fn load_features(&mut self, ctx: &UiContext) {
-        if self.add_project() || self.config.get("provider").and_then(Value::as_str).unwrap_or("").is_empty() {
+        if self.add_project()
+            || self
+                .config
+                .get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .is_empty()
+        {
             self.features.clear();
             self.features_key.clear();
             return;
@@ -726,7 +853,13 @@ impl WaNewTabView {
             return;
         }
         self.features_key = key.clone();
-        self.pending.send(&ctx.core, &self.target.host_id, "list_provider_features_request", json!({ "draftConfig": effective }), Req::Features(key));
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "list_provider_features_request",
+            json!({ "draftConfig": effective }),
+            Req::Features(key),
+        );
     }
 
     /// `_changeConfig` (`setProviderAndModelFromUser` & co).
@@ -734,10 +867,22 @@ impl WaNewTabView {
         let preferences = Self::form_preferences(ctx);
         let provider = str_of(&value, "provider").to_owned();
         let mut next = value.clone();
-        if !provider.is_empty() && (Some(provider.as_str()) != self.config.get("provider").and_then(Value::as_str) || value.get("model") != self.config.get("model")) {
-            next = agent_form::apply_user_model_choice(&self.config, &provider, str_of(&value, "model"), &preferences, &self.providers);
+        if !provider.is_empty()
+            && (Some(provider.as_str()) != self.config.get("provider").and_then(Value::as_str)
+                || value.get("model") != self.config.get("model"))
+        {
+            next = agent_form::apply_user_model_choice(
+                &self.config,
+                &provider,
+                str_of(&value, "model"),
+                &preferences,
+                &self.providers,
+            );
         }
-        Self::remember(ctx, agent_form::remember_user_selection(&preferences, &self.config, &next));
+        Self::remember(
+            ctx,
+            agent_form::remember_user_selection(&preferences, &self.config, &next),
+        );
         self.config = next;
         self.config_touched = true;
         self.load_features(ctx);
@@ -777,17 +922,31 @@ impl WaNewTabView {
             self.forge_timer = cx.start_timeout(0.3);
         }
         for search in effects.searches {
-            let (message, response) = forge::forge_search_request(self.legacy_forge, &search.cwd, &search.query);
+            let (message, response) =
+                forge::forge_search_request(self.legacy_forge, &search.cwd, &search.query);
             let id = ctx.core.request(&self.target.host_id, message, response);
-            self.pending.track(id, "forge.search", Req::ForgeSearch { lookup: search.lookup, index: search.index, cwd: search.cwd });
+            self.pending.track(
+                id,
+                "forge.search",
+                Req::ForgeSearch {
+                    lookup: search.lookup,
+                    index: search.index,
+                    cwd: search.cwd,
+                },
+            );
         }
         let mut attached = false;
         for item in effects.attach {
             let key = attachments::forge_item_key(&item);
-            if self.attachments.iter().any(|a| forge::forge_attachment_key(a).as_deref() == Some(key.as_str())) {
+            if self
+                .attachments
+                .iter()
+                .any(|a| forge::forge_attachment_key(a).as_deref() == Some(key.as_str()))
+            {
                 continue;
             }
-            self.attachments.push(attachments::forge_attachment(&item, self.legacy_forge));
+            self.attachments
+                .push(attachments::forge_attachment(&item, self.legacy_forge));
             attached = true;
         }
         if attached {
@@ -802,22 +961,35 @@ impl WaNewTabView {
     }
 
     fn forge_resolving(&self) -> bool {
-        !self.forge_timer.is_empty() || self.pending.any(|req| matches!(req, Req::ForgeSearch { .. }))
+        !self.forge_timer.is_empty()
+            || self
+                .pending
+                .any(|req| matches!(req, Req::ForgeSearch { .. }))
     }
 
     /// `_persistIntent`: the exact immutable intent, saved before submission.
     fn persist_intent(&self, ctx: &mut UiContext, intent: Option<&Value>) {
-        let mut values = object_of(host::preferences(&ctx.state), "workspaceCreationIntents").as_object().cloned().unwrap_or_default();
+        let mut values = object_of(host::preferences(&ctx.state), "workspaceCreationIntents")
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         match intent {
             Some(intent) => values.insert(self.target.tab_key.clone(), intent.clone()),
             None => values.remove(&self.target.tab_key),
         };
-        host::set_preference(&mut ctx.effects, "workspaceCreationIntents", Value::Object(values));
+        host::set_preference(
+            &mut ctx.effects,
+            "workspaceCreationIntents",
+            Value::Object(values),
+        );
     }
 
     fn fail(&mut self, ctx: &mut UiContext, message: String, toast: bool) {
         if toast {
-            ctx.effects.push(UiEffect::Toast { message: message.clone(), is_error: true });
+            ctx.effects.push(UiEffect::Toast {
+                message: message.clone(),
+                is_error: true,
+            });
         }
         self.error = Some(message);
         self.busy = false;
@@ -843,7 +1015,10 @@ impl WaNewTabView {
             let workspace = if self.existing {
                 let directory = self
                     .host(ctx)
-                    .and_then(|h| h.workspace(&self.target.workspace_id).map(|w| str_of(w, "workspaceDirectory").to_owned()))
+                    .and_then(|h| {
+                        h.workspace(&self.target.workspace_id)
+                            .map(|w| str_of(w, "workspaceDirectory").to_owned())
+                    })
                     .filter(|dir| !dir.is_empty())
                     .unwrap_or_else(|| cwd.clone());
                 Some((self.target.workspace_id.clone(), directory))
@@ -854,7 +1029,10 @@ impl WaNewTabView {
                 return self.create_terminal(ctx, workspace_id, directory);
             }
         }
-        let has_input = !terminal && (!self.prompt.trim().is_empty() || !self.images.is_empty() || !self.attachments.is_empty());
+        let has_input = !terminal
+            && (!self.prompt.trim().is_empty()
+                || !self.images.is_empty()
+                || !self.attachments.is_empty());
         let with_agent = !terminal && !self.add_project();
         if with_agent && self.catalog_cwd != cwd {
             forget_timer(&mut self.directory_timer);
@@ -866,44 +1044,88 @@ impl WaNewTabView {
             return self.fail(ctx, t("newWorkspace.errors.selectModel"), true);
         }
         if !self.existing && matches!(self.source.as_str(), "clone" | "new-directory") {
-            return self.fail(ctx, l("Prepare the directory before creating a session.").into(), true);
+            return self.fail(
+                ctx,
+                l("Prepare the directory before creating a session.").into(),
+                true,
+            );
         }
         if !model::SOURCES.contains(&self.source.as_str()) {
-            return self.fail(ctx, l("Worktree creation is no longer supported. Choose a local directory.").into(), true);
+            return self.fail(
+                ctx,
+                l("Worktree creation is no longer supported. Choose a local directory.").into(),
+                true,
+            );
         }
         // new-workspace-screen.tsx createWorkspaceChatAgent: the effective model, mode and
         // thinking option; the selection is remembered on submit.
         let mut effective = agent_form::effective_submit_config(&self.config, &self.providers);
         if self.add_project() {
             self.busy = true;
-            self.pending.send(&ctx.core, &self.target.host_id, "project.add.request", json!({ "cwd": cwd }), Req::AddProject);
+            self.pending.send(
+                &ctx.core,
+                &self.target.host_id,
+                "project.add.request",
+                json!({ "cwd": cwd }),
+                Req::AddProject,
+            );
             return;
         }
-        let local_features = effective.as_object_mut().and_then(|m| m.remove("featureValues")).unwrap_or(Value::Null);
+        let local_features = effective
+            .as_object_mut()
+            .and_then(|m| m.remove("featureValues"))
+            .unwrap_or(Value::Null);
         self.busy = true;
-        self.create = Some(CreateDraft { cwd: cwd.clone(), with_agent, has_input, effective, local_features });
+        self.create = Some(CreateDraft {
+            cwd: cwd.clone(),
+            with_agent,
+            has_input,
+            effective,
+            local_features,
+        });
         self.create_features(ctx);
     }
 
     fn create_features(&mut self, ctx: &mut UiContext) {
-        let Some(draft) = self.create.clone() else { return };
+        let Some(draft) = self.create.clone() else {
+            return;
+        };
         if !draft.with_agent {
             return self.create_submit(ctx, Value::Null);
         }
         let preferences = Self::form_preferences(ctx);
-        Self::remember(ctx, self.with_launch(agent_form::remember_submitted_selection(&preferences, &draft.effective, &self.providers)));
+        Self::remember(
+            ctx,
+            self.with_launch(agent_form::remember_submitted_selection(
+                &preferences,
+                &draft.effective,
+                &self.providers,
+            )),
+        );
         let mut config = draft.effective.clone();
         config["cwd"] = draft.cwd.clone().into();
-        self.pending.send(&ctx.core, &self.target.host_id, "list_provider_features_request", json!({ "draftConfig": config }), Req::CreateFeatures);
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "list_provider_features_request",
+            json!({ "draftConfig": config }),
+            Req::CreateFeatures,
+        );
     }
 
     fn create_submit(&mut self, ctx: &mut UiContext, offered: Value) {
-        let Some(draft) = self.create.take() else { return };
+        let Some(draft) = self.create.take() else {
+            return;
+        };
         let mut effective = draft.effective.clone();
         if draft.with_agent {
             let offered: Vec<Value> = offered.as_array().cloned().unwrap_or_default();
-            let remembered = agent_form::remembered_feature_values(&Self::form_preferences(ctx), str_of(&effective, "provider"));
-            let values = agent_form::resolve_feature_values(&offered, &remembered, &draft.local_features);
+            let remembered = agent_form::remembered_feature_values(
+                &Self::form_preferences(ctx),
+                str_of(&effective, "provider"),
+            );
+            let values =
+                agent_form::resolve_feature_values(&offered, &remembered, &draft.local_features);
             if values.as_object().is_some_and(|m| !m.is_empty()) {
                 effective["featureValues"] = values;
             }
@@ -926,10 +1148,22 @@ impl WaNewTabView {
         if !self.images.is_empty() {
             agent.insert(
                 "images".into(),
-                Value::Array(self.images.iter().map(|i| json!({ "data": i["data"], "mimeType": i["mimeType"] })).collect()),
+                Value::Array(
+                    self.images
+                        .iter()
+                        .map(|i| json!({ "data": i["data"], "mimeType": i["mimeType"] }))
+                        .collect(),
+                ),
             );
         }
-        let wire: Vec<Value> = if terminal { Vec::new() } else { self.attachments.iter().map(attachments::wire_attachment).collect() };
+        let wire: Vec<Value> = if terminal {
+            Vec::new()
+        } else {
+            self.attachments
+                .iter()
+                .map(attachments::wire_attachment)
+                .collect()
+        };
         if !wire.is_empty() {
             agent.insert("attachments".into(), Value::Array(wire.clone()));
         }
@@ -939,7 +1173,10 @@ impl WaNewTabView {
         request.insert("subscribe".into(), false.into());
         if self.existing {
             request.extend(agent);
-            request.insert("workspaceId".into(), self.target.workspace_id.clone().into());
+            request.insert(
+                "workspaceId".into(),
+                self.target.workspace_id.clone().into(),
+            );
         } else {
             request.insert("source".into(), model::workspace_source(&draft.cwd));
             if draft.with_agent {
@@ -974,14 +1211,23 @@ impl WaNewTabView {
 
     /// `_submit`: `<kind>.create.request` with the intent's request, 10 minute deadline.
     fn submit(&mut self, ctx: &UiContext) {
-        let Some(intent) = self.intent.clone() else { return };
+        let Some(intent) = self.intent.clone() else {
+            return;
+        };
         let kind = str_of(&intent, "kind").to_owned();
-        if kind == "workspace" && str_of(object_of(object_of(&intent, "request"), "source"), "kind") != "directory" {
+        if kind == "workspace"
+            && str_of(object_of(object_of(&intent, "request"), "source"), "kind") != "directory"
+        {
             self.busy = false;
-            self.error = Some(l("Worktree creation is no longer supported. Choose a local directory.").into());
+            self.error = Some(
+                l("Worktree creation is no longer supported. Choose a local directory.").into(),
+            );
             return;
         }
-        let message = super::rpc::message(&format!("{kind}.create.request"), object_of(&intent, "request").clone());
+        let message = super::rpc::message(
+            &format!("{kind}.create.request"),
+            object_of(&intent, "request").clone(),
+        );
         let id = ctx.core.request_with_timeout(
             &self.target.host_id,
             message,
@@ -993,7 +1239,10 @@ impl WaNewTabView {
     }
 
     fn idempotency_key(&self) -> String {
-        self.intent.as_ref().map(|i| str_of(object_of(i, "request"), "idempotencyKey").to_owned()).unwrap_or_default()
+        self.intent
+            .as_ref()
+            .map(|i| str_of(object_of(i, "request"), "idempotencyKey").to_owned())
+            .unwrap_or_default()
     }
 
     /// `_receive`: a creation receipt snapshot, ordered by revision.
@@ -1002,11 +1251,19 @@ impl WaNewTabView {
             return;
         }
         let body = payload(message);
-        let snapshot = if body.get("snapshot").is_some() { object_of(body, "snapshot") } else { body };
-        if snapshot.as_object().is_none_or(|m| m.is_empty()) || str_of(snapshot, "idempotencyKey") != self.idempotency_key() {
+        let snapshot = if body.get("snapshot").is_some() {
+            object_of(body, "snapshot")
+        } else {
+            body
+        };
+        if snapshot.as_object().is_none_or(|m| m.is_empty())
+            || str_of(snapshot, "idempotencyKey") != self.idempotency_key()
+        {
             return;
         }
-        if let Some(previous) = &self.snapshot && super::rpc::int_of(snapshot, "revision") < super::rpc::int_of(previous, "revision") {
+        if let Some(previous) = &self.snapshot
+            && super::rpc::int_of(snapshot, "revision") < super::rpc::int_of(previous, "revision")
+        {
             return;
         }
         let snapshot = snapshot.clone();
@@ -1050,21 +1307,35 @@ impl WaNewTabView {
             return;
         }
         let receipt = object_of(result, "creation");
-        if receipt.as_object().is_some_and(|m| !m.is_empty()) && str_of(receipt, "phase") != "completed" {
+        if receipt.as_object().is_some_and(|m| !m.is_empty())
+            && str_of(receipt, "phase") != "completed"
+        {
             return;
         }
         let pick = |key: &str| {
             let value = object_of(result, key);
-            if value.as_object().is_some_and(|m| !m.is_empty()) { value.clone() } else { object_of(receipt, key).clone() }
+            if value.as_object().is_some_and(|m| !m.is_empty()) {
+                value.clone()
+            } else {
+                object_of(receipt, key).clone()
+            }
         };
         let workspace = pick("workspace");
         let agent = pick("agent");
-        let workspace_id = str_or(&workspace, "id", str_or(receipt, "workspaceId", str_or(&agent, "workspaceId", &self.target.workspace_id))).to_owned();
+        let workspace_id = str_or(
+            &workspace,
+            "id",
+            str_or(
+                receipt,
+                "workspaceId",
+                str_or(&agent, "workspaceId", &self.target.workspace_id),
+            ),
+        )
+        .to_owned();
         let agent_id = str_or(&agent, "id", str_of(receipt, "agentId")).to_owned();
-        let expected_agent = self
-            .intent
-            .as_ref()
-            .is_some_and(|i| str_of(i, "kind") == "agent" || object_of(i, "request").get("agent").is_some());
+        let expected_agent = self.intent.as_ref().is_some_and(|i| {
+            str_of(i, "kind") == "agent" || object_of(i, "request").get("agent").is_some()
+        });
         if workspace_id.is_empty() || (agent_id.is_empty() && expected_agent) {
             return;
         }
@@ -1072,9 +1343,21 @@ impl WaNewTabView {
         ctx.core.refresh_host(&self.target.host_id);
         self.persist_intent(ctx, None);
         self.observation = None;
-        let fallback_cwd = if self.target.cwd.is_empty() { self.path.trim().to_owned() } else { self.target.cwd.clone() };
-        let cwd = str_or(&agent, "cwd", str_or(&workspace, "workspaceDirectory", &fallback_cwd)).to_owned();
-        let terminal = self.intent.as_ref().is_some_and(|i| str_of(i, "launch") == "terminal");
+        let fallback_cwd = if self.target.cwd.is_empty() {
+            self.path.trim().to_owned()
+        } else {
+            self.target.cwd.clone()
+        };
+        let cwd = str_or(
+            &agent,
+            "cwd",
+            str_or(&workspace, "workspaceDirectory", &fallback_cwd),
+        )
+        .to_owned();
+        let terminal = self
+            .intent
+            .as_ref()
+            .is_some_and(|i| str_of(i, "launch") == "terminal");
         self.opened = true;
         self.intent = None;
         self.busy = false;
@@ -1086,11 +1369,23 @@ impl WaNewTabView {
                 .with_id(new_id())
                 .with_title(t("sessionNavigation.newSession"))
                 .with_data(json!({ "creationDraft": { "title": self.title, "prompt": self.prompt, "config": self.config, "launch": "chat" } }));
-            ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
+            ctx.effects.push(UiEffect::ReplaceTab {
+                tab_key: self.target.tab_key.clone(),
+                target,
+            });
         } else {
-            let target = PanelTarget::agent(&self.target.host_id, &workspace_id, &cwd, &agent_id, str_of(&agent, "title"))
-                .with_data(json!({ "project": object_of(&agent, "project") }));
-            ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
+            let target = PanelTarget::agent(
+                &self.target.host_id,
+                &workspace_id,
+                &cwd,
+                &agent_id,
+                str_of(&agent, "title"),
+            )
+            .with_data(json!({ "project": object_of(&agent, "project") }));
+            ctx.effects.push(UiEffect::ReplaceTab {
+                tab_key: self.target.tab_key.clone(),
+                target,
+            });
         }
         self.finishing = false;
     }
@@ -1100,7 +1395,13 @@ impl WaNewTabView {
         self.busy = true;
         self.error = None;
         let fields = json!({ "cwd": cwd, "workspaceId": workspace_id });
-        self.pending.send(&ctx.core, &self.target.host_id, "create_terminal_request", fields, Req::CreateTerminal { workspace_id, cwd });
+        self.pending.send(
+            &ctx.core,
+            &self.target.host_id,
+            "create_terminal_request",
+            fields,
+            Req::CreateTerminal { workspace_id, cwd },
+        );
     }
 
     fn handle_core(&mut self, cx: &mut Cx, ctx: &mut UiContext) {
@@ -1117,8 +1418,11 @@ impl WaNewTabView {
             let reconnected = status == Some(Connection::Connected);
             self.last_status = status;
             self.connected = reconnected;
-            self.legacy_forge = self.host(ctx).is_some_and(|h| attachments::uses_legacy_forge(h.server_info()));
-            if reconnected && self.intent.is_some() && !self.finishing && self.observation.is_none() {
+            self.legacy_forge = self
+                .host(ctx)
+                .is_some_and(|h| attachments::uses_legacy_forge(h.server_info()));
+            if reconnected && self.intent.is_some() && !self.finishing && self.observation.is_none()
+            {
                 self.recover(ctx);
             }
             if reconnected {
@@ -1163,7 +1467,8 @@ impl WaNewTabView {
                     }
                     ObsEvent::RestoreFailed(error) => {
                         self.error = Some(if error.is_empty() {
-                            l("Creation observation failed. Recover the receipt to continue.").to_owned()
+                            l("Creation observation failed. Recover the receipt to continue.")
+                                .to_owned()
                         } else {
                             error
                         });
@@ -1178,12 +1483,20 @@ impl WaNewTabView {
         }
         // Loading snapshots complete through host events. Apply only this tab's
         // host/cwd and the latest update, without issuing another discovery pull.
-        if let Some((_, event)) = ctx.host_events().filter(|(host, event)| {
-            *host == self.target.host_id
-                && str_of(event, "type") == "providers_snapshot_update"
-                && self.provider_scope.as_deref()
-                    == Some(str_of(object_of(event, "payload"), "cwd").trim().trim_end_matches('/'))
-        }).last() {
+        if let Some((_, event)) = ctx
+            .host_events()
+            .filter(|(host, event)| {
+                *host == self.target.host_id
+                    && str_of(event, "type") == "providers_snapshot_update"
+                    && self.provider_scope.as_deref()
+                        == Some(
+                            str_of(object_of(event, "payload"), "cwd")
+                                .trim()
+                                .trim_end_matches('/'),
+                        )
+            })
+            .last()
+        {
             let body = object_of(event, "payload");
             if body.get("entries").is_some() || body.get("compactSnapshot").is_some() {
                 self.provider_generation += 1;
@@ -1195,7 +1508,13 @@ impl WaNewTabView {
         }
     }
 
-    fn answer(&mut self, cx: &mut Cx, ctx: &mut UiContext, req: Req, result: Result<Value, RpcError>) {
+    fn answer(
+        &mut self,
+        cx: &mut Cx,
+        ctx: &mut UiContext,
+        req: Req,
+        result: Result<Value, RpcError>,
+    ) {
         let checked = |result: Result<Value, RpcError>, request: &str| -> Result<Value, RpcError> {
             let body = result?;
             if let Some(error) = super::rpc::domain_error(&body, request) {
@@ -1234,7 +1553,8 @@ impl WaNewTabView {
                 }
                 self.providers_loading = false;
                 if let Ok(body) = checked(result, "get_providers_snapshot_request") {
-                    self.provider_scope = Some(str_of(&body, "cwd").trim().trim_end_matches('/').to_owned());
+                    self.provider_scope =
+                        Some(str_of(&body, "cwd").trim().trim_end_matches('/').to_owned());
                     self.apply_providers(cx, ctx, &body);
                 }
             }
@@ -1242,7 +1562,10 @@ impl WaNewTabView {
                 if key != self.features_key {
                     return;
                 }
-                self.features = result.ok().map(|b| array_of(&b, "features").to_vec()).unwrap_or_default();
+                self.features = result
+                    .ok()
+                    .map(|b| array_of(&b, "features").to_vec())
+                    .unwrap_or_default();
             }
             Req::AddProject => {
                 self.busy = false;
@@ -1251,7 +1574,11 @@ impl WaNewTabView {
                         ctx.core.refresh_host(&self.target.host_id);
                         self.project_added = true;
                     }
-                    Ok(_) => self.fail(ctx, l("The host did not return a registered project.").into(), false),
+                    Ok(_) => self.fail(
+                        ctx,
+                        l("The host did not return a registered project.").into(),
+                        false,
+                    ),
                     Err(error) => self.fail(ctx, error.to_string(), false),
                 }
             }
@@ -1263,7 +1590,15 @@ impl WaNewTabView {
                         if let Err(error) = checked(Ok(body.clone()), "project.prepare") {
                             return self.fail(ctx, error.to_string(), false);
                         }
-                        let directory = str_of(&body, if self.source == "clone" { "checkoutPath" } else { "directoryPath" }).to_owned();
+                        let directory = str_of(
+                            &body,
+                            if self.source == "clone" {
+                                "checkoutPath"
+                            } else {
+                                "directoryPath"
+                            },
+                        )
+                        .to_owned();
                         if directory.is_empty() {
                             return self.fail(ctx, l("The host did not return the prepared directory. Browse to inspect its state.").into(), false);
                         }
@@ -1282,15 +1617,26 @@ impl WaNewTabView {
                     Ok(body) => {
                         self.repositories = array_of(&body, "repositories").to_vec();
                         if self.repositories.is_empty() {
-                            ctx.effects.push(UiEffect::Toast { message: l("No repositories found.").into(), is_error: false });
+                            ctx.effects.push(UiEffect::Toast {
+                                message: l("No repositories found.").into(),
+                                is_error: false,
+                            });
                             return;
                         }
                         let options = self
                             .repositories
                             .iter()
-                            .map(|repo| SelectOption::new(str_of(repo, "nameWithOwner"), str_of(repo, "nameWithOwner")).description(str_of(repo, "description")))
+                            .map(|repo| {
+                                SelectOption::new(
+                                    str_of(repo, "nameWithOwner"),
+                                    str_of(repo, "nameWithOwner"),
+                                )
+                                .description(str_of(repo, "description"))
+                            })
                             .collect();
-                        let request = SelectRequest::new(l("GitHub repositories"), options).selected(Some(self.repo.trim())).searchable("");
+                        let request = SelectRequest::new(l("GitHub repositories"), options)
+                            .selected(Some(self.repo.trim()))
+                            .searchable("");
                         self.view.wa_select(id!(select)).open(cx, "repo", request);
                     }
                     Err(error) => self.error = Some(error.to_string()),
@@ -1298,7 +1644,10 @@ impl WaNewTabView {
             }
             // Offered features; none when the list cannot be loaded.
             Req::CreateFeatures => {
-                let offered = result.ok().map(|b| Value::Array(array_of(&b, "features").to_vec())).unwrap_or(Value::Array(Vec::new()));
+                let offered = result
+                    .ok()
+                    .map(|b| Value::Array(array_of(&b, "features").to_vec()))
+                    .unwrap_or(Value::Array(Vec::new()));
                 self.create_submit(ctx, offered);
             }
             Req::Submit => {
@@ -1315,23 +1664,39 @@ impl WaNewTabView {
                         }
                         if let Err(error) = checked(Ok(body.clone()), "create") {
                             self.error = Some(error.to_string());
-                            ctx.effects.push(UiEffect::Toast { message: error.to_string(), is_error: true });
+                            ctx.effects.push(UiEffect::Toast {
+                                message: error.to_string(),
+                                is_error: true,
+                            });
                             return;
                         }
                         self.finish(ctx, &body);
-                        let failed = self.snapshot.as_ref().is_some_and(|s| str_of(s, "phase") == "failed");
-                        if self.intent.is_some() && !self.finishing && !self.opened && self.observation.is_none() && !failed {
+                        let failed = self
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|s| str_of(s, "phase") == "failed");
+                        if self.intent.is_some()
+                            && !self.finishing
+                            && !self.opened
+                            && self.observation.is_none()
+                            && !failed
+                        {
                             self.observe_receipt(ctx, false);
                         }
                     }
                     Err(error) => {
                         self.error = Some(error.to_string());
-                        ctx.effects.push(UiEffect::Toast { message: error.to_string(), is_error: true });
+                        ctx.effects.push(UiEffect::Toast {
+                            message: error.to_string(),
+                            is_error: true,
+                        });
                     }
                 }
             }
             Req::ForgeSearch { lookup, index, cwd } => {
-                let items = result.map(|body| forge::forge_search_items(self.legacy_forge, &body)).map_err(|e| e.to_string());
+                let items = result
+                    .map(|body| forge::forge_search_items(self.legacy_forge, &body))
+                    .map_err(|e| e.to_string());
                 let effects = self.forge_auto.search_finished(lookup, index, &cwd, items);
                 self.apply_forge(cx, ctx, effects);
             }
@@ -1346,7 +1711,9 @@ impl WaNewTabView {
                 }
             }
             Req::Images => match result.map(|v| ops::open_envelope(&v)) {
-                Ok(Ok(body)) => self.images.extend(array_of(&body, "images").iter().cloned()),
+                Ok(Ok(body)) => self
+                    .images
+                    .extend(array_of(&body, "images").iter().cloned()),
                 Ok(Err(error)) => self.toast_upload_error(ctx, str_of(&error, "message")),
                 Err(error) => self.toast_upload_error(ctx, &error.to_string()),
             },
@@ -1362,7 +1729,8 @@ impl WaNewTabView {
                 self.upload_name = None;
                 match result.map(|v| ops::open_envelope(&v)) {
                     Ok(Ok(body)) => {
-                        self.attachments.extend(array_of(&body, "files").iter().cloned());
+                        self.attachments
+                            .extend(array_of(&body, "files").iter().cloned());
                         self.sync_forge(cx, ctx);
                     }
                     Ok(Err(error)) => self.toast_upload_error(ctx, str_of(&error, "message")),
@@ -1390,18 +1758,32 @@ impl WaNewTabView {
                 }
                 self.terminal_workspace = None;
                 self.opened = true;
-                let target = PanelTarget::new("terminal", &self.target.host_id, str_or(&terminal, "workspaceId", &workspace_id), str_or(&terminal, "cwd", &cwd))
-                    .with_id(terminal_id);
-                ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
+                let target = PanelTarget::new(
+                    "terminal",
+                    &self.target.host_id,
+                    str_or(&terminal, "workspaceId", &workspace_id),
+                    str_or(&terminal, "cwd", &cwd),
+                )
+                .with_id(terminal_id);
+                ctx.effects.push(UiEffect::ReplaceTab {
+                    tab_key: self.target.tab_key.clone(),
+                    target,
+                });
             }
         }
     }
 
     fn toast_upload_error(&self, ctx: &mut UiContext, message: &str) {
-        let message = if message.trim().is_empty() { t("composer.errors.uploadFailed") } else { message.to_owned() };
-        ctx.effects.push(UiEffect::Toast { message, is_error: true });
+        let message = if message.trim().is_empty() {
+            t("composer.errors.uploadFailed")
+        } else {
+            message.to_owned()
+        };
+        ctx.effects.push(UiEffect::Toast {
+            message,
+            is_error: true,
+        });
     }
-
 
     fn open_forge_picker(&mut self, cx: &mut Cx) {
         let attached: Vec<String> = self
@@ -1416,14 +1798,28 @@ impl WaNewTabView {
             .map(|item| {
                 let key = attachments::forge_item_key(item);
                 let number = super::rpc::int_of(item, "number");
-                let prefix = if str_of(item, "kind") == "change_request" { "git-pull-request" } else { "circle-dot" };
-                let mut option = SelectOption::new(key.clone(), format!("#{number} {}", str_of(item, "title"))).glyph(prefix);
+                let prefix = if str_of(item, "kind") == "change_request" {
+                    "git-pull-request"
+                } else {
+                    "circle-dot"
+                };
+                let mut option =
+                    SelectOption::new(key.clone(), format!("#{number} {}", str_of(item, "title")))
+                        .glyph(prefix);
                 option = option.checked(attached.contains(&key));
                 option
             })
             .collect();
-        let title = if self.gitlab() { t("composer.attachments.addIssueOrPr_mr") } else { t("composer.attachments.addIssueOrPr") };
-        self.view.wa_select(id!(select)).open(cx, "forge", SelectRequest::new(title, options).searchable(""));
+        let title = if self.gitlab() {
+            t("composer.attachments.addIssueOrPr_mr")
+        } else {
+            t("composer.attachments.addIssueOrPr")
+        };
+        self.view.wa_select(id!(select)).open(
+            cx,
+            "forge",
+            SelectRequest::new(title, options).searchable(""),
+        );
     }
 
     fn gitlab(&self) -> bool {
@@ -1445,22 +1841,33 @@ impl WaNewTabView {
             "checkout_pr_status_response",
         );
         self.attachment_forge_scope = Some(scope.clone());
-        self.pending.track(id, "forge.kind", Req::AttachmentForge(scope));
+        self.pending
+            .track(id, "forge.kind", Req::AttachmentForge(scope));
     }
 
     fn apply_providers(&mut self, cx: &mut Cx, ctx: &UiContext, body: &Value) {
         self.providers_loading = false;
         self.providers = agent_form::provider_entries(body);
         if !self.config_touched {
-            self.config = agent_form::resolve_initial_agent_config(&self.initial_config, &Self::form_preferences(ctx), &self.providers);
+            self.config = agent_form::resolve_initial_agent_config(
+                &self.initial_config,
+                &Self::form_preferences(ctx),
+                &self.providers,
+            );
         }
         self.load_features(ctx);
-        self.view.wa_select(id!(select)).refresh(cx, "model", || self.model_request());
+        self.view
+            .wa_select(id!(select))
+            .refresh(cx, "model", || self.model_request());
     }
 
     fn model_request(&self) -> SelectRequest {
         let mut options = Vec::new();
-        for entry in self.providers.iter().filter(|e| e.get("enabled") != Some(&Value::Bool(false))) {
+        for entry in self
+            .providers
+            .iter()
+            .filter(|e| e.get("enabled") != Some(&Value::Bool(false)))
+        {
             let id = str_of(entry, "provider");
             let label = str_or(entry, "label", id).to_owned();
             let models = agent_form::selectable_models(entry);
@@ -1471,21 +1878,37 @@ impl WaNewTabView {
                     str_or(entry, "error", &t("providerSelection.unavailable")).to_owned()
                 };
                 let separated = !options.is_empty();
-                options.push(SelectOption::new(format!("{id}\u{0}"), label).description(status).enabled(false).separated(separated));
+                options.push(
+                    SelectOption::new(format!("{id}\u{0}"), label)
+                        .description(status)
+                        .enabled(false)
+                        .separated(separated),
+                );
                 continue;
             }
             let separated = !options.is_empty();
             for (index, row) in models.iter().enumerate() {
                 let model_id = str_of(row, "id");
                 options.push(
-                    SelectOption::new(format!("{id}\u{0}{model_id}"), controls_model::model_label(row))
-                        .description(format!("{label} · {model_id}"))
-                        .separated(index == 0 && separated),
+                    SelectOption::new(
+                        format!("{id}\u{0}{model_id}"),
+                        controls_model::model_label(row),
+                    )
+                    .description(format!("{label} · {model_id}"))
+                    .separated(index == 0 && separated),
                 );
             }
         }
-        let selected = format!("{}\u{0}{}", str_of(&self.config, "provider"), str_of(&self.config, "model"));
-        let empty = if self.providers_loading { t("modelSelector.loadingSelector") } else { t("providerSelection.readiness.noProviders") };
+        let selected = format!(
+            "{}\u{0}{}",
+            str_of(&self.config, "provider"),
+            str_of(&self.config, "model")
+        );
+        let empty = if self.providers_loading {
+            t("modelSelector.loadingSelector")
+        } else {
+            t("providerSelection.readiness.noProviders")
+        };
         SelectRequest::new(t("providerSelection.selectModel"), options)
             .selected(Some(&selected))
             .searchable(t("modelSelector.searchAllPlaceholder"))
@@ -1493,23 +1916,49 @@ impl WaNewTabView {
     }
 
     fn pick_models(&mut self, cx: &mut Cx) {
-        self.view.wa_select(id!(select)).open(cx, "model", self.model_request());
+        self.view
+            .wa_select(id!(select))
+            .open(cx, "model", self.model_request());
     }
 
     fn pick_mode(&mut self, cx: &mut Cx) {
-        let modes = self.entry().map(|e| array_of(e, "modes").to_vec()).unwrap_or_default();
-        let options = modes.iter().map(|m| SelectOption::new(str_of(m, "id"), controls_model::format_agent_mode_label(m))).collect();
-        self.view.wa_select(id!(select)).open(cx, "mode", SelectRequest::new(l("Select mode"), options).selected(Some(str_of(&self.config, "modeId"))));
+        let modes = self
+            .entry()
+            .map(|e| array_of(e, "modes").to_vec())
+            .unwrap_or_default();
+        let options = modes
+            .iter()
+            .map(|m| SelectOption::new(str_of(m, "id"), controls_model::format_agent_mode_label(m)))
+            .collect();
+        self.view.wa_select(id!(select)).open(
+            cx,
+            "mode",
+            SelectRequest::new(l("Select mode"), options)
+                .selected(Some(str_of(&self.config, "modeId"))),
+        );
     }
 
     fn pick_thinking(&mut self, cx: &mut Cx) {
-        let options_list = self.current_model().map(|m| array_of(&m, "thinkingOptions").to_vec()).unwrap_or_default();
+        let options_list = self
+            .current_model()
+            .map(|m| array_of(&m, "thinkingOptions").to_vec())
+            .unwrap_or_default();
         let extra = t("agentControls.thinking.extraHigh");
         let options = options_list
             .iter()
-            .map(|o| SelectOption::new(str_of(o, "id"), controls_model::format_thinking_option_label(o, &extra)))
+            .map(|o| {
+                SelectOption::new(
+                    str_of(o, "id"),
+                    controls_model::format_thinking_option_label(o, &extra),
+                )
+            })
             .collect();
-        self.view.wa_select(id!(select)).open(cx, "thinking", SelectRequest::new(l("Select thinking"), options).selected(Some(str_of(&self.config, "thinkingOptionId"))));
+        self.view.wa_select(id!(select)).open(
+            cx,
+            "thinking",
+            SelectRequest::new(l("Select thinking"), options)
+                .selected(Some(str_of(&self.config, "thinkingOptionId"))),
+        );
     }
 
     /// A toggle feature flips at once; a select feature opens its options.
@@ -1520,10 +1969,19 @@ impl WaNewTabView {
             let next = model::with_feature(&self.config, &id, Value::Bool(!current));
             self.change_config(ctx, next);
         } else {
-            let options = array_of(feature, "options").iter().map(|o| SelectOption::new(str_of(o, "id"), str_or(o, "label", str_of(o, "id")))).collect();
-            let selected = model::feature_value(&self.config, feature).as_str().map(str::to_owned);
+            let options = array_of(feature, "options")
+                .iter()
+                .map(|o| SelectOption::new(str_of(o, "id"), str_or(o, "label", str_of(o, "id"))))
+                .collect();
+            let selected = model::feature_value(&self.config, feature)
+                .as_str()
+                .map(str::to_owned);
             let title = str_or(feature, "label", &id).to_owned();
-            self.view.wa_select(id!(select)).open(cx, &format!("feature:{id}"), SelectRequest::new(title, options).selected(selected.as_deref()));
+            self.view.wa_select(id!(select)).open(
+                cx,
+                &format!("feature:{id}"),
+                SelectRequest::new(title, options).selected(selected.as_deref()),
+            );
         }
         self.view.redraw(cx);
     }
@@ -1533,7 +1991,10 @@ impl WaNewTabView {
     /// opening its own picker. `None` when the model is the only setting.
     fn controls_request(&self) -> Option<SelectRequest> {
         let mut options = Vec::new();
-        let thinking_options = self.current_model().map(|m| array_of(&m, "thinkingOptions").to_vec()).unwrap_or_default();
+        let thinking_options = self
+            .current_model()
+            .map(|m| array_of(&m, "thinkingOptions").to_vec())
+            .unwrap_or_default();
         if !thinking_options.is_empty() {
             let thinking_id = str_of(&self.config, "thinkingOptionId");
             let extra = t("agentControls.thinking.extraHigh");
@@ -1543,18 +2004,37 @@ impl WaNewTabView {
                 .or(thinking_options.first())
                 .map(|o| controls_model::format_thinking_option_label(o, &extra))
                 .unwrap_or_default();
-            options.push(SelectOption::new("thinking", t("agentControls.thinking.title")).trailing(value).glyph("brain"));
+            options.push(
+                SelectOption::new("thinking", t("agentControls.thinking.title"))
+                    .trailing(value)
+                    .glyph("brain"),
+            );
         }
-        let modes = self.entry().map(|e| array_of(e, "modes").to_vec()).unwrap_or_default();
+        let modes = self
+            .entry()
+            .map(|e| array_of(e, "modes").to_vec())
+            .unwrap_or_default();
         if !modes.is_empty() {
-            let selected = modes.iter().find(|m| str_of(m, "id") == str_of(&self.config, "modeId"));
-            let value = selected.map(controls_model::format_agent_mode_label).unwrap_or_else(|| l("Default mode").to_owned());
-            options.push(SelectOption::new("mode", t("agentControls.mode.title")).trailing(value).glyph(controls_model::mode_icon(selected)));
+            let selected = modes
+                .iter()
+                .find(|m| str_of(m, "id") == str_of(&self.config, "modeId"));
+            let value = selected
+                .map(controls_model::format_agent_mode_label)
+                .unwrap_or_else(|| l("Default mode").to_owned());
+            options.push(
+                SelectOption::new("mode", t("agentControls.mode.title"))
+                    .trailing(value)
+                    .glyph(controls_model::mode_icon(selected)),
+            );
         }
         for feature in self.visible_features() {
             let current = model::feature_value(&self.config, &feature);
             let value = if str_of(&feature, "type") == "toggle" {
-                t(if current == &Value::Bool(true) { "agentControls.features.on" } else { "agentControls.features.off" })
+                t(if current == &Value::Bool(true) {
+                    "agentControls.features.on"
+                } else {
+                    "agentControls.features.off"
+                })
             } else {
                 array_of(&feature, "options")
                     .iter()
@@ -1563,7 +2043,11 @@ impl WaNewTabView {
                     .unwrap_or_default()
             };
             let label = str_or(&feature, "label", str_of(&feature, "id")).to_owned();
-            options.push(SelectOption::new(format!("feature:{}", str_of(&feature, "id")), label).trailing(value).glyph(controls_model::feature_icon(&feature)));
+            options.push(
+                SelectOption::new(format!("feature:{}", str_of(&feature, "id")), label)
+                    .trailing(value)
+                    .glyph(controls_model::feature_icon(&feature)),
+            );
         }
         if options.is_empty() {
             return None;
@@ -1572,7 +2056,12 @@ impl WaNewTabView {
             Some(model) => controls_model::model_label(&model),
             None => t("providerSelection.selectModel"),
         };
-        options.insert(0, SelectOption::new("model", t("modelSelector.model")).trailing(model).glyph("box"));
+        options.insert(
+            0,
+            SelectOption::new("model", t("modelSelector.model"))
+                .trailing(model)
+                .glyph("box"),
+        );
         // The composer's compact controls sheet carries the same title.
         Some(SelectRequest::new(t("modelSelector.selectModel"), options))
     }
@@ -1585,23 +2074,43 @@ impl WaNewTabView {
         let entry = self.entry()?;
         let models = agent_form::selectable_models(entry);
         let wanted = str_of(&self.config, "model");
-        agent_form::find_model_by_reference(Some(&models), wanted).cloned().or_else(|| {
-            let default = agent_form::resolve_default_model_id(Some(&models));
-            models.iter().find(|m| str_of(m, "id") == default).cloned()
-        })
+        agent_form::find_model_by_reference(Some(&models), wanted)
+            .cloned()
+            .or_else(|| {
+                let default = agent_form::resolve_default_model_id(Some(&models));
+                models.iter().find(|m| str_of(m, "id") == default).cloned()
+            })
     }
 
     fn handle_platform(&mut self, cx: &mut Cx, ctx: &mut UiContext, actions: &Actions) {
         for action in actions.iter() {
-            let Some(PlatformAction::Completed { request, result }) = action.downcast_ref::<PlatformAction>() else { continue };
-            let Some(kind) = self.platform_requests.remove(request) else { continue };
+            let Some(PlatformAction::Completed { request, result }) =
+                action.downcast_ref::<PlatformAction>()
+            else {
+                continue;
+            };
+            let Some(kind) = self.platform_requests.remove(request) else {
+                continue;
+            };
             match (kind, result) {
                 (PlatformReq::PickImages, Ok(PlatformValue::Files(files))) if !files.is_empty() => {
                     let files: Vec<(std::path::PathBuf, String)> = files
                         .iter()
-                        .map(|f| (f.path.clone(), attachments::raster_image_mime_type(&f.name).map(str::to_owned).or(f.mime_type.clone()).unwrap_or_else(|| "image/png".into())))
+                        .map(|f| {
+                            (
+                                f.path.clone(),
+                                attachments::raster_image_mime_type(&f.name)
+                                    .map(str::to_owned)
+                                    .or(f.mime_type.clone())
+                                    .unwrap_or_else(|| "image/png".into()),
+                            )
+                        })
                         .collect();
-                    let id = ctx.core.operation(&self.target.host_id, move |_client| async move { Ok(encode_images(files)) });
+                    let id = ctx
+                        .core
+                        .operation(&self.target.host_id, move |_client| async move {
+                            Ok(encode_images(files))
+                        });
                     self.pending.track(id, "images", Req::Images);
                 }
                 (PlatformReq::PickFiles, Ok(PlatformValue::Files(files))) if !files.is_empty() => {
@@ -1610,7 +2119,9 @@ impl WaNewTabView {
                         .map(|f| UploadFile {
                             path: f.path.clone(),
                             name: f.name.clone(),
-                            mime: f.mime_type.clone().unwrap_or_else(|| attachments::mime_type_for_path(&f.name).to_owned()),
+                            mime: f.mime_type.clone().unwrap_or_else(|| {
+                                attachments::mime_type_for_path(&f.name).to_owned()
+                            }),
                             size: f.size,
                         })
                         .collect();
@@ -1618,7 +2129,10 @@ impl WaNewTabView {
                 }
                 (PlatformReq::Paste, Ok(PlatformValue::Clipboard(content))) => {
                     if content.images.is_empty() {
-                        ctx.effects.push(UiEffect::Toast { message: t("composer.errors.noClipboardImage"), is_error: true });
+                        ctx.effects.push(UiEffect::Toast {
+                            message: t("composer.errors.noClipboardImage"),
+                            is_error: true,
+                        });
                     }
                     for image in &content.images {
                         self.images.push(json!({
@@ -1628,7 +2142,10 @@ impl WaNewTabView {
                     }
                 }
                 (PlatformReq::Paste, Err(_)) => {
-                    ctx.effects.push(UiEffect::Toast { message: t("composer.errors.pasteImageFailed"), is_error: true });
+                    ctx.effects.push(UiEffect::Toast {
+                        message: t("composer.errors.pasteImageFailed"),
+                        is_error: true,
+                    });
                 }
                 (_, Err(error)) if error.code != "cancelled" => {
                     self.toast_upload_error(ctx, &error.message);
@@ -1641,31 +2158,55 @@ impl WaNewTabView {
 
     /// actions.ts uploadFileAttachments: every file is size-checked before any upload starts.
     fn upload_files(&mut self, ctx: &mut UiContext, files: Vec<UploadFile>) {
-        if let Err(too_large) = attachments::check_upload_sizes(files.iter().map(|f| (f.name.as_str(), f.size))) {
-            let message = ta("composer.errors.fileTooLarge", &[("size", "50MB"), ("fileName", &too_large.file_name)]);
-            ctx.effects.push(UiEffect::Toast { message, is_error: true });
+        if let Err(too_large) =
+            attachments::check_upload_sizes(files.iter().map(|f| (f.name.as_str(), f.size)))
+        {
+            let message = ta(
+                "composer.errors.fileTooLarge",
+                &[("size", "50MB"), ("fileName", &too_large.file_name)],
+            );
+            ctx.effects.push(UiEffect::Toast {
+                message,
+                is_error: true,
+            });
             return;
         }
         if !self.connected {
-            ctx.effects.push(UiEffect::Toast { message: t("composer.errors.daemonClientDisconnected"), is_error: true });
+            ctx.effects.push(UiEffect::Toast {
+                message: t("composer.errors.daemonClientDisconnected"),
+                is_error: true,
+            });
             return;
         }
         self.upload_name = files.last().map(|f| f.name.clone());
-        let list: Vec<_> = files.into_iter().map(|f| (f.path, f.name, f.mime)).collect();
-        let id = ctx.core.operation(&self.target.host_id, move |client| ops::upload_files(client, list));
+        let list: Vec<_> = files
+            .into_iter()
+            .map(|f| (f.path, f.name, f.mime))
+            .collect();
+        let id = ctx.core.operation(&self.target.host_id, move |client| {
+            ops::upload_files(client, list)
+        });
         self.pending.track(id, "upload", Req::Upload);
     }
 
     /// Whether the composer card can take dropped files now (composer/index.tsx
     /// `useFileDrop` `disabled`): it is shown and neither submitting nor uploading.
     fn accepts_file_drop(&self) -> bool {
-        !self.terminal() && !self.busy && self.intent.is_none() && !self.drop_pending && self.upload_name.is_none()
+        !self.terminal()
+            && !self.busy
+            && self.intent.is_none()
+            && !self.drop_pending
+            && self.upload_name.is_none()
     }
 
     /// Files dropped anywhere on the screen: inspected off the GUI thread, then attached.
     fn drop_files(&mut self, ctx: &mut UiContext, paths: Vec<std::path::PathBuf>) {
         self.drop_pending = true;
-        let id = ctx.core.operation(&self.target.host_id, move |_client| async move { Ok(stat_files(paths)) });
+        let id = ctx
+            .core
+            .operation(&self.target.host_id, move |_client| async move {
+                Ok(stat_files(paths))
+            });
         self.pending.track(id, "dropped", Req::Dropped);
     }
 
@@ -1675,7 +2216,10 @@ impl WaNewTabView {
         let mut images = Vec::new();
         let mut uploads = Vec::new();
         for file in files {
-            let (path, name) = (std::path::PathBuf::from(str_of(file, "path")), str_of(file, "name"));
+            let (path, name) = (
+                std::path::PathBuf::from(str_of(file, "path")),
+                str_of(file, "name"),
+            );
             match attachments::raster_image_mime_type(name) {
                 Some(mime) => images.push((path, mime.to_owned())),
                 None => uploads.push(UploadFile {
@@ -1687,7 +2231,11 @@ impl WaNewTabView {
             }
         }
         if !images.is_empty() {
-            let id = ctx.core.operation(&self.target.host_id, move |_client| async move { Ok(encode_images(images)) });
+            let id = ctx
+                .core
+                .operation(&self.target.host_id, move |_client| async move {
+                    Ok(encode_images(images))
+                });
             self.pending.track(id, "images", Req::Images);
         }
         if !uploads.is_empty() {
@@ -1695,7 +2243,11 @@ impl WaNewTabView {
         }
     }
 
-    fn platform_call(&mut self, kind: PlatformReq, call: impl FnOnce(&paseo_gui_platform::PlatformHandle) -> u64) {
+    fn platform_call(
+        &mut self,
+        kind: PlatformReq,
+        call: impl FnOnce(&paseo_gui_platform::PlatformHandle) -> u64,
+    ) {
         if let Some(handle) = platform() {
             let id = call(&handle);
             self.platform_requests.insert(id, kind);
@@ -1717,7 +2269,8 @@ impl WaNewTabView {
             if let Some(text) = view.wa_input(path).changed(actions) {
                 *field(self) = text;
                 if index == 2 {
-                    self.existing = !self.target.workspace_id.is_empty() && self.path.trim() == self.target.cwd;
+                    self.existing =
+                        !self.target.workspace_id.is_empty() && self.path.trim() == self.target.cwd;
                     self.terminal_workspace = None;
                     // Directory edits refresh the catalog after 350ms.
                     cx.stop_timer(self.directory_timer);
@@ -1757,7 +2310,8 @@ impl WaNewTabView {
                 .map(|h| SelectOption::new(h.id(), h.label()).leading(Leading::Status(h.status())))
                 .collect();
             options.push(SelectOption::new("\u{0}add-host", l("Add host")).glyph("plus"));
-            let request = SelectRequest::new(t("newWorkspace.fields.host"), options).selected(Some(&self.target.host_id));
+            let request = SelectRequest::new(t("newWorkspace.fields.host"), options)
+                .selected(Some(&self.target.host_id));
             view.wa_select(id!(select)).open(cx, "host", request);
         }
         if view.wa_trigger(id!(launch_field)).clicked(actions) && !pending_intent && !self.busy {
@@ -1765,31 +2319,54 @@ impl WaNewTabView {
             // profiles row are not offered (no profile support in this client).
             let options = vec![
                 SelectOption::new("chat", t("newWorkspace.launch.chat")).glyph("message-circle"),
-                SelectOption::new("terminal", t("newWorkspace.launch.terminal")).glyph("square-terminal"),
+                SelectOption::new("terminal", t("newWorkspace.launch.terminal"))
+                    .glyph("square-terminal"),
             ];
             let selected = if self.terminal() { "terminal" } else { "chat" };
-            let request = SelectRequest::new(t("newWorkspace.launch.title"), options).selected(Some(selected));
+            let request = SelectRequest::new(t("newWorkspace.launch.title"), options)
+                .selected(Some(selected));
             view.wa_select(id!(select)).open(cx, "launch", request);
         }
         // Composer toolbar.
         if view.wa_button(id!(attach)).clicked(actions) && self.connected && !locked {
             self.ensure_attachment_forge(ctx);
-            let mut entries = vec![MenuItem::new("image", t("composer.attachments.addImage")).icon("image").entry()];
+            let mut entries = vec![
+                MenuItem::new("image", t("composer.attachments.addImage"))
+                    .icon("image")
+                    .entry(),
+            ];
             if host::is_mobile() {
-                entries.push(MenuItem::new("paste", t("composer.attachments.pasteImage")).icon("clipboard-paste").entry());
+                entries.push(
+                    MenuItem::new("paste", t("composer.attachments.pasteImage"))
+                        .icon("clipboard-paste")
+                        .entry(),
+                );
             }
-            let forge_label = if self.gitlab() { t("composer.attachments.addIssueOrPr_mr") } else { t("composer.attachments.addIssueOrPr") };
+            let forge_label = if self.gitlab() {
+                t("composer.attachments.addIssueOrPr_mr")
+            } else {
+                t("composer.attachments.addIssueOrPr")
+            };
             let forge = MenuItem::new("forge", forge_label);
             let forge = match crate::common::icons::forge_brand_svg(&self.attachment_forge) {
                 Some(svg) => forge.svg(svg),
                 None => forge.icon("git-pull-request"),
             };
             entries.push(forge.entry());
-            entries.push(MenuItem::new("file", t("composer.attachments.addFile")).icon("paperclip").entry());
+            entries.push(
+                MenuItem::new("file", t("composer.attachments.addFile"))
+                    .icon("paperclip")
+                    .entry(),
+            );
             let anchor = view.wa_button(id!(attach)).rect(cx);
             let owner = overlay::widget_owner(self.widget_uid());
             self.attachment_menu = Some(overlay::with_owner(ctx, &owner, |ctx| {
-                overlay::open_menu(ctx, anchor, Some(t("composer.input.addAttachment")), entries)
+                overlay::open_menu(
+                    ctx,
+                    anchor,
+                    Some(t("composer.input.addAttachment")),
+                    entries,
+                )
             }));
         }
         if view.surface(id!(model_trigger)).clicked(actions) && !locked {
@@ -1806,16 +2383,33 @@ impl WaNewTabView {
             self.pick_thinking(cx);
         }
         let features = view.wa_repeat(id!(features));
-        if let Some(index) = features.items().iter().position(|item| item.as_wa_button().clicked(actions)) && let Some(feature) = self.visible_features().get(index).cloned() {
+        if let Some(index) = features
+            .items()
+            .iter()
+            .position(|item| item.as_wa_button().clicked(actions))
+            && let Some(feature) = self.visible_features().get(index).cloned()
+        {
             self.pick_feature(cx, ctx, &feature);
         }
         let images = view.wa_repeat(id!(images));
-        if let Some(index) = images.items().iter().position(|item| item.as_wa_attachment_pill().removed(actions)) && !locked && index < self.images.len() {
+        if let Some(index) = images
+            .items()
+            .iter()
+            .position(|item| item.as_wa_attachment_pill().removed(actions))
+            && !locked
+            && index < self.images.len()
+        {
             self.images.remove(index);
             self.view.redraw(cx);
         }
         let files = view.wa_repeat(id!(files));
-        if let Some(index) = files.items().iter().position(|item| item.as_wa_attachment_pill().removed(actions)) && !locked && index < self.attachments.len() {
+        if let Some(index) = files
+            .items()
+            .iter()
+            .position(|item| item.as_wa_attachment_pill().removed(actions))
+            && !locked
+            && index < self.attachments.len()
+        {
             let removed = self.attachments.remove(index);
             self.forge_auto.mark_removed(&removed);
             self.sync_forge(cx, ctx);
@@ -1823,7 +2417,10 @@ impl WaNewTabView {
         }
         // Bottom row and options.
         if view.wa_button(id!(import_session)).clicked(actions) {
-            ctx.effects.push(UiEffect::RunCommand { action: "session.import".into(), args: json!({ "serverId": self.target.host_id }) });
+            ctx.effects.push(UiEffect::RunCommand {
+                action: "session.import".into(),
+                args: json!({ "serverId": self.target.host_id }),
+            });
         }
         if view.wa_button(id!(options_toggle)).clicked(actions) {
             self.options_open = !self.options_open;
@@ -1831,9 +2428,22 @@ impl WaNewTabView {
         }
         if view.wa_button(id!(source)).clicked(actions) {
             let glyphs = ["folder", "download", "folder-plus"];
-            let labels = [l("Existing checkout or directory"), l("Clone GitHub repository"), l("Create remote directory")];
-            let options = model::SOURCES.iter().zip(labels).zip(glyphs).map(|((id, label), glyph)| SelectOption::new(*id, label).glyph(glyph)).collect();
-            view.wa_select(id!(select)).open(cx, "source", SelectRequest::new(l("Directory source"), options).selected(Some(&self.source)));
+            let labels = [
+                l("Existing checkout or directory"),
+                l("Clone GitHub repository"),
+                l("Create remote directory"),
+            ];
+            let options = model::SOURCES
+                .iter()
+                .zip(labels)
+                .zip(glyphs)
+                .map(|((id, label), glyph)| SelectOption::new(*id, label).glyph(glyph))
+                .collect();
+            view.wa_select(id!(select)).open(
+                cx,
+                "source",
+                SelectRequest::new(l("Directory source"), options).selected(Some(&self.source)),
+            );
         }
         if view.wa_button(id!(browse)).clicked(actions) {
             self.open_browser(cx, ctx.compact);
@@ -1844,7 +2454,13 @@ impl WaNewTabView {
         if view.wa_button(id!(repo_field.search)).clicked(actions) && !locked {
             self.busy = true;
             self.error = None;
-            self.pending.send(&ctx.core, &self.target.host_id, "workspace.github.search_repositories.request", json!({ "query": self.repo.trim(), "limit": 30 }), Req::SearchRepos);
+            self.pending.send(
+                &ctx.core,
+                &self.target.host_id,
+                "workspace.github.search_repositories.request",
+                json!({ "query": self.repo.trim(), "limit": 30 }),
+                Req::SearchRepos,
+            );
         }
         if let Some(protocol) = view.psegmented(id!(protocol)).changed(actions) {
             self.clone_protocol = protocol;
@@ -1857,8 +2473,13 @@ impl WaNewTabView {
         if view.wa_button(id!(recover)).clicked(actions) && !self.busy {
             self.recover(ctx);
         }
-        if view.wa_button(id!(open_session)).clicked(actions) && let Some(snapshot) = &self.snapshot {
-            ctx.effects.push(UiEffect::OpenSession { host_id: self.target.host_id.clone(), agent_id: str_of(snapshot, "agentId").to_owned() });
+        if view.wa_button(id!(open_session)).clicked(actions)
+            && let Some(snapshot) = &self.snapshot
+        {
+            ctx.effects.push(UiEffect::OpenSession {
+                host_id: self.target.host_id.clone(),
+                agent_id: str_of(snapshot, "agentId").to_owned(),
+            });
         }
         if view.wa_button(id!(new_attempt)).clicked(actions) && !self.busy {
             view.wa_dialog(id!(dialog)).confirm(
@@ -1871,7 +2492,10 @@ impl WaNewTabView {
             );
         }
         if view.wa_dialog(id!(dialog)).confirmed(actions).as_deref() == Some("new-attempt")
-            && self.snapshot.as_ref().is_some_and(|s| str_of(s, "phase") == "failed")
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| str_of(s, "phase") == "failed")
         {
             self.persist_intent(ctx, None);
             self.observation = None;
@@ -1884,7 +2508,6 @@ impl WaNewTabView {
         self.handle_folder(cx, actions, ctx);
     }
 
-
     fn open_project_picker(&mut self, cx: &mut Cx, ctx: &UiContext) {
         let Some(host) = self.host(ctx) else { return };
         let mut options: Vec<SelectOption> = host
@@ -1895,34 +2518,59 @@ impl WaNewTabView {
                 let name = host::project_name(p);
                 SelectOption::new(project_root(p), name.clone())
                     .description(project_root(p))
-                    .leading(Leading::Project(name, project_view_key(&self.target.host_id, p)))
+                    .leading(Leading::Project(
+                        name,
+                        project_view_key(&self.target.host_id, p),
+                    ))
             })
             .collect();
         let separated = !options.is_empty();
-        options.push(SelectOption::new("\u{0}browse", t("sidebar.actions.addProject")).glyph("folder-plus").separated(separated));
+        options.push(
+            SelectOption::new("\u{0}browse", t("sidebar.actions.addProject"))
+                .glyph("folder-plus")
+                .separated(separated),
+        );
         let request = SelectRequest::new(t("newWorkspace.fields.project"), options)
             .selected(Some(self.path.trim()))
             .searchable(l("Search projects"))
             .empty(l("No projects available."));
-        self.view.wa_select(id!(select)).open(cx, "project", request);
+        self.view
+            .wa_select(id!(select))
+            .open(cx, "project", request);
     }
 
     fn open_browser(&mut self, cx: &mut Cx, compact: bool) {
-        let cwd = if self.path.trim().is_empty() { "~".to_owned() } else { self.path.trim().to_owned() };
-        self.view.widget(id!(folder_modal.sheet.header.title)).set_text(cx, &t("workspace.folderPicker.title"));
+        let cwd = if self.path.trim().is_empty() {
+            "~".to_owned()
+        } else {
+            self.path.trim().to_owned()
+        };
+        self.view
+            .widget(id!(folder_modal.sheet.header.title))
+            .set_text(cx, &t("workspace.folderPicker.title"));
         // The modal clamps the body to the window: an oversized body fills a phone's height.
         let body_height = if compact { 10_000.0 } else { 495.0 };
-        self.view.widget(id!(folder_modal.sheet.body)).apply_over(cx, live! { height: (body_height) });
-        self.view.remote_folder_picker(id!(picker)).open(cx, &self.target.host_id, &cwd);
+        self.view
+            .widget(id!(folder_modal.sheet.body))
+            .apply_over(cx, live! { height: (body_height) });
+        self.view
+            .remote_folder_picker(id!(picker))
+            .open(cx, &self.target.host_id, &cwd);
         self.view.wa_modal(id!(folder_modal)).open(cx);
     }
 
     fn handle_folder(&mut self, cx: &mut Cx, actions: &Actions, ctx: &mut UiContext) {
         let modal = self.view.wa_modal(id!(folder_modal));
-        if self.view.wa_button(id!(folder_modal.sheet.header.close)).clicked(actions) {
+        if self
+            .view
+            .wa_button(id!(folder_modal.sheet.header.close))
+            .clicked(actions)
+        {
             modal.close(cx);
         }
-        for action in actions.filter_widget_actions(self.view.remote_folder_picker(id!(picker)).widget_uid()) {
+        for action in
+            actions.filter_widget_actions(self.view.remote_folder_picker(id!(picker)).widget_uid())
+        {
             match action.cast::<RemoteFolderPickerAction>() {
                 RemoteFolderPickerAction::Selected(path) => {
                     modal.close(cx);
@@ -1948,14 +2596,24 @@ impl WaNewTabView {
             return self.fail(ctx, l("Enter a directory name.").into(), false);
         }
         if self.source == "clone" && self.repo.trim().is_empty() {
-            return self.fail(ctx, l("Choose a repository or enter owner/repository.").into(), false);
+            return self.fail(
+                ctx,
+                l("Choose a repository or enter owner/repository.").into(),
+                false,
+            );
         }
         self.preparation_unknown = true;
         self.busy = true;
         let (request, fields) = if self.source == "clone" {
-            ("project.github.clone", json!({ "repo": self.repo.trim(), "cloneProtocol": self.clone_protocol, "targetDirectory": self.path.trim() }))
+            (
+                "project.github.clone",
+                json!({ "repo": self.repo.trim(), "cloneProtocol": self.clone_protocol, "targetDirectory": self.path.trim() }),
+            )
         } else {
-            ("project.create_directory", json!({ "parentPath": self.path.trim(), "name": self.directory_name.trim() }))
+            (
+                "project.create_directory",
+                json!({ "parentPath": self.path.trim(), "name": self.directory_name.trim() }),
+            )
         };
         let id = ctx.core.request_with_timeout(
             &self.target.host_id,
@@ -1967,7 +2625,9 @@ impl WaNewTabView {
     }
 
     fn handle_picks(&mut self, cx: &mut Cx, actions: &Actions, ctx: &mut UiContext) {
-        let Some((token, value)) = self.view.wa_select(id!(select)).picked(actions) else { return };
+        let Some((token, value)) = self.view.wa_select(id!(select)).picked(actions) else {
+            return;
+        };
         self.handle_pick(cx, &token, value, ctx);
     }
 
@@ -1984,8 +2644,14 @@ impl WaNewTabView {
                     "creationDraft".into(),
                     json!({ "title": self.title, "prompt": self.prompt, "config": self.config, "launch": launch }),
                 );
-                let target = PanelTarget::new("new_tab", &value, "", "").with_id(new_id()).with_title(t("sessionNavigation.newSession")).with_data(Value::Object(data));
-                ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
+                let target = PanelTarget::new("new_tab", &value, "", "")
+                    .with_id(new_id())
+                    .with_title(t("sessionNavigation.newSession"))
+                    .with_data(Value::Object(data));
+                ctx.effects.push(UiEffect::ReplaceTab {
+                    tab_key: self.target.tab_key.clone(),
+                    target,
+                });
             }
             "launch" => {
                 let terminal = value == "terminal";
@@ -1996,11 +2662,17 @@ impl WaNewTabView {
             }
             "repo" => {
                 self.repo = value;
-                sync_input(cx, &self.view.wa_input(id!(repo_field.row.input_box)), &self.repo);
+                sync_input(
+                    cx,
+                    &self.view.wa_input(id!(repo_field.row.input_box)),
+                    &self.repo,
+                );
             }
             "source" => {
                 self.source = value;
-                self.existing = self.source == "directory" && !self.target.workspace_id.is_empty() && self.path.trim() == self.target.cwd;
+                self.existing = self.source == "directory"
+                    && !self.target.workspace_id.is_empty()
+                    && self.path.trim() == self.target.cwd;
             }
             "model" => {
                 if let Some((provider, model_id)) = value.split_once('\u{0}') {
@@ -2011,7 +2683,11 @@ impl WaNewTabView {
                 }
             }
             "mode" | "thinking" => {
-                let key = if token == "mode" { "modeId" } else { "thinkingOptionId" };
+                let key = if token == "mode" {
+                    "modeId"
+                } else {
+                    "thinkingOptionId"
+                };
                 let mut next = self.config.clone();
                 next[key] = value.into();
                 self.change_config(ctx, next);
@@ -2022,22 +2698,35 @@ impl WaNewTabView {
                 "mode" => self.pick_mode(cx),
                 other => {
                     let id = other.strip_prefix("feature:").unwrap_or_default();
-                    if let Some(feature) = self.visible_features().into_iter().find(|f| str_of(f, "id") == id) {
+                    if let Some(feature) = self
+                        .visible_features()
+                        .into_iter()
+                        .find(|f| str_of(f, "id") == id)
+                    {
                         self.pick_feature(cx, ctx, &feature);
                     }
                 }
             },
             "attach" => match value.as_str() {
                 "image" => self.platform_call(PlatformReq::PickImages, |p| {
-                    p.pick_files(PickFilesOptions { multiple: true, images_only: true, title: Some(t("composer.attachments.addImage")) })
+                    p.pick_files(PickFilesOptions {
+                        multiple: true,
+                        images_only: true,
+                        title: Some(t("composer.attachments.addImage")),
+                    })
                 }),
                 "paste" => self.platform_call(PlatformReq::Paste, |p| p.read_clipboard(true)),
                 "file" => self.platform_call(PlatformReq::PickFiles, |p| {
-                    p.pick_files(PickFilesOptions { multiple: true, images_only: false, title: Some(t("composer.attachments.addFile")) })
+                    p.pick_files(PickFilesOptions {
+                        multiple: true,
+                        images_only: false,
+                        title: Some(t("composer.attachments.addFile")),
+                    })
                 }),
                 "forge" => {
                     self.busy = true;
-                    let (message, response) = forge::forge_search_request(self.legacy_forge, self.path.trim(), "");
+                    let (message, response) =
+                        forge::forge_search_request(self.legacy_forge, self.path.trim(), "");
                     let id = ctx.core.request(&self.target.host_id, message, response);
                     self.pending.track(id, "forge.picker", Req::ForgePicker);
                 }
@@ -2045,18 +2734,25 @@ impl WaNewTabView {
             },
             // `handleToggleGithubItem`: an attached item is removed, any other attached.
             "forge" => {
-                if let Some(item) = self.forge_items.iter().find(|i| attachments::forge_item_key(i) == value).cloned() {
-                    let position = self
-                        .attachments
-                        .iter()
-                        .position(|a| attachments::forge_labels(a).is_some() && attachments::forge_item_key(a) == value);
+                if let Some(item) = self
+                    .forge_items
+                    .iter()
+                    .find(|i| attachments::forge_item_key(i) == value)
+                    .cloned()
+                {
+                    let position = self.attachments.iter().position(|a| {
+                        attachments::forge_labels(a).is_some()
+                            && attachments::forge_item_key(a) == value
+                    });
                     match position {
                         // A picker removal never re-attaches.
                         Some(index) => {
                             let removed = self.attachments.remove(index);
                             self.forge_auto.mark_removed(&removed);
                         }
-                        None => self.attachments.push(attachments::forge_attachment(&item, self.legacy_forge)),
+                        None => self
+                            .attachments
+                            .push(attachments::forge_attachment(&item, self.legacy_forge)),
                     }
                     self.sync_forge(cx, ctx);
                 }
@@ -2094,24 +2790,41 @@ impl WaNewTabView {
             let column = width.min(820.0);
             if (column - self.column_width).abs() > 0.5 {
                 self.column_width = column;
-                view.widget(id!(column)).apply_over(cx, live! { width: (column) });
+                view.widget(id!(column))
+                    .apply_over(cx, live! { width: (column) });
                 // Original `inputWrapper` below the 720px breakpoint: 8 top/bottom and 12
                 // side insets, the button row 6 from the border (12 − 6), no gap between
                 // "+" and the model trigger; the compact dock is bottom-anchored with no
                 // reserved space under the card.
-                let (card_bottom, box_top, box_side, bar_side, gap, scroll_bottom) =
-                    if self.compact { (8.0, 8.0, 12.0, 6.0, 0.0, 0.0) } else { (12.0, 16.0, 16.0, 10.0, 4.0, 60.0) };
-                if self.compact {
-                    view.widget(id!(fields)).apply_over(cx, live! { flow: Down });
+                let (card_bottom, box_top, box_side, bar_side, gap, scroll_bottom) = if self.compact
+                {
+                    (8.0, 8.0, 12.0, 6.0, 0.0, 0.0)
                 } else {
-                    view.widget(id!(fields)).apply_over(cx, live! { flow: Right });
+                    (12.0, 16.0, 16.0, 10.0, 4.0, 60.0)
+                };
+                if self.compact {
+                    view.widget(id!(fields))
+                        .apply_over(cx, live! { flow: Down });
+                } else {
+                    view.widget(id!(fields))
+                        .apply_over(cx, live! { flow: Right });
                 }
-                view.widget(id!(composer.card)).apply_over(cx, live! { padding: { bottom: (card_bottom) } });
-                view.widget(id!(prompt_box)).apply_over(cx, live! { padding: { left: (box_side), right: (box_side), top: (box_top) } });
-                view.widget(id!(toolbar)).apply_over(cx, live! { padding: { left: (bar_side), right: (bar_side) } });
-                view.widget(id!(agent_controls)).apply_over(cx, live! { spacing: (gap) });
-                view.widget(id!(scroll)).apply_over(cx, live! { padding: { bottom: (scroll_bottom) } });
-                view.widget(id!(prompt.input)).apply_over(cx, live! { return_key_submits: (!self.compact) });
+                view.widget(id!(composer.card))
+                    .apply_over(cx, live! { padding: { bottom: (card_bottom) } });
+                view.widget(id!(prompt_box)).apply_over(
+                    cx,
+                    live! { padding: { left: (box_side), right: (box_side), top: (box_top) } },
+                );
+                view.widget(id!(toolbar)).apply_over(
+                    cx,
+                    live! { padding: { left: (bar_side), right: (bar_side) } },
+                );
+                view.widget(id!(agent_controls))
+                    .apply_over(cx, live! { spacing: (gap) });
+                view.widget(id!(scroll))
+                    .apply_over(cx, live! { padding: { bottom: (scroll_bottom) } });
+                view.widget(id!(prompt.input))
+                    .apply_over(cx, live! { return_key_submits: (!self.compact) });
             }
         }
         if !self.synced {
@@ -2124,8 +2837,10 @@ impl WaNewTabView {
             }
             // Native composer: 30px minimum input (6px vertical inset) and 20px glyphs.
             if host::is_mobile() {
-                view.widget(id!(prompt.input)).apply_over(cx, live! { padding: { top: 6., bottom: 6. } });
-                view.widget(id!(provider)).apply_over(cx, live! { width: 20., height: 20. });
+                view.widget(id!(prompt.input))
+                    .apply_over(cx, live! { padding: { top: 6., bottom: 6. } });
+                view.widget(id!(provider))
+                    .apply_over(cx, live! { width: 20., height: 20. });
             }
         }
         let pending_intent = self.intent.is_some();
@@ -2135,13 +2850,22 @@ impl WaNewTabView {
         let card = view.widget(id!(pending));
         card.set_visible(cx, pending_intent);
         if let Some(intent) = &self.intent {
-            let phase = self.snapshot.as_ref().map(|s| str_of(s, "phase").to_owned()).unwrap_or_else(|| l("awaiting confirmation").to_owned());
-            card.widget(id!(row.body.label)).set_text(cx, &lf("Creation: {phase}", &[("phase", &phase)]));
+            let phase = self
+                .snapshot
+                .as_ref()
+                .map(|s| str_of(s, "phase").to_owned())
+                .unwrap_or_else(|| l("awaiting confirmation").to_owned());
+            card.widget(id!(row.body.label))
+                .set_text(cx, &lf("Creation: {phase}", &[("phase", &phase)]));
             let mut hint = vec![
                 lf("Receipt: {key}", &[("key", str_of(object_of(intent, "request"), "idempotencyKey"))]),
                 l("The original request is retained. Recover its receipt instead of creating a duplicate.").to_owned(),
             ];
-            if self.snapshot.as_ref().is_some_and(|s| super::rpc::flag(s, "outcomeUnknown")) {
+            if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| super::rpc::flag(s, "outcomeUnknown"))
+            {
                 hint.push(l("The host reports an unknown outcome. Inspect the created resources before proceeding.").to_owned());
             }
             set_optional(cx, &card.widget(id!(row.body.hint)), &hint.join("\n"));
@@ -2166,12 +2890,28 @@ impl WaNewTabView {
         };
         set_optional(cx, &view.widget(id!(notice)), notice);
         // Compact shows the New session title in the header; Add project names itself here.
-        let heading = if add_project { t("sidebar.actions.addProject") } else if self.compact { String::new() } else { t("sessionNavigation.newSession") };
+        let heading = if add_project {
+            t("sidebar.actions.addProject")
+        } else if self.compact {
+            String::new()
+        } else {
+            t("sessionNavigation.newSession")
+        };
         set_optional(cx, &view.widget(id!(heading)), &heading);
 
         // Field triggers.
-        let projects: Vec<Value> = host.map(|h| h.projects().iter().filter(|p| !project_root(p).is_empty()).cloned().collect()).unwrap_or_default();
-        let selected = projects.iter().find(|p| project_root(p) == self.path.trim());
+        let projects: Vec<Value> = host
+            .map(|h| {
+                h.projects()
+                    .iter()
+                    .filter(|p| !project_root(p).is_empty())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let selected = projects
+            .iter()
+            .find(|p| project_root(p) == self.path.trim());
         let project_name = match selected {
             Some(project) => host::project_name(project),
             None if self.path.is_empty() => l("Choose project").to_owned(),
@@ -2180,7 +2920,10 @@ impl WaNewTabView {
         let tip = |key: &str| if self.compact { String::new() } else { t(key) };
         let project_lead = match selected {
             Some(project) => TriggerLead::Project {
-                fill: super::identity::rgb(super::identity::identity_fill(&project_view_key(&self.target.host_id, project))),
+                fill: super::identity::rgb(super::identity::identity_fill(&project_view_key(
+                    &self.target.host_id,
+                    project,
+                ))),
                 initial: super::identity::project_initial(&project_name),
             },
             None => TriggerLead::Icon("folder"),
@@ -2190,26 +2933,59 @@ impl WaNewTabView {
         // same directory only shows while those options are collapsed.
         let show_project = !(add_project && self.options_open);
         project_trigger.set_visible(cx, show_project);
-        project_trigger.set(cx, &t("newWorkspace.fields.project"), &project_name, &tip("newWorkspace.tooltips.project"), project_lead);
+        project_trigger.set(
+            cx,
+            &t("newWorkspace.fields.project"),
+            &project_name,
+            &tip("newWorkspace.tooltips.project"),
+            project_lead,
+        );
         project_trigger.set_enabled(cx, !pending_intent);
         let host_status = host.map(|h| h.status()).unwrap_or(Connection::Disconnected);
         let host_trigger = view.wa_trigger(id!(host_field));
-        let host_label = host.map(|h| h.label()).unwrap_or_else(|| l("Host").to_owned());
-        host_trigger.set(cx, &t("newWorkspace.fields.host"), &host_label, &tip("newWorkspace.tooltips.host"), TriggerLead::Status(host_status));
+        let host_label = host
+            .map(|h| h.label())
+            .unwrap_or_else(|| l("Host").to_owned());
+        host_trigger.set(
+            cx,
+            &t("newWorkspace.fields.host"),
+            &host_label,
+            &tip("newWorkspace.tooltips.host"),
+            TriggerLead::Status(host_status),
+        );
         host_trigger.set_enabled(cx, !pending_intent);
         let terminal = self.terminal();
         let launch = view.wa_trigger(id!(launch_field));
         launch.set_visible(cx, !add_project);
-        let (launch_label, launch_icon) = if terminal { (t("newWorkspace.launch.terminal"), "square-terminal") } else { (t("newWorkspace.launch.chat"), "message-circle") };
-        launch.set(cx, &t("newWorkspace.launch.title"), &launch_label, &tip("newWorkspace.tooltips.launch"), TriggerLead::Icon(launch_icon));
+        let (launch_label, launch_icon) = if terminal {
+            (t("newWorkspace.launch.terminal"), "square-terminal")
+        } else {
+            (t("newWorkspace.launch.chat"), "message-circle")
+        };
+        launch.set(
+            cx,
+            &t("newWorkspace.launch.title"),
+            &launch_label,
+            &tip("newWorkspace.tooltips.launch"),
+            TriggerLead::Icon(launch_icon),
+        );
         launch.set_enabled(cx, !pending_intent && !self.busy);
-        view.widget(id!(fields.spacer)).set_visible(cx, !self.compact);
+        view.widget(id!(fields.spacer))
+            .set_visible(cx, !self.compact);
         if !self.compact && self.column_width > 0.0 {
             // Launch keeps its badge at the row's end; the selectors share the rest
             // (16px row insets, 8px between the selectors, spacer and launch).
-            let launch_w = if add_project { 0.0 } else { launch.badge_width(cx).min(240.0) };
+            let launch_w = if add_project {
+                0.0
+            } else {
+                launch.badge_width(cx).min(240.0)
+            };
             let selectors = [(&project_trigger, show_project), (&host_trigger, true)];
-            let naturals: Vec<f64> = selectors.iter().filter(|(_, shown)| *shown).map(|(trigger, _)| trigger.badge_width(cx)).collect();
+            let naturals: Vec<f64> = selectors
+                .iter()
+                .filter(|(_, shown)| *shown)
+                .map(|(trigger, _)| trigger.badge_width(cx))
+                .collect();
             let gaps = naturals.len() + usize::from(!add_project);
             let available = self.column_width - 32.0 - launch_w - 8.0 * gaps as f64;
             let cap = shared_cap(&naturals, available, 240.0);
@@ -2220,13 +2996,21 @@ impl WaNewTabView {
 
         // Composer card (original `inputWrapper`: 16/16/12 insets at ≥720px, else 8/12).
         // A Terminal launch takes no attachments (`NO_TERMINAL_ATTACHMENTS`).
-        let has_tray = !terminal && (!self.images.is_empty() || !self.attachments.is_empty() || self.upload_name.is_some());
+        let has_tray = !terminal
+            && (!self.images.is_empty()
+                || !self.attachments.is_empty()
+                || self.upload_name.is_some());
         view.widget(id!(tray)).set_visible(cx, has_tray);
         let locked = self.busy || pending_intent;
         let images = view.wa_repeat(id!(images));
         images.set_count(cx, self.images.len());
         for (index, image) in self.images.iter().enumerate() {
-            images.item(cx, index).as_wa_attachment_pill().set(cx, PillBody::Image(image.clone()), true, !locked);
+            images.item(cx, index).as_wa_attachment_pill().set(
+                cx,
+                PillBody::Image(image.clone()),
+                true,
+                !locked,
+            );
         }
         let files = view.wa_repeat(id!(files));
         files.set_count(cx, self.attachments.len());
@@ -2238,13 +3022,30 @@ impl WaNewTabView {
                 attachments::AttachmentGlyph::GitPullRequest => "git-pull-request",
             };
             let subtitle = subtitle.unwrap_or_else(|| t("message.attachments.file"));
-            files.item(cx, index).as_wa_attachment_pill().set(cx, PillBody::Label { icon, title, subtitle }, true, !locked);
+            files.item(cx, index).as_wa_attachment_pill().set(
+                cx,
+                PillBody::Label {
+                    icon,
+                    title,
+                    subtitle,
+                },
+                true,
+                !locked,
+            );
         }
         let uploading = view.wa_attachment_pill(id!(uploading));
         uploading.set_visible(cx, self.upload_name.is_some());
         if let Some(name) = &self.upload_name {
             let subtitle = attachments::file_type_label(name).unwrap_or_default();
-            uploading.set(cx, PillBody::Pending { title: name.clone(), subtitle }, false, false);
+            uploading.set(
+                cx,
+                PillBody::Pending {
+                    title: name.clone(),
+                    subtitle,
+                },
+                false,
+                false,
+            );
         }
         // A Terminal launch replaces the composer with one Open terminal action.
         view.widget(id!(composer)).set_visible(cx, !terminal);
@@ -2252,10 +3053,22 @@ impl WaNewTabView {
         let prompt = view.wa_input(id!(prompt));
         prompt.set_visible(cx, !add_project);
         prompt.set_is_read_only(cx, locked);
-        prompt.set_empty_text(cx, t(if self.compact { "composer.placeholders.mobile" } else { "composer.placeholders.desktop" }));
-        let preview = if !add_project { String::new() } else { t("sidebar.actions.addProject") };
+        prompt.set_empty_text(
+            cx,
+            t(if self.compact {
+                "composer.placeholders.mobile"
+            } else {
+                "composer.placeholders.desktop"
+            }),
+        );
+        let preview = if !add_project {
+            String::new()
+        } else {
+            t("sidebar.actions.addProject")
+        };
         set_optional(cx, &view.widget(id!(title_preview)), &preview);
-        view.widget(id!(agent_controls)).set_visible(cx, !add_project);
+        view.widget(id!(agent_controls))
+            .set_visible(cx, !add_project);
         let attach = view.wa_button(id!(attach));
         attach.set_enabled(cx, self.connected && !locked);
         attach.set_tooltip(cx, &t("composer.input.addAttachment"));
@@ -2264,30 +3077,45 @@ impl WaNewTabView {
         // feature controls with carets on wide layouts.
         let provider = str_of(&self.config, "provider").to_owned();
         let model_label = match self.current_model() {
-            Some(model) if !provider.is_empty() => controls_model::short_model_label(&controls_model::model_label(&model)),
+            Some(model) if !provider.is_empty() => {
+                controls_model::short_model_label(&controls_model::model_label(&model))
+            }
             _ if self.providers_loading => t("providerSelection.loading"),
             _ => t("providerSelection.selectModel"),
         };
         let trigger = view.widget(id!(model_trigger));
         let provider_icon = trigger.provider_icon(id!(provider));
-        trigger.widget(id!(provider_box)).set_visible(cx, !provider.trim().is_empty());
+        trigger
+            .widget(id!(provider_box))
+            .set_visible(cx, !provider.trim().is_empty());
         if !provider.trim().is_empty() {
-            let svg = self.entry().map(|e| str_of(e, "iconSvg").to_owned()).filter(|svg| !svg.is_empty());
+            let svg = self
+                .entry()
+                .map(|e| str_of(e, "iconSvg").to_owned())
+                .filter(|svg| !svg.is_empty());
             provider_icon.set_provider(cx, &provider, svg.as_deref());
         }
         trigger.widget(id!(label)).set_text(cx, &model_label);
         trigger.wa_icon(id!(caret)).set_visible(cx, !self.compact);
-        let modes = self.entry().map(|e| array_of(e, "modes").to_vec()).unwrap_or_default();
+        let modes = self
+            .entry()
+            .map(|e| array_of(e, "modes").to_vec())
+            .unwrap_or_default();
         let mode_id = str_of(&self.config, "modeId");
         let selected_mode = modes.iter().find(|m| str_of(m, "id") == mode_id);
         let mode = view.wa_button(id!(mode));
         mode.set_visible(cx, !modes.is_empty() && !self.compact);
-        let mode_label = selected_mode.map(controls_model::format_agent_mode_label).unwrap_or_else(|| l("Default mode").to_owned());
+        let mode_label = selected_mode
+            .map(controls_model::format_agent_mode_label)
+            .unwrap_or_else(|| l("Default mode").to_owned());
         mode.set_text(cx, &mode_label);
         mode.set_icon(cx, controls_model::mode_icon(selected_mode));
         mode.set_trailing(cx, "chevron-down");
         mode.set_tooltip(cx, &t("agentControls.hints.mode"));
-        let thinking_options = self.current_model().map(|m| array_of(&m, "thinkingOptions").to_vec()).unwrap_or_default();
+        let thinking_options = self
+            .current_model()
+            .map(|m| array_of(&m, "thinkingOptions").to_vec())
+            .unwrap_or_default();
         let thinking = view.wa_button(id!(thinking));
         thinking.set_visible(cx, !thinking_options.is_empty() && !self.compact);
         let thinking_id = str_of(&self.config, "thinkingOptionId");
@@ -2302,44 +3130,93 @@ impl WaNewTabView {
         thinking.set_trailing(cx, "chevron-down");
         thinking.set_tooltip(cx, &t("agentControls.hints.thinking"));
         let inline = trigger.widget(id!(thinking_inline));
-        set_optional(cx, &inline, if self.compact && !thinking_options.is_empty() { &thinking_label } else { "" });
-        let visible_features = if self.compact { Vec::new() } else { self.visible_features() };
+        set_optional(
+            cx,
+            &inline,
+            if self.compact && !thinking_options.is_empty() {
+                &thinking_label
+            } else {
+                ""
+            },
+        );
+        let visible_features = if self.compact {
+            Vec::new()
+        } else {
+            self.visible_features()
+        };
         let features = view.wa_repeat(id!(features));
         features.set_count(cx, visible_features.len());
         for (index, feature) in visible_features.iter().enumerate() {
             let button = features.item(cx, index).as_wa_button();
             let label = str_or(feature, "label", str_of(feature, "id")).to_owned();
             let value = model::feature_value(&self.config, feature);
-            let tint = controls_model::feature_icon_tint(feature, value).map(|[r, g, b, a]| vec4(r, g, b, a));
+            let tint = controls_model::feature_icon_tint(feature, value)
+                .map(|[r, g, b, a]| vec4(r, g, b, a));
             button.set_icon(cx, controls_model::feature_icon(feature));
             button.set_icon_color(cx, tint);
             let tooltip = str_or(feature, "tooltip", &label).to_owned();
             if str_of(feature, "type") == "toggle" || str_of(feature, "desktopTrigger") == "icon" {
                 button.set_text(cx, "");
-                let option = array_of(feature, "options").iter().find(|o| Some(str_of(o, "id")) == value.as_str());
+                let option = array_of(feature, "options")
+                    .iter()
+                    .find(|o| Some(str_of(o, "id")) == value.as_str());
                 let hint = match option {
-                    Some(option) if str_of(feature, "type") != "toggle" => format!("{label}: {}", str_or(option, "label", str_of(option, "id"))),
+                    Some(option) if str_of(feature, "type") != "toggle" => {
+                        format!("{label}: {}", str_or(option, "label", str_of(option, "id")))
+                    }
                     _ => tooltip,
                 };
                 button.set_tooltip(cx, &hint);
             } else {
-                let option = array_of(feature, "options").iter().find(|o| Some(str_of(o, "id")) == value.as_str());
-                button.set_text(cx, option.map(|o| str_or(o, "label", str_of(o, "id"))).unwrap_or(&label));
+                let option = array_of(feature, "options")
+                    .iter()
+                    .find(|o| Some(str_of(o, "id")) == value.as_str());
+                button.set_text(
+                    cx,
+                    option
+                        .map(|o| str_or(o, "label", str_of(o, "id")))
+                        .unwrap_or(&label),
+                );
                 button.set_tooltip(cx, &tooltip);
             }
         }
         let submit = view.wa_button(id!(submit));
         let creating = self.busy || (pending_intent && !self.opened);
         submit.set_busy(cx, creating);
-        submit.set_text(cx, &if !add_project || creating { String::new() } else { t("sidebar.actions.addProject") });
+        submit.set_text(
+            cx,
+            &if !add_project || creating {
+                String::new()
+            } else {
+                t("sidebar.actions.addProject")
+            },
+        );
         submit.set_icon(cx, if !add_project { "corner-down-left" } else { "" });
         submit.set_enabled(cx, self.can_create());
-        submit.set_tooltip(cx, &t(if add_project { "sidebar.actions.addProject" } else { "sessionNavigation.newSession" }));
+        submit.set_tooltip(
+            cx,
+            &t(if add_project {
+                "sidebar.actions.addProject"
+            } else {
+                "sessionNavigation.newSession"
+            }),
+        );
         let open_terminal = view.wa_button(id!(open_terminal));
         open_terminal.set_busy(cx, terminal && creating);
-        open_terminal.set_text(cx, &if creating { String::new() } else { t("newWorkspace.launch.openTerminal") });
+        open_terminal.set_text(
+            cx,
+            &if creating {
+                String::new()
+            } else {
+                t("newWorkspace.launch.openTerminal")
+            },
+        );
         open_terminal.set_enabled(cx, self.can_create());
-        set_optional(cx, &view.widget(id!(error)), self.error.as_deref().unwrap_or(""));
+        set_optional(
+            cx,
+            &view.widget(id!(error)),
+            self.error.as_deref().unwrap_or(""),
+        );
         let import = view.wa_button(id!(import_session));
         import.set_visible(cx, !self.compact);
         import.set_text(cx, &t("importSession.title"));
@@ -2347,9 +3224,17 @@ impl WaNewTabView {
         let toggle = view.wa_button(id!(options_toggle));
         toggle.set_visible(cx, add_project);
         toggle.set_text(cx, l("Directory options"));
-        toggle.set_trailing(cx, if self.options_open { "chevron-up" } else { "chevron-down" });
+        toggle.set_trailing(
+            cx,
+            if self.options_open {
+                "chevron-up"
+            } else {
+                "chevron-down"
+            },
+        );
         toggle.set_pill(cx, !self.compact);
-        view.widget(id!(bottom)).set_visible(cx, !self.compact || add_project);
+        view.widget(id!(bottom))
+            .set_visible(cx, !self.compact || add_project);
         // Options.
         let options = view.widget(id!(options));
         let show_options = add_project && self.options_open;
@@ -2397,11 +3282,16 @@ impl WaNewTabView {
         }
         let Some(inner) = input.borrow() else { return };
         let vertical = if host::is_mobile() { 12.0 } else { 0.0 };
-        let text = if self.prompt.is_empty() { inner.empty_text() } else { &self.prompt };
+        let text = if self.prompt.is_empty() {
+            inner.empty_text()
+        } else {
+            &self.prompt
+        };
         let laid = inner.text_layout(cx, text, Some(editor.size.x as f32));
         let scale = inner.text_scale() as f64;
         let natural = laid.size_in_lpxs.height as f64 * scale + vertical;
-        let line = inner.text_layout(cx, "한Ag", None).size_in_lpxs.height as f64 * scale + vertical;
+        let line =
+            inner.text_layout(cx, "한Ag", None).size_in_lpxs.height as f64 * scale + vertical;
         let cursor = inner.cursor();
         drop(inner);
         // Include the measured toolbar (which can wrap), card spacing, and any
@@ -2422,11 +3312,19 @@ impl WaNewTabView {
             self.prompt_layout = None;
             return;
         }
-        let key = (viewport.size, natural, controls, cursor.index, cursor.prefer_next_row);
+        let key = (
+            viewport.size,
+            natural,
+            controls,
+            cursor.index,
+            cursor.prefer_next_row,
+        );
         if self.prompt_layout.is_none_or(|previous| {
-            previous.0 != key.0 || (previous.1 - natural).abs() > 0.5
+            previous.0 != key.0
+                || (previous.1 - natural).abs() > 0.5
                 || (previous.2 - controls).abs() > 0.5
-                || previous.3 != cursor.index || previous.4 != cursor.prefer_next_row
+                || previous.3 != cursor.index
+                || previous.4 != cursor.prefer_next_row
         }) {
             self.prompt_layout = Some(key);
             self.prompt_reveal = true;
@@ -2440,7 +3338,9 @@ impl WaNewTabView {
         let column = view.widget(id!(column)).area().rect(cx);
         let scroll = (viewport.pos.y - column.pos.y).max(0.0);
         let next = reveal_prompt_scroll(
-            scroll, viewport.size.y, column.size.y,
+            scroll,
+            viewport.size.y,
+            column.size.y,
             editor.pos.y - viewport.pos.y + scroll,
             bottom - viewport.pos.y + scroll,
         );
@@ -2454,11 +3354,15 @@ impl WaNewTabView {
         let view = self.root();
         let source_field = view.widget(id!(source_field));
         source_field.set_visible(cx, !self.existing);
-        source_field.widget(id!(label)).set_text(cx, l("Directory source"));
+        source_field
+            .widget(id!(label))
+            .set_text(cx, l("Directory source"));
         let source_label = match self.source.as_str() {
             "clone" => l("Clone GitHub repository"),
             "new-directory" => l("Create remote directory"),
-            source if !model::SOURCES.contains(&source) => l("Worktree creation is no longer supported. Choose a local directory."),
+            source if !model::SOURCES.contains(&source) => {
+                l("Worktree creation is no longer supported. Choose a local directory.")
+            }
             _ => l("Existing checkout or directory"),
         };
         view.wa_button(id!(source)).set_text(cx, source_label);
@@ -2473,35 +3377,60 @@ impl WaNewTabView {
             "clone" => l("Clone target directory"),
             _ => l("Remote directory"),
         };
-        view.widget(id!(directory_field.label)).set_text(cx, directory_label);
-        view.wa_input(id!(path)).set_is_read_only(cx, self.busy || self.intent.is_some());
+        view.widget(id!(directory_field.label))
+            .set_text(cx, directory_label);
+        view.wa_input(id!(path))
+            .set_is_read_only(cx, self.busy || self.intent.is_some());
         let browse = view.wa_button(id!(browse));
         browse.set_enabled(cx, !self.busy && self.intent.is_none());
         browse.set_tooltip(cx, l("Browse remote directories"));
         let clone = !self.existing && self.source == "clone";
         view.widget(id!(repo_field)).set_visible(cx, clone);
-        view.widget(id!(repo_field.label)).set_text(cx, l("Repository or search query"));
+        view.widget(id!(repo_field.label))
+            .set_text(cx, l("Repository or search query"));
         view.widget(id!(protocol_field)).set_visible(cx, clone);
-        view.widget(id!(protocol_field.label)).set_text(cx, l("Clone protocol"));
-        let segment = |value: &str, label: &str| Segment { value: value.into(), label: label.into(), icon: None, enabled: true };
-        view.psegmented(id!(protocol)).set_options(cx, vec![segment("https", "HTTPS"), segment("ssh", "SSH")], &self.clone_protocol);
-        view.wa_button(id!(repo_field.search)).set_tooltip(cx, l("Search GitHub repositories"));
+        view.widget(id!(protocol_field.label))
+            .set_text(cx, l("Clone protocol"));
+        let segment = |value: &str, label: &str| Segment {
+            value: value.into(),
+            label: label.into(),
+            icon: None,
+            enabled: true,
+        };
+        view.psegmented(id!(protocol)).set_options(
+            cx,
+            vec![segment("https", "HTTPS"), segment("ssh", "SSH")],
+            &self.clone_protocol,
+        );
+        view.wa_button(id!(repo_field.search))
+            .set_tooltip(cx, l("Search GitHub repositories"));
         let new_dir = !self.existing && self.source == "new-directory";
         view.widget(id!(dirname_field)).set_visible(cx, new_dir);
-        view.widget(id!(dirname_field.label)).set_text(cx, l("New directory name"));
+        view.widget(id!(dirname_field.label))
+            .set_text(cx, l("New directory name"));
         let prepare_visible = clone || new_dir;
         set_optional(
             cx,
             &view.widget(id!(unknown)),
             if prepare_visible && self.preparation_unknown {
-                l("The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.")
+                l(
+                    "The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.",
+                )
             } else {
                 ""
             },
         );
-        view.widget(id!(prepare_row)).set_visible(cx, prepare_visible);
+        view.widget(id!(prepare_row))
+            .set_visible(cx, prepare_visible);
         let prepare = view.wa_button(id!(prepare));
-        prepare.set_text(cx, if clone { l("Clone repository") } else { l("Create directory") });
+        prepare.set_text(
+            cx,
+            if clone {
+                l("Clone repository")
+            } else {
+                l("Create directory")
+            },
+        );
         prepare.set_busy(cx, self.busy);
         prepare.set_enabled(cx, !self.preparation_unknown);
         let inspect = view.wa_button(id!(inspect_prepared));
@@ -2519,7 +3448,9 @@ fn encode_images(files: Vec<(std::path::PathBuf, String)>) -> Value {
                 "data": base64::engine::general_purpose::STANDARD.encode(&bytes),
                 "mimeType": attachments::sniff_image_mime(&bytes).unwrap_or(mime.as_str()),
             })),
-            Err(error) => return json!({ "ok": false, "error": { "message": format!("{}: {error}", path.display()) } }),
+            Err(error) => {
+                return json!({ "ok": false, "error": { "message": format!("{}: {error}", path.display()) } });
+            }
         }
     }
     json!({ "ok": true, "payload": { "images": images } })
@@ -2538,10 +3469,17 @@ struct UploadFile {
 fn stat_files(paths: Vec<std::path::PathBuf>) -> Value {
     let mut files = Vec::with_capacity(paths.len());
     for path in paths {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
         match std::fs::metadata(&path) {
-            Ok(metadata) => files.push(json!({ "path": path.to_string_lossy(), "name": name, "size": metadata.len() })),
-            Err(error) => return json!({ "ok": false, "error": { "message": format!("{name}: {error}") } }),
+            Ok(metadata) => files.push(
+                json!({ "path": path.to_string_lossy(), "name": name, "size": metadata.len() }),
+            ),
+            Err(error) => {
+                return json!({ "ok": false, "error": { "message": format!("{name}: {error}") } });
+            }
         }
     }
     json!({ "ok": true, "payload": { "files": files } })
@@ -2587,7 +3525,13 @@ mod shared_cap_tests {
 }
 
 /// A short viewport yields down to one measured line, never an arbitrary desktop cap.
-fn compact_prompt_height(compact: bool, viewport: f64, natural: f64, line: f64, controls: f64) -> Option<f64> {
+fn compact_prompt_height(
+    compact: bool,
+    viewport: f64,
+    natural: f64,
+    line: f64,
+    controls: f64,
+) -> Option<f64> {
     compact.then(|| natural.max(line).min((viewport - controls).max(line)))
 }
 
@@ -2625,7 +3569,8 @@ mod prompt_viewport_tests {
             assert!(prompt_height_changed(height, next));
             height = next;
             for controls in [64.00000672657188, 63.99998230165761] {
-                let measured = compact_prompt_height(true, viewport, 1035.3469848632813, 35.168, controls);
+                let measured =
+                    compact_prompt_height(true, viewport, 1035.3469848632813, 35.168, controls);
                 assert!(!prompt_height_changed(height, measured));
                 let top = 256.0;
                 let bottom = top + height.unwrap() + controls;
@@ -2665,10 +3610,19 @@ mod prompt_viewport_tests {
             assert!(top >= scroll);
             assert!(bottom <= scroll + viewport);
         }
-        assert_eq!(compact_prompt_height(false, 280.0, 1200.0, 30.0, controls), None);
-        assert_eq!(compact_prompt_height(true, 720.0, 30.0, 30.0, controls), Some(30.0));
+        assert_eq!(
+            compact_prompt_height(false, 280.0, 1200.0, 30.0, controls),
+            None
+        );
+        assert_eq!(
+            compact_prompt_height(true, 720.0, 30.0, 30.0, controls),
+            Some(30.0)
+        );
         // Nothing moves when the input and actions are already visible.
-        assert_eq!(reveal_prompt_scroll(100.0, 320.0, 800.0, 120.0, 300.0), 100.0);
+        assert_eq!(
+            reveal_prompt_scroll(100.0, 320.0, 800.0, 120.0, 300.0),
+            100.0
+        );
     }
 }
 
@@ -2707,7 +3661,9 @@ impl Widget for WaNewTabView {
             }
         }
         self.view.handle_event(cx, event, scope);
-        if let Event::Actions(actions) = event && let Some(ctx) = scope.data.get_mut::<UiContext>() {
+        if let Event::Actions(actions) = event
+            && let Some(ctx) = scope.data.get_mut::<UiContext>()
+        {
             self.handle_actions(cx, actions, ctx);
         }
     }
@@ -2723,12 +3679,20 @@ impl Widget for WaNewTabView {
         // top, while a fitting compact form is bottom-docked.
         let view = self.root();
         let viewport = view.widget(id!(scroll)).area().rect(cx).size.y;
-        let content = view.widget(id!(column)).area().rect(cx).size.y + if self.compact { 0.0 } else { 60.0 };
-        let align_y = if viewport > 0.0 && content > viewport { 0.0 } else if self.compact { 1.0 } else { 0.5 };
+        let content =
+            view.widget(id!(column)).area().rect(cx).size.y + if self.compact { 0.0 } else { 60.0 };
+        let align_y = if viewport > 0.0 && content > viewport {
+            0.0
+        } else if self.compact {
+            1.0
+        } else {
+            0.5
+        };
         let alignment_changed = self.scroll_align != Some(align_y);
         if alignment_changed {
             self.scroll_align = Some(align_y);
-            view.widget(id!(scroll)).apply_over(cx, live! { align: { y: (align_y) } });
+            view.widget(id!(scroll))
+                .apply_over(cx, live! { align: { y: (align_y) } });
             cx.redraw_area_in_draw(self.view.area());
         }
         if self.focus_prompt {
@@ -2769,16 +3733,24 @@ mod completion_tests {
             let dir = std::env::temp_dir().join(format!("paseo-creation-{}", new_id()));
             std::fs::create_dir_all(&dir).unwrap();
             let core = GuiCore::start(
-                CoreConfig { state_dir: dir.join("state"), daemon_home: Some(dir.join("daemon")), default_endpoint: None },
+                CoreConfig {
+                    state_dir: dir.join("state"),
+                    daemon_home: Some(dir.join("daemon")),
+                    default_endpoint: None,
+                    tailnet_key_store: None,
+                },
                 Arc::new(|| {}),
-            ).unwrap();
+            )
+            .unwrap();
             let mut cx = Cx::new(Box::new(|_, _| {}));
             let mut view = WaNewTabView::new(&mut cx);
-            let creation = PanelTarget::new("new_tab", "owner-host", "", "/project").with_id("creation");
+            let creation =
+                PanelTarget::new("new_tab", "owner-host", "", "/project").with_id("creation");
             let owner = creation.key();
             let mut layout = Layout::default();
             layout.open(creation, false);
-            let sibling = PanelTarget::agent("other-host", "other-workspace", "/other", "existing", "");
+            let sibling =
+                PanelTarget::agent("other-host", "other-workspace", "/other", "existing", "");
             let sibling_key = sibling.key();
             layout.open(sibling.clone(), true);
             let sibling_pane = layout.focused_pane.clone();
@@ -2787,7 +3759,12 @@ mod completion_tests {
             // The retained form must use its own identity, not current selection.
             ctx.tab_key = Some(sibling_key.clone());
             ctx.target = Some(sibling);
-            view.target = NewTabTarget { host_id: "owner-host".into(), cwd: "/project".into(), tab_key: owner.clone(), ..Default::default() };
+            view.target = NewTabTarget {
+                host_id: "owner-host".into(),
+                cwd: "/project".into(),
+                tab_key: owner.clone(),
+                ..Default::default()
+            };
             view.path = "/project".into();
             view.prompt = "Keep my prompt".into();
             view.title = "Keep my title".into();
@@ -2797,12 +3774,23 @@ mod completion_tests {
                 "request": { "idempotencyKey": "receipt", "source": { "kind": "directory", "cwd": "/project" } }
             }));
             if agent {
-                view.intent.as_mut().unwrap()["request"]["agent"] = json!({ "prompt": view.prompt });
+                view.intent.as_mut().unwrap()["request"]["agent"] =
+                    json!({ "prompt": view.prompt });
             }
             if terminal {
                 view.intent.as_mut().unwrap()["launch"] = json!("terminal");
             }
-            Self { cx, ctx, view, layout, owner, sibling: sibling_key, sibling_pane, core: Some(core), dir }
+            Self {
+                cx,
+                ctx,
+                view,
+                layout,
+                owner,
+                sibling: sibling_key,
+                sibling_pane,
+                core: Some(core),
+                dir,
+            }
         }
 
         fn receipt(agent: bool) -> Value {
@@ -2842,7 +3830,12 @@ mod completion_tests {
 
         fn assert_destination(&self, kind: &str) {
             assert!(self.layout.target(&self.owner).is_none());
-            let pane = self.layout.panes().into_iter().find(|pane| pane.id != self.sibling_pane).unwrap();
+            let pane = self
+                .layout
+                .panes()
+                .into_iter()
+                .find(|pane| pane.id != self.sibling_pane)
+                .unwrap();
             assert_eq!(pane.tabs.len(), 1);
             assert_eq!(pane.selected.as_ref(), pane.tabs.first());
             let destination = self.layout.target(&pane.tabs[0]).unwrap();
@@ -2875,9 +3868,11 @@ mod completion_tests {
                 if receipt_first {
                     h.view.receive(&mut h.ctx, &receipt);
                 }
-                h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response.clone()));
+                h.view
+                    .answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response.clone()));
                 h.view.receive(&mut h.ctx, &receipt);
-                h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response));
+                h.view
+                    .answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response));
                 assert_eq!(h.apply(), 1);
                 h.assert_destination(if agent { "agent" } else { "new_tab" });
                 assert!(h.view.intent.is_none());
@@ -2895,7 +3890,12 @@ mod completion_tests {
             let mut receipt = Harness::receipt(false);
             receipt["phase"] = json!(phase);
             h.view.receive(&mut h.ctx, &receipt);
-            h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(Harness::response(&receipt)));
+            h.view.answer(
+                &mut h.cx,
+                &mut h.ctx,
+                Req::Submit,
+                Ok(Harness::response(&receipt)),
+            );
             assert_eq!(h.apply(), 0);
             assert_eq!(h.layout.to_json(), before);
             assert_eq!(h.view.intent, intent);
@@ -2903,7 +3903,12 @@ mod completion_tests {
             assert_eq!(h.view.title, "Keep my title");
             assert_eq!(h.view.config["model"], "selected-model");
         }
-        h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Err(RpcError::new("Disconnected")));
+        h.view.answer(
+            &mut h.cx,
+            &mut h.ctx,
+            Req::Submit,
+            Err(RpcError::new("Disconnected")),
+        );
         assert_eq!(h.apply(), 0);
         assert_eq!(h.view.intent, intent);
         assert_eq!(h.view.error.as_deref(), Some("Disconnected"));
@@ -2919,23 +3924,40 @@ mod completion_tests {
         let receipt = Harness::receipt(false);
         let response = Harness::response(&receipt);
         h.view.receive(&mut h.ctx, &receipt);
-        h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response.clone()));
+        h.view
+            .answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response.clone()));
         assert!(h.view.busy);
         assert_eq!(h.apply(), 0);
         assert!(h.layout.target(&h.owner).is_some());
-        let terminal_request = || Req::CreateTerminal { workspace_id: "created-workspace".into(), cwd: "/created".into() };
-        h.view.answer(&mut h.cx, &mut h.ctx, terminal_request(), Err(RpcError::new("Missing shell")));
+        let terminal_request = || Req::CreateTerminal {
+            workspace_id: "created-workspace".into(),
+            cwd: "/created".into(),
+        };
+        h.view.answer(
+            &mut h.cx,
+            &mut h.ctx,
+            terminal_request(),
+            Err(RpcError::new("Missing shell")),
+        );
         assert!(!h.view.busy);
         assert!(h.view.terminal_workspace.is_some());
         assert_eq!(h.view.prompt, "Keep my prompt");
-        h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response));
+        h.view
+            .answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response));
         assert_eq!(h.apply(), 0);
         assert!(!h.view.busy);
-        h.view.create_terminal(&h.ctx, "created-workspace".into(), "/created".into());
+        h.view
+            .create_terminal(&h.ctx, "created-workspace".into(), "/created".into());
         assert!(h.view.busy);
         let terminal = json!({ "terminal": { "id": "terminal", "workspaceId": "created-workspace", "cwd": "/created" } });
-        h.view.answer(&mut h.cx, &mut h.ctx, terminal_request(), Ok(terminal.clone()));
-        h.view.answer(&mut h.cx, &mut h.ctx, terminal_request(), Ok(terminal));
+        h.view.answer(
+            &mut h.cx,
+            &mut h.ctx,
+            terminal_request(),
+            Ok(terminal.clone()),
+        );
+        h.view
+            .answer(&mut h.cx, &mut h.ctx, terminal_request(), Ok(terminal));
         assert_eq!(h.apply(), 1);
         h.assert_destination("terminal");
     }
@@ -2943,12 +3965,18 @@ mod completion_tests {
     #[test]
     fn creation_submission_rejects_legacy_worktree_replay_without_changing_intent() {
         let mut h = Harness::new(true, false);
-        h.view.intent.as_mut().unwrap()["request"]["source"] = json!({"kind": "worktree", "cwd": "/project", "action": "branch-off"});
+        h.view.intent.as_mut().unwrap()["request"]["source"] =
+            json!({"kind": "worktree", "cwd": "/project", "action": "branch-off"});
         let intent = h.view.intent.clone();
         h.view.submit(&h.ctx);
         assert_eq!(h.view.intent, intent);
         assert!(!h.view.busy);
-        assert!(h.view.error.as_deref().is_some_and(|error| error.contains("Worktree")));
+        assert!(
+            h.view
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Worktree"))
+        );
         assert_eq!(h.apply(), 0);
     }
 
@@ -2961,10 +3989,18 @@ mod completion_tests {
         h.view.catalog_cwd = h.view.path.clone();
         h.view.source = "directory".into();
         h.view.start_create(&mut h.ctx);
-        assert!(h.view.create.as_ref().is_some_and(|draft| draft.with_agent && !draft.has_input));
+        assert!(
+            h.view
+                .create
+                .as_ref()
+                .is_some_and(|draft| draft.with_agent && !draft.has_input)
+        );
         h.view.create_submit(&mut h.ctx, Value::Null);
         let request = object_of(h.view.intent.as_ref().unwrap(), "request");
-        assert_eq!(request["source"], json!({"kind": "directory", "path": "/existing/worktree"}));
+        assert_eq!(
+            request["source"],
+            json!({"kind": "directory", "path": "/existing/worktree"})
+        );
         assert_eq!(request["agent"]["config"]["cwd"], "/existing/worktree");
         assert!(request["agent"].get("initialPrompt").is_none());
     }
@@ -2972,19 +4008,29 @@ mod completion_tests {
     #[test]
     fn creation_completion_host_switch_replaces_only_owner_and_carries_draft() {
         let mut h = Harness::new(false, false);
-        h.view.handle_pick(&mut h.cx, "host", "chosen-host".into(), &mut h.ctx);
+        h.view
+            .handle_pick(&mut h.cx, "host", "chosen-host".into(), &mut h.ctx);
         assert_eq!(h.apply(), 0);
         assert!(h.layout.target(&h.owner).is_some());
         h.view.intent = None;
-        h.view.handle_pick(&mut h.cx, "host", "chosen-host".into(), &mut h.ctx);
+        h.view
+            .handle_pick(&mut h.cx, "host", "chosen-host".into(), &mut h.ctx);
         assert_eq!(h.apply(), 1);
-        let pane = h.layout.panes().into_iter().find(|pane| pane.id != h.sibling_pane).unwrap();
+        let pane = h
+            .layout
+            .panes()
+            .into_iter()
+            .find(|pane| pane.id != h.sibling_pane)
+            .unwrap();
         let target = h.layout.target(pane.selected.as_deref().unwrap()).unwrap();
         assert_eq!(target.kind, "new_tab");
         assert_eq!(target.server_id, "chosen-host");
         assert_eq!(target.data["creationDraft"]["prompt"], "Keep my prompt");
         assert_eq!(target.data["creationDraft"]["title"], "Keep my title");
-        assert_eq!(target.data["creationDraft"]["config"]["model"], "selected-model");
+        assert_eq!(
+            target.data["creationDraft"]["config"]["model"],
+            "selected-model"
+        );
         assert_eq!(h.layout.tabs.len(), 2);
         assert!(h.layout.target(&h.owner).is_none());
         assert_eq!(h.layout.selected().unwrap().key(), h.sibling);

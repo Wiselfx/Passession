@@ -21,7 +21,9 @@ fn screen_is_shareable_across_threads() {
 #[test]
 fn styled_unicode_cells_keep_all_wire_attributes() {
     let mut screen = screen(2, 8);
-    screen.process("\x1b[1;2;3;4;7;9;38;2;12;34;56;48;5;123m好e\u{301}\x1b[0m \x1b[31;104mx".as_bytes());
+    screen.process(
+        "\x1b[1;2;3;4;7;9;38;2;12;34;56;48;5;123m好e\u{301}\x1b[0m \x1b[31;104mx".as_bytes(),
+    );
     let state = screen.snapshot(true);
     let cell = &state["grid"][0][0];
     assert_eq!(cell["char"], "好");
@@ -91,9 +93,12 @@ fn queries_are_answered_with_paseo_capabilities_colors_and_current_cursor() {
             .replies,
         b"\x1b[?62;4;22c\x1b[?62;4;22c\x1b[0n\x1b[2;4R"
     );
-    let colors =
-        String::from_utf8(screen.process(b"\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]12;?\x07").replies)
-            .unwrap();
+    let colors = String::from_utf8(
+        screen
+            .process(b"\x1b]10;?\x07\x1b]11;?\x1b\\\x1b]12;?\x07")
+            .replies,
+    )
+    .unwrap();
     for answer in [
         "\x1b]10;rgb:e6e6/e6e6/e6e6",
         "\x1b]11;rgb:0b0b/0b0b/0b0b",
@@ -123,7 +128,10 @@ fn replay_preamble_reflects_current_input_modes() {
         screen.replay_preamble(),
         "\x1b[=1;1u\x1b[?9001h\x1b[?1h\x1b[?2004h"
     );
-    assert_eq!(screen.restore("live", 0), screen.replay_preamble().into_bytes());
+    assert_eq!(
+        screen.restore("live", 0),
+        screen.replay_preamble().into_bytes()
+    );
     screen.process(b"\x1b[=7;1u");
     assert!(screen.replay_preamble().starts_with("\x1b[=7;1u"));
     screen.process(b"\x1b[<u\x1b[?9001;1;2004l");
@@ -229,7 +237,10 @@ fn cursor_presentation_and_title_can_change_and_reset() {
     assert_eq!(screen.snapshot(false)["cursor"]["blink"], true);
     assert_eq!(screen.process(b"\x1b]2;\x07").title.as_deref(), Some(""));
     assert!(screen.snapshot(false).get("title").is_none());
-    assert_eq!(screen.process(b"\x1b]2;Again\x07").title.as_deref(), Some("Again"));
+    assert_eq!(
+        screen.process(b"\x1b]2;Again\x07").title.as_deref(),
+        Some("Again")
+    );
     assert_eq!(screen.process(b"\x1bc").title.as_deref(), Some(""));
     let state = screen.snapshot(false);
     assert!(state.get("title").is_none());
@@ -297,7 +308,10 @@ fn resize_reflows_logical_lines_without_losing_wide_or_combining_characters() {
     assert_eq!(state["cols"], 12);
     assert_eq!(state["rows"], 3);
     let captured = lines(&screen);
-    assert!(captured.iter().any(|line| line == "ab好e\u{301}fg"), "{captured:?}");
+    assert!(
+        captured.iter().any(|line| line == "ab好e\u{301}fg"),
+        "{captured:?}"
+    );
     assert!(captured.iter().any(|line| line == "next"), "{captured:?}");
     screen.resize(4, 4).unwrap();
     assert_eq!(screen.snapshot(true)["grid"].as_array().unwrap().len(), 4);

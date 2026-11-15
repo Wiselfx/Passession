@@ -10,8 +10,8 @@
 use crate::action::{PlatformAction, PlatformRequestId};
 use makepad_widgets::*;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 live_design! {
@@ -125,12 +125,15 @@ impl Widget for QrScanView {
         match event {
             Event::Actions(actions) => {
                 for action in actions {
-                    let Some(action) = action.downcast_ref::<PlatformAction>() else { continue };
+                    let Some(action) = action.downcast_ref::<PlatformAction>() else {
+                        continue;
+                    };
                     if let Some(request) = self.permission_request
-                        && let Some(result) = action.completed(request) {
-                            self.permission_request = None;
-                            self.permission_result(cx, result.clone());
-                        }
+                        && let Some(result) = action.completed(request)
+                    {
+                        self.permission_request = None;
+                        self.permission_result(cx, result.clone());
+                    }
                 }
             }
             Event::VideoInputs(inputs) => self.choose_input(cx, inputs),
@@ -169,7 +172,10 @@ impl QrScanView {
             return;
         }
         let Some(platform) = crate::platform() else {
-            self.set_state(cx, QrScanState::Failed("The platform layer has not started.".into()));
+            self.set_state(
+                cx,
+                QrScanState::Failed("The platform layer has not started.".into()),
+            );
             return;
         };
         *self.shared.found.lock().unwrap() = None;
@@ -193,12 +199,19 @@ impl QrScanView {
         *self.shared.found.lock().unwrap() = None;
         if self.state.0 == QrScanState::Paused {
             self.set_state(cx, QrScanState::Scanning);
-        } else if matches!(self.state.0, QrScanState::Idle | QrScanState::PermissionDenied | QrScanState::Failed(_)) {
+        } else if matches!(
+            self.state.0,
+            QrScanState::Idle | QrScanState::PermissionDenied | QrScanState::Failed(_)
+        ) {
             self.start(cx);
         }
     }
 
-    fn permission_result(&mut self, cx: &mut Cx, result: Result<crate::PlatformValue, crate::PlatformError>) {
+    fn permission_result(
+        &mut self,
+        cx: &mut Cx,
+        result: Result<crate::PlatformValue, crate::PlatformError>,
+    ) {
         match result {
             Ok(crate::PlatformValue::Permission(state)) if state.allowed() => self.open_camera(cx),
             Ok(_) => self.set_state(cx, QrScanState::PermissionDenied),
@@ -212,7 +225,12 @@ impl QrScanView {
         cx.video_input(0, move |buffer| {
             if let Some((width, height, luma)) = luminance(&buffer) {
                 serial += 1;
-                *shared.frame.lock().unwrap() = Some(LumaFrame { width, height, luma, serial });
+                *shared.frame.lock().unwrap() = Some(LumaFrame {
+                    width,
+                    height,
+                    luma,
+                    serial,
+                });
                 SignalToUI::set_ui_signal();
             }
         });
@@ -229,9 +247,16 @@ impl QrScanView {
             return;
         }
         let mounts = camera::mounts(&inputs.descs);
-        let index = mounts.iter().position(|mount| matches!(mount, Some(mount) if !mount.front)).unwrap_or(0);
+        let index = mounts
+            .iter()
+            .position(|mount| matches!(mount, Some(mount) if !mount.front))
+            .unwrap_or(0);
         self.mount = mounts.get(index).copied().flatten();
-        let preferred = if cfg!(target_os = "android") { VideoPixelFormat::YUV420 } else { VideoPixelFormat::YUY2 };
+        let preferred = if cfg!(target_os = "android") {
+            VideoPixelFormat::YUV420
+        } else {
+            VideoPixelFormat::YUY2
+        };
         let mut choice = inputs.find_format(index, 1280, 720, preferred);
         if choice.is_empty() {
             choice = inputs.find_format(index, 640, 480, preferred);
@@ -240,13 +265,22 @@ impl QrScanView {
             // Any non-JPEG format whose luminance can be read.
             let desc = &inputs.descs[index];
             if let Some(format) = desc.formats.iter().find(|f| {
-                matches!(f.pixel_format, VideoPixelFormat::YUV420 | VideoPixelFormat::YUY2 | VideoPixelFormat::GRAY | VideoPixelFormat::RGB24)
+                matches!(
+                    f.pixel_format,
+                    VideoPixelFormat::YUV420
+                        | VideoPixelFormat::YUY2
+                        | VideoPixelFormat::GRAY
+                        | VideoPixelFormat::RGB24
+                )
             }) {
                 choice = vec![(desc.input_id, format.format_id)];
             }
         }
         if choice.is_empty() {
-            self.set_state(cx, QrScanState::Failed("The camera offers no readable preview format.".into()));
+            self.set_state(
+                cx,
+                QrScanState::Failed("The camera offers no readable preview format.".into()),
+            );
             return;
         }
         cx.use_video_input(&choice);
@@ -256,22 +290,29 @@ impl QrScanView {
     fn poll(&mut self, cx: &mut Cx) {
         let found = self.shared.found.lock().unwrap().take();
         if let Some(link) = found
-            && self.state.0 == QrScanState::Scanning {
-                self.set_state(cx, QrScanState::Paused);
-                crate::action::post_event(crate::PlatformEvent::QrScanned { link });
-            }
+            && self.state.0 == QrScanState::Scanning
+        {
+            self.set_state(cx, QrScanState::Paused);
+            crate::action::post_event(crate::PlatformEvent::QrScanned { link });
+        }
         let frame = {
             let guard = self.shared.frame.lock().unwrap();
             match guard.as_ref() {
-                Some(frame) if frame.serial != self.shown_serial => Some((frame.width, frame.height, frame.luma.clone(), frame.serial)),
+                Some(frame) if frame.serial != self.shown_serial => {
+                    Some((frame.width, frame.height, frame.luma.clone(), frame.serial))
+                }
                 _ => None,
             }
         };
-        let Some((width, height, luma, serial)) = frame else { return };
+        let Some((width, height, luma, serial)) = frame else {
+            return;
+        };
         self.shown_serial = serial;
         self.update_texture(cx, width, height, &luma);
         crate::action::post_event(crate::PlatformEvent::CameraFrame);
-        if self.state.0 == QrScanState::Scanning && !self.shared.decoding.swap(true, Ordering::SeqCst) {
+        if self.state.0 == QrScanState::Scanning
+            && !self.shared.decoding.swap(true, Ordering::SeqCst)
+        {
             let shared = self.shared.clone();
             std::thread::spawn(move || {
                 let link = decode(width, height, &luma);
@@ -289,11 +330,20 @@ impl QrScanView {
     fn update_texture(&mut self, cx: &mut Cx, width: usize, height: usize, luma: &[u8]) {
         let transform = self.mount.map(camera::transform).unwrap_or_default();
         let pixels = transform_luma(width, height, luma, transform);
-        let (out_w, out_h) = if transform.rotation % 180 == 90 { (height, width) } else { (width, height) };
+        let (out_w, out_h) = if transform.rotation % 180 == 90 {
+            (height, width)
+        } else {
+            (width, height)
+        };
         if self.texture.is_none() || self.texture_size != (out_w, out_h) {
             self.texture = Some(Texture::new_with_format(
                 cx,
-                TextureFormat::VecBGRAu8_32 { width: out_w, height: out_h, data: Some(pixels), updated: TextureUpdated::Full },
+                TextureFormat::VecBGRAu8_32 {
+                    width: out_w,
+                    height: out_h,
+                    data: Some(pixels),
+                    updated: TextureUpdated::Full,
+                },
             ));
             self.texture_size = (out_w, out_h);
         } else if let Some(texture) = &self.texture {
@@ -301,14 +351,27 @@ impl QrScanView {
         }
         let rect = self.draw_bg.area().rect(cx);
         let crop = cover_crop(out_w as f64, out_h as f64, rect.size.x, rect.size.y);
-        self.draw_frame.draw_vars.set_var_instance(cx, &[live_id!(crop)], &[crop.0 as f32, crop.1 as f32]);
+        self.draw_frame.draw_vars.set_var_instance(
+            cx,
+            &[live_id!(crop)],
+            &[crop.0 as f32, crop.1 as f32],
+        );
         self.redraw(cx);
     }
 }
 
 /// BGRA grey pixels of `luma` (`width * height`) after `transform`.
-fn transform_luma(width: usize, height: usize, luma: &[u8], transform: PreviewTransform) -> Vec<u32> {
-    let (out_w, out_h) = if transform.rotation % 180 == 90 { (height, width) } else { (width, height) };
+fn transform_luma(
+    width: usize,
+    height: usize,
+    luma: &[u8],
+    transform: PreviewTransform,
+) -> Vec<u32> {
+    let (out_w, out_h) = if transform.rotation % 180 == 90 {
+        (height, width)
+    } else {
+        (width, height)
+    };
     let mut pixels = Vec::with_capacity(out_w * out_h);
     for y in 0..out_h {
         for x in 0..out_w {
@@ -333,7 +396,11 @@ fn cover_crop(tex_w: f64, tex_h: f64, view_w: f64, view_h: f64) -> (f64, f64) {
         return (1.0, 1.0);
     }
     let (tex, view) = (tex_w / tex_h, view_w / view_h);
-    if tex > view { (view / tex, 1.0) } else { (1.0, tex / view) }
+    if tex > view {
+        (view / tex, 1.0)
+    } else {
+        (1.0, tex / view)
+    }
 }
 
 /// Android: Camera2 characteristics through the Java bridge. Makepad names
@@ -342,7 +409,7 @@ fn cover_crop(tex_w: f64, tex_h: f64, view_w: f64, view_h: f64) -> (f64, f64) {
 mod camera {
     use super::{CameraMount, PreviewTransform};
     use makepad_widgets::{LiveId, VideoInputDesc};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     pub(super) fn mounts(descs: &[VideoInputDesc]) -> Vec<Option<CameraMount>> {
         let cameras = match crate::android::call("cameraGeometry", json!({})) {
@@ -354,10 +421,16 @@ mod camera {
             .map(|desc| {
                 cameras.iter().find_map(|camera| {
                     let id = std::ffi::CString::new(camera.get("id")?.as_str()?).ok()?;
-                    (desc.input_id.0 == LiveId::from_str(&format!("{:?}", id.as_c_str()))).then(|| CameraMount {
-                        front: camera.get("front").and_then(Value::as_bool).unwrap_or(false),
-                        sensor: (camera.get("sensor").and_then(Value::as_u64).unwrap_or(0) % 360) as u16,
-                    })
+                    (desc.input_id.0 == LiveId::from_str(&format!("{:?}", id.as_c_str()))).then(
+                        || CameraMount {
+                            front: camera
+                                .get("front")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                            sensor: (camera.get("sensor").and_then(Value::as_u64).unwrap_or(0)
+                                % 360) as u16,
+                        },
+                    )
                 })
             })
             .collect()
@@ -371,9 +444,15 @@ mod camera {
             Err(_) => 0,
         };
         if mount.front {
-            PreviewTransform { rotation: (mount.sensor + display) % 360, mirror: true }
+            PreviewTransform {
+                rotation: (mount.sensor + display) % 360,
+                mirror: true,
+            }
         } else {
-            PreviewTransform { rotation: (mount.sensor + 360 - display) % 360, mirror: false }
+            PreviewTransform {
+                rotation: (mount.sensor + 360 - display) % 360,
+                mirror: false,
+            }
         }
     }
 }
@@ -384,7 +463,7 @@ mod camera {
 #[cfg(target_os = "ios")]
 mod camera {
     use super::{CameraMount, PreviewTransform};
-    use crate::apple::{ns_string, rust_string, Id};
+    use crate::apple::{Id, ns_string, rust_string};
     use makepad_widgets::{LiveId, VideoInputDesc};
     use objc2::{class, msg_send};
 
@@ -432,7 +511,10 @@ mod camera {
                     let device: Id = msg_send![devices, objectAtIndex: index];
                     let model = rust_string(msg_send![device, modelID])?;
                     let position: isize = msg_send![device, position];
-                    (desc.input_id.0 == LiveId::from_str(&model)).then_some(CameraMount { front: position == POSITION_FRONT, sensor: 90 })
+                    (desc.input_id.0 == LiveId::from_str(&model)).then_some(CameraMount {
+                        front: position == POSITION_FRONT,
+                        sensor: 90,
+                    })
                 })
                 .collect()
         }
@@ -454,9 +536,15 @@ mod camera {
             _ => mount.sensor,               // portrait
         };
         if mount.front {
-            PreviewTransform { rotation: (540 - back) % 360, mirror: true }
+            PreviewTransform {
+                rotation: (540 - back) % 360,
+                mirror: true,
+            }
         } else {
-            PreviewTransform { rotation: back, mirror: false }
+            PreviewTransform {
+                rotation: back,
+                mirror: false,
+            }
         }
     }
 }
@@ -494,7 +582,9 @@ impl QrScanViewRef {
         }
     }
     pub fn state(&self) -> QrScanState {
-        self.borrow().map(|inner| inner.state()).unwrap_or(QrScanState::Idle)
+        self.borrow()
+            .map(|inner| inner.state())
+            .unwrap_or(QrScanState::Idle)
     }
 }
 
@@ -507,7 +597,9 @@ fn luminance(buffer: &VideoBufferRef) -> Option<(usize, usize, Vec<u8>)> {
     }
     let bytes: &[u8] = match &buffer.data {
         VideoBufferRefData::U8(data) => data,
-        VideoBufferRefData::U32(data) => unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) },
+        VideoBufferRefData::U32(data) => unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
+        },
     };
     let mut luma = vec![0u8; width * height];
     match format.pixel_format {
@@ -528,18 +620,27 @@ fn luminance(buffer: &VideoBufferRef) -> Option<(usize, usize, Vec<u8>)> {
         // byte of each pair varies far more than chroma.
         VideoPixelFormat::YUY2 => {
             let pairs = (bytes.len() / 2).min(4096);
-            let spread = |offset: usize| -> u64 { (0..pairs).map(|i| (bytes[i * 2 + offset] as i64 - 128).unsigned_abs()).sum() };
+            let spread = |offset: usize| -> u64 {
+                (0..pairs)
+                    .map(|i| (bytes[i * 2 + offset] as i64 - 128).unsigned_abs())
+                    .sum()
+            };
             let offset = if spread(1) > spread(0) { 1 } else { 0 };
             let stride = (bytes.len() / height).max(width * 2);
             for y in 0..height {
                 for x in 0..width {
-                    luma[y * width + x] = bytes.get(y * stride + x * 2 + offset).copied().unwrap_or(0);
+                    luma[y * width + x] =
+                        bytes.get(y * stride + x * 2 + offset).copied().unwrap_or(0);
                 }
             }
         }
         VideoPixelFormat::RGB24 => {
             for (i, pixel) in luma.iter_mut().enumerate() {
-                let (r, g, b) = (bytes.get(i * 3).copied()?, bytes.get(i * 3 + 1).copied()?, bytes.get(i * 3 + 2).copied()?);
+                let (r, g, b) = (
+                    bytes.get(i * 3).copied()?,
+                    bytes.get(i * 3 + 1).copied()?,
+                    bytes.get(i * 3 + 2).copied()?,
+                );
                 *pixel = ((r as u32 * 77 + g as u32 * 150 + b as u32 * 29) >> 8) as u8;
             }
         }
@@ -550,7 +651,8 @@ fn luminance(buffer: &VideoBufferRef) -> Option<(usize, usize, Vec<u8>)> {
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 fn decode(width: usize, height: usize, luma: &[u8]) -> Option<String> {
-    let mut image = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| luma[y * width + x]);
+    let mut image =
+        rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| luma[y * width + x]);
     image
         .detect_grids()
         .into_iter()
@@ -570,7 +672,10 @@ mod tests {
     /// Grey levels of a transformed frame, row by row.
     fn levels(width: usize, height: usize, rotation: u16, mirror: bool) -> Vec<u8> {
         let luma: Vec<u8> = (0..(width * height) as u8).collect();
-        transform_luma(width, height, &luma, PreviewTransform { rotation, mirror }).into_iter().map(|p| p as u8).collect()
+        transform_luma(width, height, &luma, PreviewTransform { rotation, mirror })
+            .into_iter()
+            .map(|p| p as u8)
+            .collect()
     }
 
     // Source 3×2:  0 1 2

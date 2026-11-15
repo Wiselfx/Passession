@@ -2,7 +2,7 @@
 //! density) over the provider snapshot shared by the toolbar and the model sheet.
 
 use super::json::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct ControlsModel<'a> {
     pub providers: &'a [Value],
@@ -56,7 +56,13 @@ impl<'a> ControlsModel<'a> {
         models
             .iter()
             .find(|m| s(get(m, "id")) == id)
-            .or_else(|| models.iter().find(|m| list_ref(get(m, "aliases")).iter().any(|a| a.as_str() == Some(id.as_str()))))
+            .or_else(|| {
+                models.iter().find(|m| {
+                    list_ref(get(m, "aliases"))
+                        .iter()
+                        .any(|a| a.as_str() == Some(id.as_str()))
+                })
+            })
             .cloned()
     }
 
@@ -74,18 +80,28 @@ impl<'a> ControlsModel<'a> {
             return labels.error.to_owned();
         }
         let selected_id = s(get(self.config, "model")).trim().to_owned();
-        let exact = models.iter().find(|m| get(m, "id") == get(self.config, "model") && !get(self.config, "model").is_null());
+        let exact = models.iter().find(|m| {
+            get(m, "id") == get(self.config, "model") && !get(self.config, "model").is_null()
+        });
         if exact.is_none() && !selected_id.is_empty() {
             return selected_id;
         }
         let model = exact
-            .or_else(|| models.iter().find(|m| get(m, "isDefault") == &Value::Bool(true)))
+            .or_else(|| {
+                models
+                    .iter()
+                    .find(|m| get(m, "isDefault") == &Value::Bool(true))
+            })
             .or_else(|| models.first());
-        model.map(model_label).unwrap_or_else(|| labels.select_model.to_owned())
+        model
+            .map(model_label)
+            .unwrap_or_else(|| labels.select_model.to_owned())
     }
 
     pub fn thinking_options(&self) -> Vec<Value> {
-        self.selected_model().map(|m| maps(get(&m, "thinkingOptions"))).unwrap_or_default()
+        self.selected_model()
+            .map(|m| maps(get(&m, "thinkingOptions")))
+            .unwrap_or_default()
     }
 
     pub fn thinking_label(&self, labels: &ModelLabels) -> String {
@@ -184,7 +200,9 @@ fn split_compact_label(value: &str, split_hyphen: bool) -> String {
             let prev = chars[index - 1];
             let next = chars.get(index + 1).copied();
             let camel = prev.is_ascii_lowercase() && ch.is_ascii_uppercase();
-            let acronym = prev.is_ascii_uppercase() && ch.is_ascii_uppercase() && next.is_some_and(|n| n.is_ascii_lowercase());
+            let acronym = prev.is_ascii_uppercase()
+                && ch.is_ascii_uppercase()
+                && next.is_some_and(|n| n.is_ascii_lowercase());
             if camel || acronym {
                 out.push(' ');
             }
@@ -196,13 +214,17 @@ fn split_compact_label(value: &str, split_hyphen: bool) -> String {
 
 /// agent-controls/labels.ts formatAgentModeLabel.
 pub fn format_agent_mode_label(mode: &Value) -> String {
-    let raw = s_or(get(mode, "label"), s(get(mode, "id"))).trim().to_owned();
+    let raw = s_or(get(mode, "label"), s(get(mode, "id")))
+        .trim()
+        .to_owned();
     sentence_case(&split_compact_label(&raw, get(mode, "label").is_null()))
 }
 
 /// agent-controls/labels.ts formatThinkingOptionLabel.
 pub fn format_thinking_option_label(option: &Value, extra_high: &str) -> String {
-    let raw = s_or(get(option, "label"), s(get(option, "id"))).trim().to_owned();
+    let raw = s_or(get(option, "label"), s(get(option, "id")))
+        .trim()
+        .to_owned();
     let compact: String = raw
         .chars()
         .filter(|c| !(c.is_whitespace() || *c == '_' || *c == '-'))
@@ -297,9 +319,17 @@ pub fn resolve_density(
     font_scale: f64,
 ) -> Density {
     const HYSTERESIS: f64 = 12.0;
-    let scale = if font_scale.is_finite() { font_scale.max(1.0) } else { 1.0 };
+    let scale = if font_scale.is_finite() {
+        font_scale.max(1.0)
+    } else {
+        1.0
+    };
     let sum = |widths: &[f64]| {
-        if widths.is_empty() { 0.0 } else { widths.iter().sum::<f64>() + (widths.len() - 1) as f64 * 4.0 }
+        if widths.is_empty() {
+            0.0
+        } else {
+            widths.iter().sum::<f64>() + (widths.len() - 1) as f64 * 4.0
+        }
     };
     let mut full_parts = Vec::new();
     if has_model {
@@ -367,8 +397,23 @@ pub fn resolve_density(
 
 pub fn presentation(density: Density) -> Presentation {
     match density {
-        Density::Full => Presentation { show_carets: true, show_thinking_label: true, show_mode_label: true, aggregate_features: false },
-        Density::Condensed => Presentation { show_carets: false, show_thinking_label: false, show_mode_label: true, aggregate_features: true },
-        Density::Tight => Presentation { show_carets: false, show_thinking_label: false, show_mode_label: false, aggregate_features: true },
+        Density::Full => Presentation {
+            show_carets: true,
+            show_thinking_label: true,
+            show_mode_label: true,
+            aggregate_features: false,
+        },
+        Density::Condensed => Presentation {
+            show_carets: false,
+            show_thinking_label: false,
+            show_mode_label: true,
+            aggregate_features: true,
+        },
+        Density::Tight => Presentation {
+            show_carets: false,
+            show_thinking_label: false,
+            show_mode_label: false,
+            aggregate_features: true,
+        },
     }
 }

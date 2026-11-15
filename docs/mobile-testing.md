@@ -280,3 +280,29 @@ no fatal exception, fatal signal or Rust panic appeared in that capture. The tes
 daemon/emulator were stopped and their private credentials, repository and daemon
 home removed. Production processes and physical Android devices were untouched.
 This run does not establish physical-device, iOS or Windows GUI execution.
+
+### Opaque Git entries and installed-font coverage (2026-11-15)
+
+An isolated Android 15/API 35 x86_64 emulator at 720×1568 and 320 dpi ran the
+fixed debug client against a disposable native daemon with only the mock
+provider enabled. Evidence is at `/tmp/passession-git-cjk-proof-d6e5dzjp/`.
+
+- A real linked Git worktree under `tmp/actdt-patch-check-fixture/` no longer
+  prevents the parent checkout's Commit list from loading. The actual UI
+  committed exactly `notes/new.txt` and `workflow.txt`; the nested checkout
+  and its private untracked file remained untouched (`commit-ui-proof.json`,
+  `android-commit-success.png`).
+- Cold opening the multilingual code block discovers installed Android fonts
+  asynchronously and refreshes the already displayed layout without reopening
+  it (`android-code-fonts-fixed.png`). The historical Git diff also renders
+  those scripts (`android-historical-diff-fonts-settled.png`).
+- `font-discovery.log` records system faces for CJK, Armenian, Georgian, Thai,
+  Devanagari, Arabic, Deseret and Cherokee. This exercises collection faces,
+  variable fonts and supplementary-plane input, not a CJK-only fallback list.
+- `verification.json` records the APK digest and scoped regression/lint results.
+  RTL contextual glyphs no longer become forced squares, but full bidi visual
+  ordering is not established by this test.
+
+The test daemon/emulator and their private fixture data are removed after the
+run. Production installations and physical Android devices are unchanged.
+This does not establish Windows UI or Apple runtime behavior.

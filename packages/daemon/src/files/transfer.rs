@@ -204,7 +204,10 @@ impl Transfers {
             context.clone(),
             operation,
             upload,
-            UploadInput { commands: receiver, deadlines },
+            UploadInput {
+                commands: receiver,
+                deadlines,
+            },
         ));
         Ok(())
     }
@@ -251,9 +254,10 @@ impl Transfers {
         while let Some(result) = tasks.join_next().await {
             let result = result.map_err(anyhow::Error::from).and_then(|r| r);
             if let Err(error) = result
-                && first_error.is_none() {
-                    first_error = Some(error);
-                }
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
         }
         if let Some(error) = first_error {
             return Err(error);
@@ -351,7 +355,10 @@ async fn run_upload(
     mut upload: Upload,
     input: UploadInput,
 ) -> Result<()> {
-    let UploadInput { mut commands, mut deadlines } = input;
+    let UploadInput {
+        mut commands,
+        mut deadlines,
+    } = input;
     let owner_cancel = operation.cancellation();
     let result: Result<()> = async {
         loop {

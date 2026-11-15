@@ -1,7 +1,7 @@
 use super::catalog;
-use paseo_client::process::CommandSpec;
-use crate::{ providers::api::{LaunchContext, ProviderSpec}, };
+use crate::providers::api::{LaunchContext, ProviderSpec};
 use anyhow::{Result, anyhow, bail};
+use paseo_client::process::CommandSpec;
 use serde_json::{Map, Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -48,16 +48,17 @@ pub fn validate_mode(mode: &str, env: &BTreeMap<String, String>) -> Result<()> {
         );
     }
     if mode == "auto"
-        && let Some(transport) = catalog::auto_mode_transport(env) {
-            bail!(
-                "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses {transport}. Select another permission mode or unset the {} environment variable.",
-                if transport == "Bedrock" {
-                    "CLAUDE_CODE_USE_BEDROCK"
-                } else {
-                    "CLAUDE_CODE_USE_VERTEX"
-                }
-            );
-        }
+        && let Some(transport) = catalog::auto_mode_transport(env)
+    {
+        bail!(
+            "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses {transport}. Select another permission mode or unset the {} environment variable.",
+            if transport == "Bedrock" {
+                "CLAUDE_CODE_USE_BEDROCK"
+            } else {
+                "CLAUDE_CODE_USE_VERTEX"
+            }
+        );
+    }
     Ok(())
 }
 fn strings(value: &Value) -> bool {

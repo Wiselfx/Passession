@@ -313,9 +313,10 @@ pub(super) fn patch_format(bytes: &[u8]) -> PatchFormat {
                 if value.trim().eq_ignore_ascii_case("no") {
                     full = true;
                 } else if let Ok(n) = value.trim().parse::<usize>()
-                    && (4..=64).contains(&n) {
-                        result.abbreviation = n;
-                    }
+                    && (4..=64).contains(&n)
+                {
+                    result.abbreviation = n;
+                }
             }
             _ => {}
         }

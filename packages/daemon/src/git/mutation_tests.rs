@@ -191,7 +191,12 @@ async fn merge_from_base_conflict_is_classified_and_aborted() -> anyhow::Result<
 fn selected_commit_cleaned_up(root: &Path) -> anyhow::Result<()> {
     assert!(!root.join(".git/index.lock").exists());
     for entry in std::fs::read_dir(root.join(".git"))? {
-        assert!(!entry?.file_name().to_string_lossy().starts_with("paseo-selected-"));
+        assert!(
+            !entry?
+                .file_name()
+                .to_string_lossy()
+                .starts_with("paseo-selected-")
+        );
     }
     Ok(())
 }
@@ -200,7 +205,13 @@ fn selected_commit_cleaned_up(root: &Path) -> anyhow::Result<()> {
 async fn selected_commit_preserves_unselected_index_and_worktree() -> anyhow::Result<()> {
     let dir = repository().await?;
     let root = dir.path();
-    for name in ["other.txt", "deleted.txt", "staged-delete.txt", "old name.txt", "a.txt"] {
+    for name in [
+        "other.txt",
+        "deleted.txt",
+        "staged-delete.txt",
+        "old name.txt",
+        "a.txt",
+    ] {
         tokio::fs::write(root.join(name), format!("original {name}\n")).await?;
     }
     git(root, &["add", "-A"]).await?;
@@ -216,8 +227,12 @@ async fn selected_commit_preserves_unselected_index_and_worktree() -> anyhow::Re
     tokio::fs::write(root.join("a.txt"), b"unselected glob match\n").await?;
     tokio::fs::write(root.join("unselected new.txt"), b"leave untracked\n").await?;
     let mut selected = vec![
-        "tracked.txt".to_owned(), "deleted.txt".into(), "staged-delete.txt".into(),
-        "new name.txt".into(), "[ab].txt".into(), "new file.txt".into(),
+        "tracked.txt".to_owned(),
+        "deleted.txt".into(),
+        "staged-delete.txt".into(),
+        "new name.txt".into(),
+        "[ab].txt".into(),
+        "new file.txt".into(),
     ];
     if !cfg!(windows) {
         selected.push(":(glob)*".into());
@@ -228,31 +243,74 @@ async fn selected_commit_preserves_unselected_index_and_worktree() -> anyhow::Re
     let other_index = git(root, &["ls-files", "--stage", "--", "other.txt"]).await?;
     let other_unstaged = git(root, &["diff", "--", "other.txt"]).await?;
     let sha = mutations::commit_selected(
-        root, &selected, "Selected files\n\nFull contents, not staged hunks.",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await?;
+        root,
+        &selected,
+        "Selected files\n\nFull contents, not staged hunks.",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
     assert_eq!(sha, git(root, &["rev-parse", "HEAD"]).await?);
-    assert_eq!(git(root, &["show", "HEAD:tracked.txt"]).await?, "complete working contents");
-    assert_eq!(git(root, &["show", "HEAD:other.txt"]).await?, "original other.txt");
+    assert_eq!(
+        git(root, &["show", "HEAD:tracked.txt"]).await?,
+        "complete working contents"
+    );
+    assert_eq!(
+        git(root, &["show", "HEAD:other.txt"]).await?,
+        "original other.txt"
+    );
     assert_eq!(git(root, &["show", "HEAD:a.txt"]).await?, "original a.txt");
-    assert_eq!(git(root, &["show", "HEAD:new name.txt"]).await?, "original old name.txt");
+    assert_eq!(
+        git(root, &["show", "HEAD:new name.txt"]).await?,
+        "original old name.txt"
+    );
     for name in &selected[4..] {
-        assert_eq!(git(root, &["show", &format!("HEAD:{name}")]).await?, "literal new content");
+        assert_eq!(
+            git(root, &["show", &format!("HEAD:{name}")]).await?,
+            "literal new content"
+        );
     }
     let tree = git(root, &["ls-tree", "--name-only", "HEAD"]).await?;
-    assert!(!tree.lines().any(|name| ["deleted.txt", "staged-delete.txt", "old name.txt", "unselected new.txt"].contains(&name)));
-    assert_eq!(other_index, git(root, &["ls-files", "--stage", "--", "other.txt"]).await?);
-    assert_eq!(other_unstaged, git(root, &["diff", "--", "other.txt"]).await?);
-    assert_eq!(git(root, &["diff", "--cached", "--name-only"]).await?, "other.txt");
-    assert_eq!(tokio::fs::read(root.join("a.txt")).await?, b"unselected glob match\n");
-    assert_eq!(tokio::fs::read(root.join("other.txt")).await?, b"complete working contents\n");
-    assert_eq!(tokio::fs::read(root.join("unselected new.txt")).await?, b"leave untracked\n");
+    assert!(!tree.lines().any(|name| {
+        [
+            "deleted.txt",
+            "staged-delete.txt",
+            "old name.txt",
+            "unselected new.txt",
+        ]
+        .contains(&name)
+    }));
+    assert_eq!(
+        other_index,
+        git(root, &["ls-files", "--stage", "--", "other.txt"]).await?
+    );
+    assert_eq!(
+        other_unstaged,
+        git(root, &["diff", "--", "other.txt"]).await?
+    );
+    assert_eq!(
+        git(root, &["diff", "--cached", "--name-only"]).await?,
+        "other.txt"
+    );
+    assert_eq!(
+        tokio::fs::read(root.join("a.txt")).await?,
+        b"unselected glob match\n"
+    );
+    assert_eq!(
+        tokio::fs::read(root.join("other.txt")).await?,
+        b"complete working contents\n"
+    );
+    assert_eq!(
+        tokio::fs::read(root.join("unselected new.txt")).await?,
+        b"leave untracked\n"
+    );
     selected_commit_cleaned_up(root)?;
     Ok(())
 }
 
 #[tokio::test]
-async fn selected_commit_supports_unborn_head_without_committing_unselected_staging() -> anyhow::Result<()> {
+async fn selected_commit_supports_unborn_head_without_committing_unselected_staging()
+-> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let root = dir.path();
     git(root, &["init", "--initial-branch=main"]).await?;
@@ -264,13 +322,29 @@ async fn selected_commit_supports_unborn_head_without_committing_unselected_stag
     tokio::fs::write(root.join("other.txt"), b"other unstaged\n").await?;
     let original = git(root, &["ls-files", "--stage", "--", "other.txt"]).await?;
     mutations::commit_selected(
-        root, &["selected.txt".into()], "Initial selection",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await?;
-    assert_eq!(git(root, &["ls-tree", "--name-only", "HEAD"]).await?, "selected.txt");
-    assert_eq!(original, git(root, &["ls-files", "--stage", "--", "other.txt"]).await?);
-    assert_eq!(git(root, &["diff", "--cached", "--name-only"]).await?, "other.txt");
-    assert_eq!(tokio::fs::read(root.join("other.txt")).await?, b"other unstaged\n");
+        root,
+        &["selected.txt".into()],
+        "Initial selection",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
+    assert_eq!(
+        git(root, &["ls-tree", "--name-only", "HEAD"]).await?,
+        "selected.txt"
+    );
+    assert_eq!(
+        original,
+        git(root, &["ls-files", "--stage", "--", "other.txt"]).await?
+    );
+    assert_eq!(
+        git(root, &["diff", "--cached", "--name-only"]).await?,
+        "other.txt"
+    );
+    assert_eq!(
+        tokio::fs::read(root.join("other.txt")).await?,
+        b"other unstaged\n"
+    );
     selected_commit_cleaned_up(root)?;
     Ok(())
 }
@@ -300,19 +374,39 @@ async fn selected_commit_rejects_invalid_empty_and_unchanged_selections() -> any
         (vec!["folder/new.txt", "missing"], "message"),
     ] {
         let paths = paths.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        assert!(mutations::commit_selected(
-            root, &paths, message, &BTreeMap::new(), CancellationToken::new(),
-        ).await.is_err(), "{paths:?}");
+        assert!(
+            mutations::commit_selected(
+                root,
+                &paths,
+                message,
+                &BTreeMap::new(),
+                CancellationToken::new(),
+            )
+            .await
+            .is_err(),
+            "{paths:?}"
+        );
         assert_eq!(tokio::fs::read(root.join(".git/index")).await?, before);
         selected_commit_cleaned_up(root)?;
     }
     let cancelled = CancellationToken::new();
     cancelled.cancel();
-    assert!(mutations::commit_selected(
-        root, &["folder/new.txt".into()], "cancelled", &BTreeMap::new(), cancelled,
-    ).await.is_err());
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["folder/new.txt".into()],
+            "cancelled",
+            &BTreeMap::new(),
+            cancelled,
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
-    assert_eq!(tokio::fs::read(root.join("folder/new.txt")).await?, b"new\n");
+    assert_eq!(
+        tokio::fs::read(root.join("folder/new.txt")).await?,
+        b"new\n"
+    );
     selected_commit_cleaned_up(root)?;
     Ok(())
 }
@@ -330,16 +424,28 @@ async fn selected_commit_rejects_conflicts_without_touching_index() -> anyhow::R
     assert!(git(root, &["merge", "feature"]).await.is_err());
     tokio::fs::write(root.join("unrelated.txt"), b"must not commit\n").await?;
     let before = tokio::fs::read(root.join(".git/index")).await?;
-    assert!(mutations::commit_selected(
-        root, &["unrelated.txt".into()], "not a merge",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await.is_err());
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["unrelated.txt".into()],
+            "not a merge",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
     // Also reject unmerged index entries without relying on MERGE_HEAD.
     tokio::fs::remove_file(root.join(".git/MERGE_HEAD")).await?;
     let error = mutations::commit_selected(
-        root, &["unrelated.txt".into()], "not a conflict resolution",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await.unwrap_err();
+        root,
+        &["unrelated.txt".into()],
+        "not a conflict resolution",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
     assert!(error.to_string().contains("conflicts"));
     assert_eq!(tokio::fs::read(root.join(".git/index")).await?, before);
     selected_commit_cleaned_up(root)?;
@@ -348,7 +454,8 @@ async fn selected_commit_rejects_conflicts_without_touching_index() -> anyhow::R
 
 #[cfg(unix)]
 #[tokio::test]
-async fn selected_commit_failed_hook_restores_index_and_removes_temporary_state() -> anyhow::Result<()> {
+async fn selected_commit_failed_hook_restores_index_and_removes_temporary_state()
+-> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let dir = repository().await?;
     let root = dir.path();
@@ -360,13 +467,23 @@ async fn selected_commit_failed_hook_restores_index_and_removes_temporary_state(
     tokio::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).await?;
     let index = tokio::fs::read(root.join(".git/index")).await?;
     let head = git(root, &["rev-parse", "HEAD"]).await?;
-    assert!(mutations::commit_selected(
-        root, &["tracked.txt".into()], "rejected",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await.is_err());
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["tracked.txt".into()],
+            "rejected",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(tokio::fs::read(root.join(".git/index")).await?, index);
     assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
-    assert_eq!(tokio::fs::read(root.join("tracked.txt")).await?, b"working\n");
+    assert_eq!(
+        tokio::fs::read(root.join("tracked.txt")).await?,
+        b"working\n"
+    );
     selected_commit_cleaned_up(root)?;
     Ok(())
 }
@@ -389,21 +506,33 @@ async fn selected_commit_settles_index_after_cancellation_during_commit() -> any
     let task_cancel = cancel.clone();
     let commit = tokio::spawn(async move {
         mutations::commit_selected(
-            &task_root, &["tracked.txt".into()], "finish admitted commit",
-            &BTreeMap::new(), task_cancel,
-        ).await
+            &task_root,
+            &["tracked.txt".into()],
+            "finish admitted commit",
+            &BTreeMap::new(),
+            task_cancel,
+        )
+        .await
     });
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while !root.join(".git/hook-started").exists() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }).await?;
+    })
+    .await?;
     cancel.cancel();
     tokio::fs::write(root.join(".git/hook-release"), b"").await?;
     let sha = commit.await??;
     assert_eq!(sha, git(&root, &["rev-parse", "HEAD"]).await?);
-    assert_eq!(git(&root, &["show", "HEAD:tracked.txt"]).await?, "committed");
-    assert!(git(&root, &["diff", "--cached", "--name-only"]).await?.is_empty());
+    assert_eq!(
+        git(&root, &["show", "HEAD:tracked.txt"]).await?,
+        "committed"
+    );
+    assert!(
+        git(&root, &["diff", "--cached", "--name-only"])
+            .await?
+            .is_empty()
+    );
     selected_commit_cleaned_up(&root)?;
     Ok(())
 }
@@ -431,8 +560,13 @@ async fn selected_commit_unborn_without_existing_index() -> anyhow::Result<()> {
     tokio::fs::write(root.join("new.txt"), b"first\n").await?;
     assert!(!root.join(".git/index").exists());
     let sha = mutations::commit_selected(
-        root, &["new.txt".into()], "first commit", &BTreeMap::new(), CancellationToken::new(),
-    ).await?;
+        root,
+        &["new.txt".into()],
+        "first commit",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
     assert_eq!(sha, git(root, &["rev-parse", "HEAD"]).await?);
     assert_eq!(git(root, &["show", "HEAD:new.txt"]).await?, "first");
     assert!(git(root, &["status", "--porcelain"]).await?.is_empty());
@@ -444,15 +578,26 @@ async fn selected_commit_unborn_without_existing_index() -> anyhow::Result<()> {
 async fn selected_commit_empty_tree_change_keeps_staged_version() -> anyhow::Result<()> {
     let dir = repository().await?;
     let root = dir.path();
-    tokio::fs::write(root.join("tracked.txt"), b"staged but not selected contents\n").await?;
+    tokio::fs::write(
+        root.join("tracked.txt"),
+        b"staged but not selected contents\n",
+    )
+    .await?;
     git(root, &["add", "tracked.txt"]).await?;
     tokio::fs::write(root.join("tracked.txt"), b"before\n").await?;
     let index = tokio::fs::read(root.join(".git/index")).await?;
     let head = git(root, &["rev-parse", "HEAD"]).await?;
-    assert!(mutations::commit_selected(
-        root, &["tracked.txt".into()], "no working changes",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await.is_err());
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["tracked.txt".into()],
+            "no working changes",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
     assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
     selected_commit_cleaned_up(root)?;
@@ -465,10 +610,17 @@ async fn selected_commit_rename_can_select_source() -> anyhow::Result<()> {
     let root = dir.path();
     git(root, &["mv", "tracked.txt", "renamed.txt"]).await?;
     mutations::commit_selected(
-        root, &["tracked.txt".into()], "rename",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await?;
-    assert_eq!(git(root, &["ls-tree", "--name-only", "HEAD"]).await?, "renamed.txt");
+        root,
+        &["tracked.txt".into()],
+        "rename",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
+    assert_eq!(
+        git(root, &["ls-tree", "--name-only", "HEAD"]).await?,
+        "renamed.txt"
+    );
     assert!(git(root, &["status", "--porcelain"]).await?.is_empty());
     selected_commit_cleaned_up(root)?;
     Ok(())
@@ -481,11 +633,233 @@ async fn selected_commit_does_not_remove_another_writers_lock() -> anyhow::Resul
     tokio::fs::write(root.join("tracked.txt"), b"changed\n").await?;
     tokio::fs::write(root.join(".git/index.lock"), b"owned elsewhere\n").await?;
     let index = tokio::fs::read(root.join(".git/index")).await?;
-    assert!(mutations::commit_selected(
-        root, &["tracked.txt".into()], "must wait",
-        &BTreeMap::new(), CancellationToken::new(),
-    ).await.is_err());
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["tracked.txt".into()],
+            "must wait",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
-    assert_eq!(tokio::fs::read(root.join(".git/index.lock")).await?, b"owned elsewhere\n");
+    assert_eq!(
+        tokio::fs::read(root.join(".git/index.lock")).await?,
+        b"owned elsewhere\n"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_commit_from_inventory_ignores_embedded_repositories() -> anyhow::Result<()> {
+    let dir = repository().await?;
+    let root = dir.path();
+    git(root, &["init", "--initial-branch=main", "nested"]).await?;
+    tokio::fs::write(root.join("nested/private.txt"), b"leave nested alone\n").await?;
+    tokio::fs::create_dir_all(root.join("ordinary/deep")).await?;
+    tokio::fs::write(root.join("ordinary/deep/new.txt"), b"parent file\n").await?;
+    tokio::fs::write(root.join("tracked.txt"), b"parent modification\n").await?;
+    let listed = super::diff::read(
+        root,
+        &serde_json::json!({"mode":"uncommitted","detail":"summary"}),
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
+    assert!(listed["error"].is_null(), "{listed}");
+    let paths: Vec<String> = listed["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(paths, ["ordinary/deep/new.txt", "tracked.txt"]);
+    let index = tokio::fs::read(root.join(".git/index")).await?;
+    let before = git(root, &["rev-parse", "HEAD"]).await?;
+    for invalid in ["nested", "nested/", "nested/private.txt"] {
+        assert!(
+            mutations::commit_selected(
+                root,
+                &["tracked.txt".into(), invalid.into()],
+                "not a nested commit",
+                &BTreeMap::new(),
+                CancellationToken::new(),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
+        assert_eq!(before, git(root, &["rev-parse", "HEAD"]).await?);
+        selected_commit_cleaned_up(root)?;
+    }
+    mutations::commit_selected(
+        root,
+        &paths,
+        "Parent files only",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
+    assert_eq!(
+        git(root, &["show", "HEAD:ordinary/deep/new.txt"]).await?,
+        "parent file"
+    );
+    assert_eq!(
+        git(root, &["show", "HEAD:tracked.txt"]).await?,
+        "parent modification"
+    );
+    assert_eq!(git(root, &["ls-tree", "HEAD", "--", "nested"]).await?, "");
+    assert_eq!(
+        tokio::fs::read(root.join("nested/private.txt")).await?,
+        b"leave nested alone\n"
+    );
+    assert!(!root.join("nested/.git/index").exists());
+    selected_commit_cleaned_up(root)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_commit_rejects_staged_dirty_and_deleted_gitlinks() -> anyhow::Result<()> {
+    let dir = repository().await?;
+    let source = repository().await?;
+    let root = dir.path();
+    git(
+        root,
+        &["clone", "--", source.path().to_str().unwrap(), "nested"],
+    )
+    .await?;
+    git(root, &["add", "nested"]).await?;
+    tokio::fs::write(root.join("nested/tracked.txt"), b"nested dirty contents\n").await?;
+    tokio::fs::write(root.join("tracked.txt"), b"selected parent contents\n").await?;
+    for state in ["staged", "dirty", "deleted"] {
+        let listed = super::diff::read(
+            root,
+            &serde_json::json!({"mode":"uncommitted","detail":"summary"}),
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await?;
+        assert!(listed["error"].is_null(), "{listed}");
+        assert!(
+            listed["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == "nested")
+        );
+        let index = tokio::fs::read(root.join(".git/index")).await?;
+        let head = git(root, &["rev-parse", "HEAD"]).await?;
+        let error = mutations::commit_selected(
+            root,
+            &["tracked.txt".into(), "nested".into()],
+            "must not claim nested contents",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Git submodule or embedded repository"),
+            "{state}: {error}"
+        );
+        assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
+        assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
+        assert_eq!(
+            tokio::fs::read(root.join("tracked.txt")).await?,
+            b"selected parent contents\n"
+        );
+        selected_commit_cleaned_up(root)?;
+        if state == "staged" {
+            git(root, &["commit", "-m", "fixture gitlink"]).await?;
+        } else if state == "dirty" {
+            assert_eq!(
+                tokio::fs::read(root.join("nested/tracked.txt")).await?,
+                b"nested dirty contents\n",
+            );
+            git(root, &["rm", "--cached", "--", "nested"]).await?;
+            tokio::fs::remove_dir_all(root.join("nested")).await?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn selected_commit_rejects_file_replaced_by_directory() -> anyhow::Result<()> {
+    let dir = repository().await?;
+    let root = dir.path();
+    tokio::fs::remove_file(root.join("tracked.txt")).await?;
+    tokio::fs::create_dir(root.join("tracked.txt")).await?;
+    tokio::fs::write(root.join("tracked.txt/child"), b"must not recurse\n").await?;
+    let index = tokio::fs::read(root.join(".git/index")).await?;
+    let head = git(root, &["rev-parse", "HEAD"]).await?;
+    let error = mutations::commit_selected(
+        root,
+        &["tracked.txt".into()],
+        "not a directory selection",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not a regular file or symlink"),
+        "{error}"
+    );
+    assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
+    assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
+    assert_eq!(
+        tokio::fs::read(root.join("tracked.txt/child")).await?,
+        b"must not recurse\n"
+    );
+    selected_commit_cleaned_up(root)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_commit_symlink_stores_link_not_target_and_rejects_fifo() -> anyhow::Result<()> {
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
+
+    let dir = repository().await?;
+    let root = dir.path();
+    git(root, &["config", "core.symlinks", "true"]).await?;
+    symlink("absent-target", root.join("link"))?;
+    mutations::commit_selected(
+        root,
+        &["link".into()],
+        "link contents",
+        &BTreeMap::new(),
+        CancellationToken::new(),
+    )
+    .await?;
+    assert_eq!(git(root, &["show", "HEAD:link"]).await?, "absent-target");
+    assert!(
+        git(root, &["ls-tree", "HEAD", "--", "link"])
+            .await?
+            .starts_with("120000 ")
+    );
+    tokio::fs::remove_file(root.join("tracked.txt")).await?;
+    let fifo = std::ffi::CString::new(root.join("tracked.txt").as_os_str().as_bytes())?;
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let index = tokio::fs::read(root.join(".git/index")).await?;
+    let head = git(root, &["rev-parse", "HEAD"]).await?;
+    assert!(
+        mutations::commit_selected(
+            root,
+            &["tracked.txt".into()],
+            "not a FIFO",
+            &BTreeMap::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(index, tokio::fs::read(root.join(".git/index")).await?);
+    assert_eq!(head, git(root, &["rev-parse", "HEAD"]).await?);
+    selected_commit_cleaned_up(root)?;
     Ok(())
 }

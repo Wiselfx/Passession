@@ -42,10 +42,18 @@ pub fn find_active_slash_command(text: &str, cursor: usize) -> Option<SlashComma
             continue;
         }
         let query = &before[slash + 1..];
-        if query.chars().any(|c| c == '/' || c.is_whitespace() || c == '"' || c == '\'') {
+        if query
+            .chars()
+            .any(|c| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
+        {
             continue;
         }
-        return Some(SlashCommandRange { start: slash, end: cursor, query: query.to_owned(), at_start: slash == 0 });
+        return Some(SlashCommandRange {
+            start: slash,
+            end: cursor,
+            query: query.to_owned(),
+            at_start: slash == 0,
+        });
     }
     None
 }
@@ -56,27 +64,59 @@ pub fn find_active_file_mention(text: &str, cursor: usize) -> Option<FileMention
     let cursor = clamp_boundary(text, cursor);
     let before = &text[..cursor];
     for (at, _) in before.rmatch_indices('@') {
-        if at > 0 && prev_char(before, at).is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+') {
+        if at > 0
+            && prev_char(before, at)
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+')
+        {
             continue;
         }
         let query = &before[at + 1..];
-        if query.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>')) {
+        if query
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
+        {
             continue;
         }
-        return Some(FileMentionRange { start: at, end: cursor, query: query.to_owned() });
+        return Some(FileMentionRange {
+            start: at,
+            end: cursor,
+            query: query.to_owned(),
+        });
     }
     None
 }
 
 /// applySlashCommandReplacement: a trailing space only when the command ends the text.
-pub fn apply_slash_command_replacement(text: &str, command: &SlashCommandRange, name: &str) -> String {
-    let replaced = format!("{}/{}{}", &text[..command.start], name, &text[command.end..]);
-    if command.end == text.len() { format!("{replaced} ") } else { replaced }
+pub fn apply_slash_command_replacement(
+    text: &str,
+    command: &SlashCommandRange,
+    name: &str,
+) -> String {
+    let replaced = format!(
+        "{}/{}{}",
+        &text[..command.start],
+        name,
+        &text[command.end..]
+    );
+    if command.end == text.len() {
+        format!("{replaced} ")
+    } else {
+        replaced
+    }
 }
 
 /// applyFileMentionReplacement: the mention becomes the quoted relative path.
-pub fn apply_file_mention_replacement(text: &str, mention: &FileMentionRange, path: &str) -> String {
-    format!("{}\"{}\"{}", &text[..mention.start], path.replace('"', "\\\""), &text[mention.end..])
+pub fn apply_file_mention_replacement(
+    text: &str,
+    mention: &FileMentionRange,
+    path: &str,
+) -> String {
+    format!(
+        "{}\"{}\"{}",
+        &text[..mention.start],
+        path.replace('"', "\\\""),
+        &text[mention.end..]
+    )
 }
 
 pub struct ClientCommand {
@@ -87,8 +127,16 @@ pub struct ClientCommand {
 
 /// client-slash-commands CLIENT_SLASH_COMMANDS.
 pub const CLIENT_SLASH_COMMANDS: &[ClientCommand] = &[
-    ClientCommand { name: "exit", aliases: &["quit", "q"], description_key: "composer.clientCommands.archiveAgent" },
-    ClientCommand { name: "clear", aliases: &["new"], description_key: "composer.clientCommands.freshDraft" },
+    ClientCommand {
+        name: "exit",
+        aliases: &["quit", "q"],
+        description_key: "composer.clientCommands.archiveAgent",
+    },
+    ClientCommand {
+        name: "clear",
+        aliases: &["new"],
+        description_key: "composer.clientCommands.freshDraft",
+    },
 ];
 
 /// resolveClientSlashCommand: the canonical name of a whole-text client command.
@@ -132,7 +180,11 @@ fn score_match(query: &str, text: &str) -> Option<MatchScore> {
     let q: Vec<char> = query.to_lowercase().chars().collect();
     let t: Vec<char> = text.to_lowercase().chars().collect();
     if q.is_empty() || t == q {
-        return Some(MatchScore { tier: TIER_EXACT, offset: 0, spread: 0 });
+        return Some(MatchScore {
+            tier: TIER_EXACT,
+            offset: 0,
+            spread: 0,
+        });
     }
     let mut best: Option<MatchScore> = None;
     if q.len() <= t.len() {
@@ -153,7 +205,11 @@ fn score_match(query: &str, text: &str) -> Option<MatchScore> {
             };
             let offset = found as i64;
             if best.is_none_or(|b| tier < b.tier || (tier == b.tier && offset < b.offset)) {
-                best = Some(MatchScore { tier, offset, spread: 0 });
+                best = Some(MatchScore {
+                    tier,
+                    offset,
+                    spread: 0,
+                });
             }
         }
     }
@@ -182,11 +238,18 @@ fn score_match(query: &str, text: &str) -> Option<MatchScore> {
     if qi != q.len() || first == -1 {
         return None;
     }
-    Some(MatchScore { tier: TIER_SUBSEQUENCE, offset: first, spread: last - first + 1 })
+    Some(MatchScore {
+        tier: TIER_SUBSEQUENCE,
+        offset: first,
+        spread: last - first + 1,
+    })
 }
 
 pub fn compare_match_scores(a: &MatchScore, b: &MatchScore) -> std::cmp::Ordering {
-    a.tier.cmp(&b.tier).then(a.offset.cmp(&b.offset)).then(a.spread.cmp(&b.spread))
+    a.tier
+        .cmp(&b.tier)
+        .then(a.offset.cmp(&b.offset))
+        .then(a.spread.cmp(&b.spread))
 }
 
 /// scoreTextFields: every query token must match one field; scores add up.
@@ -205,9 +268,17 @@ pub fn score_text_fields(query: &str, fields: &[String]) -> Option<MatchScore> {
         let best = best?;
         tier += best.tier;
         offset += best.offset;
-        spread += if best.tier == TIER_SUBSEQUENCE { best.spread } else { token.chars().count() as i64 };
+        spread += if best.tier == TIER_SUBSEQUENCE {
+            best.spread
+        } else {
+            token.chars().count() as i64
+        };
     }
-    Some(MatchScore { tier, offset, spread })
+    Some(MatchScore {
+        tier,
+        offset,
+        spread,
+    })
 }
 
 /// A command candidate: (name, aliases, argumentHint, description, client command).
@@ -279,7 +350,10 @@ pub struct ComposerAutocomplete {
 
 impl ComposerAutocomplete {
     pub fn new() -> Self {
-        Self { can_load_files: true, ..Default::default() }
+        Self {
+            can_load_files: true,
+            ..Default::default()
+        }
     }
 
     pub fn mode(&self) -> Option<AutocompleteMode> {
@@ -294,7 +368,9 @@ impl ComposerAutocomplete {
 
     pub fn visible(&self) -> bool {
         match self.mode() {
-            Some(AutocompleteMode::Command) => !self.commands_loading || self.draft_empty_key.is_some(),
+            Some(AutocompleteMode::Command) => {
+                !self.commands_loading || self.draft_empty_key.is_some()
+            }
             Some(AutocompleteMode::File) => self.can_load_files,
             None => false,
         }
@@ -328,7 +404,8 @@ impl ComposerAutocomplete {
         if self.mode() == Some(AutocompleteMode::File) {
             "agentAutocomplete.noFiles"
         } else {
-            self.draft_empty_key.unwrap_or("agentAutocomplete.noCommands")
+            self.draft_empty_key
+                .unwrap_or("agentAutocomplete.noCommands")
         }
     }
 
@@ -375,7 +452,12 @@ impl ComposerAutocomplete {
     }
 
     /// directory_suggestions_response for `query` (generation-guarded by the caller).
-    pub fn files_loaded(&mut self, generation: u64, query: &str, result: Result<Vec<Value>, String>) {
+    pub fn files_loaded(
+        &mut self,
+        generation: u64,
+        query: &str,
+        result: Result<Vec<Value>, String>,
+    ) {
         if generation != self.file_generation {
             return;
         }
@@ -469,7 +551,7 @@ impl ComposerAutocomplete {
                     score_text_fields(&query, &fields).map(|score| (score, entry))
                 })
                 .collect();
-            scored.sort_by(|a, b| compare_match_scores(&a.0, &b.0).then_with(|| a.1 .0.cmp(&b.1 .0)));
+            scored.sort_by(|a, b| compare_match_scores(&a.0, &b.0).then_with(|| a.1.0.cmp(&b.1.0)));
             entries = scored.into_iter().map(|(_, entry)| entry).collect();
         }
         entries
@@ -497,14 +579,23 @@ impl ComposerAutocomplete {
             NavKey::Up | NavKey::Down => {
                 let down = key == NavKey::Down;
                 self.selected_index = Some(match self.selected_index {
-                    None => if down { 0 } else { count - 1 },
+                    None => {
+                        if down {
+                            0
+                        } else {
+                            count - 1
+                        }
+                    }
                     Some(index) if down => (index % count + 1) % count,
                     Some(index) => (index % count + count - 1) % count,
                 });
                 AutocompleteKey::Moved
             }
             NavKey::Tab | NavKey::Enter if !repeat => {
-                let index = self.selected_index.filter(|i| *i < count).unwrap_or(count - 1);
+                let index = self
+                    .selected_index
+                    .filter(|i| *i < count)
+                    .unwrap_or(count - 1);
                 AutocompleteKey::Select(self.options[index].clone())
             }
             NavKey::Escape
@@ -535,7 +626,10 @@ impl ComposerAutocomplete {
 fn provider_entry(command: &Value) -> CommandEntry {
     (
         owned(get(command, "name")),
-        list_ref(get(command, "aliases")).iter().map(display).collect(),
+        list_ref(get(command, "aliases"))
+            .iter()
+            .map(display)
+            .collect(),
         owned(get(command, "argumentHint")),
         owned(get(command, "description")),
         false,
@@ -544,5 +638,8 @@ fn provider_entry(command: &Value) -> CommandEntry {
 
 /// The popover strips the ⚡ emoji and variation selector from labels and descriptions.
 pub fn clean_label(value: &str) -> String {
-    value.replace(['\u{26A1}', '\u{FE0F}'], "").trim().to_owned()
+    value
+        .replace(['\u{26A1}', '\u{FE0F}'], "")
+        .trim()
+        .to_owned()
 }

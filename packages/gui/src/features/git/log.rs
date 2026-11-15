@@ -70,7 +70,11 @@ fn ref_labels(value: &Value) -> Vec<RefLabel> {
 }
 
 fn strings(value: &Value, key: &str) -> Vec<String> {
-    array(value, key).iter().filter_map(Value::as_str).map(str::to_owned).collect()
+    array(value, key)
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// One `LogCommit` row.
@@ -133,7 +137,13 @@ pub struct Refs {
 impl Refs {
     fn parse(payload: &Value) -> Self {
         let head = &payload["head"];
-        let optional = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        let optional = |value: &Value, key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
         Self {
             head_sha: optional(head, "sha"),
             head_branch: optional(head, "branch"),
@@ -157,7 +167,10 @@ impl Refs {
                     branch: text(b, "branch").to_owned(),
                 })
                 .collect(),
-            tags: array(payload, "tags").iter().map(|t| text(t, "name").to_owned()).collect(),
+            tags: array(payload, "tags")
+                .iter()
+                .map(|t| text(t, "name").to_owned())
+                .collect(),
         }
     }
 
@@ -254,10 +267,20 @@ impl Filters {
 
     /// The `revision` and `path` a `git_log` tab target asks for.
     pub fn from_target(data: &Value) -> Self {
-        let field = |key: &str| data.get(key).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned);
+        let field = |key: &str| {
+            data.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
         Self {
             revision: field("revision").map(|name| RefFilter { name, kind: None }),
-            path: data.get("path").and_then(Value::as_str).map(|path| path.trim_matches('/').to_owned()).filter(|p| !p.is_empty()),
+            path: data
+                .get("path")
+                .and_then(Value::as_str)
+                .map(|path| path.trim_matches('/').to_owned())
+                .filter(|p| !p.is_empty()),
             ..Self::default()
         }
     }
@@ -288,10 +311,19 @@ pub enum Goto {
 }
 
 enum Pending {
-    Refs { generation: u64 },
-    Page { generation: u64, skip: usize },
+    Refs {
+        generation: u64,
+    },
+    Page {
+        generation: u64,
+        skip: usize,
+    },
     Commit(String),
-    Goto { generation: u64, query: String, explicit: bool },
+    Goto {
+        generation: u64,
+        query: String,
+        explicit: bool,
+    },
 }
 
 pub struct LogState {
@@ -342,22 +374,32 @@ pub struct LogState {
 fn status_print(store: &GitStore, host: &str, cwd: &str) -> Option<String> {
     let status = store.checkout(host, cwd)?.status.as_ref()?;
     Some(
-        ["currentBranch", "upstreamRef", "aheadBehind", "aheadOfOrigin", "behindOfOrigin"]
-            .iter()
-            .map(|key| status.get(*key).map(Value::to_string).unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("\u{1f}"),
+        [
+            "currentBranch",
+            "upstreamRef",
+            "aheadBehind",
+            "aheadOfOrigin",
+            "behindOfOrigin",
+        ]
+        .iter()
+        .map(|key| status.get(*key).map(Value::to_string).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\u{1f}"),
     )
 }
 
 /// Drops the least recently requested details beyond `cap`, never `keep` or
 /// a loading one.
-fn evict_details(order: &mut VecDeque<String>, details: &mut HashMap<String, Detail>, keep: Option<&str>, cap: usize) {
+fn evict_details(
+    order: &mut VecDeque<String>,
+    details: &mut HashMap<String, Detail>,
+    keep: Option<&str>,
+    cap: usize,
+) {
     while order.len() > cap {
-        let Some(position) = order
-            .iter()
-            .position(|sha| Some(sha.as_str()) != keep && !matches!(details.get(sha), Some(Detail::Loading)))
-        else {
+        let Some(position) = order.iter().position(|sha| {
+            Some(sha.as_str()) != keep && !matches!(details.get(sha), Some(Detail::Loading))
+        }) else {
             break;
         };
         if let Some(sha) = order.remove(position) {
@@ -368,7 +410,12 @@ fn evict_details(order: &mut VecDeque<String>, details: &mut HashMap<String, Det
 
 /// The selection after a first page replaced the list: kept while listed, or
 /// while it sat past the end of the reloaded prefix (later pages may list it).
-fn keeps_selection(previous_index: Option<usize>, listed: bool, reloaded: usize, has_more: bool) -> bool {
+fn keeps_selection(
+    previous_index: Option<usize>,
+    listed: bool,
+    reloaded: usize,
+    has_more: bool,
+) -> bool {
     listed || (has_more && previous_index.is_some_and(|index| index >= reloaded))
 }
 
@@ -449,7 +496,8 @@ impl LogState {
     pub fn reload(&mut self, ui: &UiContext, keep: bool) {
         self.generation += 1;
         let generation = self.generation;
-        self.pending.retain(|_, pending| matches!(pending, Pending::Commit(_) | Pending::Goto { .. }));
+        self.pending
+            .retain(|_, pending| matches!(pending, Pending::Commit(_) | Pending::Goto { .. }));
         if !keep {
             self.commits.clear();
             self.index.clear();
@@ -469,8 +517,17 @@ impl LogState {
             return;
         }
         self.stale = false;
-        self.send(ui, "checkout.refs.request", json!({ "cwd": self.cwd }), Pending::Refs { generation });
-        let limit = if keep { self.commits.len().clamp(PAGE_SIZE, MAX_PAGE) } else { PAGE_SIZE };
+        self.send(
+            ui,
+            "checkout.refs.request",
+            json!({ "cwd": self.cwd }),
+            Pending::Refs { generation },
+        );
+        let limit = if keep {
+            self.commits.len().clamp(PAGE_SIZE, MAX_PAGE)
+        } else {
+            PAGE_SIZE
+        };
         self.request_page(ui, 0, limit);
     }
 
@@ -493,12 +550,22 @@ impl LogState {
         self.page_error = None;
         self.dirty = true;
         let generation = self.generation;
-        self.send(ui, "checkout.log.request", fields, Pending::Page { generation, skip });
+        self.send(
+            ui,
+            "checkout.log.request",
+            fields,
+            Pending::Page { generation, skip },
+        );
     }
 
     /// The next page, once the list end comes near.
     pub fn load_more(&mut self, ui: &UiContext) {
-        if !self.active || !self.loaded || !self.has_more || self.page_loading || self.page_error.is_some() {
+        if !self.active
+            || !self.loaded
+            || !self.has_more
+            || self.page_loading
+            || self.page_error.is_some()
+        {
             return;
         }
         let skip = self.commits.len();
@@ -543,7 +610,12 @@ impl LogState {
             self.detail_order.remove(position);
         }
         self.detail_order.push_back(sha.to_owned());
-        evict_details(&mut self.detail_order, &mut self.details, self.selected.as_deref(), DETAIL_CACHE);
+        evict_details(
+            &mut self.detail_order,
+            &mut self.details,
+            self.selected.as_deref(),
+            DETAIL_CACHE,
+        );
     }
 
     /// Requests `sha`'s details once (cached per SHA, least recently used dropped).
@@ -561,7 +633,12 @@ impl LogState {
         self.details.insert(sha.to_owned(), Detail::Loading);
         self.touch_detail(sha);
         self.dirty = true;
-        self.send(ui, "checkout.commit.get.request", json!({ "cwd": self.cwd, "sha": sha }), Pending::Commit(sha.to_owned()));
+        self.send(
+            ui,
+            "checkout.commit.get.request",
+            json!({ "cwd": self.cwd, "sha": sha }),
+            Pending::Commit(sha.to_owned()),
+        );
     }
 
     /// A failed detail load asks again.
@@ -575,8 +652,17 @@ impl LogState {
     pub fn goto(&mut self, ui: &UiContext, query: &str, explicit: bool) {
         self.goto_generation += 1;
         let generation = self.goto_generation;
-        let pending = Pending::Goto { generation, query: query.to_owned(), explicit };
-        self.send(ui, "checkout.commit.get.request", json!({ "cwd": self.cwd, "sha": query }), pending);
+        let pending = Pending::Goto {
+            generation,
+            query: query.to_owned(),
+            explicit,
+        };
+        self.send(
+            ui,
+            "checkout.commit.get.request",
+            json!({ "cwd": self.cwd, "sha": query }),
+            pending,
+        );
     }
 
     /// Drops an unanswered hash lookup (the query changed).
@@ -599,7 +685,14 @@ impl LogState {
 
     /// Indexes and lays out the commits from `from` on.
     fn extend_list(&mut self, from: usize) {
-        let Self { commits, index, rows, graph, filters, .. } = self;
+        let Self {
+            commits,
+            index,
+            rows,
+            graph,
+            filters,
+            ..
+        } = self;
         let graphed = !filters.breaks_graph();
         for (position, commit) in commits.iter().enumerate().skip(from) {
             index.entry(commit.sha.clone()).or_insert(position);
@@ -616,7 +709,11 @@ impl LogState {
                 continue;
             }
             let key = name.to_lowercase();
-            if let Err(index) = self.authors.binary_search_by(|a| a.to_lowercase().cmp(&key).then_with(|| a.as_str().cmp(name))) {
+            if let Err(index) = self.authors.binary_search_by(|a| {
+                a.to_lowercase()
+                    .cmp(&key)
+                    .then_with(|| a.as_str().cmp(name))
+            }) {
                 self.authors.insert(index, name.to_owned());
             }
         }
@@ -636,11 +733,14 @@ impl LogState {
                     self.goto_generation += 1;
                     self.pending.clear();
                     self.page_loading = false;
-                    self.details.retain(|_, detail| !matches!(detail, Detail::Loading));
+                    self.details
+                        .retain(|_, detail| !matches!(detail, Detail::Loading));
                     self.stale = true;
                     self.dirty = true;
                 }
-                CoreEvent::Response { request_id, result, .. } => {
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
                     if let Some(pending) = self.pending.remove(request_id) {
                         self.on_response(pending, wire::checkout_result(result));
                     }
@@ -706,7 +806,10 @@ impl LogState {
                         return;
                     }
                 };
-                let page: Vec<LogCommit> = array(&payload, "commits").iter().map(LogCommit::parse).collect();
+                let page: Vec<LogCommit> = array(&payload, "commits")
+                    .iter()
+                    .map(LogCommit::parse)
+                    .collect();
                 let from = if skip == 0 {
                     let previous = self.selected.as_deref().and_then(|sha| self.index_of(sha));
                     self.commits = page;
@@ -715,8 +818,16 @@ impl LogState {
                     self.graph = Builder::default();
                     self.extend_list(0);
                     self.replaced += 1;
-                    let listed = self.selected.as_deref().is_some_and(|sha| self.index.contains_key(sha));
-                    if !keeps_selection(previous, listed, self.commits.len(), flag(&payload, "hasMore")) {
+                    let listed = self
+                        .selected
+                        .as_deref()
+                        .is_some_and(|sha| self.index.contains_key(sha));
+                    if !keeps_selection(
+                        previous,
+                        listed,
+                        self.commits.len(),
+                        flag(&payload, "hasMore"),
+                    ) {
                         self.selected = None;
                     }
                     0
@@ -734,15 +845,26 @@ impl LogState {
             Pending::Commit(sha) => {
                 let detail = match result {
                     Ok(payload) => match payload.get("commit") {
-                        Some(commit @ Value::Object(_)) => Detail::Ready(Box::new(CommitDetail::parse(commit))),
+                        Some(commit @ Value::Object(_)) => {
+                            Detail::Ready(Box::new(CommitDetail::parse(commit)))
+                        }
                         _ => Detail::Missing,
                     },
                     Err(failure) => Detail::Failed(failure.message),
                 };
                 self.details.insert(sha, detail);
-                evict_details(&mut self.detail_order, &mut self.details, self.selected.as_deref(), DETAIL_CACHE);
+                evict_details(
+                    &mut self.detail_order,
+                    &mut self.details,
+                    self.selected.as_deref(),
+                    DETAIL_CACHE,
+                );
             }
-            Pending::Goto { generation, query, explicit } => {
+            Pending::Goto {
+                generation,
+                query,
+                explicit,
+            } => {
                 if generation != self.goto_generation {
                     return;
                 }
@@ -760,7 +882,8 @@ impl LogState {
                 self.goto = Some(match commit.filter(|c| !c.sha.is_empty()) {
                     Some(commit) => {
                         let sha = commit.sha.clone();
-                        self.details.insert(sha.clone(), Detail::Ready(Box::new(commit)));
+                        self.details
+                            .insert(sha.clone(), Detail::Ready(Box::new(commit)));
                         self.touch_detail(&sha);
                         Goto::Found { sha, explicit }
                     }
@@ -776,14 +899,21 @@ mod tests {
     use super::*;
 
     fn state() -> LogState {
-        LogState::new(&PanelTarget::new("git_log", "host", "workspace", "/repo"), &GitStore::default())
+        LogState::new(
+            &PanelTarget::new("git_log", "host", "workspace", "/repo"),
+            &GitStore::default(),
+        )
     }
 
     #[test]
     fn failed_hash_lookup_does_not_become_a_message_search() {
         let mut state = state();
         state.on_response(
-            Pending::Goto { generation: 0, query: "deadbeef".into(), explicit: false },
+            Pending::Goto {
+                generation: 0,
+                query: "deadbeef".into(),
+                explicit: false,
+            },
             Err(wire::Failure::message("Disconnected")),
         );
         assert_eq!(state.take_goto(), Some(Goto::Failed("Disconnected".into())));
@@ -811,7 +941,10 @@ mod tests {
         let mut state = state();
         state.generation = 2;
         state.on_response(
-            Pending::Page { generation: 1, skip: 0 },
+            Pending::Page {
+                generation: 1,
+                skip: 0,
+            },
             Ok(json!({ "commits": [{ "sha": "old" }], "hasMore": false })),
         );
         assert!(state.commits.is_empty());
@@ -869,10 +1002,21 @@ mod tests {
     #[test]
     fn target_data_selects_revision_and_path() {
         let filters = Filters::from_target(&json!({ "revision": " main ", "path": "/src/lib.rs" }));
-        assert_eq!(filters.revision, Some(RefFilter { name: "main".to_owned(), kind: None }));
+        assert_eq!(
+            filters.revision,
+            Some(RefFilter {
+                name: "main".to_owned(),
+                kind: None
+            })
+        );
         assert_eq!(filters.path.as_deref(), Some("src/lib.rs"));
         assert!(filters.breaks_graph());
-        assert_eq!(Filters::from_target(&json!({ "path": " file " })).path.as_deref(), Some(" file "));
+        assert_eq!(
+            Filters::from_target(&json!({ "path": " file " }))
+                .path
+                .as_deref(),
+            Some(" file ")
+        );
         assert_eq!(Filters::from_target(&json!({})), Filters::default());
     }
 }

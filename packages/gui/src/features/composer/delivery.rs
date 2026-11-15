@@ -5,9 +5,9 @@
 use super::drafts::*;
 use super::i18n::t;
 use super::json::*;
-use super::service::{ComposerService, Pending, PanelNotice, SendJob, SendOrigin};
+use super::service::{ComposerService, PanelNotice, Pending, SendJob, SendOrigin};
 use paseo_gui_core::CoreError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
@@ -30,7 +30,9 @@ fn wakes_queue(event: &Value) -> bool {
     let kind = s(get(event, "type"));
     let payload = get(event, "payload");
     kind == "agent_permission_resolved"
-        || (kind == "agent_update" && get(payload, "agent").is_object() && get(get(payload, "agent"), "preparation").is_null())
+        || (kind == "agent_update"
+            && get(payload, "agent").is_object()
+            && get(get(payload, "agent"), "preparation").is_null())
         || (kind == "agent_stream"
             && matches!(
                 s(get(get(payload, "event"), "type")),
@@ -44,7 +46,10 @@ impl ComposerService {
             let receipt = get(get(event, "payload"), "receipt").clone();
             self.apply_receipt_everywhere(host, &receipt);
         }
-        let observation_ids: Vec<String> = list_ref(get(event, "observations")).iter().map(display).collect();
+        let observation_ids: Vec<String> = list_ref(get(event, "observations"))
+            .iter()
+            .map(display)
+            .collect();
         if s(get(event, "type")) == "subscription.restored" {
             let id = owned(get(get(event, "payload"), "observationId"));
             if let Some(delivery) = self.delivery.get_mut(host)
@@ -76,7 +81,9 @@ impl ComposerService {
         if !self.connected(host) || !self.drafts.is_loaded() {
             return;
         }
-        let Some(core) = self.core.clone() else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         let receipts = self.supports(host, "agentMessageReceipts");
         let keys = self.drafts.agent_keys_for_server(host);
         for key in keys {
@@ -89,21 +96,30 @@ impl ComposerService {
                         json!({"type": "session.events.set_subscription.request", "events": ["agent.message_receipt.update"]}),
                         "session.events.set_subscription.response",
                     );
-                    self.pending.insert(request, Pending::ReceiptObservation { host: host.to_owned() });
+                    self.pending.insert(
+                        request,
+                        Pending::ReceiptObservation {
+                            host: host.to_owned(),
+                        },
+                    );
                 }
                 let current = self.drafts.draft(&key).clone();
                 let mut uncertain = vec![get(&current, "pending").clone()];
                 uncertain.extend(
-                    maps(get(&current, "queue"))
-                        .into_iter()
-                        .filter(|item| matches!(s(get(item, "state")), "sending" | "unacknowledged")),
+                    maps(get(&current, "queue")).into_iter().filter(|item| {
+                        matches!(s(get(item, "state")), "sending" | "unacknowledged")
+                    }),
                 );
                 for message in uncertain {
                     let id = owned(get(&message, "messageId"));
                     if id.is_empty() || self.drafts.is_dismissed(&key, &id) {
                         continue;
                     }
-                    if self.active_sends.get(&key).is_some_and(|active| active == &id) {
+                    if self
+                        .active_sends
+                        .get(&key)
+                        .is_some_and(|active| active == &id)
+                    {
                         continue;
                     }
                     let fresh = self
@@ -119,7 +135,10 @@ impl ComposerService {
             }
             let draft = self.drafts.draft(&key).clone();
             let queue = maps(get(&draft, "queue"));
-            let busy = self.delivery.get(host).is_some_and(|d| d.busy.contains(&key));
+            let busy = self
+                .delivery
+                .get(host)
+                .is_some_and(|d| d.busy.contains(&key));
             if !queue.is_empty()
                 && !non_empty_obj(get(&draft, "pending"))
                 && s(get(&queue[0], "state")) == "queued"
@@ -138,8 +157,17 @@ impl ComposerService {
     }
 
     /// Exact-ID receipt query (Flutter `ChatDelivery.check`).
-    pub fn check_receipt(&mut self, host: &str, key: &str, id: &str, dismiss: bool, panel: Option<u64>) {
-        let Some(core) = self.core.clone() else { return };
+    pub fn check_receipt(
+        &mut self,
+        host: &str,
+        key: &str,
+        id: &str,
+        dismiss: bool,
+        panel: Option<u64>,
+    ) {
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         if !self.supports(host, "agentMessageReceipts") {
             self.notify(
                 panel,
@@ -161,7 +189,13 @@ impl ComposerService {
         );
         self.pending.insert(
             request,
-            Pending::Receipt { host: host.to_owned(), key: key.to_owned(), id: id.to_owned(), dismiss, panel },
+            Pending::Receipt {
+                host: host.to_owned(),
+                key: key.to_owned(),
+                id: id.to_owned(),
+                dismiss,
+                panel,
+            },
         );
     }
 
@@ -175,7 +209,11 @@ impl ComposerService {
         result: Result<Value, CoreError>,
     ) {
         let agent = key_identity(key).get(2).cloned().unwrap_or_default();
-        let request_type = if dismiss { "agent.message_receipt.dismiss.request" } else { "agent.message_receipt.get.request" };
+        let request_type = if dismiss {
+            "agent.message_receipt.dismiss.request"
+        } else {
+            "agent.message_receipt.get.request"
+        };
         let outcome = match result {
             Ok(payload) => match paseo_gui_core::response_error(&payload, request_type) {
                 Some(error) => Err(error.message),
@@ -185,7 +223,11 @@ impl ComposerService {
                         && s(get(&receipt, "messageId")) == id
                         && get(&receipt, "revision").is_i64()
                         && (!dismiss || get(&receipt, "dismissed") == &Value::Bool(true));
-                    if valid { Ok(receipt) } else { Err("Invalid message receipt identity or dismissal".to_owned()) }
+                    if valid {
+                        Ok(receipt)
+                    } else {
+                        Err("Invalid message receipt identity or dismissal".to_owned())
+                    }
                 }
             },
             Err(error) => Err(error.message),
@@ -205,17 +247,35 @@ impl ComposerService {
             // Keep uncertainty durable; reconnect or an explicit Check retries.
             Err(error) => Some(error),
         };
-        if dismiss && error.is_none() && self.active_sends.get(key).is_some_and(|active| active == id) {
+        if dismiss
+            && error.is_none()
+            && self
+                .active_sends
+                .get(key)
+                .is_some_and(|active| active == id)
+        {
             self.active_sends.remove(key);
         }
         if panel.is_some() {
             self.flush_then(super::service::AfterFlush::Nothing { panel: None });
         }
-        self.notify(panel, PanelNotice::CheckFinished { key: key.to_owned(), message_id: id.to_owned(), error });
+        self.notify(
+            panel,
+            PanelNotice::CheckFinished {
+                key: key.to_owned(),
+                message_id: id.to_owned(),
+                error,
+            },
+        );
         let _ = host;
     }
 
-    pub(super) fn receipt_observation_result(&mut self, host: &str, request_id: &str, result: Result<Value, CoreError>) {
+    pub(super) fn receipt_observation_result(
+        &mut self,
+        host: &str,
+        request_id: &str,
+        result: Result<Value, CoreError>,
+    ) {
         let delivery = self.delivery.entry(host.to_owned()).or_default();
         delivery.subscribing = false;
         match result {
@@ -228,7 +288,9 @@ impl ComposerService {
 
     /// Flutter `_drain`: steer the first queued message into an idle agent.
     fn drain(&mut self, host: &str, key: &str) {
-        let Some(core) = self.core.clone() else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         let delivery = self.delivery.entry(host.to_owned()).or_default();
         if !delivery.busy.insert(key.to_owned()) {
             return;
@@ -236,8 +298,18 @@ impl ComposerService {
         let agent = key_identity(key).get(2).cloned().unwrap_or_default();
         match delivery.observations.get(key).cloned() {
             Some(observation) if delivery.observed.contains(&observation) => {
-                let request = core.request(host, json!({"type": "fetch_agent_request", "agentId": agent}), "fetch_agent_response");
-                self.pending.insert(request, Pending::DrainFetch { host: host.to_owned(), key: key.to_owned() });
+                let request = core.request(
+                    host,
+                    json!({"type": "fetch_agent_request", "agentId": agent}),
+                    "fetch_agent_response",
+                );
+                self.pending.insert(
+                    request,
+                    Pending::DrainFetch {
+                        host: host.to_owned(),
+                        key: key.to_owned(),
+                    },
+                );
             }
             Some(_) => {
                 // The subscription snapshot is still pending; it continues the drain.
@@ -248,8 +320,16 @@ impl ComposerService {
                     json!({"type": "agent.timeline.set_subscription.request", "agentIds": [agent]}),
                     "agent.timeline.set_subscription.response",
                 );
-                delivery.observations.insert(key.to_owned(), observation.clone());
-                self.pending.insert(observation, Pending::TimelineObservation { host: host.to_owned(), key: key.to_owned() });
+                delivery
+                    .observations
+                    .insert(key.to_owned(), observation.clone());
+                self.pending.insert(
+                    observation,
+                    Pending::TimelineObservation {
+                        host: host.to_owned(),
+                        key: key.to_owned(),
+                    },
+                );
             }
         }
     }
@@ -267,10 +347,18 @@ impl ComposerService {
         }
     }
 
-    pub(super) fn timeline_observation_result(&mut self, host: &str, key: &str, request_id: &str, result: Result<Value, CoreError>) {
+    pub(super) fn timeline_observation_result(
+        &mut self,
+        host: &str,
+        key: &str,
+        request_id: &str,
+        result: Result<Value, CoreError>,
+    ) {
         match result {
             Ok(_) => {
-                let Some(core) = self.core.clone() else { return };
+                let Some(core) = self.core.clone() else {
+                    return;
+                };
                 let delivery = self.delivery.entry(host.to_owned()).or_default();
                 if delivery.observations.get(key).map(String::as_str) != Some(request_id) {
                     core.cancel_request(request_id);
@@ -279,8 +367,18 @@ impl ComposerService {
                 }
                 delivery.observed.insert(request_id.to_owned());
                 let agent = key_identity(key).get(2).cloned().unwrap_or_default();
-                let request = core.request(host, json!({"type": "fetch_agent_request", "agentId": agent}), "fetch_agent_response");
-                self.pending.insert(request, Pending::DrainFetch { host: host.to_owned(), key: key.to_owned() });
+                let request = core.request(
+                    host,
+                    json!({"type": "fetch_agent_request", "agentId": agent}),
+                    "fetch_agent_response",
+                );
+                self.pending.insert(
+                    request,
+                    Pending::DrainFetch {
+                        host: host.to_owned(),
+                        key: key.to_owned(),
+                    },
+                );
             }
             Err(error) => {
                 if let Some(delivery) = self.delivery.get_mut(host) {
@@ -291,7 +389,12 @@ impl ComposerService {
         }
     }
 
-    pub(super) fn drain_fetch_result(&mut self, host: &str, key: &str, result: Result<Value, CoreError>) {
+    pub(super) fn drain_fetch_result(
+        &mut self,
+        host: &str,
+        key: &str,
+        result: Result<Value, CoreError>,
+    ) {
         let payload = match result {
             Ok(payload) => match paseo_gui_core::response_error(&payload, "fetch_agent_request") {
                 Some(error) => return self.block_queue(host, key, error.message),
@@ -320,7 +423,10 @@ impl ComposerService {
         }
         let draft = self.drafts.draft(key).clone();
         let mut queue = maps(get(&draft, "queue"));
-        if non_empty_obj(get(&draft, "pending")) || queue.is_empty() || s(get(&queue[0], "state")) != "queued" {
+        if non_empty_obj(get(&draft, "pending"))
+            || queue.is_empty()
+            || s(get(&queue[0], "state")) != "queued"
+        {
             return release(self);
         }
         // host-runtime.ts drainQueuedAgentMessage: a drained message steers.

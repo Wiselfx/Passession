@@ -79,16 +79,24 @@ impl ExplorerPanel {
 
     pub fn set_target(&mut self, target: ExplorerTarget) {
         // An assistant folder link reveals its folder once the tree lists the target's cwd.
-        let reveal_changed = self.target.as_ref().map(|old| (&old.reveal, &old.cwd)) != Some((&target.reveal, &target.cwd));
+        let reveal_changed = self.target.as_ref().map(|old| (&old.reveal, &old.cwd))
+            != Some((&target.reveal, &target.cwd));
         if reveal_changed {
-            self.reveal_pending = target.reveal.clone().filter(|path| !path.is_empty() && path != ".");
+            self.reveal_pending = target
+                .reveal
+                .clone()
+                .filter(|path| !path.is_empty() && path != ".");
         }
         self.target = Some(target);
     }
 
     fn workspace_key(target: &ExplorerTarget) -> String {
         let id = target.workspace_id.trim();
-        if id.is_empty() { format!("root:{}", target.cwd.trim()) } else { format!("workspace:{id}") }
+        if id.is_empty() {
+            format!("root:{}", target.cwd.trim())
+        } else {
+            format!("workspace:{id}")
+        }
     }
 
     fn entry_ops(ui: &UiContext, host_id: &str) -> bool {
@@ -124,12 +132,21 @@ impl ExplorerPanel {
         Some(target)
     }
 
-    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event, ui: &mut UiContext, area: Area) -> bool {
-        let Some(target) = self.ensure(ui) else { return false };
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &mut UiContext,
+        area: Area,
+    ) -> bool {
+        let Some(target) = self.ensure(ui) else {
+            return false;
+        };
         let mut changed = self.handle_commands(cx, ui, &target);
         let scroll_enabled = area.is_valid(cx) && !self.transfer_hits_active();
         changed |= store::with(|s| {
-            s.explorer_mut(&self.owner).is_some_and(|state| self.view.animate_scroll(cx, event, state, scroll_enabled))
+            s.explorer_mut(&self.owner)
+                .is_some_and(|state| self.view.animate_scroll(cx, event, state, scroll_enabled))
         });
         let hit = kit::unshift_hit(event.hits(cx, area), self.hit_shift);
         if matches!(hit, Hit::Nothing) {
@@ -163,7 +180,10 @@ impl ExplorerPanel {
         let mut view_changed = false;
         let event = store::with(|s| {
             let state = s.explorer_mut(&owner)?;
-            Some(self.view.handle_hit(cx, &hit, state, &look, &mut view_changed))
+            Some(
+                self.view
+                    .handle_hit(cx, &hit, state, &look, &mut view_changed),
+            )
         });
         changed |= view_changed;
         if let Some(event) = event {
@@ -182,21 +202,52 @@ impl ExplorerPanel {
             return Vec::new();
         }
         vec![
-            ToolbarAction { id: "new_file", icon: "file-plus", tooltip: t("workspace.fileActions.newFile"), enabled: true },
-            ToolbarAction { id: "new_directory", icon: "folder-plus", tooltip: t("workspace.fileActions.newFolder"), enabled: true },
+            ToolbarAction {
+                id: "new_file",
+                icon: "file-plus",
+                tooltip: t("workspace.fileActions.newFile"),
+                enabled: true,
+            },
+            ToolbarAction {
+                id: "new_directory",
+                icon: "folder-plus",
+                tooltip: t("workspace.fileActions.newFolder"),
+                enabled: true,
+            },
         ]
     }
 
-    fn on_event(&mut self, ui: &mut UiContext, target: &ExplorerTarget, event: ExplorerEvent, busy: bool) -> bool {
+    fn on_event(
+        &mut self,
+        ui: &mut UiContext,
+        target: &ExplorerTarget,
+        event: ExplorerEvent,
+        busy: bool,
+    ) -> bool {
         match event {
             ExplorerEvent::None => false,
             ExplorerEvent::Action(id) => {
-                self.create(ui, target, ".", if id == "new_file" { "file" } else { "directory" });
+                self.create(
+                    ui,
+                    target,
+                    ".",
+                    if id == "new_file" {
+                        "file"
+                    } else {
+                        "directory"
+                    },
+                );
                 true
             }
             ExplorerEvent::FileSelected(entry) => {
                 let beside = store::open_beside_preference(ui);
-                host::open_file(ui, &target.host_id, &target.workspace_id, &entry.path, beside);
+                host::open_file(
+                    ui,
+                    &target.host_id,
+                    &target.workspace_id,
+                    &entry.path,
+                    beside,
+                );
                 true
             }
             ExplorerEvent::EntryMenu { entry, at, row } => {
@@ -215,10 +266,15 @@ impl ExplorerPanel {
                     return false;
                 }
                 let entries = vec![
-                    MenuItem::new("file", t("workspace.fileActions.newFile")).icon("file-plus").entry(),
-                    MenuItem::new("directory", t("workspace.fileActions.newFolder")).icon("folder-plus").entry(),
+                    MenuItem::new("file", t("workspace.fileActions.newFile"))
+                        .icon("file-plus")
+                        .entry(),
+                    MenuItem::new("directory", t("workspace.fileActions.newFolder"))
+                        .icon("folder-plus")
+                        .entry(),
                 ];
-                let id = overlay::open_menu(ui, kit::shifted(anchor, self.hit_shift), None, entries);
+                let id =
+                    overlay::open_menu(ui, kit::shifted(anchor, self.hit_shift), None, entries);
                 self.overlays.insert(id, Pending::BackgroundMenu);
                 self.opened_in.insert(id, target.cwd.clone());
                 true
@@ -227,46 +283,97 @@ impl ExplorerPanel {
     }
 
     /// Original `FileActionsContextMenuContent`: grouped rows, a separator between groups.
-    fn entry_menu(&mut self, ui: &mut UiContext, target: &ExplorerTarget, entry: Entry, anchor: Rect) {
+    fn entry_menu(
+        &mut self,
+        ui: &mut UiContext,
+        target: &ExplorerTarget,
+        entry: Entry,
+        anchor: Rect,
+    ) {
         let file = entry.kind == "file";
         let ops = Self::entry_ops(ui, &target.host_id);
         let duplicate = Self::duplicate_op(ui, &target.host_id);
-        let expanded = !file && store::with(|s| s.explorer_mut(&self.owner).is_some_and(|state| state.is_expanded(&entry.path)));
+        let expanded = !file
+            && store::with(|s| {
+                s.explorer_mut(&self.owner)
+                    .is_some_and(|state| state.is_expanded(&entry.path))
+            });
         let mut groups: Vec<Vec<MenuEntry>> = Vec::new();
         if !file && ops {
             groups.push(vec![
-                MenuItem::new("new_file", t("workspace.fileActions.newFile")).icon("file-plus").entry(),
-                MenuItem::new("new_directory", t("workspace.fileActions.newFolder")).icon("folder-plus").entry(),
+                MenuItem::new("new_file", t("workspace.fileActions.newFile"))
+                    .icon("file-plus")
+                    .entry(),
+                MenuItem::new("new_directory", t("workspace.fileActions.newFolder"))
+                    .icon("folder-plus")
+                    .entry(),
             ]);
         }
         if expanded {
-            groups.push(vec![MenuItem::new("collapse", t("workspace.fileActions.collapseFolder")).icon("folder-minus").entry()]);
+            groups.push(vec![
+                MenuItem::new("collapse", t("workspace.fileActions.collapseFolder"))
+                    .icon("folder-minus")
+                    .entry(),
+            ]);
         }
         if file {
-            groups.push(vec![MenuItem::new("open", t("workspace.fileActions.openToSide")).icon("arrow-right-to-line").entry()]);
+            groups.push(vec![
+                MenuItem::new("open", t("workspace.fileActions.openToSide"))
+                    .icon("arrow-right-to-line")
+                    .entry(),
+            ]);
         }
         let mut reference = vec![
-            MenuItem::new("absolute", t("workspace.fileActions.copyPath")).icon("copy").entry(),
-            MenuItem::new("relative", t("workspace.fileActions.copyRelativePath")).icon("copy").entry(),
+            MenuItem::new("absolute", t("workspace.fileActions.copyPath"))
+                .icon("copy")
+                .entry(),
+            MenuItem::new("relative", t("workspace.fileActions.copyRelativePath"))
+                .icon("copy")
+                .entry(),
         ];
         if file {
-            reference.push(MenuItem::new("download", t("workspace.fileActions.download")).icon("download").entry());
-            reference.push(MenuItem::new("share", t("downloads.shareFile")).icon("share-2").entry());
+            reference.push(
+                MenuItem::new("download", t("workspace.fileActions.download"))
+                    .icon("download")
+                    .entry(),
+            );
+            reference.push(
+                MenuItem::new("share", t("downloads.shareFile"))
+                    .icon("share-2")
+                    .entry(),
+            );
         }
-        reference.push(MenuItem::new("chat", t("workspace.fileActions.addToChat")).icon("message-square-plus").entry());
+        reference.push(
+            MenuItem::new("chat", t("workspace.fileActions.addToChat"))
+                .icon("message-square-plus")
+                .entry(),
+        );
         groups.push(reference);
         if ops || duplicate {
             let mut manage = Vec::new();
             if ops {
-                manage.push(MenuItem::new("rename", t("workspace.fileActions.rename")).icon("pencil").entry());
+                manage.push(
+                    MenuItem::new("rename", t("workspace.fileActions.rename"))
+                        .icon("pencil")
+                        .entry(),
+                );
             }
             if duplicate {
-                manage.push(MenuItem::new("duplicate", t("workspace.fileActions.duplicate")).icon("copy-plus").entry());
+                manage.push(
+                    MenuItem::new("duplicate", t("workspace.fileActions.duplicate"))
+                        .icon("copy-plus")
+                        .entry(),
+                );
             }
             groups.push(manage);
         }
         if ops {
-            groups.push(vec![MenuItem::new("delete", t("workspace.fileActions.delete")).icon("trash-2").destructive(true).entry()]);
+            groups.push(vec![
+                MenuItem::new("delete", t("workspace.fileActions.delete"))
+                    .icon("trash-2")
+                    .destructive(true)
+                    .entry(),
+            ]);
         }
         let mut entries = Vec::new();
         for (index, group) in groups.into_iter().enumerate() {
@@ -281,35 +388,66 @@ impl ExplorerPanel {
     }
 
     /// Original `handleNewEntry`: the parent expands (and lists), then the name prompt.
-    fn create(&mut self, ui: &mut UiContext, target: &ExplorerTarget, parent: &str, kind: &'static str) {
+    fn create(
+        &mut self,
+        ui: &mut UiContext,
+        target: &ExplorerTarget,
+        parent: &str,
+        kind: &'static str,
+    ) {
         store::with(|s| {
             if let Some(state) = s.explorer_mut(&self.owner) {
                 state.expand_for_create(parent);
             }
         });
         let (title, placeholder) = if kind == "directory" {
-            (t("workspace.fileActions.newFolder"), t("workspace.fileExplorer.draft.folderPlaceholder"))
+            (
+                t("workspace.fileActions.newFolder"),
+                t("workspace.fileExplorer.draft.folderPlaceholder"),
+            )
         } else {
-            (t("workspace.fileActions.newFile"), t("workspace.fileExplorer.draft.filePlaceholder"))
+            (
+                t("workspace.fileActions.newFile"),
+                t("workspace.fileExplorer.draft.filePlaceholder"),
+            )
         };
-        let id = overlay::prompt_text(ui, &title, None, "", &placeholder, &t("common.actions.save"));
-        self.overlays.insert(id, Pending::CreateName { parent: parent.to_owned(), kind });
+        let id = overlay::prompt_text(
+            ui,
+            &title,
+            None,
+            "",
+            &placeholder,
+            &t("common.actions.save"),
+        );
+        self.overlays.insert(
+            id,
+            Pending::CreateName {
+                parent: parent.to_owned(),
+                kind,
+            },
+        );
         self.opened_in.insert(id, target.cwd.clone());
     }
 
-    fn handle_commands(&mut self, cx: &mut Cx, ui: &mut UiContext, target: &ExplorerTarget) -> bool {
+    fn handle_commands(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        target: &ExplorerTarget,
+    ) -> bool {
         let mut answers = Vec::new();
         for command in ui.commands.iter_mut() {
             if command.handled || command.tab_key != self.owner {
                 continue;
             }
             if let Some((id, args)) = overlay::result_of(command)
-                && let Some(pending) = self.overlays.remove(&id) {
-                    let args = args.clone();
-                    let cwd = self.opened_in.remove(&id).unwrap_or_default();
-                    answers.push((pending, args, cwd));
-                    command.handled = true;
-                }
+                && let Some(pending) = self.overlays.remove(&id)
+            {
+                let args = args.clone();
+                let cwd = self.opened_in.remove(&id).unwrap_or_default();
+                answers.push((pending, args, cwd));
+                command.handled = true;
+            }
         }
         let any = !answers.is_empty();
         for (pending, args, cwd) in answers {
@@ -325,12 +463,21 @@ impl ExplorerPanel {
                 }
                 Pending::BackgroundMenu => {
                     if let Some(value) = args.get("value").and_then(Value::as_str) {
-                        let kind = if value == "directory" { "directory" } else { "file" };
+                        let kind = if value == "directory" {
+                            "directory"
+                        } else {
+                            "file"
+                        };
                         self.create(ui, target, ".", kind);
                     }
                 }
                 Pending::CreateName { parent, kind } => {
-                    let name = args.get("text").and_then(Value::as_str).unwrap_or("").trim().to_owned();
+                    let name = args
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
                     if name.is_empty() {
                         continue;
                     }
@@ -341,20 +488,37 @@ impl ExplorerPanel {
                             &owner,
                             &target.host_id,
                             &target.cwd,
-                            EntryAction::Create { parent: parent.clone(), kind: kind.to_owned() },
+                            EntryAction::Create {
+                                parent: parent.clone(),
+                                kind: kind.to_owned(),
+                            },
                             json!({ "parentPath": parent, "name": name, "kind": kind }),
                         )
                     });
                 }
                 Pending::RenameName(entry) => {
-                    let name = args.get("text").and_then(Value::as_str).unwrap_or("").trim().to_owned();
+                    let name = args
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
                     if name.is_empty() || name == entry.name {
                         continue;
                     }
                     let parent = parent_explorer_path(&entry.path);
                     let owner = self.owner.clone();
                     let fields = json!({ "path": entry.path, "name": name });
-                    store::with(|s| s.entry_request(ui, &owner, &target.host_id, &target.cwd, EntryAction::Rename { entry, parent }, fields));
+                    store::with(|s| {
+                        s.entry_request(
+                            ui,
+                            &owner,
+                            &target.host_id,
+                            &target.cwd,
+                            EntryAction::Rename { entry, parent },
+                            fields,
+                        )
+                    });
                 }
                 Pending::Delete(entry) => {
                     if args.get("confirmed") != Some(&Value::Bool(true)) {
@@ -363,14 +527,30 @@ impl ExplorerPanel {
                     let parent = parent_explorer_path(&entry.path);
                     let owner = self.owner.clone();
                     let fields = json!({ "path": entry.path });
-                    store::with(|s| s.entry_request(ui, &owner, &target.host_id, &target.cwd, EntryAction::Delete { parent }, fields));
+                    store::with(|s| {
+                        s.entry_request(
+                            ui,
+                            &owner,
+                            &target.host_id,
+                            &target.cwd,
+                            EntryAction::Delete { parent },
+                            fields,
+                        )
+                    });
                 }
             }
         }
         any
     }
 
-    fn run_action(&mut self, cx: &mut Cx, ui: &mut UiContext, target: &ExplorerTarget, action: &str, entry: Entry) {
+    fn run_action(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        target: &ExplorerTarget,
+        action: &str,
+        entry: Entry,
+    ) {
         let path = entry.path.clone();
         match action {
             "open" => host::open_file(ui, &target.host_id, &target.workspace_id, &path, true),
@@ -379,27 +559,63 @@ impl ExplorerPanel {
                     state.collapse(&path);
                 }
             }),
-            "absolute" => host::copy_text(ui, remote_absolute(&target.cwd, &path), Some(t("common.states.copied"))),
-            "relative" => host::copy_text(ui, remote_relative(&target.cwd, &path), Some(t("common.states.copied"))),
+            "absolute" => host::copy_text(
+                ui,
+                remote_absolute(&target.cwd, &path),
+                Some(t("common.states.copied")),
+            ),
+            "relative" => host::copy_text(
+                ui,
+                remote_relative(&target.cwd, &path),
+                Some(t("common.states.copied")),
+            ),
             "chat" => {
                 host::add_to_chat(
                     &target.host_id,
                     &target.workspace_id,
-                    vec![json!({ "kind": "workspace_file", "path": remote_absolute(&target.cwd, &path), "selection": { "kind": "whole_file" } })],
+                    vec![
+                        json!({ "kind": "workspace_file", "path": remote_absolute(&target.cwd, &path), "selection": { "kind": "whole_file" } }),
+                    ],
                 );
                 host::toast(ui, l("Added to chat draft"), false);
             }
             "new_file" | "new_directory" => {
-                let kind = if action == "new_file" { "file" } else { "directory" };
+                let kind = if action == "new_file" {
+                    "file"
+                } else {
+                    "directory"
+                };
                 self.create(ui, target, &path, kind);
             }
             "download" | "share" => {
-                let mode = if action == "share" { TransferMode::Share } else { TransferMode::Save };
+                let mode = if action == "share" {
+                    TransferMode::Share
+                } else {
+                    TransferMode::Save
+                };
                 let owner = self.owner.clone();
-                store::with(|s| s.start_transfer(ui, &owner, &target.host_id, &target.cwd, &path, mode, None, None));
+                store::with(|s| {
+                    s.start_transfer(
+                        ui,
+                        &owner,
+                        &target.host_id,
+                        &target.cwd,
+                        &path,
+                        mode,
+                        None,
+                        None,
+                    )
+                });
             }
             "rename" => {
-                let id = overlay::prompt_text(ui, &lf("Rename {name}", &[("name", &entry.name)]), None, &entry.name, "", &t("common.actions.save"));
+                let id = overlay::prompt_text(
+                    ui,
+                    &lf("Rename {name}", &[("name", &entry.name)]),
+                    None,
+                    &entry.name,
+                    "",
+                    &t("common.actions.save"),
+                );
                 self.overlays.insert(id, Pending::RenameName(entry));
                 self.opened_in.insert(id, target.cwd.clone());
             }
@@ -409,15 +625,33 @@ impl ExplorerPanel {
                 } else {
                     "workspace.fileActions.confirmDelete.fileTitle"
                 });
-                let message = ta("workspace.fileActions.confirmDelete.message", &[("name", &entry.name)]);
-                let id = overlay::confirm(ui, &title, &message, &t("workspace.fileActions.confirmDelete.confirm"), true);
+                let message = ta(
+                    "workspace.fileActions.confirmDelete.message",
+                    &[("name", &entry.name)],
+                );
+                let id = overlay::confirm(
+                    ui,
+                    &title,
+                    &message,
+                    &t("workspace.fileActions.confirmDelete.confirm"),
+                    true,
+                );
                 self.overlays.insert(id, Pending::Delete(entry));
                 self.opened_in.insert(id, target.cwd.clone());
             }
             "duplicate" => {
                 let parent = parent_explorer_path(&path);
                 let owner = self.owner.clone();
-                store::with(|s| s.entry_request(ui, &owner, &target.host_id, &target.cwd, EntryAction::Duplicate { parent }, json!({ "path": path })));
+                store::with(|s| {
+                    s.entry_request(
+                        ui,
+                        &owner,
+                        &target.host_id,
+                        &target.cwd,
+                        EntryAction::Duplicate { parent },
+                        json!({ "path": path }),
+                    )
+                });
             }
             _ => {}
         }
@@ -442,11 +676,14 @@ impl ExplorerPanel {
             }
             Hit::FingerUp(fe) => {
                 let pressed = self.transfer_pressed.take();
-                if fe.is_over && fe.was_tap()
-                    && let (Some(Hot::Cancel(id)), Some(Hot::Cancel(at))) = (pressed, self.transfer_hits.at(fe.abs))
-                        && id == at {
-                            store::with(|s| s.cancel_transfer(ui, id));
-                        }
+                if fe.is_over
+                    && fe.was_tap()
+                    && let (Some(Hot::Cancel(id)), Some(Hot::Cancel(at))) =
+                        (pressed, self.transfer_hits.at(fe.abs))
+                    && id == at
+                {
+                    store::with(|s| s.cancel_transfer(ui, id));
+                }
                 let _ = cx;
                 true
             }
@@ -454,7 +691,14 @@ impl ExplorerPanel {
         }
     }
 
-    pub fn draw(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, ui: &UiContext, widget_area: Area) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        ui: &UiContext,
+        widget_area: Area,
+    ) {
         let p = theme::current_palette();
         let ty: Typography = theme::current_typography();
         let Some(target) = self.target.clone() else {
@@ -464,7 +708,13 @@ impl ExplorerPanel {
         let actions = self.actions(ui, &target);
         let owner = self.owner.clone();
         let busy = store::with(|s| s.is_busy(&owner));
-        let look = ExplorerLook { palette: p, typography: ty, compact: ui.compact, actions: &actions, busy };
+        let look = ExplorerLook {
+            palette: p,
+            typography: ty,
+            compact: ui.compact,
+            actions: &actions,
+            busy,
+        };
         let drawn = store::with(|s| {
             if let Some(state) = s.explorer_mut(&owner) {
                 self.view.draw(cx, kit, area, state, &look, widget_area);
@@ -480,13 +730,38 @@ impl ExplorerPanel {
             // The 2px accent progress line at the bottom.
             let phase = clock::phase(1200);
             let y = area.pos.y + area.size.y - 2.0;
-            kit.fill(cx, rect(area.pos.x + area.size.x * phase * 0.7, y, area.size.x * 0.3, 2.0), p.accent, 0.0);
+            kit.fill(
+                cx,
+                rect(
+                    area.pos.x + area.size.x * phase * 0.7,
+                    y,
+                    area.size.x * 0.3,
+                    2.0,
+                ),
+                p.accent,
+                0.0,
+            );
             clock::register(cx, widget_area);
         }
         self.transfer_hits.clear();
-        let transfers: Vec<(u64, String, u64, u64)> =
-            store::with(|s| s.transfers_of(&owner).iter().map(|t| (t.id, t.name.clone(), t.received, t.total)).collect());
-        super::file_view::draw_transfer_cards(cx, kit, area, &transfers, &mut self.transfer_hits, Hot::Block, Hot::Cancel, &self.transfer_hover, &p, &ty);
+        let transfers: Vec<(u64, String, u64, u64)> = store::with(|s| {
+            s.transfers_of(&owner)
+                .iter()
+                .map(|t| (t.id, t.name.clone(), t.received, t.total))
+                .collect()
+        });
+        super::file_view::draw_transfer_cards(
+            cx,
+            kit,
+            area,
+            &transfers,
+            &mut self.transfer_hits,
+            Hot::Block,
+            Hot::Cancel,
+            &self.transfer_hover,
+            &p,
+            &ty,
+        );
     }
 
     pub fn dispose(&mut self) {

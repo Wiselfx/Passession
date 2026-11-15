@@ -416,11 +416,12 @@ impl SessionCore {
             }
             "session.prompt_result" => {
                 if event["result"]["type"] == "turn"
-                    && let Some(child) = state.children.get_mut(id) {
-                        child
-                            .active
-                            .insert(event["result"]["turnId"].as_str().unwrap().to_owned());
-                    }
+                    && let Some(child) = state.children.get_mut(id)
+                {
+                    child
+                        .active
+                        .insert(event["result"]["turnId"].as_str().unwrap().to_owned());
+                }
                 None
             }
             "session.turn" => {
@@ -605,7 +606,10 @@ impl AgentSession for PluginSession {
             json!({"status":if result["type"] == "steer" && result["turnId"] == options["expectedTurnId"] {"accepted"} else {"unavailable"}}),
         )
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         for event in self.history() {
             sink.emit(event).await?;
         }

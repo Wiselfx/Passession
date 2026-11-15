@@ -76,10 +76,13 @@ mod tests {
         assert_eq!(queue.drain_into(&mut batch, 3), 3);
         assert_eq!(queue.drain_into(&mut batch, 3), 3);
         assert_eq!(queue.drain_into(&mut batch, 3), 0);
-        let sequences: Vec<_> = batch.iter().map(|event| match event {
-            CoreEvent::HostEvent { event, .. } => event["seq"].as_i64().unwrap(),
-            _ => panic!("unexpected event"),
-        }).collect();
+        let sequences: Vec<_> = batch
+            .iter()
+            .map(|event| match event {
+                CoreEvent::HostEvent { event, .. } => event["seq"].as_i64().unwrap(),
+                _ => panic!("unexpected event"),
+            })
+            .collect();
         assert_eq!(sequences, (0..8).collect::<Vec<_>>());
         queue.push(event(8));
         assert_eq!(wakes.load(Ordering::SeqCst), 2);
@@ -88,10 +91,15 @@ mod tests {
     #[test]
     fn state_coalescing_does_not_cross_ordered_event_boundaries() {
         let queue = EventQueue::new(Arc::new(|| {}));
-        let state = |revision| CoreEvent::State { state: Arc::new(json!({"revision": revision})) };
+        let state = |revision| CoreEvent::State {
+            state: Arc::new(json!({"revision": revision})),
+        };
         queue.push(state(1));
         queue.push(state(2));
-        queue.push(CoreEvent::Disconnected { host_id: "host".into(), error: None });
+        queue.push(CoreEvent::Disconnected {
+            host_id: "host".into(),
+            error: None,
+        });
         queue.push(state(3));
         queue.push(state(4));
         let mut batch = Vec::new();

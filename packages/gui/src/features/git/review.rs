@@ -28,7 +28,11 @@ pub fn review_draft_key(
     ignore_whitespace: bool,
 ) -> String {
     let trimmed = cwd.trim();
-    let normalized = if trimmed == "/" { trimmed } else { trimmed.trim_end_matches('/') };
+    let normalized = if trimmed == "/" {
+        trimmed
+    } else {
+        trimmed.trim_end_matches('/')
+    };
     let workspace = workspace_id.trim();
     let scope = if workspace.is_empty() {
         format!("cwd={}", part(normalized))
@@ -55,7 +59,10 @@ pub fn storage_key(draft_key: &str) -> String {
 pub fn valid_comment(comment: &Value) -> bool {
     comment.get("id").is_some_and(Value::is_string)
         && comment.get("filePath").is_some_and(Value::is_string)
-        && matches!(comment.get("side").and_then(Value::as_str), Some("old" | "new"))
+        && matches!(
+            comment.get("side").and_then(Value::as_str),
+            Some("old" | "new")
+        )
         && comment
             .get("lineNumber")
             .and_then(Value::as_i64)
@@ -96,7 +103,9 @@ impl ReviewDraft {
         }
         self.loaded = true;
         let stored: Vec<Value> = match stored {
-            Some(Value::Array(items)) => items.iter().filter(|c| valid_comment(c)).cloned().collect(),
+            Some(Value::Array(items)) => {
+                items.iter().filter(|c| valid_comment(c)).cloned().collect()
+            }
             // Flutter stored the JSON text; accept either shape.
             Some(Value::String(raw)) => match serde_json::from_str::<Value>(raw) {
                 Ok(Value::Array(items)) => items.into_iter().filter(valid_comment).collect(),
@@ -166,12 +175,14 @@ impl ReviewDraft {
     /// the versions included in that submission; a comment edited meanwhile stays.
     pub fn clear_sent(&mut self, sent: &[Value]) -> bool {
         let before = self.comments.len();
-        self.comments.retain(|comment| {
-            match sent.iter().find(|s| s["id"] == comment["id"]) {
+        self.comments.retain(
+            |comment| match sent.iter().find(|s| s["id"] == comment["id"]) {
                 None => true,
-                Some(sent) => sent["updatedAt"] != comment["updatedAt"] || sent["body"] != comment["body"],
-            }
-        });
+                Some(sent) => {
+                    sent["updatedAt"] != comment["updatedAt"] || sent["body"] != comment["body"]
+                }
+            },
+        );
         before != self.comments.len()
     }
 }
@@ -311,7 +322,11 @@ pub fn sent_comments(comments: &[Value], snapshot: &AttachmentSnapshot) -> Vec<V
 }
 
 /// Original `deriveState` disabled reason.
-pub fn feedback_disabled_reason(recipient_count: usize, connected: bool, has_attachment: bool) -> Option<&'static str> {
+pub fn feedback_disabled_reason(
+    recipient_count: usize,
+    connected: bool,
+    has_attachment: bool,
+) -> Option<&'static str> {
     if recipient_count == 0 {
         return Some("no-agents");
     }
@@ -387,7 +402,15 @@ mod tests {
         draft.save_comment(None, "a.rs", "new", 3, " body ", "1".into(), "t1".into());
         draft.save_comment(None, "a.rs", "new", 4, "other", "2".into(), "t1".into());
         let sent = draft.comments.clone();
-        draft.save_comment(Some("2"), "a.rs", "new", 4, "edited", "x".into(), "t2".into());
+        draft.save_comment(
+            Some("2"),
+            "a.rs",
+            "new",
+            4,
+            "edited",
+            "x".into(),
+            "t2".into(),
+        );
         assert!(draft.clear_sent(&sent));
         assert_eq!(draft.comments.len(), 1);
         assert_eq!(draft.comments[0]["body"], "edited");
@@ -402,7 +425,11 @@ mod tests {
             {"id": "s", "filePath": "a.rs", "side": "new", "lineNumber": 1, "body": "stored"},
             {"id": "bad", "filePath": "a.rs", "side": "mid", "lineNumber": 1, "body": "x"},
         ])));
-        let ids: Vec<&str> = draft.comments.iter().map(|c| c["id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = draft
+            .comments
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, ["s", "e"]);
     }
 }

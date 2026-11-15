@@ -224,7 +224,9 @@ impl DetailCache {
 // Sparse source capacities are not cloned. Oversized values keep streaming.
 fn cache_charge(value: &Value) -> Option<usize> {
     if matches!(value, Value::Null | Value::Bool(_) | Value::Number(_))
-        || value.as_str().is_some_and(|text| text.len() <= PREVIEW_BYTES)
+        || value
+            .as_str()
+            .is_some_and(|text| text.len() <= PREVIEW_BYTES)
     {
         return None;
     }
@@ -236,8 +238,7 @@ fn cache_charge(value: &Value) -> Option<usize> {
     ) -> Option<()> {
         *source = source.checked_add(source_bytes)?;
         *encoded = encoded.checked_add(encoded_bytes)?;
-        (source.checked_add(encoded.checked_mul(2)?)? <= DETAIL_CACHE_ENTRY_BYTES)
-            .then_some(())
+        (source.checked_add(encoded.checked_mul(2)?)? <= DETAIL_CACHE_ENTRY_BYTES).then_some(())
     }
     fn string(text: &str, source: &mut usize, encoded: &mut usize) -> Option<()> {
         // Reject oversized strings by length before scanning their bytes.
@@ -252,12 +253,7 @@ fn cache_charge(value: &Value) -> Option<usize> {
             .sum();
         add(source, encoded, 0, escapes)
     }
-    fn charge(
-        value: &Value,
-        depth: usize,
-        source: &mut usize,
-        encoded: &mut usize,
-    ) -> Option<()> {
+    fn charge(value: &Value, depth: usize, source: &mut usize, encoded: &mut usize) -> Option<()> {
         if depth > 64 {
             return None;
         }
@@ -308,8 +304,7 @@ fn cache_source(value: &Value) -> Value {
 fn same_encoding(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => {
-            left.len() == right.len()
-                && left.iter().zip(right).all(|(a, b)| same_encoding(a, b))
+            left.len() == right.len() && left.iter().zip(right).all(|(a, b)| same_encoding(a, b))
         }
         (Value::Object(left), Value::Object(right)) => {
             left.len() == right.len()
@@ -401,7 +396,10 @@ fn serialize_cached(
     if entry.text.len() > PREVIEW_BYTES
         && entry.charge <= DETAIL_CACHE_ENTRY_BYTES
         && let Ok(mut cache) = cache.try_lock()
-        && !cache.entries.iter().any(|entry| same_encoding(&entry.source, value))
+        && !cache
+            .entries
+            .iter()
+            .any(|entry| same_encoding(&entry.source, value))
     {
         entry.source = cache_source(value);
         cache.insert(entry);

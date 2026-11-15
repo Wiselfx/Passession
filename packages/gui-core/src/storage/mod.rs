@@ -102,7 +102,10 @@ pub(crate) fn restrict(path: &Path, directory: bool) -> Result<(), CoreError> {
         fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
             CoreError::new(
                 "STORAGE_PERMISSIONS",
-                format!("Cannot protect private app state {}: {error}", path.display()),
+                format!(
+                    "Cannot protect private app state {}: {error}",
+                    path.display()
+                ),
                 false,
             )
         })?;
@@ -162,10 +165,7 @@ fn object(value: Option<&Value>) -> Map<String, Value> {
 }
 
 fn array(value: Option<&Value>) -> Vec<Value> {
-    value
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    value.and_then(Value::as_array).cloned().unwrap_or_default()
 }
 
 /// Flutter `_hostRecords`: rows keyed by their active config id (legacy flat rows by `id`).
@@ -207,14 +207,22 @@ pub(crate) fn read_replica(
     if data["serverId"] != server_id {
         return Ok(None);
     }
-    let rows = |key: &str| array(data.get(key)).into_iter().filter(Value::is_object).collect();
+    let rows = |key: &str| {
+        array(data.get(key))
+            .into_iter()
+            .filter(Value::is_object)
+            .collect()
+    };
     let replica = Replica {
         projects: rows("projects"),
         workspaces: rows("workspaces"),
         agents: rows("agents"),
         cached_at: data["cachedAt"]
             .as_str()
-            .filter(|at| chrono::DateTime::parse_from_rfc3339(at).is_ok() || chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S%.f").is_ok())
+            .filter(|at| {
+                chrono::DateTime::parse_from_rfc3339(at).is_ok()
+                    || chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S%.f").is_ok()
+            })
             .map(str::to_owned),
     };
     written.insert(path, contents);
@@ -310,9 +318,12 @@ pub(crate) fn load(paths: &Paths) -> Loaded {
         }
         load_layouts(paths, &mut loaded);
         if !loaded.layouts.contains_key(MAIN_WINDOW)
-            && let Some(layout @ Value::Object(_)) = loaded.retained.get("layout") {
-                loaded.layouts.insert(MAIN_WINDOW.to_owned(), layout.clone());
-            }
+            && let Some(layout @ Value::Object(_)) = loaded.retained.get("layout")
+        {
+            loaded
+                .layouts
+                .insert(MAIN_WINDOW.to_owned(), layout.clone());
+        }
         loaded.suppressed_routes = array(loaded.retained.get("suppressedRoutes"))
             .into_iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
@@ -360,11 +371,7 @@ pub(crate) fn merge_changes(
 
 /// Writes through a same-directory temporary file and rename.
 pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
-    let temporary = PathBuf::from(format!(
-        "{}.{}.tmp",
-        path.display(),
-        uuid::Uuid::new_v4()
-    ));
+    let temporary = PathBuf::from(format!("{}.{}.tmp", path.display(), uuid::Uuid::new_v4()));
     let result = (|| -> Result<(), CoreError> {
         let mut file = OpenOptions::new()
             .write(true)
@@ -406,7 +413,12 @@ pub(crate) struct Saved {
 /// handle with read or write access; an append-only handle has neither and fails with
 /// ERROR_ACCESS_DENIED (os error 5), so the lock is opened for reading and writing.
 fn open_lock(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
 }
 
 /// Rust 1.93's File::lock is unsupported on Android. Use the same flock primitive on
@@ -554,7 +566,9 @@ mod tests {
                 saved_hosts: Map::new(),
                 files: Vec::new(),
             },
-        ).err().unwrap();
+        )
+        .err()
+        .unwrap();
         assert_eq!(error.code, "STORAGE_NEWER");
         assert_eq!(fs::read(paths.state()).unwrap(), original);
         let next = open_lock(&paths.lock()).unwrap();

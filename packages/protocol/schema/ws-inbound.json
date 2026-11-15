@@ -5472,6 +5472,14 @@
             {
               "type": "object",
               "properties": {
+                "type": { "type": "string", "const": "daemon.update.check.request" },
+                "requestId": { "type": "string" }
+              },
+              "required": ["type", "requestId"]
+            },
+            {
+              "type": "object",
+              "properties": {
                 "type": {
                   "type": "string",
                   "const": "daemon.update.submit.request"
@@ -5486,6 +5494,20 @@
                   "type": "string",
                   "const": "release"
                 },
+                "targetKind": { "type": "string", "enum": ["app", "daemon"] },
+                "expectedRelease": {
+                  "type": ["object", "null"],
+                  "properties": {
+                    "version": { "type": "string", "minLength": 1 },
+                    "manifestSha512": { "type": "string", "minLength": 88, "maxLength": 88 }
+                  },
+                  "required": ["version", "manifestSha512"],
+                  "additionalProperties": false
+                },
+                "selectedComponents": {
+                  "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true,
+                  "items": { "enum": ["app", "daemon", "tailnet", "update-helper"] }
+                },
                 "idleTimeoutMs": {
                   "type": "integer",
                   "minimum": 1
@@ -5494,11 +5516,37 @@
                   "type": "boolean"
                 }
               },
+              "if": { "properties": { "targetKind": { "const": "app" } }, "required": ["targetKind"] },
+              "then": { "required": ["expectedRelease"], "properties": { "expectedRelease": { "type": "object" } } },
               "required": [
                 "type",
                 "requestId",
                 "operationId"
               ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "const": "daemon.appUpdate.drain.request" },
+                "requestId": { "type": "string" },
+                "operationId": { "type": "string" },
+                "forceRunning": { "type": "boolean" },
+                "idleTimeoutMs": { "type": "integer", "minimum": 1 },
+                "ownerToken": { "type": "string", "minLength": 64, "maxLength": 64 }
+              },
+              "required": ["type", "requestId", "operationId", "forceRunning", "idleTimeoutMs", "ownerToken"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "const": "daemon.appUpdate.drain.release.request" },
+                "requestId": { "type": "string" },
+                "operationId": { "type": "string" },
+                "ownerToken": { "type": "string", "minLength": 64, "maxLength": 64 }
+              },
+              "required": ["type", "requestId", "operationId", "ownerToken"],
+              "additionalProperties": false
             },
             {
               "type": "object",

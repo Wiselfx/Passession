@@ -30,10 +30,12 @@ mod runtime;
 pub mod storage;
 pub mod timeline;
 mod wire;
-pub use generation::{StructuredAgentFallbackError, StructuredAgentResponseError, StructuredGenerationSchema};
+use event_stage::EventStage;
+pub use generation::{
+    StructuredAgentFallbackError, StructuredAgentResponseError, StructuredGenerationSchema,
+};
 pub(crate) use generation::{compile_schema, retry_prompt, validate_response};
 pub use listing::select_agent_list_items;
-use event_stage::EventStage;
 use notifications::{AgentMessageDelivery, FinishSubscriptions};
 use receipts::{CreationReceipts, MessageReceipts};
 use storage::AgentStorage;
@@ -71,8 +73,7 @@ fn next_updated_at(previous: &Value) -> String {
         .map(|previous| previous.with_timezone(&chrono::Utc))
         .filter(|previous| previous.timestamp_millis() >= now.timestamp_millis())
         .map_or(now, |previous| {
-            chrono::DateTime::from_timestamp_millis(previous.timestamp_millis() + 1)
-                .unwrap_or(now)
+            chrono::DateTime::from_timestamp_millis(previous.timestamp_millis() + 1).unwrap_or(now)
         });
     next.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -107,7 +108,10 @@ fn object(value: &mut Value) -> &mut serde_json::Map<String, Value> {
 /// runtime-mcp-config.ts stripInternalPaseoMcpServer: the daemon-owned server lives in
 /// `config.mcpServers.paseo`; a map emptied by removing it is dropped.
 fn strip_config_internal_servers(config: &mut Value) {
-    let Some(servers) = config.get_mut("mcpServers").filter(|servers| servers.is_object()) else {
+    let Some(servers) = config
+        .get_mut("mcpServers")
+        .filter(|servers| servers.is_object())
+    else {
         return;
     };
     let before = servers.as_object().map_or(0, |servers| servers.len());
@@ -274,7 +278,10 @@ impl AgentManager {
     // Catalogs are read per parent on demand; unrelated corruption cannot abort startup.
     async fn restore_persisted_state(&self) -> Result<()> {
         for mut record in self.storage()?.list().await? {
-            let interrupted = matches!(text(&record, "lastStatus"), Some("running" | "initializing"));
+            let interrupted = matches!(
+                text(&record, "lastStatus"),
+                Some("running" | "initializing")
+            );
             let transient = object(&mut record).remove("snapshotAvailability").is_some();
             if interrupted {
                 record["lastStatus"] = json!("closed");
@@ -345,7 +352,11 @@ impl AgentManager {
         Ok(match cell {
             Some(cell) => {
                 let data = cell.data.lock().await;
-                if data.owner_ended { None } else { data.session.clone() }
+                if data.owner_ended {
+                    None
+                } else {
+                    data.session.clone()
+                }
             }
             None => None,
         })
@@ -357,7 +368,11 @@ impl AgentManager {
         if let Some(cell) = cell {
             return Ok(Some(cell.data.lock().await.snapshot.clone()));
         }
-        Ok(self.storage()?.get(id).await?.map(|record| self.stored_snapshot(record)))
+        Ok(self
+            .storage()?
+            .get(id)
+            .await?
+            .map(|record| self.stored_snapshot(record)))
     }
     /// Nonblocking observation only. Callers must not persist or authorize from
     /// a snapshot marked as last_persisted.
@@ -445,7 +460,10 @@ impl AgentManager {
                 }
             }
         }
-        for snapshot in all.values_mut().filter(|snapshot| snapshot["_live"] == false) {
+        for snapshot in all
+            .values_mut()
+            .filter(|snapshot| snapshot["_live"] == false)
+        {
             self.overlay_preparation(snapshot, false);
         }
         Ok(all.into_values().collect())
@@ -461,12 +479,20 @@ impl AgentManager {
             let cell = { self.agents.read().await.get(id).cloned() };
             let (session, unavailable) = match cell {
                 Some(cell) => match cell.data.try_lock() {
-                    Ok(data) => (if data.owner_ended { None } else { data.session.clone() }, !data.ready),
+                    Ok(data) => (
+                        if data.owner_ended {
+                            None
+                        } else {
+                            data.session.clone()
+                        },
+                        !data.ready,
+                    ),
                     Err(_) => (None, true),
                 },
                 None => (None, false),
             };
-            let mut usage = session.and_then(|session| session.usage_session())
+            let mut usage = session
+                .and_then(|session| session.usage_session())
                 .unwrap_or_else(|| json!({}));
             usage["agentId"] = json!(id);
             if unavailable {
@@ -564,17 +590,18 @@ impl AgentManager {
                 config["model"] = json!(model);
             }
         }
-        if resolve_default_model && config.get("model").is_none()
+        if resolve_default_model
+            && config.get("model").is_none()
             && let Ok(catalog) = app.providers.catalog(&provider, Some(&cwd), true).await
-                && let Some(models) = catalog["models"].as_array()
-                    && let Some(model) = models
-                        .iter()
-                        .find(|m| m["isDefault"] == true)
-                        .or_else(|| models.first())
-                        .and_then(|m| m.get("id"))
-                    {
-                        config["model"] = model.clone();
-                    }
+            && let Some(models) = catalog["models"].as_array()
+            && let Some(model) = models
+                .iter()
+                .find(|m| m["isDefault"] == true)
+                .or_else(|| models.first())
+                .and_then(|m| m.get("id"))
+        {
+            config["model"] = model.clone();
+        }
         if let Some(grants) = config["toolPolicy"]["preapproved"].as_array() {
             for grant in grants {
                 let server = required(grant, "server")?;
@@ -722,9 +749,13 @@ impl AgentManager {
                         data.ready && !data.owner_ended && data.snapshot["lifecycle"] != "closed"
                     };
                     if unexpected {
-                        manager.fail_event_owner(
-                            &id, &current, &anyhow!("Agent event consumer closed unexpectedly"),
-                        ).await;
+                        manager
+                            .fail_event_owner(
+                                &id,
+                                &current,
+                                &anyhow!("Agent event consumer closed unexpectedly"),
+                            )
+                            .await;
                     }
                     break;
                 }
@@ -754,15 +785,18 @@ impl AgentManager {
         let (sender, receiver) = oneshot::channel();
         cell.barriers.lock().await.insert(key.clone(), sender);
         let result = async {
-            cell.sink.emit(json!({
-                "type":if release { "__release_stage" } else { "__barrier" },
-                "key":key
-            })).await?;
+            cell.sink
+                .emit(json!({
+                    "type":if release { "__release_stage" } else { "__barrier" },
+                    "key":key
+                }))
+                .await?;
             tokio::select! {
                 result = receiver => result.map_err(|_| anyhow!("Agent event consumer closed")),
                 _ = cell.cancel.cancelled() => Err(anyhow!("Agent event consumer closed")),
             }
-        }.await;
+        }
+        .await;
         cell.barriers.lock().await.remove(&key);
         result
     }
@@ -786,9 +820,15 @@ impl AgentManager {
         cell.cancel.cancel();
         cell.owner_ended.cancel();
         cell.barriers.lock().await.clear();
-        if let Err(report_error) = self.apply_event(
-            id, cell, json!({"type":"turn_failed","provider":provider,"error":message}), false,
-        ).await {
+        if let Err(report_error) = self
+            .apply_event(
+                id,
+                cell,
+                json!({"type":"turn_failed","provider":provider,"error":message}),
+                false,
+            )
+            .await
+        {
             // The original failure may itself be a failed disk commit. Keep the
             // in-memory state terminal even when no durable error row can be written.
             tracing::error!(agent_id=%id,error=%report_error,"Failed to persist event owner failure");
@@ -805,15 +845,18 @@ impl AgentManager {
             snapshot["activeTurn"] = Value::Null;
             snapshot["pendingPermissions"] = json!([]);
             runtime::transition_attention(None, snapshot);
-            let _ = self.events.send(json!({"type":"agent_state","agent":snapshot}));
+            let _ = self
+                .events
+                .send(json!({"type":"agent_state","agent":snapshot}));
         }
         if let Some(session) = session
-            && let Err(close_error) = session.close().await {
-                tracing::error!(agent_id=%id,error=%close_error,"Failed to close failed event owner session");
-                // The event consumer has ended, but failed process cleanup still
-                // belongs to this cell and must block replacement until retried.
-                cell.data.lock().await.session = Some(session);
-            }
+            && let Err(close_error) = session.close().await
+        {
+            tracing::error!(agent_id=%id,error=%close_error,"Failed to close failed event owner session");
+            // The event consumer has ended, but failed process cleanup still
+            // belongs to this cell and must block replacement until retried.
+            cell.data.lock().await.session = Some(session);
+        }
     }
     /// Non-activity writes preserve both durable activity stamps and the live
     /// snapshot, even when an older record uses different values for the two.
@@ -822,14 +865,19 @@ impl AgentManager {
         if record_activity {
             snapshot["lastActivityAt"] = snapshot["updatedAt"].clone();
         } else if snapshot["internal"] != true
-            && let Some(previous) = self.storage()?.get(required(snapshot, "id")?).await? {
-                for field in ["updatedAt", "lastActivityAt"] {
-                    match previous.get(field) {
-                        Some(value) => { snapshot[field] = value.clone(); }
-                        None => { object(snapshot).remove(field); }
+            && let Some(previous) = self.storage()?.get(required(snapshot, "id")?).await?
+        {
+            for field in ["updatedAt", "lastActivityAt"] {
+                match previous.get(field) {
+                    Some(value) => {
+                        snapshot[field] = value.clone();
+                    }
+                    None => {
+                        object(snapshot).remove(field);
                     }
                 }
             }
+        }
         if snapshot["internal"] == true {
             return Ok(());
         }
@@ -863,7 +911,11 @@ impl AgentManager {
         record["lastModeId"] = snapshot
             .get("currentModeId")
             .filter(|mode| mode.is_string())
-            .or_else(|| snapshot["config"].get("modeId").filter(|mode| mode.is_string()))
+            .or_else(|| {
+                snapshot["config"]
+                    .get("modeId")
+                    .filter(|mode| mode.is_string())
+            })
             .cloned()
             .unwrap_or(Value::Null);
         if snapshot["requiresAttention"] != true {
@@ -884,12 +936,23 @@ impl AgentManager {
         }
         self.storage()?.upsert(record).await
     }
-    async fn commit_snapshot(&self, cell: &Arc<AgentCell>, snapshot: Value, touch_activity: bool) -> Result<()> {
+    async fn commit_snapshot(
+        &self,
+        cell: &Arc<AgentCell>,
+        snapshot: Value,
+        touch_activity: bool,
+    ) -> Result<()> {
         let _commit = cell.commit.lock().await;
-        self.commit_snapshot_locked(cell, snapshot, touch_activity).await
+        self.commit_snapshot_locked(cell, snapshot, touch_activity)
+            .await
     }
     /// Caller owns cell.commit; never hold cell.data across persistence.
-    async fn commit_snapshot_locked(&self, cell: &Arc<AgentCell>, mut snapshot: Value, touch_activity: bool) -> Result<()> {
+    async fn commit_snapshot_locked(
+        &self,
+        cell: &Arc<AgentCell>,
+        mut snapshot: Value,
+        touch_activity: bool,
+    ) -> Result<()> {
         if snapshot["lifecycle"] != "closed" {
             let data = cell.data.lock().await;
             if let Some(error) = data.event_error.as_deref() {
@@ -934,9 +997,16 @@ mod tests {
     async fn authoritative_reads_wait_for_live_state_not_persisted_observations() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000041";
         let stored = json!({
             "id":id,"provider":"mock","cwd":root.path(),"config":{},"internal":false,
@@ -944,7 +1014,12 @@ mod tests {
             "lastStatus":"idle","updatedAt":"2026-01-01T00:00:00.000Z",
             "owner":{"kind":"daemon","daemonId":"daemon","executionId":"old"}
         });
-        manager.storage().unwrap().upsert(stored.clone()).await.unwrap();
+        manager
+            .storage()
+            .unwrap()
+            .upsert(stored.clone())
+            .await
+            .unwrap();
         let (cell, _receiver) = manager.make_cell(id, stored, true).await.unwrap();
         let mut data = cell.data.lock().await;
         data.ready = true;
@@ -959,19 +1034,41 @@ mod tests {
         let authoritative = read.await.unwrap().unwrap();
         assert_eq!(authoritative["owner"]["executionId"], "current");
         assert!(authoritative.get("snapshotAvailability").is_none());
-        assert!(manager.authorize(&json!({"kind":"daemon","daemonId":"daemon","executionId":"old"}), id).await.is_err());
-        manager.authorize(&json!({"kind":"daemon","daemonId":"daemon","executionId":"current"}), id).await.unwrap();
+        assert!(
+            manager
+                .authorize(
+                    &json!({"kind":"daemon","daemonId":"daemon","executionId":"old"}),
+                    id
+                )
+                .await
+                .is_err()
+        );
+        manager
+            .authorize(
+                &json!({"kind":"daemon","daemonId":"daemon","executionId":"current"}),
+                id,
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn contended_internal_agent_is_not_misreported_as_missing() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000042";
-        let snapshot = json!({"id":id,"provider":"mock","internal":true,"config":{},"cwd":root.path()});
+        let snapshot =
+            json!({"id":id,"provider":"mock","internal":true,"config":{},"cwd":root.path()});
         let (cell, _receiver) = manager.make_cell(id, snapshot, true).await.unwrap();
         let mut data = cell.data.lock().await;
         data.ready = true;
@@ -991,9 +1088,16 @@ mod tests {
     async fn transient_snapshot_markers_are_removed_without_touching_activity() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home.clone()) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home.clone()) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000043";
         let original = json!({
             "id":id,"provider":"mock","cwd":root.path(),"config":{},"lastStatus":"idle",
@@ -1001,18 +1105,33 @@ mod tests {
             "updatedAt":"2026-01-02T00:00:00.000Z","lastActivityAt":"2026-01-01T00:00:00.000Z",
             "snapshotAvailability":"last_persisted"
         });
-        manager.storage().unwrap().upsert(original.clone()).await.unwrap();
+        manager
+            .storage()
+            .unwrap()
+            .upsert(original.clone())
+            .await
+            .unwrap();
         manager.restore_persisted_state().await.unwrap();
         let record = manager.storage().unwrap().get(id).await.unwrap().unwrap();
         assert!(record.get("snapshotAvailability").is_none());
         assert_eq!(record["updatedAt"], original["updatedAt"]);
         assert_eq!(record["lastActivityAt"], original["lastActivityAt"]);
         let (cell, _receiver) = manager.make_cell(id, original.clone(), true).await.unwrap();
-        assert!(cell.data.lock().await.snapshot.get("snapshotAvailability").is_none());
+        assert!(
+            cell.data
+                .lock()
+                .await
+                .snapshot
+                .get("snapshotAvailability")
+                .is_none()
+        );
         let mut snapshot = cell.data.lock().await.snapshot.clone();
         snapshot["snapshotAvailability"] = json!("last_persisted");
         snapshot["historySync"] = json!({"status":"complete"});
-        manager.persist_snapshot(&mut snapshot, false).await.unwrap();
+        manager
+            .persist_snapshot(&mut snapshot, false)
+            .await
+            .unwrap();
         assert!(snapshot.get("snapshotAvailability").is_none());
         let reopened = AgentStorage::new(home).get(id).await.unwrap().unwrap();
         assert!(reopened.get("snapshotAvailability").is_none());
@@ -1041,14 +1160,24 @@ mod tests {
             storage.upsert(record.clone()).await.unwrap();
             originals.push(record);
         }
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home.clone()) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home.clone()) })
+            .await;
         manager.restore_persisted_state().await.unwrap();
         let reopened = AgentStorage::new(home.clone());
         for mut expected in originals {
             let id = expected["id"].as_str().unwrap().to_owned();
-            if matches!(expected["lastStatus"].as_str(), Some("running" | "initializing")) {
+            if matches!(
+                expected["lastStatus"].as_str(),
+                Some("running" | "initializing")
+            ) {
                 expected["lastStatus"] = json!("closed");
                 expected["lastTurnOutcome"] = json!("turn_canceled");
             }
@@ -1062,7 +1191,10 @@ mod tests {
         }
         assert!(manager.agents.read().await.is_empty());
         manager.restore_persisted_state().await.unwrap();
-        assert_eq!(reopened.list().await.unwrap(), manager.storage().unwrap().list().await.unwrap());
+        assert_eq!(
+            reopened.list().await.unwrap(),
+            manager.storage().unwrap().list().await.unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1078,15 +1210,28 @@ mod tests {
                 "lastStatus":"closed","createdAt":"2026-10-24T00:00:00.000Z","updatedAt":"2026-10-31T00:00:00.000Z",
                 "archivedAt":"2026-10-31T00:00:00.000Z"
             })).await.unwrap();
-            store.apply_persisted(&subagents, id, "omp",
-                &json!({"type":"upsert","id":"child","timestamp":"2026-10-31T00:00:00.000Z"})).unwrap();
+            store
+                .apply_persisted(
+                    &subagents,
+                    id,
+                    "omp",
+                    &json!({"type":"upsert","id":"child","timestamp":"2026-10-31T00:00:00.000Z"}),
+                )
+                .unwrap();
         }
         drop(store);
         let catalog = subagents.join("corrupt").join("index.sqlite3");
         std::fs::write(&catalog, b"not a sqlite database").unwrap();
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home.clone()) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home.clone()) })
+            .await;
         manager.restore_persisted_state().await.unwrap();
         let (activity, unavailable) = manager.list_provider_subagent_activity().await.unwrap();
         assert_eq!(activity.len(), 1);
@@ -1103,9 +1248,13 @@ mod tests {
         let mut only = json!({"provider":"codex","mcpServers":{"paseo":internal}});
         strip_config_internal_servers(&mut only);
         assert!(only.get("mcpServers").is_none());
-        let mut mixed = json!({"mcpServers":{"paseo":internal,"other":{"type":"stdio","command":"x"}}});
+        let mut mixed =
+            json!({"mcpServers":{"paseo":internal,"other":{"type":"stdio","command":"x"}}});
         strip_config_internal_servers(&mut mixed);
-        assert_eq!(mixed["mcpServers"], json!({"other":{"type":"stdio","command":"x"}}));
+        assert_eq!(
+            mixed["mcpServers"],
+            json!({"other":{"type":"stdio","command":"x"}})
+        );
         let mut empty = json!({"mcpServers":{}});
         strip_config_internal_servers(&mut empty);
         assert_eq!(empty["mcpServers"], json!({}));

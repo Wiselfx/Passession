@@ -23,9 +23,10 @@ fn workspace_id(path: &str) -> String {
 fn stamp(agent: &Value) -> Value {
     let mut agent = agent.clone();
     if agent["workspaceId"].is_null()
-        && let Some(cwd) = agent["cwd"].as_str() {
-            agent["workspaceId"] = Value::String(workspace_id(cwd));
-        }
+        && let Some(cwd) = agent["cwd"].as_str()
+    {
+        agent["workspaceId"] = Value::String(workspace_id(cwd));
+    }
     agent
 }
 
@@ -52,8 +53,12 @@ impl LegacyWorkspaces {
         let status = message["payload"]["status"].as_str().unwrap_or_default();
         let stamped = matches!(
             kind.as_str(),
-            "agent_update" | "fetch_agent_response" | "fetch_agent_timeline_response" | "cancel_agent_response"
-        ) || (kind == "status" && matches!(status, "agent_created" | "agent_resumed"));
+            "agent_update"
+                | "fetch_agent_response"
+                | "fetch_agent_timeline_response"
+                | "cancel_agent_response"
+        ) || (kind == "status"
+            && matches!(status, "agent_created" | "agent_resumed"));
         if stamped && message["payload"]["agent"].is_object() {
             let agent = stamp(&message["payload"]["agent"]);
             message["payload"]["agent"] = agent;
@@ -172,9 +177,10 @@ impl LegacyWorkspaces {
                 "done"
             };
             if let Some(existing) = result.get(&id)
-                && priority(existing["status"].as_str().unwrap_or_default()) <= priority(status) {
-                    continue;
-                }
+                && priority(existing["status"].as_str().unwrap_or_default()) <= priority(status)
+            {
+                continue;
+            }
             let is_git = checkout["isGit"] == true;
             let name = trimmed(&project["workspaceName"])
                 .map(str::to_owned)
@@ -184,11 +190,15 @@ impl LegacyWorkspaces {
                         .map(str::to_owned)
                 })
                 .unwrap_or_else(|| id.rsplit('/').next().unwrap_or_default().to_owned());
-            let root = [&checkout["mainRepoRoot"], &checkout["worktreeRoot"], &checkout["cwd"]]
-                .into_iter()
-                .find(|v| !v.is_null())
-                .cloned()
-                .unwrap_or(Value::Null);
+            let root = [
+                &checkout["mainRepoRoot"],
+                &checkout["worktreeRoot"],
+                &checkout["cwd"],
+            ]
+            .into_iter()
+            .find(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(Value::Null);
             let entered = if agent["attentionTimestamp"].is_null() {
                 agent["updatedAt"].clone()
             } else {
@@ -246,14 +256,15 @@ pub(crate) fn legacy_matches(request_type: &str, fields: &Value, message: &Value
         message
     };
     let kind = message["type"].as_str().unwrap_or_default();
-    let contains = |list: &Value, value: &Value| {
-        list.as_array().is_some_and(|items| items.contains(value))
-    };
+    let contains =
+        |list: &Value, value: &Value| list.as_array().is_some_and(|items| items.contains(value));
     match request_type {
         "fetch_agents_request" => kind == "agent_update",
         "fetch_workspaces_request" => kind == "workspace_update",
         "workspace.label.list.request" => kind == "workspace.label.update",
-        "subscribe_terminals_request" => kind == "terminals_changed" && payload["cwd"] == fields["cwd"],
+        "subscribe_terminals_request" => {
+            kind == "terminals_changed" && payload["cwd"] == fields["cwd"]
+        }
         "subscribe_terminal_request" => {
             kind == "terminal_stream_exit" && payload["terminalId"] == fields["terminalId"]
         }
@@ -263,7 +274,10 @@ pub(crate) fn legacy_matches(request_type: &str, fields: &Value, message: &Value
         }
         "session.events.set_subscription.request" => {
             let name = if kind == "status" {
-                Value::String(format!("status.{}", payload["status"].as_str().unwrap_or("null")))
+                Value::String(format!(
+                    "status.{}",
+                    payload["status"].as_str().unwrap_or("null")
+                ))
             } else {
                 Value::String(kind.to_owned())
             };
@@ -302,14 +316,19 @@ mod tests {
     #[test]
     fn agents_group_into_workspaces_by_priority() {
         let mut legacy = LegacyWorkspaces::default();
-        let rows = legacy.read(&[entry("a", "/w/", "idle"), entry("b", "/w", "running")], true);
+        let rows = legacy.read(
+            &[entry("a", "/w/", "idle"), entry("b", "/w", "running")],
+            true,
+        );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["id"], "/w");
         assert_eq!(rows[0]["status"], "running");
         assert_eq!(rows[0]["name"], "w");
-        let events = legacy.update(&json!({"type":"agent_update","payload":{"kind":"remove","agentId":"b"}}));
+        let events = legacy
+            .update(&json!({"type":"agent_update","payload":{"kind":"remove","agentId":"b"}}));
         assert_eq!(events[0]["payload"]["workspace"]["status"], "done");
-        let events = legacy.update(&json!({"type":"agent_update","payload":{"kind":"remove","agentId":"a"}}));
+        let events = legacy
+            .update(&json!({"type":"agent_update","payload":{"kind":"remove","agentId":"a"}}));
         assert_eq!(events[0]["payload"], json!({"kind":"remove","id":"/w"}));
     }
 }

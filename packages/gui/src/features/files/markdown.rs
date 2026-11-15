@@ -11,10 +11,11 @@ use std::rc::Rc;
 use makepad_widgets::makepad_draw::text::layouter::LaidoutText;
 use makepad_widgets::makepad_draw::text::selection::Cursor as TextCursor;
 use makepad_widgets::*;
-use pulldown_cmark::{CodeBlockKind, Event as MdEvent, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event as MdEvent, Options, Tag, TagEnd};
 use serde_json::Value;
 
 use crate::features::timeline::canvas::range_rects;
+use crate::features::timeline::markdown::parser::{Markdown, StyleDepth};
 use crate::theme::{Palette, Typography, with_alpha};
 
 use super::images::ImageSlot;
@@ -27,9 +28,14 @@ use super::kit::{Kit, RichFont, RichSpan, laidout_size, rect};
 /// and the remaining body. Invalid or non-mapping metadata stays visible as source.
 pub fn front_matter(text: &str) -> (Vec<(String, String)>, &str) {
     let body = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let Some(rest) = body.strip_prefix("---") else { return (Vec::new(), text) };
+    let Some(rest) = body.strip_prefix("---") else {
+        return (Vec::new(), text);
+    };
     let rest = rest.trim_start_matches([' ', '\t']);
-    let rest = match rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
+    let rest = match rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+    {
         Some(rest) => rest,
         None => return (Vec::new(), text),
     };
@@ -38,20 +44,33 @@ pub fn front_matter(text: &str) -> (Vec<(String, String)>, &str) {
     let mut offset = 0;
     let mut closing = None;
     for line in rest.split_inclusive('\n') {
-        let stripped = line.trim_end_matches(['\n', '\r']).trim_end_matches([' ', '\t']);
+        let stripped = line
+            .trim_end_matches(['\n', '\r'])
+            .trim_end_matches([' ', '\t']);
         if stripped == "---" && offset > 0 {
             closing = Some((offset, offset + line.len()));
             break;
         }
         offset += line.len();
     }
-    let Some((yaml_end, body_start)) = closing else { return (Vec::new(), text) };
+    let Some((yaml_end, body_start)) = closing else {
+        return (Vec::new(), text);
+    };
     let yaml = rest[..yaml_end].trim_end_matches(['\n', '\r']);
-    let Ok(metadata) = serde_yaml::from_str::<serde_yaml::Value>(yaml) else { return (Vec::new(), text) };
-    let serde_yaml::Value::Mapping(map) = metadata else { return (Vec::new(), text) };
+    let Ok(metadata) = serde_yaml::from_str::<serde_yaml::Value>(yaml) else {
+        return (Vec::new(), text);
+    };
+    let serde_yaml::Value::Mapping(map) = metadata else {
+        return (Vec::new(), text);
+    };
     let rows = map
         .iter()
-        .map(|(key, value)| (yaml_scalar(key).unwrap_or_else(|| format_yaml(key)), format_yaml(value)))
+        .map(|(key, value)| {
+            (
+                yaml_scalar(key).unwrap_or_else(|| format_yaml(key)),
+                format_yaml(value),
+            )
+        })
         .collect();
     let consumed = text.len() - rest.len() + body_start;
     (rows, &text[consumed.min(text.len())..])
@@ -73,9 +92,10 @@ fn format_yaml(value: &serde_yaml::Value) -> String {
         return scalar;
     }
     if let serde_yaml::Value::Sequence(items) = value
-        && let Some(parts) = items.iter().map(yaml_scalar).collect::<Option<Vec<_>>>() {
-            return parts.join(", ");
-        }
+        && let Some(parts) = items.iter().map(yaml_scalar).collect::<Option<Vec<_>>>()
+    {
+        return parts.join(", ");
+    }
     let json: Value = serde_yaml::from_value(value.clone()).unwrap_or(Value::Null);
     serde_json::to_string_pretty(&json).unwrap_or_default()
 }
@@ -96,6 +116,14 @@ struct InlineStyle {
 struct Inline {
     text: String,
     spans: Vec<(usize, InlineStyle)>,
+    images: Vec<(usize, InlineImage)>,
+}
+
+#[derive(Clone, Debug)]
+struct InlineImage {
+    src: String,
+    alt: String,
+    link: Option<usize>,
 }
 
 impl Inline {
@@ -111,7 +139,7 @@ impl Inline {
     }
 
     fn is_empty(&self) -> bool {
-        self.text.trim().is_empty()
+        self.text.trim().is_empty() && self.images.is_empty()
     }
 }
 
@@ -127,19 +155,37 @@ enum Block {
     Heading(u8, Inline),
     Code(String),
     Quote(Vec<Block>),
-    List { ordered: bool, start: u64, items: Vec<ListItem> },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<ListItem>,
+    },
     Rule,
-    Table { head: Vec<Inline>, rows: Vec<Vec<Inline>> },
-    Image { src: String, alt: String },
+    Table {
+        head: Vec<Inline>,
+        rows: Vec<Vec<Inline>>,
+    },
     Html(String),
 }
 
 enum Frame {
     Blocks(Vec<Block>),
     Quote(Vec<Block>),
-    List { ordered: bool, start: u64, items: Vec<ListItem> },
-    Item { task: Option<bool>, blocks: Vec<Block> },
-    Table { head: Vec<Inline>, rows: Vec<Vec<Inline>>, row: Vec<Inline>, in_head: bool },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<ListItem>,
+    },
+    Item {
+        task: Option<bool>,
+        blocks: Vec<Block>,
+    },
+    Table {
+        head: Vec<Inline>,
+        rows: Vec<Vec<Inline>>,
+        row: Vec<Inline>,
+        in_head: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -162,7 +208,9 @@ struct Builder {
 impl Builder {
     fn push_block(&mut self, block: Block) {
         match self.frames.last_mut() {
-            Some(Frame::Blocks(blocks) | Frame::Quote(blocks) | Frame::Item { blocks, .. }) => blocks.push(block),
+            Some(Frame::Blocks(blocks) | Frame::Quote(blocks) | Frame::Item { blocks, .. }) => {
+                blocks.push(block)
+            }
             _ => {
                 if let Some(Frame::Blocks(blocks)) = self.frames.first_mut() {
                     blocks.push(block);
@@ -181,7 +229,9 @@ impl Builder {
     fn flush_inline(&mut self) {
         if let Some((kind, inline)) = self.inline.take() {
             match kind {
-                InlineKind::Paragraph if !inline.is_empty() => self.push_block(Block::Paragraph(inline)),
+                InlineKind::Paragraph if !inline.is_empty() => {
+                    self.push_block(Block::Paragraph(inline))
+                }
                 InlineKind::Heading(level) => self.push_block(Block::Heading(level, inline)),
                 InlineKind::Cell => {
                     if let Some(Frame::Table { row, .. }) = self.frames.last_mut() {
@@ -225,7 +275,15 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
         image: None,
         html: None,
     };
-    for event in Parser::new_ext(body, options) {
+    let markdown = Markdown::new(body, options);
+    let mut depth = StyleDepth::default();
+    for event in markdown.events() {
+        match &event {
+            MdEvent::Start(tag) => depth.start(tag),
+            MdEvent::End(tag) => depth.end(*tag),
+            _ => {}
+        }
+        (b.style.bold, b.style.italic, b.style.strike) = depth.flags();
         match event {
             MdEvent::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -251,15 +309,27 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
                 }
                 Tag::List(start) => {
                     b.flush_inline();
-                    b.frames.push(Frame::List { ordered: start.is_some(), start: start.unwrap_or(1), items: Vec::new() });
+                    b.frames.push(Frame::List {
+                        ordered: start.is_some(),
+                        start: start.unwrap_or(1),
+                        items: Vec::new(),
+                    });
                 }
                 Tag::Item => {
                     b.flush_inline();
-                    b.frames.push(Frame::Item { task: None, blocks: Vec::new() });
+                    b.frames.push(Frame::Item {
+                        task: None,
+                        blocks: Vec::new(),
+                    });
                 }
                 Tag::Table(_) => {
                     b.flush_inline();
-                    b.frames.push(Frame::Table { head: Vec::new(), rows: Vec::new(), row: Vec::new(), in_head: false });
+                    b.frames.push(Frame::Table {
+                        head: Vec::new(),
+                        rows: Vec::new(),
+                        row: Vec::new(),
+                        in_head: false,
+                    });
                 }
                 Tag::TableHead => {
                     if let Some(Frame::Table { in_head, row, .. }) = b.frames.last_mut() {
@@ -273,20 +343,11 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
                     }
                 }
                 Tag::TableCell => b.inline = Some((InlineKind::Cell, Inline::default())),
-                Tag::Emphasis => b.style.italic = true,
-                Tag::Strong => b.style.bold = true,
-                Tag::Strikethrough => b.style.strike = true,
                 Tag::Link { dest_url, .. } => {
                     b.links.push(dest_url.to_string());
                     b.style.link = Some(b.links.len() - 1);
                 }
                 Tag::Image { dest_url, .. } => {
-                    // Images render on their own row: the text before them is a paragraph.
-                    let kind = b.inline.as_ref().map(|(kind, _)| *kind);
-                    if kind == Some(InlineKind::Paragraph) {
-                        b.flush_inline();
-                        b.inline = Some((InlineKind::Paragraph, Inline::default()));
-                    }
                     b.image = Some((dest_url.to_string(), String::new()));
                 }
                 _ => {}
@@ -301,8 +362,13 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
                     }
                 }
                 TagEnd::CodeBlock => {
-                    if let Some(code) = b.code.take() {
-                        b.push_block(Block::Code(code.trim_end_matches('\n').to_owned()));
+                    if let Some(mut code) = b.code.take() {
+                        // Only the fence's final newline is structural; blank
+                        // lines inside the code remain selectable and copyable.
+                        if code.ends_with('\n') {
+                            code.pop();
+                        }
+                        b.push_block(Block::Code(code));
                     }
                 }
                 TagEnd::HtmlBlock => {
@@ -313,19 +379,32 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
                 TagEnd::Item => {
                     b.flush_inline();
                     if let Some(Frame::Item { task, blocks }) = b.frames.pop()
-                        && let Some(Frame::List { items, .. }) = b.frames.last_mut() {
-                            items.push(ListItem { task, blocks });
-                        }
+                        && let Some(Frame::List { items, .. }) = b.frames.last_mut()
+                    {
+                        items.push(ListItem { task, blocks });
+                    }
                 }
                 TagEnd::List(_) => {
                     b.flush_inline();
-                    if let Some(Frame::List { ordered, start, items }) = b.frames.pop() {
-                        b.push_block(Block::List { ordered, start, items });
+                    if let Some(Frame::List {
+                        ordered,
+                        start,
+                        items,
+                    }) = b.frames.pop()
+                    {
+                        b.push_block(Block::List {
+                            ordered,
+                            start,
+                            items,
+                        });
                     }
                 }
                 TagEnd::TableCell => b.flush_inline(),
                 TagEnd::TableHead => {
-                    if let Some(Frame::Table { head, row, in_head, .. }) = b.frames.last_mut() {
+                    if let Some(Frame::Table {
+                        head, row, in_head, ..
+                    }) = b.frames.last_mut()
+                    {
                         *head = std::mem::take(row);
                         *in_head = false;
                     }
@@ -340,25 +419,30 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
                         b.push_block(Block::Table { head, rows });
                     }
                 }
-                TagEnd::Emphasis => b.style.italic = false,
-                TagEnd::Strong => b.style.bold = false,
-                TagEnd::Strikethrough => b.style.strike = false,
                 TagEnd::Link => b.style.link = None,
                 TagEnd::Image => {
                     if let Some((src, alt)) = b.image.take() {
-                        b.push_block(Block::Image { src, alt });
+                        let link = b.style.link;
+                        let inline = b.inline();
+                        inline
+                            .images
+                            .push((inline.text.len(), InlineImage { src, alt, link }));
                     }
                 }
                 _ => {}
             },
             MdEvent::Text(text) => b.text(&text),
             MdEvent::Code(text) => {
-                let mut style = b.style;
-                style.code = true;
-                b.inline().push(&text, style);
+                if b.image.is_some() {
+                    b.text(&text);
+                } else {
+                    let mut style = b.style;
+                    style.code = true;
+                    b.inline().push(&text, style);
+                }
             }
             MdEvent::InlineHtml(html) | MdEvent::Html(html) => {
-                if b.html.is_some() {
+                if b.html.is_some() || b.image.is_some() {
                     b.text(&html);
                 } else {
                     let mut style = b.style;
@@ -385,7 +469,15 @@ fn parse(body: &str) -> (Vec<Block>, Vec<String>) {
     while b.frames.len() > 1 {
         match b.frames.pop() {
             Some(Frame::Quote(blocks)) => b.push_block(Block::Quote(blocks)),
-            Some(Frame::List { ordered, start, items }) => b.push_block(Block::List { ordered, start, items }),
+            Some(Frame::List {
+                ordered,
+                start,
+                items,
+            }) => b.push_block(Block::List {
+                ordered,
+                start,
+                items,
+            }),
             Some(Frame::Item { task, blocks }) => {
                 if let Some(Frame::List { items, .. }) = b.frames.last_mut() {
                     items.push(ListItem { task, blocks });
@@ -413,16 +505,33 @@ struct Run {
 }
 
 enum Item {
-    Fill { rect: Rect, color: Vec4, radius: f64 },
-    Border { rect: Rect, color: Vec4, radius: f64 },
+    Fill {
+        rect: Rect,
+        color: Vec4,
+        radius: f64,
+    },
+    Border {
+        rect: Rect,
+        color: Vec4,
+        radius: f64,
+    },
     Text(usize),
-    Image { rect: Rect, key: String, alt: String },
+    Image {
+        rect: Rect,
+        key: String,
+        alt: String,
+        link: Option<String>,
+    },
 }
 
 /// What the owner tells the preview about an image source.
 pub enum ImageState {
     Loading,
-    Ready { texture: Texture, width: usize, height: usize },
+    Ready {
+        texture: Texture,
+        width: usize,
+        height: usize,
+    },
     Failed(String),
 }
 
@@ -498,9 +607,18 @@ impl Default for MarkdownPreview {
 fn collect_images(blocks: &[Block], out: &mut Vec<String>) {
     for block in blocks {
         match block {
-            Block::Image { src, .. } => out.push(src.clone()),
+            Block::Paragraph(inline) | Block::Heading(_, inline) => {
+                out.extend(inline.images.iter().map(|(_, image)| image.src.clone()));
+            }
+            Block::Table { head, rows } => {
+                for cell in head.iter().chain(rows.iter().flatten()) {
+                    out.extend(cell.images.iter().map(|(_, image)| image.src.clone()));
+                }
+            }
             Block::Quote(children) => collect_images(children, out),
-            Block::List { items, .. } => items.iter().for_each(|item| collect_images(&item.blocks, out)),
+            Block::List { items, .. } => items
+                .iter()
+                .for_each(|item| collect_images(&item.blocks, out)),
             _ => {}
         }
     }
@@ -520,15 +638,74 @@ impl Ctx<'_> {
         self.look.typography.content_font_size
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn rich(
+        &mut self,
+        cx: &mut Cx,
+        inline: &Inline,
+        size: f64,
+        bold: bool,
+        color: Vec4,
+        width: f64,
+        pos: DVec2,
+    ) -> f64 {
+        let mut start = 0;
+        let mut span_cursor = (0, 0);
+        let mut y = pos.y;
+        for (offset, image) in &inline.images {
+            y += self.rich_text(
+                cx,
+                inline,
+                start..*offset,
+                &mut span_cursor,
+                size,
+                bold,
+                color,
+                width,
+                dvec2(pos.x, y),
+            );
+            y += self.image(cx, image, width, dvec2(pos.x, y));
+            start = *offset;
+        }
+        y += self.rich_text(
+            cx,
+            inline,
+            start..inline.text.len(),
+            &mut span_cursor,
+            size,
+            bold,
+            color,
+            width,
+            dvec2(pos.x, y),
+        );
+        y - pos.y
+    }
+
     #[allow(clippy::too_many_arguments)] // independent text layout inputs
-    fn rich(&mut self, cx: &mut Cx, inline: &Inline, size: f64, bold: bool, color: Vec4, width: f64, pos: DVec2) -> f64 {
+    fn rich_text(
+        &mut self,
+        cx: &mut Cx,
+        inline: &Inline,
+        range: std::ops::Range<usize>,
+        span_cursor: &mut (usize, usize),
+        size: f64,
+        bold: bool,
+        color: Vec4,
+        width: f64,
+        pos: DVec2,
+    ) -> f64 {
         let p = &self.look.palette;
         let code_size = (size - 1.0).max(9.0);
         let mut spans = Vec::new();
         let mut links = Vec::new();
         let mut code_ranges = Vec::new();
-        let mut offset = 0;
-        for (len, style) in &inline.spans {
+        while let Some((len, style)) = inline.spans.get(span_cursor.0) {
+            let span_end = span_cursor.1 + len;
+            let start = span_cursor.1.max(range.start);
+            let end = span_end.min(range.end);
+            if start >= end {
+                break;
+            }
             let font = if style.code {
                 RichFont::Mono
             } else {
@@ -539,25 +716,58 @@ impl Ctx<'_> {
                     (false, false) => RichFont::Regular,
                 }
             };
-            let span_color = if style.link.is_some() { p.accent_bright } else if style.strike { p.muted } else { color };
-            spans.push(RichSpan { len: *len, font, size: if style.code { code_size } else { size }, color: span_color });
+            let span_color = if style.link.is_some() {
+                p.accent_bright
+            } else if style.strike {
+                p.muted
+            } else {
+                color
+            };
+            spans.push(RichSpan {
+                len: end - start,
+                font,
+                size: if style.code { code_size } else { size },
+                color: span_color,
+            });
             if let Some(link) = style.link {
-                links.push((offset, offset + len, self.links.get(link).cloned().unwrap_or_default()));
+                links.push((
+                    start - range.start,
+                    end - range.start,
+                    self.links.get(link).cloned().unwrap_or_default(),
+                ));
             }
             if style.code {
-                code_ranges.push((offset, offset + len));
+                code_ranges.push((start - range.start, end - range.start));
             }
-            offset += len;
+            if end < span_end {
+                break;
+            }
+            *span_cursor = (span_cursor.0 + 1, span_end);
         }
         if spans.is_empty() {
             return 0.0;
         }
-        let laid = self.kit.layout_rich(cx, &inline.text, &spans, Some(width.max(1.0)), 1.15);
+        let laid =
+            self.kit
+                .layout_rich(cx, &inline.text[range], &spans, Some(width.max(1.0)), 1.15);
         let size_px = laidout_size(&laid);
         for (a, b) in code_ranges {
             for r in range_rects(&laid, a, b) {
-                let fill = rect(pos.x + r.pos.x - 2.0, pos.y + r.pos.y, r.size.x + 4.0, r.size.y);
-                self.items.push((fill.pos.y, fill.size.y, Item::Fill { rect: fill, color: p.surface2, radius: 4.0 }));
+                let fill = rect(
+                    pos.x + r.pos.x - 2.0,
+                    pos.y + r.pos.y,
+                    r.size.x + 4.0,
+                    r.size.y,
+                );
+                self.items.push((
+                    fill.pos.y,
+                    fill.size.y,
+                    Item::Fill {
+                        rect: fill,
+                        color: p.surface2,
+                        radius: 4.0,
+                    },
+                ));
             }
         }
         let index = self.runs.len();
@@ -567,22 +777,107 @@ impl Ctx<'_> {
     }
 
     #[allow(clippy::too_many_arguments)] // independent text layout inputs
-    fn plain(&mut self, cx: &mut Cx, text: &str, font: RichFont, size: f64, color: Vec4, width: Option<f64>, pos: DVec2) -> DVec2 {
-        let spans = [RichSpan { len: text.len(), font, size, color }];
-        let laid = self.kit.layout_rich(cx, text, &spans, width.map(|w| w.max(1.0)), 1.15);
+    fn plain(
+        &mut self,
+        cx: &mut Cx,
+        text: &str,
+        font: RichFont,
+        size: f64,
+        color: Vec4,
+        width: Option<f64>,
+        pos: DVec2,
+    ) -> DVec2 {
+        let spans = [RichSpan {
+            len: text.len(),
+            font,
+            size,
+            color,
+        }];
+        let laid = self
+            .kit
+            .layout_rich(cx, text, &spans, width.map(|w| w.max(1.0)), 1.15);
         let size_px = laidout_size(&laid);
         let index = self.runs.len();
-        self.runs.push(Run { laid, pos, links: Vec::new() });
+        self.runs.push(Run {
+            laid,
+            pos,
+            links: Vec::new(),
+        });
         self.items.push((pos.y, size_px.y, Item::Text(index)));
         size_px
     }
 
     fn fill(&mut self, r: Rect, color: Vec4, radius: f64) {
-        self.items.push((r.pos.y, r.size.y, Item::Fill { rect: r, color, radius }));
+        self.items.push((
+            r.pos.y,
+            r.size.y,
+            Item::Fill {
+                rect: r,
+                color,
+                radius,
+            },
+        ));
     }
 
     fn border(&mut self, r: Rect, color: Vec4, radius: f64) {
-        self.items.push((r.pos.y, r.size.y, Item::Border { rect: r, color, radius }));
+        self.items.push((
+            r.pos.y,
+            r.size.y,
+            Item::Border {
+                rect: r,
+                color,
+                radius,
+            },
+        ));
+    }
+
+    fn image(&mut self, cx: &mut Cx, image: &InlineImage, width: f64, pos: DVec2) -> f64 {
+        let state = (self.images)(&image.src);
+        let link = image.link.and_then(|index| self.links.get(index)).cloned();
+        let r = match &state {
+            ImageState::Ready {
+                width: w,
+                height: h,
+                ..
+            } => {
+                let scale = (width.max(1.0) / (*w as f64).max(1.0)).min(1.0);
+                rect(pos.x, pos.y, *w as f64 * scale, *h as f64 * scale)
+            }
+            ImageState::Loading => rect(pos.x, pos.y, 16.0, 16.0),
+            ImageState::Failed(error) => {
+                let label = if image.alt.is_empty() {
+                    error.as_str()
+                } else {
+                    &image.alt
+                };
+                let measured = self.plain(
+                    cx,
+                    label,
+                    RichFont::Regular,
+                    self.base_size(),
+                    self.look.palette.muted,
+                    Some(width),
+                    pos,
+                );
+                if let Some(link) = link
+                    && let Some(run) = self.runs.last_mut()
+                {
+                    run.links.push((0, label.len(), link));
+                }
+                return measured.y;
+            }
+        };
+        self.items.push((
+            r.pos.y,
+            r.size.y,
+            Item::Image {
+                rect: r,
+                key: image.src.clone(),
+                alt: image.alt.clone(),
+                link,
+            },
+        ));
+        r.size.y
     }
 
     /// Lays out `blocks` from `y` at `x` within `width`; returns the new y.
@@ -594,7 +889,9 @@ impl Ctx<'_> {
                 y += size * 0.75;
             }
             match block {
-                Block::Paragraph(inline) => y += self.rich(cx, inline, size, false, p.foreground, width, dvec2(x, y)),
+                Block::Paragraph(inline) => {
+                    y += self.rich(cx, inline, size, false, p.foreground, width, dvec2(x, y))
+                }
                 Block::Heading(level, inline) => {
                     let scale = match level {
                         1 => 1.6,
@@ -605,7 +902,15 @@ impl Ctx<'_> {
                     if index > 0 {
                         y += size * 0.5;
                     }
-                    y += self.rich(cx, inline, (size * scale).round(), true, p.foreground, width, dvec2(x, y));
+                    y += self.rich(
+                        cx,
+                        inline,
+                        (size * scale).round(),
+                        true,
+                        p.foreground,
+                        width,
+                        dvec2(x, y),
+                    );
                     if *level <= 2 {
                         y += 6.0;
                         self.fill(rect(x, y, width, 1.0), p.border, 0.0);
@@ -617,18 +922,41 @@ impl Ctx<'_> {
                     let measured = self.kit.layout_rich(
                         cx,
                         code,
-                        &[RichSpan { len: code.len(), font: RichFont::Mono, size: code_size, color: p.foreground }],
+                        &[RichSpan {
+                            len: code.len(),
+                            font: RichFont::Mono,
+                            size: code_size,
+                            color: p.foreground,
+                        }],
                         Some((width - 24.0).max(1.0)),
                         1.2,
                     );
                     let h = laidout_size(&measured).y + 24.0;
                     self.fill(rect(x, y, width, h), p.surface2, 6.0);
-                    self.plain(cx, code, RichFont::Mono, code_size, p.foreground, Some(width - 24.0), dvec2(x + 12.0, y + 12.0));
+                    self.plain(
+                        cx,
+                        code,
+                        RichFont::Mono,
+                        code_size,
+                        p.foreground,
+                        Some(width - 24.0),
+                        dvec2(x + 12.0, y + 12.0),
+                    );
                     y += h;
                 }
                 Block::Html(html) => {
                     let code_size = self.look.typography.code_font_size;
-                    y += self.plain(cx, html, RichFont::Mono, code_size, p.muted, Some(width), dvec2(x, y)).y;
+                    y += self
+                        .plain(
+                            cx,
+                            html,
+                            RichFont::Mono,
+                            code_size,
+                            p.muted,
+                            Some(width),
+                            dvec2(x, y),
+                        )
+                        .y;
                 }
                 Block::Quote(children) => {
                     let start = y;
@@ -636,7 +964,11 @@ impl Ctx<'_> {
                     self.fill(rect(x, start, 3.0, (end - start).max(size)), p.border, 1.5);
                     y = end;
                 }
-                Block::List { ordered, start, items } => {
+                Block::List {
+                    ordered,
+                    start,
+                    items,
+                } => {
                     for (number, item) in items.iter().enumerate() {
                         if number > 0 {
                             y += size * 0.25;
@@ -648,7 +980,15 @@ impl Ctx<'_> {
                             None => "•".to_owned(),
                         };
                         let marker_w = if *ordered { 24.0 } else { 18.0 };
-                        self.plain(cx, &marker, RichFont::Regular, size, p.muted, None, dvec2(x, y));
+                        self.plain(
+                            cx,
+                            &marker,
+                            RichFont::Regular,
+                            size,
+                            p.muted,
+                            None,
+                            dvec2(x, y),
+                        );
                         let end = self.blocks(cx, &item.blocks, x + marker_w, y, width - marker_w);
                         y = end.max(y + size * 1.15);
                     }
@@ -659,7 +999,10 @@ impl Ctx<'_> {
                     y += 1.0 + size * 0.5;
                 }
                 Block::Table { head, rows } => {
-                    let columns = head.len().max(rows.iter().map(Vec::len).max().unwrap_or(0)).max(1);
+                    let columns = head
+                        .len()
+                        .max(rows.iter().map(Vec::len).max().unwrap_or(0))
+                        .max(1);
                     let col_w = width / columns as f64;
                     let top = y;
                     let mut all: Vec<(bool, &Vec<Inline>)> = vec![(true, head)];
@@ -667,7 +1010,15 @@ impl Ctx<'_> {
                     for (is_head, row) in all {
                         let mut row_h: f64 = size * 1.15;
                         for (column, cell) in row.iter().enumerate() {
-                            let h = self.rich(cx, cell, size, is_head, p.foreground, col_w - 16.0, dvec2(x + column as f64 * col_w + 8.0, y + 6.0));
+                            let h = self.rich(
+                                cx,
+                                cell,
+                                size,
+                                is_head,
+                                p.foreground,
+                                col_w - 16.0,
+                                dvec2(x + column as f64 * col_w + 8.0, y + 6.0),
+                            );
                             row_h = row_h.max(h);
                         }
                         if is_head {
@@ -677,27 +1028,6 @@ impl Ctx<'_> {
                         self.fill(rect(x, y - 1.0, width, 1.0), p.border, 0.0);
                     }
                     self.border(rect(x, top, width, y - top), p.border, 0.0);
-                }
-                Block::Image { src, alt } => {
-                    let state = (self.images)(src);
-                    let r = match &state {
-                        ImageState::Ready { width: w, height: h, .. } => {
-                            let w = *w as f64;
-                            let h = *h as f64;
-                            let scale = (width / w).min(1.0);
-                            rect(x, y, w * scale, h * scale)
-                        }
-                        ImageState::Loading => rect(x, y, 16.0, 16.0),
-                        ImageState::Failed(error) => {
-                            // Flutter `errorBuilder`: `Text(alt ?? error.toString())`.
-                            let label = if alt.is_empty() { error.as_str() } else { alt.as_str() };
-                            let measured = self.plain(cx, label, RichFont::Regular, size, p.muted, Some(width), dvec2(x, y));
-                            y += measured.y;
-                            continue;
-                        }
-                    };
-                    self.items.push((r.pos.y, r.size.y, Item::Image { rect: r, key: src.clone(), alt: alt.clone() }));
-                    y += r.size.y;
                 }
             }
         }
@@ -735,7 +1065,15 @@ impl MarkdownPreview {
         self.selection_invalidated = true;
     }
 
-    fn layout(&mut self, cx: &mut Cx, kit: &mut Kit, look: &MarkdownLook, width: f64, images: &dyn Fn(&str) -> ImageState, image_epoch: u64) {
+    fn layout(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        look: &MarkdownLook,
+        width: f64,
+        images: &dyn Fn(&str) -> ImageState,
+        image_epoch: u64,
+    ) {
         let key = (
             hash_text(self.source.as_deref().unwrap_or("")),
             width.to_bits(),
@@ -752,7 +1090,14 @@ impl MarkdownPreview {
         let frame = (width - outer * 2.0).clamp(0.0, t.content_max_width);
         let x = ((width - frame) / 2.0).max(0.0) + 8.0;
         let inner = (frame - 16.0).max(1.0);
-        let mut ctx = Ctx { kit, look, images, runs: Vec::new(), items: Vec::new(), links: &self.links };
+        let mut ctx = Ctx {
+            kit,
+            look,
+            images,
+            runs: Vec::new(),
+            items: Vec::new(),
+            links: &self.links,
+        };
         let mut y = 16.0;
         if !self.front.is_empty() {
             let key_w = (inner * 0.3).clamp(0.0, 180.0);
@@ -761,12 +1106,34 @@ impl MarkdownPreview {
             for (index, (key, value)) in self.front.clone().iter().enumerate() {
                 let key_h = ctx
                     .kit
-                    .layout_rich(cx, key, &[RichSpan { len: key.len(), font: RichFont::Mono, size: base, color: p.muted }], Some((key_w - 24.0).max(1.0)), 1.15)
+                    .layout_rich(
+                        cx,
+                        key,
+                        &[RichSpan {
+                            len: key.len(),
+                            font: RichFont::Mono,
+                            size: base,
+                            color: p.muted,
+                        }],
+                        Some((key_w - 24.0).max(1.0)),
+                        1.15,
+                    )
                     .size_in_lpxs
                     .height as f64;
                 let value_h = ctx
                     .kit
-                    .layout_rich(cx, value, &[RichSpan { len: value.len(), font: RichFont::Regular, size: base, color: p.foreground }], Some((inner - key_w - 24.0).max(1.0)), 1.15)
+                    .layout_rich(
+                        cx,
+                        value,
+                        &[RichSpan {
+                            len: value.len(),
+                            font: RichFont::Regular,
+                            size: base,
+                            color: p.foreground,
+                        }],
+                        Some((inner - key_w - 24.0).max(1.0)),
+                        1.15,
+                    )
                     .size_in_lpxs
                     .height as f64;
                 let row_h = key_h.max(value_h) + 16.0;
@@ -774,8 +1141,24 @@ impl MarkdownPreview {
                     ctx.fill(rect(x, y, inner, 1.0), p.border, 0.0);
                 }
                 ctx.fill(rect(x, y, key_w, row_h), p.surface2, 0.0);
-                ctx.plain(cx, key, RichFont::Mono, base, p.muted, Some(key_w - 24.0), dvec2(x + 12.0, y + 8.0));
-                ctx.plain(cx, value, RichFont::Regular, base, p.foreground, Some(inner - key_w - 24.0), dvec2(x + key_w + 12.0, y + 8.0));
+                ctx.plain(
+                    cx,
+                    key,
+                    RichFont::Mono,
+                    base,
+                    p.muted,
+                    Some(key_w - 24.0),
+                    dvec2(x + 12.0, y + 8.0),
+                );
+                ctx.plain(
+                    cx,
+                    value,
+                    RichFont::Regular,
+                    base,
+                    p.foreground,
+                    Some(inner - key_w - 24.0),
+                    dvec2(x + key_w + 12.0, y + 8.0),
+                );
                 y += row_h;
             }
             ctx.border(rect(x, top, inner, y - top), p.border, 8.0);
@@ -818,28 +1201,61 @@ impl MarkdownPreview {
                 continue;
             }
             match item {
-                Item::Fill { rect: r, color, radius } => kit.fill(cx, r.translate(self.origin), *color, *radius),
-                Item::Border { rect: r, color, radius } => {
-                    kit.outline(cx, r.translate(self.origin), Vec4::default(), *color, 1.0, *radius)
-                }
+                Item::Fill {
+                    rect: r,
+                    color,
+                    radius,
+                } => kit.fill(cx, r.translate(self.origin), *color, *radius),
+                Item::Border {
+                    rect: r,
+                    color,
+                    radius,
+                } => kit.outline(
+                    cx,
+                    r.translate(self.origin),
+                    Vec4::default(),
+                    *color,
+                    1.0,
+                    *radius,
+                ),
                 Item::Text(index) => {
                     let run = &self.runs[*index];
                     if let Some(((sa, sb), (ea, eb))) = selection
-                        && *index >= sa && *index <= ea {
-                            let a = if *index == sa { sb } else { 0 };
-                            let b = if *index == ea { eb } else { run.laid.text.len() };
-                            for r in range_rects(&run.laid, a, b) {
-                                kit.fill(cx, r.translate(run.pos + self.origin), with_alpha(p.accent, 0.35), 0.0);
-                                let visible = r.translate(run.pos + self.origin).clip((area.pos, area.pos + area.size));
-                                if action_anchor.is_none() && visible.size.x > 0.0 && visible.size.y > 0.0 {
-                                    action_anchor = Some(visible);
-                                }
+                        && *index >= sa
+                        && *index <= ea
+                    {
+                        let a = if *index == sa { sb } else { 0 };
+                        let b = if *index == ea {
+                            eb
+                        } else {
+                            run.laid.text.len()
+                        };
+                        for r in range_rects(&run.laid, a, b) {
+                            kit.fill(
+                                cx,
+                                r.translate(run.pos + self.origin),
+                                with_alpha(p.accent, 0.35),
+                                0.0,
+                            );
+                            let visible = r
+                                .translate(run.pos + self.origin)
+                                .clip((area.pos, area.pos + area.size));
+                            if action_anchor.is_none()
+                                && visible.size.x > 0.0
+                                && visible.size.y > 0.0
+                            {
+                                action_anchor = Some(visible);
                             }
                         }
+                    }
                     kit.draw_rich(cx, run.pos + self.origin, &run.laid);
                 }
-                Item::Image { rect: r, key, alt } => match images(key) {
-                    ImageState::Ready { texture, .. } => kit.texture(cx, r.translate(self.origin), &texture, 0.0, 1.0),
+                Item::Image {
+                    rect: r, key, alt, ..
+                } => match images(key) {
+                    ImageState::Ready { texture, .. } => {
+                        kit.texture(cx, r.translate(self.origin), &texture, 0.0, 1.0)
+                    }
                     ImageState::Loading => kit.spinner(cx, r.translate(self.origin), p.muted, 0.0),
                     ImageState::Failed(_) => {
                         let _ = alt;
@@ -849,23 +1265,44 @@ impl MarkdownPreview {
         }
         if self.height > area.size.y + 1.0 {
             let thumb_h = (area.size.y * area.size.y / self.height).max(24.0);
-            let thumb_y = area.pos.y + (area.size.y - thumb_h) * (self.scroll_y / max).clamp(0.0, 1.0);
-            kit.fill(cx, rect(area.pos.x + area.size.x - 6.0, thumb_y, 4.0, thumb_h), with_alpha(p.muted, 0.35), 2.0);
+            let thumb_y =
+                area.pos.y + (area.size.y - thumb_h) * (self.scroll_y / max).clamp(0.0, 1.0);
+            kit.fill(
+                cx,
+                rect(area.pos.x + area.size.x - 6.0, thumb_y, 4.0, thumb_h),
+                with_alpha(p.muted, 0.35),
+                2.0,
+            );
         }
         cx.end_turtle();
-        if self.touch_selection && let Some((anchor, cursor)) = self.selection {
-            let a = self.caret_rect(anchor, anchor <= cursor).unwrap_or_default();
+        if self.touch_selection
+            && let Some((anchor, cursor)) = self.selection
+        {
+            let a = self
+                .caret_rect(anchor, anchor <= cursor)
+                .unwrap_or_default();
             let b = self.caret_rect(cursor, cursor < anchor).unwrap_or_default();
-            self.selection_handles.get_or_insert_with(|| TextSelectionHandles::new(cx))
+            self.selection_handles
+                .get_or_insert_with(|| TextSelectionHandles::new(cx))
                 .draw(cx, owner, area, a, b, anchor == cursor, false);
         }
-        if !self.selection_handles.as_ref().is_some_and(TextSelectionHandles::is_dragging)
-            && (self.show_actions || (self.owns_selection && cx.text_actions_active(self.owner))) {
+        if !self
+            .selection_handles
+            .as_ref()
+            .is_some_and(TextSelectionHandles::is_dragging)
+            && (self.show_actions || (self.owns_selection && cx.text_actions_active(self.owner)))
+        {
             self.show_actions = false;
             if let Some(anchor) = action_anchor {
-                cx.show_text_actions(self.owner, anchor, TextActionCapabilities {
-                    copy: true, select_all: true, ..Default::default()
-                });
+                cx.show_text_actions(
+                    self.owner,
+                    anchor,
+                    TextActionCapabilities {
+                        copy: true,
+                        select_all: true,
+                        ..Default::default()
+                    },
+                );
             } else {
                 cx.clear_text_selection(self.owner);
                 cx.claim_text_selection(self.owner);
@@ -915,8 +1352,20 @@ impl MarkdownPreview {
         let mut best: Option<(f64, usize)> = None;
         for (index, run) in self.runs.iter().enumerate() {
             let size = laidout_size(&run.laid);
-            let dy = if rel.y < run.pos.y { run.pos.y - rel.y } else if rel.y > run.pos.y + size.y { rel.y - run.pos.y - size.y } else { 0.0 };
-            let dx = if rel.x < run.pos.x { run.pos.x - rel.x } else if rel.x > run.pos.x + size.x { rel.x - run.pos.x - size.x } else { 0.0 };
+            let dy = if rel.y < run.pos.y {
+                run.pos.y - rel.y
+            } else if rel.y > run.pos.y + size.y {
+                rel.y - run.pos.y - size.y
+            } else {
+                0.0
+            };
+            let dx = if rel.x < run.pos.x {
+                run.pos.x - rel.x
+            } else if rel.x > run.pos.x + size.x {
+                rel.x - run.pos.x - size.x
+            } else {
+                0.0
+            };
             let distance = dy * 1000.0 + dx;
             if best.is_none_or(|(d, _)| distance < d) {
                 best = Some((distance, index));
@@ -925,7 +1374,9 @@ impl MarkdownPreview {
         let (_, index) = best?;
         let run = &self.runs[index];
         let local = rel - run.pos;
-        let cursor = run.laid.point_in_lpxs_to_cursor(makepad_widgets::makepad_draw::text::geom::Point::new(local.x as f32, local.y as f32));
+        let cursor = run.laid.point_in_lpxs_to_cursor(
+            makepad_widgets::makepad_draw::text::geom::Point::new(local.x as f32, local.y as f32),
+        );
         Some((index, cursor.index))
     }
 
@@ -934,10 +1385,18 @@ impl MarkdownPreview {
         if run.laid.rows.is_empty() {
             return None;
         }
-        let pos = run.laid.cursor_to_position(TextCursor { index: point.1.min(run.laid.text.len()), prefer_next_row: prefer_next });
+        let pos = run.laid.cursor_to_position(TextCursor {
+            index: point.1.min(run.laid.text.len()),
+            prefer_next_row: prefer_next,
+        });
         let row = &run.laid.rows[pos.row_index];
         Some(Rect {
-            pos: self.origin + run.pos + dvec2(pos.x_in_lpxs as f64, (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64),
+            pos: self.origin
+                + run.pos
+                + dvec2(
+                    pos.x_in_lpxs as f64,
+                    (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64,
+                ),
             size: dvec2(1.0, (row.ascender_in_lpxs - row.descender_in_lpxs) as f64),
         })
     }
@@ -948,14 +1407,20 @@ impl MarkdownPreview {
             self.clear_selection(cx);
             return false;
         }
-        let Some(action) = self.selection_handles.as_mut()
-            .and_then(|handles| handles.handle_event(cx, event, self.owner)) else { return false };
+        let Some(action) = self
+            .selection_handles
+            .as_mut()
+            .and_then(|handles| handles.handle_event(cx, event, self.owner))
+        else {
+            return false;
+        };
         self.touch_scroll.reset();
         self.show_actions = false;
         self.dragging = false;
         self.thumb_drag = None;
         if action.phase != TextHandlePhase::Cancel {
-            self.scroll_y = (self.scroll_y + action.scroll.y).clamp(0.0, (self.height - self.area.size.y).max(0.0));
+            self.scroll_y = (self.scroll_y + action.scroll.y)
+                .clamp(0.0, (self.height - self.area.size.y).max(0.0));
             self.origin.y = self.area.pos.y - self.scroll_y;
             let abs = action.abs - (self.owner.rect(cx).pos - self.owner_draw_pos);
             if let (Some(point), Some((anchor, cursor))) = (self.point_at(abs), self.selection) {
@@ -974,6 +1439,17 @@ impl MarkdownPreview {
 
     fn link_at(&self, abs: DVec2) -> Option<String> {
         let rel = abs - self.origin;
+        for (_, _, item) in &self.items {
+            if let Item::Image {
+                rect,
+                link: Some(link),
+                ..
+            } = item
+                && rect.contains(rel)
+            {
+                return Some(link.clone());
+            }
+        }
         for run in &self.runs {
             for (a, b, href) in &run.links {
                 for r in range_rects(&run.laid, *a, *b) {
@@ -1010,8 +1486,11 @@ impl MarkdownPreview {
             self.touch_scroll.reset();
             return false;
         }
-        let Some(delta) = self.touch_scroll.frame(cx, event) else { return false };
-        self.touch_scroll.apply_delta(&mut self.scroll_y, delta, self.height - self.area.size.y)
+        let Some(delta) = self.touch_scroll.frame(cx, event) else {
+            return false;
+        };
+        self.touch_scroll
+            .apply_delta(&mut self.scroll_y, delta, self.height - self.area.size.y)
     }
 
     pub fn handle_hit(&mut self, cx: &mut Cx, owner: Area, hit: &Hit) -> PreviewEvent {
@@ -1033,7 +1512,11 @@ impl MarkdownPreview {
                 }
                 self.touch_selection = false;
                 self.selection = self.point_at(fe.abs).map(|(run, offset)| {
-                    let (a, b) = if fe.tap_count == 2 { word_bounds(self.runs[run].laid.text.as_str(), offset) } else { (offset, offset) };
+                    let (a, b) = if fe.tap_count == 2 {
+                        word_bounds(self.runs[run].laid.text.as_str(), offset)
+                    } else {
+                        (offset, offset)
+                    };
                     ((run, a), (run, b))
                 });
                 if self.selection.is_some() {
@@ -1059,7 +1542,11 @@ impl MarkdownPreview {
                     return PreviewEvent::None;
                 }
                 if let Some(dy) = self.touch_scroll.handle_hit(hit) {
-                    self.touch_scroll.apply_delta(&mut self.scroll_y, dy, self.height - self.area.size.y);
+                    self.touch_scroll.apply_delta(
+                        &mut self.scroll_y,
+                        dy,
+                        self.height - self.area.size.y,
+                    );
                     return PreviewEvent::None;
                 }
                 if self.dragging {
@@ -1068,7 +1555,9 @@ impl MarkdownPreview {
                     } else if fe.abs.y > self.area.pos.y + self.area.size.y {
                         self.scroll_y += 20.0;
                     }
-                    if let (Some((anchor, _)), Some(point)) = (self.selection, self.point_at(fe.abs)) {
+                    if let (Some((anchor, _)), Some(point)) =
+                        (self.selection, self.point_at(fe.abs))
+                    {
                         self.selection = Some((anchor, point));
                     }
                 }
@@ -1084,10 +1573,14 @@ impl MarkdownPreview {
                 if cfg!(target_os = "android") && was_drag && fe.device.is_touch() {
                     self.show_actions = self.ordered_selection().is_some();
                 }
-                if (was_drag || fe.device.is_touch()) && fe.is_over && fe.was_tap() && self.ordered_selection().is_none()
-                    && let Some(href) = self.link_at(fe.abs) {
-                        return PreviewEvent::Link(href);
-                    }
+                if (was_drag || fe.device.is_touch())
+                    && fe.is_over
+                    && fe.was_tap()
+                    && self.ordered_selection().is_none()
+                    && let Some(href) = self.link_at(fe.abs)
+                {
+                    return PreviewEvent::Link(href);
+                }
             }
             Hit::FingerScroll(fe) => {
                 self.touch_scroll.reset();
@@ -1135,7 +1628,8 @@ mod tests {
 
     #[test]
     fn front_matter_table_and_body() {
-        let (rows, body) = front_matter("---\ntitle: Hello\ntags: [a, b]\nnested: {x: 1}\n---\n# Body\n");
+        let (rows, body) =
+            front_matter("---\ntitle: Hello\ntags: [a, b]\nnested: {x: 1}\n---\n# Body\n");
         assert_eq!(rows[0], ("title".to_owned(), "Hello".to_owned()));
         assert_eq!(rows[1], ("tags".to_owned(), "a, b".to_owned()));
         assert!(rows[2].1.contains("\"x\": 1"));
@@ -1149,14 +1643,121 @@ mod tests {
 
     #[test]
     fn parses_blocks_and_images() {
-        let (blocks, links) = parse("# T\n\ntext [l](a.md) ![alt](img.png) after\n\n- [x] done\n- b\n\n```\ncode\n```\n");
+        let (blocks, links) = parse(
+            "# T\n\ntext [l](a.md) ![alt](img.png) after\n\n- [x] done\n- b\n\n```\ncode\n```\n",
+        );
         assert!(matches!(blocks[0], Block::Heading(1, _)));
-        assert!(matches!(blocks[1], Block::Paragraph(_)));
-        assert!(matches!(&blocks[2], Block::Image { src, alt } if src == "img.png" && alt == "alt"));
-        assert!(matches!(blocks[3], Block::Paragraph(_)));
-        assert!(matches!(&blocks[4], Block::List { items, .. } if items[0].task == Some(true)));
-        assert!(matches!(&blocks[5], Block::Code(code) if code == "code"));
+        assert!(matches!(&blocks[1], Block::Paragraph(inline)
+            if inline.text == "text l  after"
+                && inline.images.len() == 1
+                && inline.images[0].0 == "text l ".len()
+                && inline.images[0].1.src == "img.png"
+                && inline.images[0].1.alt == "alt"));
+        assert!(matches!(&blocks[2], Block::List { items, .. } if items[0].task == Some(true)));
+        assert!(matches!(&blocks[3], Block::Code(code) if code == "code"));
         assert_eq!(links, vec!["a.md".to_owned()]);
+    }
+
+    #[test]
+    fn fenced_code_retains_authored_trailing_blank_lines() {
+        let (blocks, _) = parse("```\nline\n\n\n```\n");
+        assert!(matches!(&blocks[0], Block::Code(code) if code == "line\n\n"));
+    }
+
+    #[test]
+    fn multilingual_emphasis_and_nested_styles_preserve_copy_text() {
+        let (blocks, _) =
+            parse("첨부한 위치대로 **호스트 메뉴 맨 아래에 ‘버전’**을 추가하겠습니다.");
+        let Block::Paragraph(inline) = &blocks[0] else {
+            panic!("paragraph")
+        };
+        assert_eq!(
+            inline.text,
+            "첨부한 위치대로 호스트 메뉴 맨 아래에 ‘버전’을 추가하겠습니다."
+        );
+        let mut offset = 0;
+        let mut bold = String::new();
+        for (len, style) in &inline.spans {
+            if style.bold {
+                bold.push_str(&inline.text[offset..offset + len]);
+            }
+            offset += len;
+        }
+        assert_eq!(bold, "호스트 메뉴 맨 아래에 ‘버전’");
+        for (source, bold, italic) in [
+            ("**outer __inner__ tail**", true, false),
+            ("*outer _inner_ tail*", false, true),
+            ("***‘both’***을", true, true),
+        ] {
+            let (blocks, _) = parse(source);
+            let Block::Paragraph(inline) = &blocks[0] else {
+                panic!("paragraph")
+            };
+            let mut offset = 0;
+            for (len, style) in &inline.spans {
+                if &inline.text[offset..offset + len] != "을" {
+                    assert_eq!((style.bold, style.italic), (bold, italic), "{source}");
+                }
+                offset += len;
+            }
+        }
+        let (blocks, _) = parse(r"\*\*‘literal’\*\*을 and `**‘code’**을`");
+        let Block::Paragraph(inline) = &blocks[0] else {
+            panic!("paragraph")
+        };
+        assert_eq!(inline.text, "**‘literal’**을 and **‘code’**을");
+        assert!(inline.spans.iter().all(|(_, style)| !style.bold));
+    }
+
+    #[test]
+    fn reference_labels_keep_target_style_and_copy_text() {
+        for label in ["[**‘버전’**을][]", "[**‘버전’**을]", "[**‘버전’**을][ref]"]
+        {
+            let source = format!(
+                "{label}\n\n[**‘버전’**을]: https://example.test/correct\n[ref]: https://example.test/correct\n[**‘버전한**을]: https://example.test/wrong\n",
+            );
+            let (blocks, links) = parse(&source);
+            let Block::Paragraph(inline) = &blocks[0] else {
+                panic!("paragraph")
+            };
+            assert_eq!(inline.text, "‘버전’을");
+            assert_eq!(links, ["https://example.test/correct"]);
+            assert!(inline.spans.iter().all(|(_, style)| style.link == Some(0)));
+            let mut offset = 0;
+            let mut bold = String::new();
+            for (len, style) in &inline.spans {
+                if style.bold {
+                    bold.push_str(&inline.text[offset..offset + len]);
+                }
+                offset += len;
+            }
+            assert_eq!(bold, "‘버전’");
+            assert!(source.starts_with(label));
+        }
+    }
+
+    #[test]
+    fn images_remain_in_heading_cells_and_linked_labels() {
+        let (blocks, links) = parse(
+            "# before ![a `code`](heading.png) after\n\n| image |\n| --- |\n| [![cell](cell.png)](guide.md) |\n\n![only](only.png)",
+        );
+        assert_eq!(blocks.len(), 3);
+        let Block::Heading(_, heading) = &blocks[0] else {
+            panic!("heading")
+        };
+        assert_eq!(heading.text, "before  after");
+        assert_eq!(heading.images[0].0, "before ".len());
+        assert_eq!(heading.images[0].1.alt, "a code");
+        let Block::Table { rows, .. } = &blocks[1] else {
+            panic!("table")
+        };
+        assert_eq!(rows[0][0].images[0].1.src, "cell.png");
+        assert_eq!(rows[0][0].images[0].1.link, Some(0));
+        assert_eq!(links, ["guide.md"]);
+        assert!(matches!(&blocks[2], Block::Paragraph(inline) if inline.images.len() == 1));
+        let mut images = Vec::new();
+        collect_images(&blocks, &mut images);
+        assert_eq!(images, ["heading.png", "cell.png", "only.png"]);
     }
 
     /// The files panel as Makepad runs it: `Cx2d::add_aligned_rect_area` issues the widget a
@@ -1178,7 +1779,12 @@ mod tests {
                 height: document_height,
                 ..Default::default()
             };
-            let mut panel = Panel { cx, list, area: Area::Empty, preview };
+            let mut panel = Panel {
+                cx,
+                list,
+                area: Area::Empty,
+                preview,
+            };
             panel.repaint();
             panel
         }
@@ -1187,7 +1793,11 @@ mod tests {
             self.cx.redraw_id += 1;
             let draw_list_id = self.list.id();
             self.cx.draw_lists[draw_list_id].redraw_id = self.cx.redraw_id;
-            let area = Area::Rect(RectArea { draw_list_id, rect_id: 0, redraw_id: self.cx.redraw_id });
+            let area = Area::Rect(RectArea {
+                draw_list_id,
+                rect_id: 0,
+                redraw_id: self.cx.redraw_id,
+            });
             self.cx.update_area_refs(self.area, area);
             self.area = area;
             self.preview.set_owner(&mut self.cx, area);
@@ -1203,26 +1813,48 @@ mod tests {
 
     fn touch_down(abs: DVec2, time: f64, tap_count: u32) -> Hit {
         Hit::FingerDown(FingerDownEvent {
-            window_id: WindowId(0, 0), abs, digit_id: live_id_num!(touch, 1).into(),
-            device: DigitDevice::Touch { uid: 1 }, tap_count, modifiers: KeyModifiers::default(),
-            time, rect: rect(0.0, 0.0, 357.0, 760.0),
+            window_id: WindowId(0, 0),
+            abs,
+            digit_id: live_id_num!(touch, 1).into(),
+            device: DigitDevice::Touch { uid: 1 },
+            tap_count,
+            modifiers: KeyModifiers::default(),
+            time,
+            rect: rect(0.0, 0.0, 357.0, 760.0),
         })
     }
 
     fn touch_move(start: DVec2, abs: DVec2, time: f64) -> Hit {
         Hit::FingerMove(FingerMoveEvent {
-            window_id: WindowId(0, 0), abs, abs_start: start, digit_id: live_id_num!(touch, 1).into(),
-            device: DigitDevice::Touch { uid: 1 }, tap_count: 1, modifiers: KeyModifiers::default(),
-            time, rect: rect(0.0, 0.0, 357.0, 760.0), is_over: true,
+            window_id: WindowId(0, 0),
+            abs,
+            abs_start: start,
+            digit_id: live_id_num!(touch, 1).into(),
+            device: DigitDevice::Touch { uid: 1 },
+            tap_count: 1,
+            modifiers: KeyModifiers::default(),
+            time,
+            rect: rect(0.0, 0.0, 357.0, 760.0),
+            is_over: true,
         })
     }
 
     fn touch_up(start: DVec2, abs: DVec2, time: f64) -> Hit {
         Hit::FingerUp(FingerUpEvent {
-            window_id: WindowId(0, 0), abs, abs_start: start, capture_time: 0.0, time,
-            digit_id: live_id_num!(touch, 1).into(), device: DigitDevice::Touch { uid: 1 },
-            has_long_press_occurred: false, tap_cancelled: true, tap_count: 1,
-            modifiers: KeyModifiers::default(), rect: rect(0.0, 0.0, 357.0, 760.0), is_over: true, is_sweep: false,
+            window_id: WindowId(0, 0),
+            abs,
+            abs_start: start,
+            capture_time: 0.0,
+            time,
+            digit_id: live_id_num!(touch, 1).into(),
+            device: DigitDevice::Touch { uid: 1 },
+            has_long_press_occurred: false,
+            tap_cancelled: true,
+            tap_count: 1,
+            modifiers: KeyModifiers::default(),
+            rect: rect(0.0, 0.0, 357.0, 760.0),
+            is_over: true,
+            is_sweep: false,
         })
     }
 
@@ -1268,7 +1900,10 @@ mod tests {
             "# 수집기 부하 TC\n\n`collector.load` 설정은 [문서](guide.md)를 따른다.\n\n## 시나리오\n\n| 항목 | 값 | 근거 |\n|---|---|---|\n",
         );
         for row in 0..60 {
-            source.push_str(&format!("| `collector.queue.capacity.{row}` | `{}` | `QueueProperties#capacity` 기본값 |\n", row * 1000));
+            source.push_str(&format!(
+                "| `collector.queue.capacity.{row}` | `{}` | `QueueProperties#capacity` 기본값 |\n",
+                row * 1000
+            ));
         }
         let mut panel = Panel::new(0.0);
         let mut kit = Kit::new(&mut panel.cx);
@@ -1278,7 +1913,14 @@ mod tests {
             compact_width: true,
         };
         panel.preview.set_text(&source);
-        panel.preview.layout(&mut panel.cx, &mut kit, &look, 357.0, &|_| ImageState::Loading, 0);
+        panel.preview.layout(
+            &mut panel.cx,
+            &mut kit,
+            &look,
+            357.0,
+            &|_| ImageState::Loading,
+            0,
+        );
         panel.preview.origin = panel.preview.area.pos;
         panel.repaint();
         // The extent the thumb and the scroll limit share reaches the last table row.

@@ -82,7 +82,7 @@ jobs:
             publish_latest=true
           fi
           if [[ "$install_version" != "$package_version" ]]; then
-            echo "::error::Requested Docker version differs from Cargo workspace source."
+            echo "::error::Requested Docker version differs from collection release metadata."
             exit 1
           fi
           if [[ "$GITHUB_REPOSITORY" != "emotionbug/Passession" ]]; then

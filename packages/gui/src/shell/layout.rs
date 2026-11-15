@@ -41,7 +41,13 @@ pub struct Pane {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Node {
     Pane(Pane),
-    Split { id: String, axis: Axis, ratio: f64, first: Box<Node>, second: Box<Node> },
+    Split {
+        id: String,
+        axis: Axis,
+        ratio: f64,
+        first: Box<Node>,
+        second: Box<Node>,
+    },
 }
 
 impl Node {
@@ -90,11 +96,17 @@ impl Node {
     }
 
     fn first_pane_id(&self) -> String {
-        self.panes().first().map(|p| p.id.clone()).unwrap_or_else(|| MAIN_PANE.to_string())
+        self.panes()
+            .first()
+            .map(|p| p.id.clone())
+            .unwrap_or_else(|| MAIN_PANE.to_string())
     }
 
     fn last_pane_id(&self) -> String {
-        self.panes().last().map(|p| p.id.clone()).unwrap_or_else(|| MAIN_PANE.to_string())
+        self.panes()
+            .last()
+            .map(|p| p.id.clone())
+            .unwrap_or_else(|| MAIN_PANE.to_string())
     }
 
     pub fn to_json(&self) -> Value {
@@ -105,7 +117,13 @@ impl Node {
                 "tabs": pane.tabs,
                 "selected": pane.selected,
             }),
-            Node::Split { id, axis, ratio, first, second } => json!({
+            Node::Split {
+                id,
+                axis,
+                ratio,
+                first,
+                second,
+            } => json!({
                 "kind": "split",
                 "id": id,
                 "axis": match axis { Axis::Horizontal => "horizontal", Axis::Vertical => "vertical" },
@@ -127,7 +145,17 @@ const REMOVED_KINDS: [&str; 4] = ["browser", "plugin", "changes_tree", "working_
 /// Tabs shown on top of the tab they were opened from (the original's compact-sheet and child
 /// targets): compact Back closes them, and closing one returns to its opener.
 pub fn is_detail_kind(kind: &str) -> bool {
-    matches!(kind, "file" | "commit_diff" | "provider_subagent" | "pull_request" | "execution_log" | "project_settings" | "git_log" | "git_commit")
+    matches!(
+        kind,
+        "file"
+            | "commit_diff"
+            | "provider_subagent"
+            | "pull_request"
+            | "execution_log"
+            | "project_settings"
+            | "git_log"
+            | "git_commit"
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -158,7 +186,11 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             tabs: Vec::new(),
-            tree: Node::Pane(Pane { id: MAIN_PANE.to_string(), tabs: Vec::new(), selected: None }),
+            tree: Node::Pane(Pane {
+                id: MAIN_PANE.to_string(),
+                tabs: Vec::new(),
+                selected: None,
+            }),
             focused_pane: MAIN_PANE.to_string(),
             maximized_pane: None,
             explorer_tabs: Vec::new(),
@@ -191,7 +223,11 @@ impl Layout {
 
     pub fn focused(&self) -> &Pane {
         let panes = self.tree.panes();
-        panes.iter().find(|pane| pane.id == self.focused_pane).copied().unwrap_or(panes[0])
+        panes
+            .iter()
+            .find(|pane| pane.id == self.focused_pane)
+            .copied()
+            .unwrap_or(panes[0])
     }
 
     fn focused_id(&self) -> String {
@@ -200,15 +236,23 @@ impl Layout {
 
     /// The selected tab of the focused pane (`store.selected`).
     pub fn selected(&self) -> Option<&PanelTarget> {
-        self.focused().selected.as_deref().and_then(|key| self.target(key))
+        self.focused()
+            .selected
+            .as_deref()
+            .and_then(|key| self.target(key))
     }
 
     pub fn selected_explorer_target(&self) -> Option<&PanelTarget> {
-        self.selected_explorer.as_deref().and_then(|key| self.target(key))
+        self.selected_explorer
+            .as_deref()
+            .and_then(|key| self.target(key))
     }
 
     pub fn explorer_targets(&self) -> Vec<&PanelTarget> {
-        self.explorer_tabs.iter().filter_map(|key| self.target(key)).collect()
+        self.explorer_tabs
+            .iter()
+            .filter_map(|key| self.target(key))
+            .collect()
     }
 
     fn explorer_workspace(target: &PanelTarget) -> (String, String) {
@@ -247,12 +291,21 @@ impl Layout {
     pub fn open(&mut self, target: PanelTarget, beside: bool) {
         self.navigation_serial += 1;
         let key = target.key();
-        let opener = self.focused().selected.clone().filter(|opener| is_detail_kind(&target.kind) && *opener != key);
+        let opener = self
+            .focused()
+            .selected
+            .clone()
+            .filter(|opener| is_detail_kind(&target.kind) && *opener != key);
         self.upsert(target);
         if let Some(opener) = opener {
             self.set_opener(&key, opener);
         }
-        let found = self.tree.panes().iter().find(|pane| pane.tabs.contains(&key)).map(|pane| pane.id.clone());
+        let found = self
+            .tree
+            .panes()
+            .iter()
+            .find(|pane| pane.tabs.contains(&key))
+            .map(|pane| pane.id.clone());
         if let Some(pane_id) = found {
             if let Some(pane) = self.tree.pane_mut(&pane_id) {
                 pane.selected = Some(key);
@@ -282,7 +335,9 @@ impl Layout {
         let mut at = opener.as_str();
         let mut below = None;
         for _ in 0..self.openers.len() {
-            let Some(above) = self.openers.get(at) else { break };
+            let Some(above) = self.openers.get(at) else {
+                break;
+            };
             if above == key {
                 below = Some(at.to_string());
                 break;
@@ -332,13 +387,21 @@ impl Layout {
 
     pub fn show_explorer(&mut self, visible: bool) {
         self.explorer_visible = visible;
-        self.compact_destination = if visible { CompactDestination::Explorer } else { CompactDestination::Agent };
+        self.compact_destination = if visible {
+            CompactDestination::Explorer
+        } else {
+            CompactDestination::Agent
+        };
         self.changed();
     }
 
     /// Compact overlay only; the wide column's visibility is untouched (not persisted).
     pub fn show_compact_explorer(&mut self, visible: bool) {
-        self.compact_destination = if visible { CompactDestination::Explorer } else { CompactDestination::Agent };
+        self.compact_destination = if visible {
+            CompactDestination::Explorer
+        } else {
+            CompactDestination::Agent
+        };
     }
 
     pub fn set_explorer_width(&mut self, width: f64) {
@@ -357,7 +420,11 @@ impl Layout {
         if !compact {
             self.sidebar_visible = visible;
         }
-        self.compact_destination = if visible { CompactDestination::Sidebar } else { CompactDestination::Agent };
+        self.compact_destination = if visible {
+            CompactDestination::Sidebar
+        } else {
+            CompactDestination::Agent
+        };
         self.changed();
     }
 
@@ -384,12 +451,19 @@ impl Layout {
         if !compact || self.compact_destination != CompactDestination::Agent {
             return None;
         }
-        self.selected().filter(|tab| is_detail_kind(&tab.kind)).map(PanelTarget::key)
+        self.selected()
+            .filter(|tab| is_detail_kind(&tab.kind))
+            .map(PanelTarget::key)
     }
 
     pub fn select_tab(&mut self, key: &str) -> bool {
         self.navigation_serial += 1;
-        let found = self.tree.panes().iter().find(|pane| pane.tabs.iter().any(|k| k == key)).map(|p| p.id.clone());
+        let found = self
+            .tree
+            .panes()
+            .iter()
+            .find(|pane| pane.tabs.iter().any(|k| k == key))
+            .map(|p| p.id.clone());
         if let Some(pane_id) = found {
             if let Some(pane) = self.tree.pane_mut(&pane_id) {
                 pane.selected = Some(key.to_string());
@@ -418,7 +492,13 @@ impl Layout {
         fn locate(node: &Node, r: [f64; 4], out: &mut Vec<(String, [f64; 4])>) {
             match node {
                 Node::Pane(pane) => out.push((pane.id.clone(), r)),
-                Node::Split { axis, ratio, first, second, .. } => {
+                Node::Split {
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                    ..
+                } => {
                     let [l, t, rr, b] = r;
                     match axis {
                         Axis::Horizontal => {
@@ -484,7 +564,11 @@ impl Layout {
     /// `splitPane`: returns the new pane id.
     pub fn split_pane(&mut self, pane_id: &str, axis: Axis) -> Option<String> {
         let pane = self.tree.pane(pane_id)?.clone();
-        let next = Pane { id: new_id(), tabs: Vec::new(), selected: None };
+        let next = Pane {
+            id: new_id(),
+            tabs: Vec::new(),
+            selected: None,
+        };
         let next_id = next.id.clone();
         let split = Node::Split {
             id: new_id(),
@@ -493,7 +577,14 @@ impl Layout {
             first: Box::new(Node::Pane(pane)),
             second: Box::new(Node::Pane(next)),
         };
-        let tree = std::mem::replace(&mut self.tree, Node::Pane(Pane { id: String::new(), tabs: Vec::new(), selected: None }));
+        let tree = std::mem::replace(
+            &mut self.tree,
+            Node::Pane(Pane {
+                id: String::new(),
+                tabs: Vec::new(),
+                selected: None,
+            }),
+        );
         self.tree = replace_node(tree, pane_id, split);
         self.focused_pane = next_id.clone();
         self.maximized_pane = None;
@@ -503,7 +594,14 @@ impl Layout {
 
     pub fn resize_split(&mut self, id: &str, value: f64) {
         fn visit(node: &mut Node, id: &str, value: f64) {
-            if let Node::Split { id: split_id, ratio, first, second, .. } = node {
+            if let Node::Split {
+                id: split_id,
+                ratio,
+                first,
+                second,
+                ..
+            } = node
+            {
                 if split_id == id {
                     *ratio = value.clamp(0.1, 0.9);
                 }
@@ -586,7 +684,12 @@ impl Layout {
         self.tabs.retain(|tab| tab.key() != key);
         // `transferReplacedTabParent`.
         let opener = self.openers.remove(key).filter(|opener| *opener != next);
-        let opened: Vec<String> = self.openers.iter().filter(|(tab, from)| *from == key && **tab != next).map(|(tab, _)| tab.clone()).collect();
+        let opened: Vec<String> = self
+            .openers
+            .iter()
+            .filter(|(tab, from)| *from == key && **tab != next)
+            .map(|(tab, _)| tab.clone())
+            .collect();
         self.openers.retain(|_, from| from != key);
         if let Some(opener) = opener {
             self.set_opener(&next, opener);
@@ -599,7 +702,9 @@ impl Layout {
     }
 
     pub fn reorder_tab(&mut self, pane_id: &str, old_index: usize, new_index: usize) {
-        let Some(pane) = self.tree.pane_mut(pane_id) else { return };
+        let Some(pane) = self.tree.pane_mut(pane_id) else {
+            return;
+        };
         if old_index >= pane.tabs.len() {
             return;
         }
@@ -611,7 +716,9 @@ impl Layout {
 
     /// `closePane` once its guards passed: removes the pane's tabs and the pane.
     pub fn close_pane(&mut self, pane_id: &str) -> Vec<String> {
-        let Some(pane) = self.tree.pane(pane_id) else { return Vec::new() };
+        let Some(pane) = self.tree.pane(pane_id) else {
+            return Vec::new();
+        };
         let keys = pane.tabs.clone();
         for key in &keys {
             self.remove_tab(key);
@@ -635,7 +742,13 @@ impl Layout {
         fn remove(node: Node, pane_id: &str, fallback: &mut Option<String>) -> Node {
             match node {
                 Node::Pane(_) => node,
-                Node::Split { id, axis, ratio, first, second } => {
+                Node::Split {
+                    id,
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                } => {
                     if matches!(&*first, Node::Pane(p) if p.id == pane_id) {
                         *fallback = Some(second.first_pane_id());
                         return *second;
@@ -655,7 +768,14 @@ impl Layout {
             }
         }
         let mut fallback = None;
-        let tree = std::mem::replace(&mut self.tree, Node::Pane(Pane { id: String::new(), tabs: Vec::new(), selected: None }));
+        let tree = std::mem::replace(
+            &mut self.tree,
+            Node::Pane(Pane {
+                id: String::new(),
+                tabs: Vec::new(),
+                selected: None,
+            }),
+        );
         self.tree = remove(tree, pane_id, &mut fallback);
         if self.focused_pane == pane_id {
             self.focused_pane = fallback.unwrap_or_else(|| self.tree.first_pane_id());
@@ -668,7 +788,11 @@ impl Layout {
     /// `_removeTab`: an emptied pane goes away except `main` and the last pane. A pane that was
     /// showing `key` returns to the tab it was opened from (`getCloseSuccessorTabId`).
     fn remove_tab(&mut self, key: &str) {
-        let shown = self.tree.panes().iter().any(|pane| pane.selected.as_deref() == Some(key));
+        let shown = self
+            .tree
+            .panes()
+            .iter()
+            .any(|pane| pane.selected.as_deref() == Some(key));
         let opener = self.openers.remove(key);
         // Tabs opened from `key` now return to where `key` came from.
         self.openers.retain(|_, parent| match &opener {
@@ -746,7 +870,11 @@ impl Layout {
         let focus: Vec<((String, String), String)> = self.explorer_focus.drain().collect();
         for ((server, workspace), mut key) in focus {
             map(&mut key);
-            let server = if server == old_id { new_id.to_string() } else { server };
+            let server = if server == old_id {
+                new_id.to_string()
+            } else {
+                server
+            };
             self.explorer_focus.insert((server, workspace), key);
         }
         let openers: Vec<(String, String)> = self.openers.drain().collect();
@@ -776,11 +904,21 @@ impl Layout {
         let mut seen: Vec<String> = Vec::new();
         fn restore_node(node: &Value, layout: &Layout, seen: &mut Vec<String>) -> Node {
             if j::text(node, "kind") == "split" {
-                let ratio = j::number(node, "ratio").map(|r| r.clamp(0.1, 0.9)).unwrap_or(0.5);
+                let ratio = j::number(node, "ratio")
+                    .map(|r| r.clamp(0.1, 0.9))
+                    .unwrap_or(0.5);
                 let id = j::text(node, "id");
                 return Node::Split {
-                    id: if id.is_empty() { new_id() } else { id.to_string() },
-                    axis: if j::text(node, "axis") == "vertical" { Axis::Vertical } else { Axis::Horizontal },
+                    id: if id.is_empty() {
+                        new_id()
+                    } else {
+                        id.to_string()
+                    },
+                    axis: if j::text(node, "axis") == "vertical" {
+                        Axis::Vertical
+                    } else {
+                        Axis::Horizontal
+                    },
                     ratio,
                     first: Box::new(restore_node(j::object(node, "first"), layout, seen)),
                     second: Box::new(restore_node(j::object(node, "second"), layout, seen)),
@@ -794,22 +932,45 @@ impl Layout {
                 }
             }
             let selected = j::text(node, "selected");
-            let selected = if keys.iter().any(|k| k == selected) { Some(selected.to_string()) } else { keys.first().cloned() };
+            let selected = if keys.iter().any(|k| k == selected) {
+                Some(selected.to_string())
+            } else {
+                keys.first().cloned()
+            };
             let id = j::text(node, "id");
-            Node::Pane(Pane { id: if id.is_empty() { MAIN_PANE.to_string() } else { id.to_string() }, tabs: keys, selected })
+            Node::Pane(Pane {
+                id: if id.is_empty() {
+                    MAIN_PANE.to_string()
+                } else {
+                    id.to_string()
+                },
+                tabs: keys,
+                selected,
+            })
         }
         layout.tree = restore_node(j::object(saved, "tree"), &layout, &mut seen);
         let focused = j::text(saved, "focusedPane");
-        layout.focused_pane = if focused.is_empty() { layout.tree.first_pane_id() } else { focused.to_string() };
-        for key in j::array(saved, "explorerTabs").iter().filter_map(Value::as_str) {
-            if layout.target(key).is_some_and(|target| !matches!(target.kind.as_str(), "agent" | "draft" | "new_tab"))
-                && !seen.iter().any(|s| s == key)
+        layout.focused_pane = if focused.is_empty() {
+            layout.tree.first_pane_id()
+        } else {
+            focused.to_string()
+        };
+        for key in j::array(saved, "explorerTabs")
+            .iter()
+            .filter_map(Value::as_str)
+        {
+            if layout.target(key).is_some_and(|target| {
+                !matches!(target.kind.as_str(), "agent" | "draft" | "new_tab")
+            }) && !seen.iter().any(|s| s == key)
             {
                 seen.push(key.to_string());
                 layout.explorer_tabs.push(key.to_string());
             }
         }
-        let selected_explorer = saved.get("selectedExplorer").and_then(Value::as_str).map(str::to_string);
+        let selected_explorer = saved
+            .get("selectedExplorer")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         layout.selected_explorer = match selected_explorer {
             Some(key) if layout.explorer_tabs.contains(&key) => Some(key),
             _ => layout.explorer_tabs.first().cloned(),
@@ -817,7 +978,12 @@ impl Layout {
         if let Some(key) = layout.selected_explorer.clone() {
             layout.focus_explorer(&key);
         }
-        let unplaced: Vec<String> = layout.tabs.iter().map(PanelTarget::key).filter(|key| !seen.contains(key)).collect();
+        let unplaced: Vec<String> = layout
+            .tabs
+            .iter()
+            .map(PanelTarget::key)
+            .filter(|key| !seen.contains(key))
+            .collect();
         let focused_id = layout.focused_id();
         if let Some(pane) = layout.tree.pane_mut(&focused_id) {
             pane.tabs.extend(unplaced);
@@ -876,7 +1042,11 @@ impl Layout {
                 .tree
                 .panes()
                 .into_iter()
-                .map(|pane| PaneSnapshot { id: pane.id.clone(), tabs: pane.tabs.clone(), selected: pane.selected.clone() })
+                .map(|pane| PaneSnapshot {
+                    id: pane.id.clone(),
+                    tabs: pane.tabs.clone(),
+                    selected: pane.selected.clone(),
+                })
                 .collect(),
             focused_pane: self.focused_id(),
             selected: self.focused().selected.clone(),
@@ -887,7 +1057,11 @@ impl Layout {
 
     /// Pane id holding `key`, if any.
     pub fn pane_of(&self, key: &str) -> Option<String> {
-        self.tree.panes().iter().find(|pane| pane.tabs.iter().any(|k| k == key)).map(|pane| pane.id.clone())
+        self.tree
+            .panes()
+            .iter()
+            .find(|pane| pane.tabs.iter().any(|k| k == key))
+            .map(|pane| pane.id.clone())
     }
 }
 
@@ -897,12 +1071,30 @@ fn replace_node(node: Node, id: &str, replacement: Node) -> Node {
     }
     match node {
         Node::Pane(_) => node,
-        Node::Split { id: split_id, axis, ratio, first, second } => {
+        Node::Split {
+            id: split_id,
+            axis,
+            ratio,
+            first,
+            second,
+        } => {
             // Only one subtree holds the id; the other is returned unchanged.
             if first.contains_id(id) {
-                Node::Split { id: split_id, axis, ratio, first: Box::new(replace_node(*first, id, replacement)), second }
+                Node::Split {
+                    id: split_id,
+                    axis,
+                    ratio,
+                    first: Box::new(replace_node(*first, id, replacement)),
+                    second,
+                }
             } else {
-                Node::Split { id: split_id, axis, ratio, first, second: Box::new(replace_node(*second, id, replacement)) }
+                Node::Split {
+                    id: split_id,
+                    axis,
+                    ratio,
+                    first,
+                    second: Box::new(replace_node(*second, id, replacement)),
+                }
             }
         }
     }
@@ -919,17 +1111,28 @@ impl Node {
     fn contains_id(&self, id: &str) -> bool {
         match self {
             Node::Pane(pane) => pane.id == id,
-            Node::Split { id: split_id, first, second, .. } => split_id == id || first.contains_id(id) || second.contains_id(id),
+            Node::Split {
+                id: split_id,
+                first,
+                second,
+                ..
+            } => split_id == id || first.contains_id(id) || second.contains_id(id),
         }
     }
 }
 
 /// `_removeFromPane`: selection moves to the tab now at the removed index.
 fn remove_from_pane(pane: &mut Pane, key: &str) {
-    let Some(index) = pane.tabs.iter().position(|k| k == key) else { return };
+    let Some(index) = pane.tabs.iter().position(|k| k == key) else {
+        return;
+    };
     pane.tabs.remove(index);
     if pane.selected.as_deref() == Some(key) {
-        pane.selected = if pane.tabs.is_empty() { None } else { Some(pane.tabs[index.min(pane.tabs.len() - 1)].clone()) };
+        pane.selected = if pane.tabs.is_empty() {
+            None
+        } else {
+            Some(pane.tabs[index.min(pane.tabs.len() - 1)].clone())
+        };
     }
 }
 
@@ -1064,7 +1267,10 @@ mod tests {
         layout.close_tab(&b);
         assert_eq!(layout.panes().len(), 1);
         assert_eq!(layout.focused().id, MAIN_PANE);
-        assert_eq!(layout.selected().map(PanelTarget::key), Some(agent("a").key()));
+        assert_eq!(
+            layout.selected().map(PanelTarget::key),
+            Some(agent("a").key())
+        );
     }
 
     #[test]
@@ -1078,7 +1284,11 @@ mod tests {
 
     #[test]
     fn restored_sessions_and_creation_tabs_leave_the_supporting_sidebar() {
-        for target in [agent("a"), PanelTarget::new("draft", "srv", "ws", "/w").with_id("d"), PanelTarget::new("new_tab", "srv", "ws", "/w")] {
+        for target in [
+            agent("a"),
+            PanelTarget::new("draft", "srv", "ws", "/w").with_id("d"),
+            PanelTarget::new("new_tab", "srv", "ws", "/w"),
+        ] {
             let saved = json!({
                 "tabs": [target.to_json()],
                 "tree": {"kind": "pane", "id": "main", "tabs": []},
@@ -1120,7 +1330,10 @@ mod tests {
         assert_eq!(layout.explorer_tabs, vec![log.key(), commit.key()]);
         assert_eq!(layout.selected_explorer, Some(log.key()));
         assert_eq!(layout.openers.len(), 1);
-        assert_eq!(super::super::panels::root_kind("git_commit"), Some(super::super::panels::RootKind::Git));
+        assert_eq!(
+            super::super::panels::root_kind("git_commit"),
+            Some(super::super::panels::RootKind::Git)
+        );
         assert_eq!(super::super::panels::root_kind("working_diff"), None);
     }
 
@@ -1138,8 +1351,14 @@ mod tests {
             assert_eq!(layout.selected(), Some(&agent("a")));
             assert_eq!(layout.target(&target.key()), Some(&target));
             assert_eq!(layout.explorer_focus_for(&agent("a")), Some(target.key()));
-            assert_eq!(layout.explorer_focus_for(&PanelTarget::agent("other", "ws", "/w", "a", "")), None);
-            assert_eq!(layout.explorer_focus_for(&PanelTarget::agent("srv", "ws", "/elsewhere", "a", "")), None);
+            assert_eq!(
+                layout.explorer_focus_for(&PanelTarget::agent("other", "ws", "/w", "a", "")),
+                None
+            );
+            assert_eq!(
+                layout.explorer_focus_for(&PanelTarget::agent("srv", "ws", "/elsewhere", "a", "")),
+                None
+            );
         }
     }
 
@@ -1158,7 +1377,10 @@ mod tests {
         assert!(layout.target(&terminal.key()).is_some());
         assert!(layout.target(&browser.key()).is_none());
         let pane = layout.focused();
-        assert_eq!(pane.tabs, vec![agent("a").key(), terminal.key(), agent("b").key()]);
+        assert_eq!(
+            pane.tabs,
+            vec![agent("a").key(), terminal.key(), agent("b").key()]
+        );
         assert_eq!(pane.selected, Some(agent("a").key()));
         assert_eq!(layout.sidebar_width, 600.0);
         assert_eq!(layout.compact_destination, CompactDestination::Agent);
@@ -1187,7 +1409,8 @@ mod tests {
     }
 
     #[test]
-    fn creation_completion_replacement_ignores_late_or_closed_owner_without_unplacing_destination() {
+    fn creation_completion_replacement_ignores_late_or_closed_owner_without_unplacing_destination()
+    {
         let mut layout = sessions();
         let creation = PanelTarget::new("new_tab", "srv", "ws", "/w").with_id("creation");
         let owner = creation.key();
@@ -1196,8 +1419,14 @@ mod tests {
         let destination = agent("created");
         layout.replace_tab(&owner, destination.clone());
         assert!(layout.target(&owner).is_none());
-        assert_eq!(layout.tree.pane(&pane_id).unwrap().tabs, vec![destination.key()]);
-        assert_eq!(layout.tree.pane(&pane_id).unwrap().selected, Some(destination.key()));
+        assert_eq!(
+            layout.tree.pane(&pane_id).unwrap().tabs,
+            vec![destination.key()]
+        );
+        assert_eq!(
+            layout.tree.pane(&pane_id).unwrap().selected,
+            Some(destination.key())
+        );
         let serial = layout.navigation_serial;
         let before = layout.to_json();
         layout.replace_tab(&owner, destination);

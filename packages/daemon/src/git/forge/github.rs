@@ -187,9 +187,10 @@ impl Context<'_> {
         let head = required(input, "headRef")?;
         let mut selected = None;
         if let Some(view) = self.github_try_view(strings(&["pr", "view"])).await?
-            && matches_head(&view, input, s(input, "headRepositoryOwner")) {
-                selected = Some(view);
-            }
+            && matches_head(&view, input, s(input, "headRepositoryOwner"))
+        {
+            selected = Some(view);
+        }
         if selected.is_none() {
             let mut owner = s(input, "headRepositoryOwner").to_owned();
             let mut candidates = Vec::new();
@@ -213,9 +214,7 @@ impl Context<'_> {
                         .await?;
                     let mut refs: Vec<_> = array(&refs).iter().collect();
                     let head_sha = s(input, "headSha");
-                    refs.sort_by_key(|v| {
-                        head_sha.is_empty() || s(&v["head"], "sha") != head_sha
-                    });
+                    refs.sort_by_key(|v| head_sha.is_empty() || s(&v["head"], "sha") != head_sha);
                     for row in refs.into_iter().take(3) {
                         if let Some(view) = self
                             .github_try_view(strings(&[
@@ -274,8 +273,7 @@ impl Context<'_> {
         let Some(pr_number) = out["number"].as_u64() else {
             return Ok(out);
         };
-        let data = match self.graphql(FACTS_QUERY, &owner, &name, pr_number).await
-        {
+        let data = match self.graphql(FACTS_QUERY, &owner, &name, pr_number).await {
             Ok(v) => v,
             Err(e) if auth_state(&e) == "error" => return Ok(out),
             Err(e) => return Err(e),

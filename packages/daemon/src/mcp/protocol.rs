@@ -48,15 +48,12 @@ fn tool_call_error(name: &str, error: &anyhow::Error) -> Value {
             }
             let mut dotted = String::new();
             for (index, segment) in path.iter().enumerate() {
-                let index_segment = segment
-                    .as_u64()
-                    .map(|n| n.to_string())
-                    .or_else(|| {
-                        segment
-                            .as_str()
-                            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-                            .map(str::to_owned)
-                    });
+                let index_segment = segment.as_u64().map(|n| n.to_string()).or_else(|| {
+                    segment
+                        .as_str()
+                        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+                        .map(str::to_owned)
+                });
                 let text = segment
                     .as_str()
                     .map(str::to_owned)
@@ -86,12 +83,13 @@ impl McpService {
         authorization: Option<&str>,
     ) -> Result<Authority> {
         if let Some(token) = authorization.and_then(crate::transport::extract_http_bearer_token)
-            && let Some(grant) = self.grants.read().await.get(token).cloned() {
-                if grant.cancel.is_cancelled() || caller != Some(grant.agent_id.as_str()) {
-                    return Err(anyhow!("Unauthorized"));
-                }
-                return Ok(Authority::Agent(grant));
+            && let Some(grant) = self.grants.read().await.get(token).cloned()
+        {
+            if grant.cancel.is_cancelled() || caller != Some(grant.agent_id.as_str()) {
+                return Err(anyhow!("Unauthorized"));
             }
+            return Ok(Authority::Agent(grant));
+        }
         // A run's caller cannot be chosen by query string under owner credentials.
         // Owner tools use owner scope, and run capabilities bind exact agent IDs.
         if caller.is_none()
@@ -206,14 +204,15 @@ impl McpService {
             Authority::Owner => (None, None),
         };
         if let Authority::Agent(grant) = authority
-            && grant.cancel.is_cancelled() {
-                return Some(rpc_error(
-                    id,
-                    -32000,
-                    "Agent MCP capability has been revoked",
-                    None,
-                ));
-            }
+            && grant.cancel.is_cancelled()
+        {
+            return Some(rpc_error(
+                id,
+                -32000,
+                "Agent MCP capability has been revoked",
+                None,
+            ));
+        }
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         if !params.is_object() {
             return Some(rpc_error(

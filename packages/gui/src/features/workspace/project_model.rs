@@ -9,14 +9,15 @@ use super::rpc::{object_of, str_of};
 pub const METADATA_KEYS: [&str; 3] = ["branchName", "commitMessage", "pullRequest"];
 pub const MAX_ICON_BYTES: usize = 512 * 1024;
 
-
 /// The object at `key` of `config`, created when missing or not an object.
 pub fn ensure_object<'a>(config: &'a mut Value, key: &str) -> &'a mut Map<String, Value> {
     if !config.is_object() {
         *config = Value::Object(Map::new());
     }
     let map = config.as_object_mut().expect("object ensured");
-    let entry = map.entry(key.to_owned()).or_insert_with(|| Value::Object(Map::new()));
+    let entry = map
+        .entry(key.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
     if !entry.is_object() {
         *entry = Value::Object(Map::new());
     }
@@ -33,7 +34,9 @@ pub fn scripts(config: &Value) -> Vec<(String, Value)> {
 
 /// Saving is blocked while any script has an empty name or command.
 pub fn invalid_scripts(config: &Value) -> bool {
-    scripts(config).iter().any(|(name, script)| name.trim().is_empty() || str_of(script, "command").trim().is_empty())
+    scripts(config)
+        .iter()
+        .any(|(name, script)| name.trim().is_empty() || str_of(script, "command").trim().is_empty())
 }
 
 /// The script row hint: type · port · first command line.
@@ -59,7 +62,11 @@ pub fn script_hint(script: &Value, port_label: impl Fn(&str) -> String) -> Strin
 }
 
 /// Validation of the script editor (`ScriptEditModal`).
-pub fn script_name_error(name: &str, old_name: Option<&str>, config: &Value) -> Option<ScriptNameError> {
+pub fn script_name_error(
+    name: &str,
+    old_name: Option<&str>,
+    config: &Value,
+) -> Option<ScriptNameError> {
     let key = name.trim();
     if key.is_empty() {
         return Some(ScriptNameError::Required);
@@ -92,7 +99,9 @@ pub fn script_entry(existing: &Value, command: &str, port: &str, service: bool) 
     } else {
         entry.insert(
             "port".into(),
-            port.parse::<i64>().map(Value::from).unwrap_or_else(|_| Value::String(port.to_owned())),
+            port.parse::<i64>()
+                .map(Value::from)
+                .unwrap_or_else(|_| Value::String(port.to_owned())),
         );
     }
     Value::Object(entry)
@@ -100,7 +109,10 @@ pub fn script_entry(existing: &Value, command: &str, port: &str, service: bool) 
 
 /// Puts the edited script back in its original position (or appends a new one).
 pub fn replace_script(config: &mut Value, old_name: Option<&str>, name: &str, entry: Value) {
-    let current = object_of(config, "scripts").as_object().cloned().unwrap_or_default();
+    let current = object_of(config, "scripts")
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
     let mut next = Map::new();
     for (key, value) in current {
         if Some(key.as_str()) == old_name {
@@ -112,7 +124,9 @@ pub fn replace_script(config: &mut Value, old_name: Option<&str>, name: &str, en
     if old_name.is_none() {
         next.insert(name.to_owned(), entry);
     }
-    config.as_object_mut().map(|map| map.insert("scripts".into(), Value::Object(next)));
+    config
+        .as_object_mut()
+        .map(|map| map.insert("scripts".into(), Value::Object(next)));
 }
 
 pub fn remove_script(config: &mut Value, name: &str) {
@@ -121,12 +135,20 @@ pub fn remove_script(config: &mut Value, name: &str) {
 
 /// The metadata generation instructions for `key`.
 pub fn metadata_text(config: &Value, key: &str) -> String {
-    str_of(object_of(object_of(config, "metadataGeneration"), key), "instructions").to_owned()
+    str_of(
+        object_of(object_of(config, "metadataGeneration"), key),
+        "instructions",
+    )
+    .to_owned()
 }
 
 pub fn set_metadata_text(config: &mut Value, key: &str, text: &str) {
     let metadata = ensure_object(config, "metadataGeneration");
-    let mut entry = metadata.get(key).and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut entry = metadata
+        .get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     if text.trim().is_empty() {
         entry.remove("instructions");
     } else {
@@ -139,17 +161,18 @@ pub fn set_metadata_text(config: &mut Value, key: &str, text: &str) {
     }
 }
 
-
-
 /// `importProjectIconFromUrl` URL rule: http(s) with a host and no credentials.
 pub fn icon_url_error(value: &str) -> Option<&'static str> {
     let value = value.trim();
-    let Some((scheme, rest)) = value.split_once("://") else { return Some("Enter a valid website or image URL") };
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return Some("Enter a valid website or image URL");
+    };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
         return Some("Enter a valid website or image URL");
     }
-    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") || authority.contains('@') {
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") || authority.contains('@')
+    {
         return Some("URL must use HTTP or HTTPS without credentials");
     }
     None
@@ -166,7 +189,9 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
             continue;
         }
         let rest = tag[search..].trim_start();
-        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
         let rest = rest.trim_start();
         let quote = rest.chars().next()?;
         if quote != '"' && quote != '\'' {
@@ -187,12 +212,20 @@ pub fn declared_icons(html: &str) -> Vec<String> {
     let mut search = 0;
     while let Some(found) = lower[search..].find("<link") {
         let start = search + found;
-        let Some(end) = lower[start..].find('>') else { break };
+        let Some(end) = lower[start..].find('>') else {
+            break;
+        };
         let tag = &html[start..start + end + 1];
         search = start + end + 1;
-        let rel = attribute(tag, "rel").unwrap_or_default().to_ascii_lowercase();
-        let kind = attribute(tag, "type").unwrap_or_default().to_ascii_lowercase();
-        let Some(href) = attribute(tag, "href") else { continue };
+        let rel = attribute(tag, "rel")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let kind = attribute(tag, "type")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let Some(href) = attribute(tag, "href") else {
+            continue;
+        };
         if !rel.contains("icon") || kind.contains("svg") || href.ends_with(".svg") {
             continue;
         }
@@ -228,18 +261,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-
     #[test]
     fn scripts_replace_in_place_and_validate() {
-        let mut config = json!({"scripts": {"a": {"command": "x"}, "b": {"command": "y", "extra": 1}}});
+        let mut config =
+            json!({"scripts": {"a": {"command": "x"}, "b": {"command": "y", "extra": 1}}});
         let entry = script_entry(&config["scripts"]["b"], "z", "3000", true);
         replace_script(&mut config, Some("b"), "c", entry);
         let names: Vec<_> = scripts(&config).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["a", "c"]);
-        assert_eq!(config["scripts"]["c"], json!({"command": "z", "extra": 1, "type": "service", "port": 3000}));
-        assert_eq!(script_name_error("a", None, &config), Some(ScriptNameError::Duplicate));
-        assert_eq!(script_name_error(" ", None, &config), Some(ScriptNameError::Required));
-        assert_eq!(script_entry(&json!({"type": "service"}), "c", "$PORT", false), json!({"command": "c", "port": "$PORT"}));
+        assert_eq!(
+            config["scripts"]["c"],
+            json!({"command": "z", "extra": 1, "type": "service", "port": 3000})
+        );
+        assert_eq!(
+            script_name_error("a", None, &config),
+            Some(ScriptNameError::Duplicate)
+        );
+        assert_eq!(
+            script_name_error(" ", None, &config),
+            Some(ScriptNameError::Required)
+        );
+        assert_eq!(
+            script_entry(&json!({"type": "service"}), "c", "$PORT", false),
+            json!({"command": "c", "port": "$PORT"})
+        );
     }
 
     #[test]
@@ -256,8 +301,19 @@ mod tests {
         assert!(icon_url_error("https://example.com").is_none());
         assert!(icon_url_error("ftp://example.com").is_some());
         assert!(icon_url_error("https://user@example.com").is_some());
-        assert_eq!(declared_icons("<link rel=\"icon\" href=\"/a.png\"><link rel='icon' type='image/svg+xml' href='/b.svg'>"), ["/a.png"]);
-        assert_eq!(resolve_url("https://e.com/x/y", "/favicon.ico"), "https://e.com/favicon.ico");
-        assert_eq!(resolve_url("https://e.com/x/y", "i.png"), "https://e.com/x/i.png");
+        assert_eq!(
+            declared_icons(
+                "<link rel=\"icon\" href=\"/a.png\"><link rel='icon' type='image/svg+xml' href='/b.svg'>"
+            ),
+            ["/a.png"]
+        );
+        assert_eq!(
+            resolve_url("https://e.com/x/y", "/favicon.ico"),
+            "https://e.com/favicon.ico"
+        );
+        assert_eq!(
+            resolve_url("https://e.com/x/y", "i.png"),
+            "https://e.com/x/i.png"
+        );
     }
 }

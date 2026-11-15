@@ -179,9 +179,9 @@ fn validate_before(name: &str, input: &Value) -> Result<()> {
                 && !env
                     .as_object()
                     .is_some_and(|env| env.values().all(Value::is_string))
-                {
-                    bail!("Invalid agent.create environment");
-                }
+            {
+                bail!("Invalid agent.create environment");
+            }
         }
         "workspace.create" => {
             // `WorkspaceCreateRequestSchema.omit({type, requestId}).strict()`:

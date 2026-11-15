@@ -108,10 +108,24 @@ impl Connection {
         global: Arc<Semaphore>,
         parent: CancellationToken,
     ) -> Result<Self> {
+        Self::connect_with_proxy(target, minimum, global, parent, None).await
+    }
+
+    /// An explicit embedded-node route. There is no direct or environment-proxy fallback.
+    pub async fn connect_with_proxy(
+        target: &Target,
+        minimum: SecurityMode,
+        global: Arc<Semaphore>,
+        parent: CancellationToken,
+        proxy: Option<paseo_tailnet::Proxy>,
+    ) -> Result<Self> {
         let cancel = parent.child_token();
         let mut child = None;
-        let result =
-            tokio::time::timeout(Duration::from_secs(10), open(target, &cancel, &mut child)).await;
+        let result = tokio::select! { biased;
+            _ = cancel.cancelled() => bail!("Host connection cancelled"),
+            _ = proxy_invalidated(proxy.as_ref()) => bail!("Embedded Tailscale connection invalidated"),
+            result = tokio::time::timeout(Duration::from_secs(10), open(target, &cancel, &mut child, proxy.as_ref())) => result,
+        };
         let mut socket = match result {
             Ok(Ok(socket)) => socket,
             other => {
@@ -249,8 +263,11 @@ impl Connection {
                 }
                 Ok(())
             };
-            let result: Result<()> =
-                tokio::select! {_=task_cancel.cancelled()=>Ok(()),result=run=>result};
+            let result: Result<()> = tokio::select! { biased;
+                _ = task_cancel.cancelled() => Ok(()),
+                _ = proxy_invalidated(proxy.as_ref()) => Err(anyhow!("Embedded Tailscale connection invalidated")),
+                result = run => result,
+            };
             if let Some(channel) = crypto.as_mut() {
                 channel.close();
             }
@@ -292,6 +309,7 @@ async fn open(
     target: &Target,
     cancel: &CancellationToken,
     child: &mut Option<Arc<ManagedProcess>>,
+    proxy: Option<&paseo_tailnet::Proxy>,
 ) -> Result<Socket> {
     let config = WebSocketConfig::default()
         .max_message_size(Some(if target.security.is_some() {
@@ -300,6 +318,34 @@ async fn open(
             100 * 1024 * 1024
         }))
         .max_frame_size(Some(100 * 1024 * 1024));
+    if let Some(proxy) = proxy {
+        anyhow::ensure!(
+            proxy.is_valid(),
+            "Embedded Tailscale connection invalidated"
+        );
+        anyhow::ensure!(
+            target.security.is_none(),
+            "Embedded Tailscale does not support relay endpoints"
+        );
+        let Endpoint::Socket { url, ipc: None } = &target.endpoint else {
+            bail!("Embedded Tailscale requires a direct WebSocket endpoint");
+        };
+        let authority = url::Url::parse(url)?;
+        anyhow::ensure!(
+            matches!(authority.scheme(), "ws" | "wss"),
+            "Embedded Tailscale requires ws:// or wss://"
+        );
+        let stream = super::network::connect(&authority, Some(proxy)).await?;
+        let request = websocket_request(target, url)?;
+        // The shared connector validates TLS against the original authority, not the proxy.
+        let (socket, _) =
+            tokio_tungstenite::client_async_with_config(request, stream, Some(config)).await?;
+        anyhow::ensure!(
+            proxy.is_valid(),
+            "Embedded Tailscale connection invalidated"
+        );
+        return Ok(Box::new(socket));
+    }
     let (url, stream): (String, Option<Box<dyn Stream>>) = match &target.endpoint {
         Endpoint::Socket { url, ipc: None } => (url.clone(), None),
         Endpoint::Socket {
@@ -360,14 +406,7 @@ async fn open(
             ("ws://127.0.0.1/ws".into(), Some(Box::new(stream)))
         }
     };
-    let mut request = url.into_client_request()?;
-    if target.security.is_none()
-        && let Some(password) = &target.password
-            && password.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
-                request
-                    .headers_mut()
-                    .insert("authorization", format!("Bearer {password}").parse()?);
-            }
+    let request = websocket_request(target, &url)?;
     if let Some(stream) = stream {
         Ok(Box::new(
             tokio_tungstenite::client_async_with_config(request, stream, Some(config))
@@ -380,5 +419,28 @@ async fn open(
                 .await?
                 .0,
         ))
+    }
+}
+
+fn websocket_request(
+    target: &Target,
+    url: &str,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+    let mut request = url.into_client_request()?;
+    if target.security.is_none()
+        && let Some(password) = &target.password
+        && password.bytes().all(|b| (0x21..=0x7e).contains(&b))
+    {
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {password}").parse()?);
+    }
+    Ok(request)
+}
+
+async fn proxy_invalidated(proxy: Option<&paseo_tailnet::Proxy>) {
+    match proxy {
+        Some(proxy) => proxy.invalidated().await,
+        None => std::future::pending().await,
     }
 }

@@ -7,9 +7,10 @@ use std::sync::LazyLock;
 
 /// assistant-file-links/extensions.ts.
 pub const ASSISTANT_FILE_EXTENSIONS: &[&str] = &[
-    "astro", "bash", "c", "cc", "cjs", "cpp", "cs", "css", "cts", "cxx", "env", "fish", "go", "gql", "gradle", "graphql", "h",
-    "hpp", "htm", "html", "ini", "java", "js", "json", "jsonc", "jsx", "kt", "kts", "less", "lock", "lua", "md", "mdx", "mjs",
-    "mts", "php", "proto", "py", "rb", "rs", "sass", "scss", "sh", "sql", "svelte", "swift", "toml", "ts", "tsx", "txt", "vue",
+    "astro", "bash", "c", "cc", "cjs", "cpp", "cs", "css", "cts", "cxx", "env", "fish", "go",
+    "gql", "gradle", "graphql", "h", "hpp", "htm", "html", "ini", "java", "js", "json", "jsonc",
+    "jsx", "kt", "kts", "less", "lock", "lua", "md", "mdx", "mjs", "mts", "php", "proto", "py",
+    "rb", "rs", "sass", "scss", "sh", "sql", "svelte", "swift", "toml", "ts", "tsx", "txt", "vue",
     "xml", "yaml", "yml", "zsh",
 ];
 
@@ -24,7 +25,10 @@ pub struct InlinePathTarget {
 
 impl InlinePathTarget {
     pub fn with_path(&self, path: String) -> Self {
-        Self { path, ..self.clone() }
+        Self {
+            path,
+            ..self.clone()
+        }
     }
 }
 
@@ -45,18 +49,24 @@ pub struct AssistantFileLinkSource {
 
 type Lines = (Option<i64>, Option<i64>);
 
-static INLINE_LINE_FRAGMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^L([0-9]+)(?:C[0-9]+)?(?:-L?([0-9]+)(?:C[0-9]+)?)?$").unwrap());
-static COLON_LINE_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(.+?):([0-9]+)(?::[0-9]+)?(?:-([0-9]+)(?::[0-9]+)?)?$").unwrap());
-static PAREN_LINE_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(.+?)\(([0-9]+)(?:,[0-9]+)?(?:-([0-9]+)(?:,[0-9]+)?)?\)$").unwrap());
+static INLINE_LINE_FRAGMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^L([0-9]+)(?:C[0-9]+)?(?:-L?([0-9]+)(?:C[0-9]+)?)?$").unwrap()
+});
+static COLON_LINE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(.+?):([0-9]+)(?::[0-9]+)?(?:-([0-9]+)(?::[0-9]+)?)?$").unwrap()
+});
+static PAREN_LINE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(.+?)\(([0-9]+)(?:,[0-9]+)?(?:-([0-9]+)(?:,[0-9]+)?)?\)$").unwrap()
+});
 static WORD_LINE_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(.+?)\s+lines?\s+([0-9]+)(?:-([0-9]+))?$").unwrap());
 static DRIVE_ABSOLUTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
-static WINDOWS_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$").unwrap());
-static SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap());
-static DOMAIN_SEGMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$").unwrap());
+static WINDOWS_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$").unwrap());
+static SCHEME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap());
+static DOMAIN_SEGMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$").unwrap());
 
 /// utils/path.ts isAbsolutePath.
 pub fn is_absolute_file_path(value: &str) -> bool {
@@ -110,9 +120,18 @@ fn parse_line_fragment(value: &str) -> Option<Lines> {
         return Some((None, None));
     }
     let captures = INLINE_LINE_FRAGMENT.captures(fragment);
-    let start = captures.as_ref().and_then(|c| c.get(1)).and_then(|m| m.as_str().parse::<i64>().ok());
-    let end = captures.as_ref().and_then(|c| c.get(2)).and_then(|m| m.as_str().parse::<i64>().ok());
-    if start.is_some_and(|s| s <= 0) || end.is_some_and(|e| e <= 0) || matches!((start, end), (Some(s), Some(e)) if e < s) {
+    let start = captures
+        .as_ref()
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok());
+    let end = captures
+        .as_ref()
+        .and_then(|c| c.get(2))
+        .and_then(|m| m.as_str().parse::<i64>().ok());
+    if start.is_some_and(|s| s <= 0)
+        || end.is_some_and(|e| e <= 0)
+        || matches!((start, end), (Some(s), Some(e)) if e < s)
+    {
         return None;
     }
     Some((start, end))
@@ -148,7 +167,12 @@ pub fn parse_inline_path_token(value: &str) -> Option<InlinePathTarget> {
         }
         None => None,
     };
-    Some(InlinePathTarget { raw: value.to_owned(), path, line_start: Some(line_start), line_end })
+    Some(InlinePathTarget {
+        raw: value.to_owned(),
+        path,
+        line_start: Some(line_start),
+        line_end,
+    })
 }
 
 fn normalize_file_url_path(pathname: &str) -> Option<String> {
@@ -160,7 +184,12 @@ fn normalize_file_url_path(pathname: &str) -> Option<String> {
         return None;
     }
     let bytes = decoded.as_bytes();
-    if bytes.len() >= 4 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' && bytes[3] == b'/' {
+    if bytes.len() >= 4
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && bytes[3] == b'/'
+    {
         return Some(decoded[1..].to_owned());
     }
     Some(decoded)
@@ -168,13 +197,18 @@ fn normalize_file_url_path(pathname: &str) -> Option<String> {
 
 fn parse_file_protocol_url(value: &str) -> Option<InlinePathTarget> {
     let trimmed = value.trim();
-    let rest = trimmed.strip_prefix("file:").or_else(|| trimmed.strip_prefix("FILE:"))?;
+    let rest = trimmed
+        .strip_prefix("file:")
+        .or_else(|| trimmed.strip_prefix("FILE:"))?;
     // file://host/path or file:/path; the authority is ignored like Uri.path.
     let (path_and_rest, fragment) = match rest.split_once('#') {
         Some((p, f)) => (p, Some(f)),
         None => (rest, None),
     };
-    let path_and_rest = path_and_rest.split_once('?').map(|(p, _)| p).unwrap_or(path_and_rest);
+    let path_and_rest = path_and_rest
+        .split_once('?')
+        .map(|(p, _)| p)
+        .unwrap_or(path_and_rest);
     let path = if let Some(after) = path_and_rest.strip_prefix("//") {
         match after.find('/') {
             Some(slash) => &after[slash..],
@@ -185,12 +219,21 @@ fn parse_file_protocol_url(value: &str) -> Option<InlinePathTarget> {
     };
     let path = normalize_file_url_path(path)?;
     let lines = parse_line_fragment(&fragment.map(|f| format!("#{f}")).unwrap_or_default())?;
-    Some(InlinePathTarget { raw: value.to_owned(), path, line_start: lines.0, line_end: lines.1 })
+    Some(InlinePathTarget {
+        raw: value.to_owned(),
+        path,
+        line_start: lines.0,
+        line_end: lines.1,
+    })
 }
 
 fn parse_assistant_inline_path_link(value: &str, decode_href: bool) -> Option<InlinePathTarget> {
     let target = parse_inline_path_token(value)?;
-    let decoded = if decode_href { safe_decode(&target.path) } else { target.path.clone() };
+    let decoded = if decode_href {
+        safe_decode(&target.path)
+    } else {
+        target.path.clone()
+    };
     let path = normalize_path_token(&decoded)?;
     if !is_absolute_file_path(&path) {
         return None;
@@ -206,7 +249,12 @@ pub enum FileLinkClassification {
 }
 
 /// parse.ts classifyAssistantFileLink.
-pub fn classify_assistant_file_link(value: &str, workspace_root: Option<&str>, decode_href: bool, explicit_link: bool) -> Option<FileLinkClassification> {
+pub fn classify_assistant_file_link(
+    value: &str,
+    workspace_root: Option<&str>,
+    decode_href: bool,
+    explicit_link: bool,
+) -> Option<FileLinkClassification> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -218,7 +266,9 @@ pub fn classify_assistant_file_link(value: &str, workspace_root: Option<&str>, d
         return None;
     }
     let target = parse_assistant_file_link(trimmed, workspace_root, decode_href, explicit_link)?;
-    if !explicit_link && is_ambiguous_workspace_candidate(trimmed, &target, workspace_root, decode_href) {
+    if !explicit_link
+        && is_ambiguous_workspace_candidate(trimmed, &target, workspace_root, decode_href)
+    {
         return Some(FileLinkClassification::Ambiguous(target));
     }
     Some(FileLinkClassification::Direct(target))
@@ -233,7 +283,8 @@ fn resolve_href_path(href: &str) -> (String, String) {
     };
     let path_part = before_hash.split('?').next().unwrap_or("");
     let mut segments: Vec<&str> = Vec::new();
-    let trailing = path_part.ends_with('/') || path_part.ends_with("/.") || path_part.ends_with("/..");
+    let trailing =
+        path_part.ends_with('/') || path_part.ends_with("/.") || path_part.ends_with("/..");
     for segment in path_part.split('/') {
         match segment {
             "" | "." => {}
@@ -251,7 +302,12 @@ fn resolve_href_path(href: &str) -> (String, String) {
 }
 
 /// parse.ts parseAssistantFileLink.
-pub fn parse_assistant_file_link(value: &str, workspace_root: Option<&str>, decode_href: bool, explicit_link: bool) -> Option<InlinePathTarget> {
+pub fn parse_assistant_file_link(
+    value: &str,
+    workspace_root: Option<&str>,
+    decode_href: bool,
+    explicit_link: bool,
+) -> Option<InlinePathTarget> {
     if let Some(file_url) = parse_file_protocol_url(value) {
         return Some(file_url);
     }
@@ -265,7 +321,9 @@ pub fn parse_assistant_file_link(value: &str, workspace_root: Option<&str>, deco
     if let Some(windows) = parse_windows_file_link(trimmed, value, decode_href) {
         return Some(windows);
     }
-    if let Some(relative) = parse_workspace_relative_file_link(trimmed, workspace_root, decode_href, explicit_link) {
+    if let Some(relative) =
+        parse_workspace_relative_file_link(trimmed, workspace_root, decode_href, explicit_link)
+    {
         return Some(relative);
     }
     if !is_absolute_file_path(trimmed) {
@@ -288,32 +346,65 @@ pub fn parse_assistant_file_link(value: &str, workspace_root: Option<&str>, deco
         return None;
     }
     let lines = parse_line_fragment(&hash_part)?;
-    Some(InlinePathTarget { raw: value.to_owned(), path, line_start: lines.0, line_end: lines.1 })
+    Some(InlinePathTarget {
+        raw: value.to_owned(),
+        path,
+        line_start: lines.0,
+        line_end: lines.1,
+    })
 }
 
 /// parse.ts isFileLookingAssistantToken.
 pub fn is_file_looking_assistant_token(value: &str) -> bool {
-    let Some(normalized) = normalize_path_token(value) else { return false };
-    if normalized.chars().any(char::is_whitespace) || normalized.contains('?') || normalized.contains("://") {
+    let Some(normalized) = normalize_path_token(value) else {
+        return false;
+    };
+    if normalized.chars().any(char::is_whitespace)
+        || normalized.contains('?')
+        || normalized.contains("://")
+    {
         return false;
     }
     heuristic_local_path(&normalized).is_some_and(|p| is_plausible_local_path(&p))
 }
 
-fn parse_windows_file_link(trimmed: &str, raw: &str, decode_href: bool) -> Option<InlinePathTarget> {
+fn parse_windows_file_link(
+    trimmed: &str,
+    raw: &str,
+    decode_href: bool,
+) -> Option<InlinePathTarget> {
     let captures = WINDOWS_LINK.captures(trimmed)?;
     let path_part = captures.get(1).map(|m| m.as_str()).unwrap_or("");
-    let path = normalize_path_token(&if decode_href { safe_decode(path_part) } else { path_part.to_owned() })?;
+    let path = normalize_path_token(&if decode_href {
+        safe_decode(path_part)
+    } else {
+        path_part.to_owned()
+    })?;
     let lines = parse_line_fragment(captures.get(2).map(|m| m.as_str()).unwrap_or(""))?;
-    Some(InlinePathTarget { raw: raw.to_owned(), path, line_start: lines.0, line_end: lines.1 })
+    Some(InlinePathTarget {
+        raw: raw.to_owned(),
+        path,
+        line_start: lines.0,
+        line_end: lines.1,
+    })
 }
 
-fn parse_workspace_relative_file_link(value: &str, workspace_root: Option<&str>, decode_href: bool, explicit_link: bool) -> Option<InlinePathTarget> {
+fn parse_workspace_relative_file_link(
+    value: &str,
+    workspace_root: Option<&str>,
+    decode_href: bool,
+    explicit_link: bool,
+) -> Option<InlinePathTarget> {
     let (path, lines) = parse_local_path_parts(value, decode_href, explicit_link)?;
     if is_absolute_file_path(&path) {
         return None;
     }
-    let at = |path: String| InlinePathTarget { raw: value.to_owned(), path, line_start: lines.0, line_end: lines.1 };
+    let at = |path: String| InlinePathTarget {
+        raw: value.to_owned(),
+        path,
+        line_start: lines.0,
+        line_end: lines.1,
+    };
     if is_home_relative_path(&path) {
         return Some(at(path));
     }
@@ -321,7 +412,11 @@ fn parse_workspace_relative_file_link(value: &str, workspace_root: Option<&str>,
     resolve_relative_path_under_root(&path, &root).map(at)
 }
 
-fn parse_local_path_parts(value: &str, decode_href: bool, explicit_link: bool) -> Option<(String, Lines)> {
+fn parse_local_path_parts(
+    value: &str,
+    decode_href: bool,
+    explicit_link: bool,
+) -> Option<(String, Lines)> {
     let normalized = normalize_path_token(value)?;
     if normalized.contains('?') {
         return None;
@@ -332,7 +427,11 @@ fn parse_local_path_parts(value: &str, decode_href: bool, explicit_link: bool) -
     };
     let fragment_lines = parse_line_fragment(&hash)?;
     if let Some(inline) = parse_inline_path_token(&before_hash) {
-        let path = if decode_href { safe_decode(&inline.path) } else { inline.path.clone() };
+        let path = if decode_href {
+            safe_decode(&inline.path)
+        } else {
+            inline.path.clone()
+        };
         if !explicit_link && !is_plausible_local_path(&path) {
             return None;
         }
@@ -341,8 +440,14 @@ fn parse_local_path_parts(value: &str, decode_href: bool, explicit_link: bool) -
     if before_hash.is_empty() || before_hash.contains(':') {
         return None;
     }
-    let decoded = if decode_href { safe_decode(&before_hash) } else { before_hash.clone() };
-    let plausible = parse_inline_path_token(&decoded).map(|t| t.path).unwrap_or_else(|| decoded.clone());
+    let decoded = if decode_href {
+        safe_decode(&before_hash)
+    } else {
+        before_hash.clone()
+    };
+    let plausible = parse_inline_path_token(&decoded)
+        .map(|t| t.path)
+        .unwrap_or_else(|| decoded.clone());
     if !explicit_link && !is_plausible_local_path(&plausible) {
         return None;
     }
@@ -351,11 +456,18 @@ fn parse_local_path_parts(value: &str, decode_href: bool, explicit_link: bool) -
 
 /// parse.ts normalizeInlinePathTarget: a workspace-relative file (or the
 /// directory a trailing slash names).
-pub fn normalize_inline_path_target(raw_path: &str, cwd: Option<&str>) -> Option<(String, Option<String>)> {
+pub fn normalize_inline_path_target(
+    raw_path: &str,
+    cwd: Option<&str>,
+) -> Option<(String, Option<String>)> {
     let input = normalize_path_input(Some(raw_path))?;
     let mut normalized = resolve_path_against_cwd(&input, cwd).unwrap_or(input);
     if let Some(rest) = normalized.strip_prefix("./") {
-        normalized = if rest.is_empty() { ".".into() } else { rest.to_owned() };
+        normalized = if rest.is_empty() {
+            ".".into()
+        } else {
+            rest.to_owned()
+        };
     }
     if normalized.is_empty() {
         normalized = ".".into();
@@ -365,21 +477,45 @@ pub fn normalize_inline_path_target(raw_path: &str, cwd: Option<&str>) -> Option
     }
     if normalized.ends_with('/') {
         let dir = normalized.trim_end_matches('/');
-        return Some((if dir.is_empty() { ".".into() } else { dir.to_owned() }, None));
+        return Some((
+            if dir.is_empty() {
+                ".".into()
+            } else {
+                dir.to_owned()
+            },
+            None,
+        ));
     }
     let directory = match normalized.rfind('/') {
         Some(slash) => normalized[..slash].to_owned(),
         None => ".".into(),
     };
-    Some((if directory.is_empty() { ".".into() } else { directory }, Some(normalized)))
+    Some((
+        if directory.is_empty() {
+            ".".into()
+        } else {
+            directory
+        },
+        Some(normalized),
+    ))
 }
 
 fn is_allowed_absolute_path(path: &str, workspace_root: Option<&str>) -> bool {
-    let Some(root) = normalize_path_input(workspace_root) else { return true };
+    let Some(root) = normalize_path_input(workspace_root) else {
+        return true;
+    };
     let compare_path = normalize_path_for_compare(path);
     let trimmed_root = root.trim_end_matches('/');
-    let compare_root = normalize_path_for_compare(if trimmed_root.is_empty() { "/" } else { trimmed_root });
-    let prefix = if compare_root == "/" { "/".to_owned() } else { format!("{compare_root}/") };
+    let compare_root = normalize_path_for_compare(if trimmed_root.is_empty() {
+        "/"
+    } else {
+        trimmed_root
+    });
+    let prefix = if compare_root == "/" {
+        "/".to_owned()
+    } else {
+        format!("{compare_root}/")
+    };
     compare_path == compare_root || compare_path.starts_with(&prefix)
 }
 
@@ -397,12 +533,21 @@ fn is_external_href(value: &str) -> bool {
     SCHEME.is_match(value) && !DRIVE_ABSOLUTE.is_match(value)
 }
 
-fn is_ambiguous_workspace_candidate(value: &str, target: &InlinePathTarget, workspace_root: Option<&str>, decode_href: bool) -> bool {
-    let Some(root) = normalize_path_input(workspace_root) else { return false };
+fn is_ambiguous_workspace_candidate(
+    value: &str,
+    target: &InlinePathTarget,
+    workspace_root: Option<&str>,
+    decode_href: bool,
+) -> bool {
+    let Some(root) = normalize_path_input(workspace_root) else {
+        return false;
+    };
     if !is_allowed_absolute_path(&target.path, Some(&root)) {
         return false;
     }
-    let Some((path, _)) = parse_local_path_parts(value, decode_href, false) else { return false };
+    let Some((path, _)) = parse_local_path_parts(value, decode_href, false) else {
+        return false;
+    };
     if is_absolute_file_path(&path) {
         return false;
     }
@@ -425,18 +570,24 @@ fn heuristic_local_path(value: &str) -> Option<String> {
 }
 
 fn is_plausible_local_path(value: &str) -> bool {
-    let Some(normalized) = normalize_path_token(value) else { return false };
+    let Some(normalized) = normalize_path_token(value) else {
+        return false;
+    };
     if is_absolute_file_path(&normalized) {
         return true;
     }
-    if normalized.starts_with("./") || normalized.starts_with("../") || normalized.starts_with("~/") {
+    if normalized.starts_with("./") || normalized.starts_with("../") || normalized.starts_with("~/")
+    {
         return true;
     }
     let segments: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
     match segments.len() {
         0 => false,
         1 => is_plausible_file_name(segments[0]),
-        _ => !DOMAIN_SEGMENT.is_match(segments[0]) && is_plausible_file_name(segments[segments.len() - 1]),
+        _ => {
+            !DOMAIN_SEGMENT.is_match(segments[0])
+                && is_plausible_file_name(segments[segments.len() - 1])
+        }
     }
 }
 
@@ -444,7 +595,9 @@ fn is_plausible_file_name(file_name: &str) -> bool {
     if file_name.starts_with('.') && file_name.len() > 1 {
         return true;
     }
-    let Some(dot) = file_name.rfind('.') else { return false };
+    let Some(dot) = file_name.rfind('.') else {
+        return false;
+    };
     ASSISTANT_FILE_EXTENSIONS.contains(&file_name[dot + 1..].to_lowercase().as_str())
 }
 
@@ -454,7 +607,11 @@ fn resolve_relative_path_under_root(value: &str, workspace_root: &str) -> Option
         return None;
     }
     let trimmed_root = workspace_root.trim_end_matches('/');
-    let root = if trimmed_root.is_empty() { "/" } else { trimmed_root };
+    let root = if trimmed_root.is_empty() {
+        "/"
+    } else {
+        trimmed_root
+    };
     let mut segments: Vec<&str> = Vec::new();
     for segment in path.split('/') {
         match segment {
@@ -468,7 +625,11 @@ fn resolve_relative_path_under_root(value: &str, workspace_root: &str) -> Option
     if segments.is_empty() {
         return Some(root.to_owned());
     }
-    Some(if root == "/" { format!("/{}", segments.join("/")) } else { format!("{root}/{}", segments.join("/")) })
+    Some(if root == "/" {
+        format!("/{}", segments.join("/"))
+    } else {
+        format!("{root}/{}", segments.join("/"))
+    })
 }
 
 fn normalize_path_input(value: Option<&str>) -> Option<String> {
@@ -501,13 +662,21 @@ fn resolve_path_against_cwd(path: &str, cwd: Option<&str>) -> Option<String> {
     let trimmed = normalized_cwd.trim_end_matches('/');
     let base = if trimmed.is_empty() { "/" } else { trimmed };
     let compare_path = normalize_path_for_compare(path);
-    let prefix = if base == "/" { "/".to_owned() } else { format!("{base}/") };
+    let prefix = if base == "/" {
+        "/".to_owned()
+    } else {
+        format!("{base}/")
+    };
     if compare_path == normalize_path_for_compare(base) {
         return Some(".".into());
     }
     if compare_path.starts_with(&normalize_path_for_compare(&prefix)) {
         let rest = &path[prefix.len()..];
-        return Some(if rest.is_empty() { ".".into() } else { rest.to_owned() });
+        return Some(if rest.is_empty() {
+            ".".into()
+        } else {
+            rest.to_owned()
+        });
     }
     None
 }
@@ -532,7 +701,17 @@ pub static ASSISTANT_LINKIFY_PATTERN: LazyLock<fancy_regex::Regex> = LazyLock::n
     let line_suffix = r"(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?";
     let extensions = ASSISTANT_FILE_EXTENSIONS
         .iter()
-        .map(|e| e.chars().map(|c| if c.is_ascii_lowercase() { format!("[{c}{}]", c.to_ascii_uppercase()) } else { c.to_string() }).collect::<String>())
+        .map(|e| {
+            e.chars()
+                .map(|c| {
+                    if c.is_ascii_lowercase() {
+                        format!("[{c}{}]", c.to_ascii_uppercase())
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("|");
     let path_prefix = r"(?:[A-Za-z]:[\\/]|\.{0,2}/|~/)";
@@ -548,7 +727,8 @@ pub static ASSISTANT_LINKIFY_PATTERN: LazyLock<fancy_regex::Regex> = LazyLock::n
     fancy_regex::Regex::new(&pattern).expect("linkify pattern")
 });
 
-static INLINE_CODE_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://[^\s<>]+$").unwrap());
+static INLINE_CODE_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^https?://[^\s<>]+$").unwrap());
 
 /// source.ts linkMetadata `linkRecognition.inlineCode`.
 pub fn is_inline_code_file_link(code: &str, workspace_root: Option<&str>) -> bool {
@@ -577,10 +757,17 @@ pub enum Resolution {
     Ignored,
     External(String),
     File(InlinePathTarget),
-    NeedsLookup { query: String, token: String, target: InlinePathTarget },
+    NeedsLookup {
+        query: String,
+        token: String,
+        target: InlinePathTarget,
+    },
 }
 
-pub fn classify_for_resolution(source: &AssistantFileLinkSource, workspace_root: Option<&str>) -> Resolution {
+pub fn classify_for_resolution(
+    source: &AssistantFileLinkSource,
+    workspace_root: Option<&str>,
+) -> Resolution {
     // Markdown hrefs are percent-encoded by the parser; inline code and
     // linkified prose are raw paths that must not be decoded.
     let mut token = source.href.clone();
@@ -588,7 +775,11 @@ pub fn classify_for_resolution(source: &AssistantFileLinkSource, workspace_root:
     match source.kind {
         FileLinkSourceType::InlineCode => {
             let text = source.text.as_deref().unwrap_or("").trim();
-            token = if text.is_empty() { source.href.clone() } else { text.to_owned() };
+            token = if text.is_empty() {
+                source.href.clone()
+            } else {
+                text.to_owned()
+            };
             from_href = false;
         }
         FileLinkSourceType::Linkify => {
@@ -604,7 +795,12 @@ pub fn classify_for_resolution(source: &AssistantFileLinkSource, workspace_root:
     if token.is_empty() {
         return Resolution::Ignored;
     }
-    let classification = classify_assistant_file_link(&token, workspace_root, from_href, source.kind == FileLinkSourceType::Markdown);
+    let classification = classify_assistant_file_link(
+        &token,
+        workspace_root,
+        from_href,
+        source.kind == FileLinkSourceType::Markdown,
+    );
     let target = match classification {
         None => return Resolution::Ignored,
         Some(FileLinkClassification::External(raw)) => return Resolution::External(raw),
@@ -620,15 +816,27 @@ pub fn classify_for_resolution(source: &AssistantFileLinkSource, workspace_root:
     if root.is_empty() {
         return Resolution::Ignored;
     }
-    Resolution::NeedsLookup { query: ambiguous_query(&target, root), token, target }
+    Resolution::NeedsLookup {
+        query: ambiguous_query(&target, root),
+        token,
+        target,
+    }
 }
 
 /// resolver.ts shouldResolveDirectFileThroughSuggestions.
-fn resolve_through_suggestions(source: &AssistantFileLinkSource, token: &str, target: &InlinePathTarget, workspace_root: Option<&str>) -> bool {
+fn resolve_through_suggestions(
+    source: &AssistantFileLinkSource,
+    token: &str,
+    target: &InlinePathTarget,
+    workspace_root: Option<&str>,
+) -> bool {
     if source.kind != FileLinkSourceType::InlineCode {
         return false;
     }
-    if token.starts_with('/') || token.to_lowercase().starts_with("file://") || DRIVE_ABSOLUTE.is_match(token) {
+    if token.starts_with('/')
+        || token.to_lowercase().starts_with("file://")
+        || DRIVE_ABSOLUTE.is_match(token)
+    {
         return false;
     }
     let root = workspace_root.unwrap_or("").trim();
@@ -637,7 +845,10 @@ fn resolve_through_suggestions(source: &AssistantFileLinkSource, token: &str, ta
     }
     let normalized_root = root.replace('\\', "/");
     let normalized_root = normalized_root.trim_end_matches('/');
-    target.path.replace('\\', "/").starts_with(&format!("{normalized_root}/"))
+    target
+        .path
+        .replace('\\', "/")
+        .starts_with(&format!("{normalized_root}/"))
 }
 
 fn ambiguous_query(target: &InlinePathTarget, workspace_root: &str) -> String {
@@ -659,14 +870,17 @@ pub fn link_tooltip(href: &str, cwd: Option<&str>) -> Option<String> {
     if has_scheme && !href.to_lowercase().starts_with("file:") {
         return None;
     }
-    static LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:#L|:)(\d+)(?:-L?(\d+))?$").unwrap());
+    static LINE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?:#L|:)(\d+)(?:-L?(\d+))?$").unwrap());
     let captures = LINE.captures(href);
     let mut path = match &captures {
         Some(c) => href[..c.get(0).unwrap().start()].to_owned(),
         None => href.to_owned(),
     };
     if path.starts_with("file://") {
-        path = parse_file_protocol_url(&path).map(|t| t.path).unwrap_or(path);
+        path = parse_file_protocol_url(&path)
+            .map(|t| t.path)
+            .unwrap_or(path);
     }
     if path.is_empty() {
         return None;

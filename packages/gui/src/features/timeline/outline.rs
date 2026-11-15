@@ -101,7 +101,9 @@ impl Rail {
 
     /// hover-intent.ts: a pointer crossing the rail horizontally restarts the delay.
     fn moved(&mut self, point: DVec2, now: f64) {
-        let Some(anchor) = self.motion_anchor else { return };
+        let Some(anchor) = self.motion_anchor else {
+            return;
+        };
         if self.active {
             return;
         }
@@ -135,7 +137,8 @@ impl Rail {
                 } else {
                     self.moved(p, now);
                 }
-                let index = (((p.y - rail.pos.y) / self.slot.max(0.001)) as usize).min(self.prompts.len().saturating_sub(1));
+                let index = (((p.y - rail.pos.y) / self.slot.max(0.001)) as usize)
+                    .min(self.prompts.len().saturating_sub(1));
                 let before = self.hovered;
                 self.point_at(index, now);
                 before != self.hovered || self.intent_deadline.is_some()
@@ -155,8 +158,11 @@ impl Rail {
         if !rail.contains(point) {
             return None;
         }
-        let index = (((point.y - rail.pos.y) / self.slot.max(0.001)) as usize).min(self.prompts.len().saturating_sub(1));
-        self.prompts.get(index).map(|p| RailEvent::Jump(int_of(get(p, "seq"))))
+        let index = (((point.y - rail.pos.y) / self.slot.max(0.001)) as usize)
+            .min(self.prompts.len().saturating_sub(1));
+        self.prompts
+            .get(index)
+            .map(|p| RailEvent::Jump(int_of(get(p, "seq"))))
     }
 
     pub fn contains(&self, point: DVec2) -> bool {
@@ -165,7 +171,13 @@ impl Rail {
 
     /// Paints the rail inside `area` (the transcript rect); `active_seq` is the
     /// prompt being read. Returns true while animating.
-    pub fn draw(&mut self, cx: &mut Cx2d, d: &mut Draw, area: Rect, active_seq: Option<i64>) -> bool {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        d: &mut Draw,
+        area: Rect,
+        active_seq: Option<i64>,
+    ) -> bool {
         if !self.visible(area.size.x) {
             self.rail = None;
             return false;
@@ -190,16 +202,25 @@ impl Rail {
         let rail = rect_xywh(area.pos.x + 8.0, rail_top, RAIL_WIDTH, rail_h);
         self.rail = Some(rail);
         self.slot = slot;
-        let dt = if self.anim_at > 0.0 { (now - self.anim_at).max(0.0) } else { EASE_SECS };
+        let dt = if self.anim_at > 0.0 {
+            (now - self.anim_at).max(0.0)
+        } else {
+            EASE_SECS
+        };
         self.anim_at = now;
         self.anim.resize(count, (RESTING_W, RESTING_H));
         let mut animating = self.intent_deadline.is_some();
         let attention = self.hovered;
         for (i, prompt) in self.prompts.iter().enumerate() {
             let active = Some(int_of(get(prompt, "seq"))) == active_seq;
-            let m = attention.map(|a| magnification(i as i64 - a as i64)).unwrap_or(0.0);
+            let m = attention
+                .map(|a| magnification(i as i64 - a as i64))
+                .unwrap_or(0.0);
             let resting = if active { ACTIVE_W } else { RESTING_W };
-            let target = (resting + m * (MAGNIFIED_W - resting), RESTING_H + m * (MAGNIFIED_H - RESTING_H));
+            let target = (
+                resting + m * (MAGNIFIED_W - resting),
+                RESTING_H + m * (MAGNIFIED_H - RESTING_H),
+            );
             let current = &mut self.anim[i];
             // easeOut approach: close the remaining gap proportionally to elapsed time.
             let k = (dt / EASE_SECS).clamp(0.0, 1.0);
@@ -220,7 +241,8 @@ impl Rail {
             } else {
                 p.border_accent
             };
-            d.kit.rect(cx, rect_xywh(rail.pos.x + 4.0, y, w, h), color, h / 2.0);
+            d.kit
+                .rect(cx, rect_xywh(rail.pos.x + 4.0, y, w, h), color, h / 2.0);
         }
         d.canvas.add_hit(rail, HitTarget::Chrome("outline".into()));
         if let Some(index) = attention.filter(|a| *a < count) {
@@ -228,14 +250,34 @@ impl Rail {
             let x = area.pos.x + 8.0 + RAIL_WIDTH + PREVIEW_GAP;
             let y = rail_top + slot * index as f64 + slot / 2.0 - PREVIEW_H / 2.0;
             let r = rect_xywh(x, y, PREVIEW_W, PREVIEW_H);
-            let shadow = if p.is_dark { rgba(0x33000000) } else { rgba(0x0a000000) };
+            let shadow = if p.is_dark {
+                rgba(0x33000000)
+            } else {
+                rgba(0x0a000000)
+            };
             d.kit.rect(cx, r.translate(dvec2(0.0, 4.0)), shadow, 8.0);
             d.kit.bordered(cx, r, p.surface2, 8.0, p.border, 1.0);
             let size = d.look.ui(12.0);
-            cx.begin_turtle(Walk { abs_pos: Some(r.pos), margin: Margin::default(), width: Size::Fixed(PREVIEW_W), height: Size::Fixed(PREVIEW_H) }, Layout::default());
-            let laid = d.kit.layout_clamped(cx, Font::Regular, size, 1.3, text, PREVIEW_W - 24.0, 2);
+            cx.begin_turtle(
+                Walk {
+                    abs_pos: Some(r.pos),
+                    margin: Margin::default(),
+                    width: Size::Fixed(PREVIEW_W),
+                    height: Size::Fixed(PREVIEW_H),
+                },
+                Layout::default(),
+            );
+            let laid =
+                d.kit
+                    .layout_clamped(cx, Font::Regular, size, 1.3, text, PREVIEW_W - 24.0, 2);
             let th = laidout_size(&laid).y;
-            d.kit.draw_laidout(cx, Font::Regular, p.foreground, dvec2(x + 12.0, y + (PREVIEW_H - th) / 2.0), &laid);
+            d.kit.draw_laidout(
+                cx,
+                Font::Regular,
+                p.foreground,
+                dvec2(x + 12.0, y + (PREVIEW_H - th) / 2.0),
+                &laid,
+            );
             cx.end_turtle();
         }
         animating

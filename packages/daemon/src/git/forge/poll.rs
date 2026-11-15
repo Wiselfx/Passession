@@ -280,10 +280,10 @@ impl ForgeEngine {
                                 && !github::checks(&rollup)
                                     .iter()
                                     .any(|v| s(v, "status") == "pending")
-                                {
-                                    let cell = self.frozen.lock().await.cell(key, |_| None);
-                                    let _ = cell.set(rollup.clone());
-                                }
+                            {
+                                let cell = self.frozen.lock().await.cell(key, |_| None);
+                                let _ = cell.set(rollup.clone());
+                            }
                             self.finish_poll(entry, node, repo, rollup, output).await;
                         }
                     }
@@ -346,10 +346,11 @@ impl ForgeEngine {
                     // A loaded reset time arms the host pause and fails the batch; when it
                     // cannot be loaded, salvageable partial data is still used.
                     if let Ok(rate) = context.api("rate_limit".into()).await
-                        && let Some(reset) = rate["resources"]["graphql"]["reset"].as_i64() {
-                            self.pause_host(key, reset * 1000 + 1000).await;
-                            return Err(error);
-                        }
+                        && let Some(reset) = rate["resources"]["graphql"]["reset"].as_i64()
+                    {
+                        self.pause_host(key, reset * 1000 + 1000).await;
+                        return Err(error);
+                    }
                 }
                 let partial = error
                     .downcast_ref::<ForgeError>()
@@ -363,15 +364,16 @@ impl ForgeEngine {
         };
         let rate = &value["data"]["rateLimit"];
         if let (Some(limit), Some(remaining)) = (rate["limit"].as_f64(), rate["remaining"].as_f64())
-            && remaining <= limit * 0.4 {
-                let reset = time(&rate["resetAt"]);
-                if reset > 0 {
-                    self.pause_host(key, reset + 1000).await;
-                    if enforce_reserve {
-                        bail!("GitHub GraphQL polling paused until {}", s(rate, "resetAt"));
-                    }
+            && remaining <= limit * 0.4
+        {
+            let reset = time(&rate["resetAt"]);
+            if reset > 0 {
+                self.pause_host(key, reset + 1000).await;
+                if enforce_reserve {
+                    bail!("GitHub GraphQL polling paused until {}", s(rate, "resetAt"));
                 }
             }
+        }
         Ok(value)
     }
     async fn pause_host(&self, key: String, until: i64) {
@@ -382,9 +384,9 @@ impl ForgeEngine {
                 .iter()
                 .min_by_key(|(_, v)| *v)
                 .map(|(k, _)| k.clone())
-            {
-                pauses.remove(&oldest);
-            }
+        {
+            pauses.remove(&oldest);
+        }
         let value = pauses.entry(key).or_default();
         *value = (*value).max(until);
     }

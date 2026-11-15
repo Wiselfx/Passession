@@ -9,6 +9,7 @@ description = "Non-UI runtime of the native Paseo GUI: host connections, directo
 [dependencies]
 paseo-client = { path = "../client" }
 paseo-protocol = { path = "../protocol" }
+paseo-tailnet = { path = "../tailnet" }
 anyhow = "1"
 base64 = "0.22"
 bytes = "1"

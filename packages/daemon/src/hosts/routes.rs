@@ -223,7 +223,12 @@ impl HostsService {
         cancel: CancellationToken,
         owner: Option<OwnedSubscription>,
     ) -> Result<Channel> {
-        let RouteOrigin { actor, session: origin, permissions, source } = origin;
+        let RouteOrigin {
+            actor,
+            session: origin,
+            permissions,
+            source,
+        } = origin;
         let row = self
             .inner
             .rows
@@ -478,8 +483,7 @@ impl HostsService {
         };
         let value: Value = serde_json::from_str(&text)?;
         let info = value["message"]["payload"].clone();
-        let pending: Arc<Mutex<PendingRequests>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: Arc<Mutex<PendingRequests>> = Arc::new(Mutex::new(HashMap::new()));
         let (events_tx, events) = mpsc::channel(256);
         let pending_task = pending.clone();
         let route = channel.route.clone();
@@ -618,9 +622,17 @@ async fn send_nested(
 /// The origin client's hello as the destination sees it: identity, producer
 /// and permissions are the route's, credentials are dropped, and the client's
 /// own capabilities (e.g. `saved_history_reads`) pass through unchanged.
-fn routed_hello(text: &str, client_id: &str, producer: &Value, permissions: &[String]) -> Result<String> {
+fn routed_hello(
+    text: &str,
+    client_id: &str,
+    producer: &Value,
+    permissions: &[String],
+) -> Result<String> {
     let mut hello: Value = serde_json::from_str(text)?;
-    ensure!(hello["type"] == "hello", HostError::new("invalid_message", "Expected hello"));
+    ensure!(
+        hello["type"] == "hello",
+        HostError::new("invalid_message", "Expected hello")
+    );
     hello["clientId"] = json!(client_id);
     hello["routed"] = json!(true);
     hello["producer"] = producer.clone();
@@ -636,7 +648,10 @@ fn linked_hello(text: &str, identity: &str) -> Result<String> {
         hello["type"] == "hello" && hello["clientId"].is_string(),
         HostError::new("permission_denied", "Invalid hello")
     );
-    hello["clientId"] = json!(link_client_id(identity, hello["clientId"].as_str().unwrap())?);
+    hello["clientId"] = json!(link_client_id(
+        identity,
+        hello["clientId"].as_str().unwrap()
+    )?);
     hello["routed"] = json!(true);
     hello.as_object_mut().unwrap().remove("auth");
     Ok(serde_json::to_string(&hello)?)

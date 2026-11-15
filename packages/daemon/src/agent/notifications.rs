@@ -419,17 +419,18 @@ fn notification_body(
         format!("Server: {server}"),
     ];
     if reason == "needs permission"
-        && let Some(permission) = permission {
-            sections.push(
-                "Respond with `respond_to_permission` using the `agentId` and `requestId` below."
-                    .into(),
-            );
-            let request = json!({"agentId":record.child_agent_id,"serverId":server,"requestId":permission["id"],"request":permission});
-            sections.push(format!(
-                "<permission-request>\n{}\n</permission-request>",
-                serde_json::to_string_pretty(&request).expect("JSON value serialization")
-            ));
-        }
+        && let Some(permission) = permission
+    {
+        sections.push(
+            "Respond with `respond_to_permission` using the `agentId` and `requestId` below."
+                .into(),
+        );
+        let request = json!({"agentId":record.child_agent_id,"serverId":server,"requestId":permission["id"],"request":permission});
+        sections.push(format!(
+            "<permission-request>\n{}\n</permission-request>",
+            serde_json::to_string_pretty(&request).expect("JSON value serialization")
+        ));
+    }
     if let Some(text) = outcome
         .last_message
         .as_deref()

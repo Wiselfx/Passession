@@ -206,7 +206,10 @@ pub struct PanelState {
     pub suggest_scroll: f64,
     /// The selection and options the suggestions list last revealed; it re-reveals only
     /// when either changes (keyboard navigation, a rebuilt list), so manual scrolls stay.
-    pub suggest_revealed: Option<(Option<usize>, Vec<crate::features::composer::autocomplete::AutocompleteOption>)>,
+    pub suggest_revealed: Option<(
+        Option<usize>,
+        Vec<crate::features::composer::autocomplete::AutocompleteOption>,
+    )>,
     pub sheet_scroll: f64,
     pub suggest_scroll_max: f64,
     pub sheet_scroll_max: f64,
@@ -293,29 +296,48 @@ impl Widget for ComposerPanel {
             }
             if self.st.clear_focus_scope {
                 self.st.clear_focus_scope = false;
-                ui.push(UiEffect::SetFocusScope { owner: self.input.widget_uid(), scope: None });
-                ui.push(UiEffect::SetFocusScope { owner: self.search.widget_uid(), scope: None });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.input.widget_uid(),
+                    scope: None,
+                });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.search.widget_uid(),
+                    scope: None,
+                });
             }
-            if self.st.input_focused && (!self.input.area().is_valid(cx) || !cx.has_key_focus(self.input.area())) {
+            if self.st.input_focused
+                && (!self.input.area().is_valid(cx) || !cx.has_key_focus(self.input.area()))
+            {
                 self.input.release_focus(cx);
                 self.st.input_focused = false;
-                ui.push(UiEffect::SetFocusScope { owner: self.input.widget_uid(), scope: None });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.input.widget_uid(),
+                    scope: None,
+                });
             }
-            if self.st.search_focused && (!self.search.area().is_valid(cx) || !cx.has_key_focus(self.search.area())) {
+            if self.st.search_focused
+                && (!self.search.area().is_valid(cx) || !cx.has_key_focus(self.search.area()))
+            {
                 self.search.release_focus(cx);
                 self.st.search_focused = false;
-                ui.push(UiEffect::SetFocusScope { owner: self.search.widget_uid(), scope: None });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.search.widget_uid(),
+                    scope: None,
+                });
             }
         }
         // The profile editor sheet sees every event first (core replies, platform results);
         // while it is open it owns pointer and keys.
         let editor = self.profile_editor.as_settings_panel();
         let editor_was_open = editor.is_open();
-        let editor_actions = cx.capture_actions(|cx| self.profile_editor.handle_event(cx, event, scope));
+        let editor_actions =
+            cx.capture_actions(|cx| self.profile_editor.handle_event(cx, event, scope));
         let editor_closed = editor.editor_closed(&editor_actions);
         cx.extend_actions(editor_actions);
         let editor_open = editor_was_open || editor.is_open();
-        let Some(ui) = scope.data.get_mut::<UiContext>() else { return };
+        let Some(ui) = scope.data.get_mut::<UiContext>() else {
+            return;
+        };
         self.sync(cx, ui);
         if self.st.ctl.is_none() {
             return;
@@ -360,7 +382,10 @@ impl Widget for ComposerPanel {
             self.ctl().search_forge_picker(ui, &query);
             self.draw_bg.redraw(cx);
         }
-        if self.st.meter_timer.is_event(event).is_some() && !self.st.over_meter && !self.st.card_hover {
+        if self.st.meter_timer.is_event(event).is_some()
+            && !self.st.over_meter
+            && !self.st.card_hover
+        {
             self.st.meter_hover = false;
             self.draw_bg.redraw(cx);
         }
@@ -368,7 +393,12 @@ impl Widget for ComposerPanel {
             self.st.tooltip = self.st.tooltip_pending.take();
             self.draw_bg.redraw(cx);
         }
-        if let Some(frame) = self.st.next_frame.is_event(event).filter(|_| !self.st.hidden) {
+        if let Some(frame) = self
+            .st
+            .next_frame
+            .is_event(event)
+            .filter(|_| !self.st.hidden)
+        {
             self.st.spin = frame.time;
             self.draw_bg.redraw(cx);
         }
@@ -383,8 +413,10 @@ impl Widget for ComposerPanel {
             }
         }
         let focus_transition = matches!(event, Event::KeyFocus(_) | Event::KeyFocusLost(_));
-        if matches!(event, Event::TextHandle(_) | Event::Pause | Event::AppLostFocus)
-            || matches!(event, Event::TouchUpdate(update) if update.cancelled)
+        if matches!(
+            event,
+            Event::TextHandle(_) | Event::Pause | Event::AppLostFocus
+        ) || matches!(event, Event::TouchUpdate(update) if update.cancelled)
         {
             self.st.cancel_gestures();
         }
@@ -396,7 +428,8 @@ impl Widget for ComposerPanel {
             // pointer hits before the full-window overlay background.
             let modal = self.st.modal_open();
             let overlay_consumed = modal && self.dismiss_overlay_event(cx, event, ui, &path, uid);
-            let input_allowed = !modal || matches!(self.st.overlay(), Overlay::Fullscreen)
+            let input_allowed = !modal
+                || matches!(self.st.overlay(), Overlay::Fullscreen)
                 || !crate::common::is_user_input(event);
 
             // Keys on the focused editor (autocomplete, Enter policy, paste, Escape).
@@ -411,12 +444,17 @@ impl Widget for ComposerPanel {
                 swallow = self.key_down(cx, ke, ui, &path, uid);
             }
             if !swallow && input_allowed {
-                let actions = cx.capture_actions(|cx| self.input.handle_event(cx, event, &mut Scope::empty()));
+                let actions = cx
+                    .capture_actions(|cx| self.input.handle_event(cx, event, &mut Scope::empty()));
                 self.input_actions(cx, ui, &path, uid, &actions);
                 cx.extend_actions(actions);
             }
-            if !overlay_consumed && (matches!(self.st.overlay(), Overlay::Sheet(_) | Overlay::Forge) || focus_transition) {
-                let actions = cx.capture_actions(|cx| self.search.handle_event(cx, event, &mut Scope::empty()));
+            if !overlay_consumed
+                && (matches!(self.st.overlay(), Overlay::Sheet(_) | Overlay::Forge)
+                    || focus_transition)
+            {
+                let actions = cx
+                    .capture_actions(|cx| self.search.handle_event(cx, event, &mut Scope::empty()));
                 self.search_actions(cx, ui, &actions);
                 cx.extend_actions(actions);
             }
@@ -462,7 +500,9 @@ impl Widget for ComposerPanel {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let Some(ui) = scope.data.get_mut::<UiContext>() else { return DrawStep::done() };
+        let Some(ui) = scope.data.get_mut::<UiContext>() else {
+            return DrawStep::done();
+        };
         self.sync(cx, ui);
         if self.st.ctl.is_none() {
             return DrawStep::done();
@@ -553,7 +593,11 @@ impl ComposerPanel {
         let selected = self.st.selected_override.unwrap_or_else(|| {
             let key = &self.ctl_ref().target.tab_key;
             ui.layout.selected.as_deref() == Some(key.as_str())
-                || ui.layout.panes.iter().any(|pane| pane.selected.as_deref() == Some(key.as_str()))
+                || ui
+                    .layout
+                    .panes
+                    .iter()
+                    .any(|pane| pane.selected.as_deref() == Some(key.as_str()))
         });
         if selected != self.ctl().selected {
             self.ctl().selected = selected;
@@ -566,13 +610,27 @@ impl ComposerPanel {
         }
     }
 
-    pub(super) fn apply(&mut self, cx: &mut Cx, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid, out: Outputs) {
+    pub(super) fn apply(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+        out: Outputs,
+    ) {
         if let Some((text, caret)) = out.set_editor {
             if self.input.text() != text {
                 self.input.set_text(cx, &text);
             }
             let caret = caret.min(text.len());
-            self.input.set_cursor(cx, Cursor { index: caret, prefer_next_row: false }, false);
+            self.input.set_cursor(
+                cx,
+                Cursor {
+                    index: caret,
+                    prefer_next_row: false,
+                },
+                false,
+            );
             self.st.last_cursor = caret;
             self.st.input_scroll = f64::MAX;
         }
@@ -616,7 +674,14 @@ impl ComposerPanel {
         let next = format!("{}{}{}", &text[..start], insert, &text[end..]);
         let caret = start + insert.len();
         self.input.set_text(cx, &next);
-        self.input.set_cursor(cx, Cursor { index: caret, prefer_next_row: false }, false);
+        self.input.set_cursor(
+            cx,
+            Cursor {
+                index: caret,
+                prefer_next_row: false,
+            },
+            false,
+        );
         if !self.st.hidden {
             self.input.set_key_focus(cx);
         }
@@ -627,16 +692,28 @@ impl ComposerPanel {
         self.apply(cx, ui, &path, uid, out);
     }
 
-    fn input_actions(&mut self, cx: &mut Cx, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid, actions: &ActionsBuf) {
+    fn input_actions(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+        actions: &ActionsBuf,
+    ) {
         let input_uid = self.input.widget_uid();
         let mut changed = None;
         for action in actions.filter_widget_actions_cast::<TextInputAction>(input_uid) {
             match action {
                 TextInputAction::Changed(text) => changed = Some(text),
                 TextInputAction::KeyFocus | TextInputAction::KeyFocusLost => {
-                    let focused = !self.st.hidden && self.input.area().is_valid(cx) && cx.has_key_focus(self.input.area());
+                    let focused = !self.st.hidden
+                        && self.input.area().is_valid(cx)
+                        && cx.has_key_focus(self.input.area());
                     self.st.input_focused = focused;
-                    ui.push(UiEffect::SetFocusScope { owner: input_uid, scope: focused.then(|| "message-input".to_owned()) });
+                    ui.push(UiEffect::SetFocusScope {
+                        owner: input_uid,
+                        scope: focused.then(|| "message-input".to_owned()),
+                    });
                     self.draw_bg.redraw(cx);
                 }
                 _ => {}
@@ -672,8 +749,13 @@ impl ComposerPanel {
                 }
                 TextInputAction::Escaped => self.close_overlay(cx, ui),
                 TextInputAction::KeyFocus | TextInputAction::KeyFocusLost => {
-                    self.st.search_focused = !self.st.hidden && self.search.area().is_valid(cx) && cx.has_key_focus(self.search.area());
-                    ui.push(UiEffect::SetFocusScope { owner: uid, scope: self.st.search_focused.then(|| "editable".into()) });
+                    self.st.search_focused = !self.st.hidden
+                        && self.search.area().is_valid(cx)
+                        && cx.has_key_focus(self.search.area());
+                    ui.push(UiEffect::SetFocusScope {
+                        owner: uid,
+                        scope: self.st.search_focused.then(|| "editable".into()),
+                    });
                 }
                 _ => {}
             }
@@ -688,11 +770,22 @@ impl ComposerPanel {
             && self.input.area().is_valid(cx)
             && !self.st.hidden
             && !matches!(self.st.overlay(), Overlay::Fullscreen)
-            && self.st.ctl.as_ref().is_some_and(|ctl| ctl.autocomplete.visible())
+            && self
+                .st
+                .ctl
+                .as_ref()
+                .is_some_and(|ctl| ctl.autocomplete.visible())
     }
 
     /// Flutter `_composerKey`. Returns true when the key must not reach the editor.
-    fn key_down(&mut self, cx: &mut Cx, ke: &KeyEvent, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid) -> bool {
+    fn key_down(
+        &mut self,
+        cx: &mut Cx,
+        ke: &KeyEvent,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+    ) -> bool {
         use crate::features::composer::autocomplete::{AutocompleteKey, NavKey};
         let fullscreen = matches!(self.st.overlay(), Overlay::Fullscreen);
         if fullscreen && ke.key_code == KeyCode::Escape {
@@ -780,8 +873,10 @@ impl ComposerPanel {
             if self.ctl_ref().is_subagent() {
                 continue;
             }
-            let ours = matches!(command.action.as_str(), "message-input.focus" | "message-input.send" | "message-input.mode-cycle")
-                || (command.action == "agent.interrupt" && !self.ctl_ref().is_draft());
+            let ours = matches!(
+                command.action.as_str(),
+                "message-input.focus" | "message-input.send" | "message-input.mode-cycle"
+            ) || (command.action == "agent.interrupt" && !self.ctl_ref().is_draft());
             if ours {
                 command.handled = true;
                 commands.push(command.clone());
@@ -803,12 +898,22 @@ impl ComposerPanel {
         }
     }
 
-    pub(super) fn run_command(&mut self, cx: &mut Cx, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid, command: ComposerCommand) {
+    pub(super) fn run_command(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+        command: ComposerCommand,
+    ) {
         if self.st.hidden || self.ctl_ref().is_subagent() {
             return;
         }
         let out = match command {
-            ComposerCommand::Focus => Outputs { focus: true, ..Default::default() },
+            ComposerCommand::Focus => Outputs {
+                focus: true,
+                ..Default::default()
+            },
             ComposerCommand::Send => self.ctl().submit(ui, None, None),
             ComposerCommand::CycleMode => self.ctl().cycle_mode(ui),
             ComposerCommand::Interrupt => self.ctl().cancel_agent(ui),
@@ -816,7 +921,15 @@ impl ComposerPanel {
         self.apply(cx, ui, path, uid, out);
     }
 
-    fn overlay_answer(&mut self, cx: &mut Cx, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid, id: u64, args: &Value) {
+    fn overlay_answer(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+        id: u64,
+        args: &Value,
+    ) {
         if let Some(message) = self.st.confirms.remove(&id) {
             if get(args, "confirmed") == &Value::Bool(true) {
                 self.ctl().check_delivery(&message, true);
@@ -824,8 +937,12 @@ impl ComposerPanel {
             self.draw_bg.redraw(cx);
             return;
         }
-        let Some(menu) = self.st.menus.remove(&id) else { return };
-        let Some(value) = args.get("value").and_then(Value::as_str).map(str::to_owned) else { return };
+        let Some(menu) = self.st.menus.remove(&id) else {
+            return;
+        };
+        let Some(value) = args.get("value").and_then(Value::as_str).map(str::to_owned) else {
+            return;
+        };
         let config = self.ctl().config();
         let model = {
             let ctl = self.ctl_ref();
@@ -864,8 +981,26 @@ impl ComposerPanel {
         self.apply(cx, ui, path, uid, out);
     }
 
-    pub(super) fn open_menu(&mut self, ui: &mut UiContext, anchor: Rect, title: Option<String>, entries: Vec<MenuEntry>, width: f64, menu: Menu) {
-        let id = overlay::open_menu_with(ui, anchor, title, entries, overlay::MenuOptions { width, align_end: false, sheet: true });
+    pub(super) fn open_menu(
+        &mut self,
+        ui: &mut UiContext,
+        anchor: Rect,
+        title: Option<String>,
+        entries: Vec<MenuEntry>,
+        width: f64,
+        menu: Menu,
+    ) {
+        let id = overlay::open_menu_with(
+            ui,
+            anchor,
+            title,
+            entries,
+            overlay::MenuOptions {
+                width,
+                align_end: false,
+                sheet: true,
+            },
+        );
         self.st.menus.insert(id, menu);
     }
 
@@ -877,9 +1012,17 @@ impl ComposerPanel {
         } else {
             t("composer.attachments.addIssueOrPr")
         };
-        let mut entries = vec![MenuItem::new("image", t("composer.attachments.addImage")).icon("image").entry()];
+        let mut entries = vec![
+            MenuItem::new("image", t("composer.attachments.addImage"))
+                .icon("image")
+                .entry(),
+        ];
         if native {
-            entries.push(MenuItem::new("paste", t("composer.attachments.pasteImage")).icon("clipboard-paste").entry());
+            entries.push(
+                MenuItem::new("paste", t("composer.attachments.pasteImage"))
+                    .icon("clipboard-paste")
+                    .entry(),
+            );
         }
         let forge = MenuItem::new("forge", forge_label);
         let forge = match crate::common::icons::forge_brand_svg(&self.ctl_ref().forge) {
@@ -887,9 +1030,20 @@ impl ComposerPanel {
             None => forge.icon("git-pull-request"),
         };
         entries.push(forge.entry());
-        entries.push(MenuItem::new("file", t("composer.attachments.addFile")).icon("paperclip").entry());
+        entries.push(
+            MenuItem::new("file", t("composer.attachments.addFile"))
+                .icon("paperclip")
+                .entry(),
+        );
         let anchor = self.st.attach_rect;
-        self.open_menu(ui, anchor, Some(t("composer.input.addAttachment")), entries, 220.0, Menu::Attach);
+        self.open_menu(
+            ui,
+            anchor,
+            Some(t("composer.input.addAttachment")),
+            entries,
+            220.0,
+            Menu::Attach,
+        );
     }
 
     pub(super) fn open_forge(&mut self, cx: &mut Cx, ui: &mut UiContext) {
@@ -897,7 +1051,10 @@ impl ComposerPanel {
         self.st.restore_input_focus = self.st.input_focused;
         self.input.release_focus(cx);
         self.st.input_focused = false;
-        ui.push(UiEffect::SetFocusScope { owner: self.input.widget_uid(), scope: None });
+        ui.push(UiEffect::SetFocusScope {
+            owner: self.input.widget_uid(),
+            scope: None,
+        });
         self.st.overlay = Some(Overlay::Forge);
         self.st.search_text.clear();
         self.search.set_text(cx, "");
@@ -917,7 +1074,10 @@ impl ComposerPanel {
         }
         self.input.release_focus(cx);
         self.st.input_focused = false;
-        ui.push(UiEffect::SetFocusScope { owner: self.input.widget_uid(), scope: None });
+        ui.push(UiEffect::SetFocusScope {
+            owner: self.input.widget_uid(),
+            scope: None,
+        });
         self.st.overlay = Some(Overlay::Sheet(state));
         self.st.search_text.clear();
         self.search.set_text(cx, "");
@@ -941,7 +1101,10 @@ impl ComposerPanel {
         self.search.release_focus(cx);
         self.st.search_focused = false;
         self.st.search_focus_pending = false;
-        ui.push(UiEffect::SetFocusScope { owner: self.search.widget_uid(), scope: None });
+        ui.push(UiEffect::SetFocusScope {
+            owner: self.search.widget_uid(),
+            scope: None,
+        });
         self.st.overlay = None;
         self.st.ohover = None;
         cx.stop_timer(self.st.picker_timer);
@@ -957,19 +1120,34 @@ impl ComposerPanel {
     }
 
     /// Pointer events on the inline composer.
-    fn pointer_event(&mut self, cx: &mut Cx, event: &Event, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid) {
+    fn pointer_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+    ) {
         if let Event::Scroll(scroll) = event {
             self.st.touch_scroll.reset();
-            if self.st.input_clip.contains(scroll.abs) && self.st.input_natural > self.st.input_clip.size.y + 0.5 {
+            if self.st.input_clip.contains(scroll.abs)
+                && self.st.input_natural > self.st.input_clip.size.y + 0.5
+            {
                 self.st.input_manual_scroll = true;
-                self.st.input_scroll = (self.st.input_scroll + scroll.scroll.y)
-                    .clamp(0.0, (self.st.input_natural - self.st.input_clip.size.y).max(0.0));
+                self.st.input_scroll = (self.st.input_scroll + scroll.scroll.y).clamp(
+                    0.0,
+                    (self.st.input_natural - self.st.input_clip.size.y).max(0.0),
+                );
                 self.draw_bg.redraw(cx);
-            } else if self.suggestions_rect().is_some_and(|r| r.contains(scroll.abs)) {
+            } else if self
+                .suggestions_rect()
+                .is_some_and(|r| r.contains(scroll.abs))
+            {
                 self.st.suggest_scroll = (self.st.suggest_scroll - scroll.scroll.y).max(0.0);
                 self.draw_bg.redraw(cx);
             } else if self.st.tray_clip.contains(scroll.abs) && self.st.tray_scroll_max > 0.0 {
-                self.st.tray_scroll = (self.st.tray_scroll + scroll.scroll.y).clamp(0.0, self.st.tray_scroll_max);
+                self.st.tray_scroll =
+                    (self.st.tray_scroll + scroll.scroll.y).clamp(0.0, self.st.tray_scroll_max);
                 self.draw_bg.redraw(cx);
             }
         }
@@ -983,13 +1161,23 @@ impl ComposerPanel {
             if self.st.input_clip.contains(origin) {
                 self.st.input_manual_scroll = true;
                 let max = (self.st.input_natural - self.st.input_clip.size.y).max(0.0);
-                self.st.touch_scroll.apply_delta(&mut self.st.input_scroll, dy, max);
+                self.st
+                    .touch_scroll
+                    .apply_delta(&mut self.st.input_scroll, dy, max);
                 self.draw_bg.redraw(cx);
             } else if self.suggestions_rect().is_some_and(|r| r.contains(origin)) {
-                self.st.touch_scroll.apply_delta(&mut self.st.suggest_scroll, -dy, self.st.suggest_scroll_max);
+                self.st.touch_scroll.apply_delta(
+                    &mut self.st.suggest_scroll,
+                    -dy,
+                    self.st.suggest_scroll_max,
+                );
                 self.draw_bg.redraw(cx);
             } else if self.st.tray_clip.contains(origin) && self.st.tray_scroll_max > 0.0 {
-                self.st.touch_scroll.apply_delta(&mut self.st.tray_scroll, dy, self.st.tray_scroll_max);
+                self.st.touch_scroll.apply_delta(
+                    &mut self.st.tray_scroll,
+                    dy,
+                    self.st.tray_scroll_max,
+                );
                 self.draw_bg.redraw(cx);
             } else {
                 self.st.touch_scroll.reset();
@@ -1026,7 +1214,10 @@ impl ComposerPanel {
             }
             Hit::FingerLongPress(_) => self.st.tap.cancel(),
             Hit::FingerUp(e) => {
-                if let Some(item) = self.st.tap.release(self.st.hits.at(e.abs), e.is_over && e.was_tap() && !e.has_long_press_occurred) {
+                if let Some(item) = self.st.tap.release(
+                    self.st.hits.at(e.abs),
+                    e.is_over && e.was_tap() && !e.has_long_press_occurred,
+                ) {
                     self.click(cx, ui, path, uid, item);
                 }
             }
@@ -1064,7 +1255,14 @@ impl ComposerPanel {
         self.draw_bg.redraw(cx);
     }
 
-    fn click(&mut self, cx: &mut Cx, ui: &mut UiContext, path: &HeapLiveIdPath, uid: WidgetUid, item: Item) {
+    fn click(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        path: &HeapLiveIdPath,
+        uid: WidgetUid,
+        item: Item,
+    ) {
         self.dismiss_tooltip(cx);
         let look_native = matches!(cx.os_type(), OsType::Ios | OsType::Android(_));
         let sending = self.ctl_ref().sending();
@@ -1095,7 +1293,10 @@ impl ComposerPanel {
                     self.ctl().load_usage(ui);
                     self.st.overlay = Some(Overlay::Context);
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::Send => {
                 if self.ctl_ref().running() && (sending || self.ctl_ref().uploading()) {
@@ -1116,31 +1317,44 @@ impl ComposerPanel {
                         self.st.overlay = Some(Overlay::Preview(image.clone()));
                     }
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::ImageRemove(index) => {
                 if !sending {
                     self.ctl().remove_image(index);
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::Attachment(index) => {
                 if !sending {
                     let attachments = maps(get(&self.ctl_ref().draft(), "attachments"));
                     if let Some(attachment) = attachments.get(index)
-                        && crate::features::composer::attachments::forge_labels(attachment).is_some()
+                        && crate::features::composer::attachments::forge_labels(attachment)
+                            .is_some()
                     {
                         let url = owned(get(attachment, "url"));
                         self.ctl().open_url(&url);
                     }
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::AttachmentRemove(index) => {
                 if !sending {
                     self.ctl().remove_attachment(index);
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::QueueEdit(id) => match self.queue_item(&id) {
                 Some(message) => self.ctl().edit_queued(&message),
@@ -1156,13 +1370,19 @@ impl ComposerPanel {
                 {
                     self.confirm_stop_waiting(ui, message);
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::Check(id) => {
                 if let Some(message) = self.delivery_message(&id) {
                     self.ctl().check_delivery(&message, false);
                 }
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::Retry(id) => match self.delivery_message(&id) {
                 Some(message) => {
@@ -1188,7 +1408,10 @@ impl ComposerPanel {
             }
             Item::Discard => {
                 self.ctl().discard_failed();
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
             Item::Suggest(index) => match self.ctl_ref().autocomplete.options.get(index).cloned() {
                 Some(option) => self.ctl().apply_autocomplete(ui, &option),
@@ -1196,7 +1419,10 @@ impl ComposerPanel {
             },
             Item::DismissError => {
                 self.ctl().error = None;
-                Outputs { redraw: true, ..Default::default() }
+                Outputs {
+                    redraw: true,
+                    ..Default::default()
+                }
             }
         };
         self.apply(cx, ui, path, uid, out);
@@ -1208,7 +1434,11 @@ impl ComposerPanel {
         let id = overlay::confirm(
             ui,
             &t("composer.delivery.stopWaitingTitle"),
-            &t(if remote { "composer.delivery.stopWaitingMessage" } else { "composer.delivery.stopWaitingLegacyMessage" }),
+            &t(if remote {
+                "composer.delivery.stopWaitingMessage"
+            } else {
+                "composer.delivery.stopWaitingLegacyMessage"
+            }),
             &t("composer.delivery.stopWaiting"),
             false,
         );
@@ -1221,7 +1451,9 @@ impl ComposerPanel {
     }
 
     fn queue_item(&self, id: &str) -> Option<Value> {
-        maps(get(&self.ctl_ref().draft(), "queue")).into_iter().find(|q| s(get(q, "messageId")) == id)
+        maps(get(&self.ctl_ref().draft(), "queue"))
+            .into_iter()
+            .find(|q| s(get(q, "messageId")) == id)
     }
 
     fn delivery_message(&self, id: &str) -> Option<Value> {
@@ -1241,12 +1473,21 @@ impl ComposerPanel {
             let ctl = self.ctl_ref();
             (ctl.providers.clone(), ctl.modes(), ctl.features())
         };
-        let model = ControlsModel { providers: &providers, config: &config, modes: &modes, features: &features };
+        let model = ControlsModel {
+            providers: &providers,
+            config: &config,
+            modes: &modes,
+            features: &features,
+        };
         let anchor = self.st.hits.rect_of(item).unwrap_or_default();
         match item {
             Item::Thinking => {
                 let options = model.thinking_options();
-                let selected = s_or(get(&config, "thinkingOptionId"), options.first().map(|o| s(get(o, "id"))).unwrap_or("")).to_owned();
+                let selected = s_or(
+                    get(&config, "thinkingOptionId"),
+                    options.first().map(|o| s(get(o, "id"))).unwrap_or(""),
+                )
+                .to_owned();
                 let extra = t("agentControls.thinking.extraHigh");
                 let entries = options
                     .iter()
@@ -1257,27 +1498,51 @@ impl ComposerPanel {
                             .entry()
                     })
                     .collect();
-                self.open_menu(ui, anchor, Some(t("agentControls.thinking.title")), entries, 200.0, Menu::Thinking);
+                self.open_menu(
+                    ui,
+                    anchor,
+                    Some(t("agentControls.thinking.title")),
+                    entries,
+                    200.0,
+                    Menu::Thinking,
+                );
             }
             Item::Mode => {
-                let selected = model.selected_mode().map(|m| owned(get(m, "id"))).unwrap_or_default();
+                let selected = model
+                    .selected_mode()
+                    .map(|m| owned(get(m, "id")))
+                    .unwrap_or_default();
                 let entries = modes
                     .iter()
                     .map(|m| {
-                        let mut item = MenuItem::new(owned(get(m, "id")), format_agent_mode_label(m)).checked(s(get(m, "id")) == selected);
+                        let mut item =
+                            MenuItem::new(owned(get(m, "id")), format_agent_mode_label(m))
+                                .checked(s(get(m, "id")) == selected);
                         if let Some(icon) = mode_option_icon(Some(m)) {
                             item = item.icon(icon);
                         }
                         item.entry()
                     })
                     .collect();
-                self.open_menu(ui, anchor, Some(t("agentControls.mode.title")), entries, 260.0, Menu::Mode);
+                self.open_menu(
+                    ui,
+                    anchor,
+                    Some(t("agentControls.mode.title")),
+                    entries,
+                    260.0,
+                    Menu::Mode,
+                );
             }
             Item::Feature(index) => {
-                let Some(feature) = features.get(*index).cloned() else { return };
+                let Some(feature) = features.get(*index).cloned() else {
+                    return;
+                };
                 let value = model.feature_value(&feature);
                 if s(get(&feature, "type")) == "toggle" {
-                    let next = model.with_feature(s(get(&feature, "id")), Value::Bool(value != Value::Bool(true)));
+                    let next = model.with_feature(
+                        s(get(&feature, "id")),
+                        Value::Bool(value != Value::Bool(true)),
+                    );
                     let out = self.ctl().save_config(ui, next);
                     let _ = out;
                     return;
@@ -1285,13 +1550,23 @@ impl ComposerPanel {
                 let entries = maps(get(&feature, "options"))
                     .iter()
                     .map(|o| {
-                        MenuItem::new(owned(get(o, "id")), s_or(get(o, "label"), s(get(o, "id"))).to_owned())
-                            .checked(get(o, "id") == &value)
-                            .entry()
+                        MenuItem::new(
+                            owned(get(o, "id")),
+                            s_or(get(o, "label"), s(get(o, "id"))).to_owned(),
+                        )
+                        .checked(get(o, "id") == &value)
+                        .entry()
                     })
                     .collect();
                 let label = s_or(get(&feature, "label"), s(get(&feature, "id"))).to_owned();
-                self.open_menu(ui, anchor, Some(label), entries, 220.0, Menu::Feature(feature));
+                self.open_menu(
+                    ui,
+                    anchor,
+                    Some(label),
+                    entries,
+                    220.0,
+                    Menu::Feature(feature),
+                );
             }
             _ => {}
         }
@@ -1359,7 +1634,10 @@ impl ComposerPanelRef {
 
     /// Embedded sheets own input above the timeline, including their dismissal event.
     pub fn captures_input(&self) -> bool {
-        self.borrow().is_some_and(|inner| !inner.st.hidden && (inner.st.modal_open() || inner.profile_editor.as_settings_panel().is_open()))
+        self.borrow().is_some_and(|inner| {
+            !inner.st.hidden
+                && (inner.st.modal_open() || inner.profile_editor.as_settings_panel().is_open())
+        })
     }
 
     /// Whether files dropped on the host's `FileDropZone` can be attached now
@@ -1367,7 +1645,13 @@ impl ComposerPanelRef {
     /// uploading). A sheet over the composer owns the pointer instead.
     pub fn accepts_file_drop(&self) -> bool {
         self.borrow().is_some_and(|inner| {
-            !inner.st.hidden && !inner.st.modal_open() && inner.st.ctl.as_ref().is_some_and(Controller::accepts_file_drop)
+            !inner.st.hidden
+                && !inner.st.modal_open()
+                && inner
+                    .st
+                    .ctl
+                    .as_ref()
+                    .is_some_and(Controller::accepts_file_drop)
         })
     }
 
@@ -1384,8 +1668,11 @@ impl ComposerPanelRef {
     /// Keyboard-only ownership; autocomplete must not become pointer-modal.
     /// Parents snapshot this before dispatch, since Escape hides suggestions.
     pub fn consumes_escape(&self, cx: &Cx, event: &Event) -> bool {
-        let Event::KeyDown(ke) = event else { return false };
-        self.borrow().is_some_and(|inner| inner.autocomplete_owns_escape(cx, ke))
+        let Event::KeyDown(ke) = event else {
+            return false;
+        };
+        self.borrow()
+            .is_some_and(|inner| inner.autocomplete_owns_escape(cx, ke))
     }
 
     pub fn set_target(&self, cx: &mut Cx, target: ComposerTarget) {
@@ -1422,7 +1709,10 @@ impl ComposerPanelRef {
 
     pub fn prompt_submitted(&self, actions: &Actions) -> Option<String> {
         let inner = self.borrow()?;
-        match actions.find_widget_action(inner.widget_uid()).cast_ref::<ComposerAction>() {
+        match actions
+            .find_widget_action(inner.widget_uid())
+            .cast_ref::<ComposerAction>()
+        {
             ComposerAction::PromptSubmitted { agent_id } => Some(agent_id.clone()),
             _ => None,
         }
@@ -1430,7 +1720,10 @@ impl ComposerPanelRef {
 
     pub fn reload_agent(&self, actions: &Actions) -> Option<String> {
         let inner = self.borrow()?;
-        match actions.find_widget_action(inner.widget_uid()).cast_ref::<ComposerAction>() {
+        match actions
+            .find_widget_action(inner.widget_uid())
+            .cast_ref::<ComposerAction>()
+        {
             ComposerAction::ReloadAgent { agent_id } => Some(agent_id.clone()),
             _ => None,
         }

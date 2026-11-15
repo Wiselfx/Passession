@@ -7,7 +7,7 @@ pub mod common;
 pub mod features;
 mod fonts;
 pub mod shell;
-pub mod theme;
 #[cfg(feature = "desktop-smoke")]
 mod smoke;
+pub mod theme;
 mod theme_makepad;

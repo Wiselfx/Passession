@@ -1,0 +1,31 @@
+{
+  "libtailscale": {
+    "repository": "https://github.com/tailscale/libtailscale",
+    "commit": "dacde75057ff350e146505829beff446e6823966",
+    "sha256": {
+      "go.mod": "71b27d3e43394c4722730e1e08a23afff48a691eb1ebec5552dcb7c60bff13d9",
+      "go.sum": "5bd4b5552ddc90f28560bcf155b9384683bfe2df2c60667d831a612794ebc85a",
+      "LICENSE": "d6e14a92f27cd6c82f8914041c1bb43819fcf3167b827b9198c2c803d4dff5d3",
+      "tailscale.go": "5e010d30874f06721139e533813feecee9e3989c5343e2c472f52a20daac2672",
+      "tailscale.h": "36e87d165bbd3bdca5fa9b21a861c793ce052b7539f271c0b8c802e8b66e937a",
+      "tailscale.c": "0d10f2f199cd8484e9c6b5b30f17004f1497b08a9121edf86a87a0b83d38c281"
+    }
+  },
+  "tailscale": {
+    "repository": "https://github.com/tailscale/tailscale",
+    "version": "v1.104.1",
+    "tsnetSourceSha256": "33cbbdde2afc71fd1ae92dcad811604d81d56b2b23906ce8c1dc06f2bc0bbaf7",
+    "license": "tsnet/LICENSE"
+  },
+  "toolchain": "go1.27.4",
+  "changes": [
+    "Portable C bridge replaces Unix-only file-descriptor transport; original upstream sources retained as reference.",
+    "Encrypted AES-256-GCM StateStore; per-process native handle registry and cancellable bounded LocalAPI.",
+    "Local tsnet fork disables logging side files, backend varroot side files, implicit login and ambient auth/control settings.",
+    "SOCKS authentication retained; strict MagicDNS/peer routes and netstack-only TCP, no OS resolver or direct fallback.",
+    "Root Go graph includes local integration-test dependencies; upstream graph retained verbatim under upstream/.",
+    "Android C ABI accepts java.net.NetworkInterface snapshots with explicit address lists and enumeration errors; RegisterInterfaceGetter avoids forbidden Go netlink without synthetic interfaces.",
+    "Android ConnectivityManager default/all-network callbacks update default route metadata and inject netmon changes; callbacks use application context and unregister after node close. No VpnService, route mutation, DNS changes, root or socket protection is used.",
+    "Android backend construction scopes upstream TS_LOGS_DIR to the validated app-owned state directory and restores the environment under a constructor lock: NewLocalBackend eagerly resolves a log directory even when socket statistics are unavailable. No HOME/TMPDIR override, log upload or plaintext side store is enabled; desktop/iOS directory policy is unchanged."
+  ]
+}

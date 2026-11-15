@@ -2,8 +2,9 @@
 
 ## Toolchains
 
-- Rust and Cargo for everything: the daemon/CLI, the native client (`packages/gui*`, Makepad 1.0.0), client/protocol/plugin/highlighting SDKs, relay and `xtask` tooling. `Cargo.toml` specifies the minimum Rust version.
+- Rust and Cargo for the daemon/CLI, native client (`packages/gui*`, Makepad 1.0.0), client/protocol/plugin/highlighting SDKs, relay and `xtask` tooling. `Cargo.toml` specifies the minimum Rust version.
 - Zig **0.15.2** on every target. `paseo-terminal` links Ghostty's VT library, which the vendored `libghostty-vt-sys` build script compiles with `zig build` (`packages/terminal/vendor/VENDORED.md`). Put `zig` on `PATH` or set `ZIG` to the executable; `xtask` build commands stop before compiling when it is missing or outside Ghostty's accepted range (0.15.x, patch 2 or newer). A cold build `git clone`s Ghostty at the pinned commit into Cargo's `OUT_DIR` and lets Zig fetch Ghostty's package dependencies, so it needs network access. Offline, set `GHOSTTY_SOURCE_DIR` to a checkout of that commit and `GHOSTTY_ZIG_SYSTEM_DIR` to a pre-populated Zig package directory (passed to `zig build --system`).
+- Go **1.27.4** for native GUI bundles' embedded libtailscale engine; daemon-only builds do not require Go. Put it on `PATH` or set `GO` to its executable. `packages/tailnet/native/go.mod`, `go.sum` and `UPSTREAM.json` pin the toolchain, dependency graph and maintained upstream source; builds reject another Go version and never rewrite the module graph.
 - Node, npm, Flutter/Dart and a TypeScript compiler are not Paseo build prerequisites. Separately installed agent CLIs retain their own runtime requirements.
 - Linux desktop: `pkg-config` and the X11, Xcursor, GLX/EGL, ALSA and PulseAudio development packages Makepad links, plus Wayland development files for native file dialogs (Ubuntu: `libx11-dev libxcursor-dev libglx-dev libgl-dev libegl-dev libasound2-dev libpulse-dev libwayland-dev`), and `patchelf`: `build-gui` rewrites the RPATHs of the bundled daemon runtime. Packaging adds `dpkg-dev`, `xdg-utils` and the runtime-loaded `libxss1 libsm6 libice6 libfontconfig1`.
 - macOS: Xcode command-line tools (`clang`, `codesign`, `iconutil`). iOS also needs full Xcode (`actool`, `devicectl`, `simctl`) and `rustup target add aarch64-apple-ios` (plus `aarch64-apple-ios-sim` for simulators). Simulator builds need an Apple-silicon Mac: Ghostty ships no x86_64 simulator library.
@@ -12,7 +13,7 @@
 
 Fetch Rust dependencies with `cargo fetch --locked`. Desktop builds require their target host; `xtask` chooses the GUI target itself and rejects `CARGO_BUILD_TARGET`.
 
-Default CI runs the Rust workspace tests, GUI crates included, on one Ubuntu x64 runner; it does not build release artifacts or repeat tests across platforms. Packaging and deployment workflows run only on explicit manual dispatch.
+Default CI runs Rust workspace tests (including GUI crates) and isolated native Tailscale control/DERP regressions on one Ubuntu x64 runner; it does not build release artifacts or repeat tests across platforms. Packaging and deployment workflows run only on explicit manual dispatch.
 
 ## Development commands
 
@@ -101,22 +102,28 @@ Makepad platform, draw and widgets are patched through `packages/gui-platform/ve
 
 Packages copy the `resources/` directory of every Makepad-aware crate in the `paseo-gui` dependency closure, minus the reviewed `excluded` files in `packaging/resource-notices.json`. A font without a digest-bound, revision-pinned license entry fails the build; so does a Cargo dependency without license text (add a revision-pinned entry to `packaging/cargo-notice-supplements.json`, never an SPDX template) and a natively built library whose pinned source changed without a reviewed `packaging/native-notices.json` entry (see [release](release.md#distribution-requirements)).
 
+Embedded Tailscale builds use `<target>/paseo-tailnet/` for verified module downloads, Go cache and target-specific libraries. `xtask` packages the DLL/dylib/so beside the desktop executable, the Android library in each ABI's JNI directory, and an iOS static archive. Go dependency licenses and the Go runtime license join the package notices. `PASEO_TAILSCALE_STATIC_DIR` is set by the iOS builder; it is not a runtime search path. A raw `cargo run` needs the matching native library beside its executable to enable Tailscale; use `build-gui` for a complete bundle.
+
+Run native engine regressions from `packages/tailnet/native` with `GOTOOLCHAIN=local GOMAXPROCS=2 go test -mod=readonly -p=2 . ./tsnet`. They use isolated local control/DERP servers, not a real account. Linux runtime key storage requires an unlocked Secret Service and a session bus; missing secure storage is an explicit feature error, never a plaintext fallback.
+
 ### Fonts
 
-The theme's five text families (`THEME_FONT_REGULAR`, `_BOLD`, `_ITALIC`, `_BOLD_ITALIC`, `_CODE` in `packages/gui/src/theme_makepad.rs`) are bundled fallback chains: IBM Plex, Noto Sans KR, Noto Color Emoji and Jetendard; code is Jetendard. At startup and whenever `uiFontFamily`, `monoFontFamily` or the OS appearance changes, `packages/gui/src/fonts.rs` resolves fonts on a worker thread through `paseo_gui_platform::appearance::system_fonts` and redefines those families in place (`Fonts::redefine_font_family`):
+The theme's five text families (`THEME_FONT_REGULAR`, `_BOLD`, `_ITALIC`, `_BOLD_ITALIC`, `_CODE` in `packages/gui/src/theme_makepad.rs`) retain their bundled fonts. Startup and appearance/preference changes resolve the UI/mono preferences on a worker through `paseo_gui_platform::appearance::system_fonts`:
 
-- Proportional roles: `[OS UI face, OS Hangul face, …bundled chain]`. An empty interface-font preference means the OS UI font; a CSS-like list (`'Pretendard', system-ui, sans-serif`) is tried in order, with `system-ui`/`sans-serif`/`-apple-system` naming the OS UI font.
-- Code: `[user mono face, Jetendard]`; an empty code-font preference keeps Jetendard, whose Hangul spans exactly two terminal cells.
-- Icon fonts (Lucide, Font Awesome) and emoji always stay bundled.
+- Proportional roles prefer the OS UI face and an eager Hangul face, then the bundled chain. The eager lookup is a startup optimization, not a list of supported scripts.
+- Code keeps the requested mono face or Jetendard first, preserving existing Latin and Hangul metrics; bundled emoji remains available.
+- When either UI or background layout encounters an uncovered glyph, a shared queue requests an installed font for that Unicode character and style. Discovery runs off the UI thread and appends validated faces without replacing glyphs already covered by the family. No script whitelist or new bundled language pack is required.
+- Native discovery preserves collection indices and variable-font axes. The renderer requires an eligible sfnt outline face; system font availability is not a promise of complete bidirectional paragraph layout.
 
-Font discovery is refreshed on appearance changes, not cached for the process lifetime: the same requested family can resolve to different files after the user changes desktop settings or installs a font. The GUI deduplicates unchanged requests between refreshes.
+Positive and negative discoveries belong to the current appearance/preference epoch. Refreshing it permits newly installed or changed fonts to resolve, including a different file under the same family name. Pending discovery and per-family Unicode deduplication are bounded; overflow retries without permanently excluding characters, and unavailable characters eventually stop requesting work.
 
-System faces get ascender/descender fudges so their line height equals the bundled face they precede, so authored `line_spacing` values look the same. Variable system fonts use the axis values the platform reports (`wght`, …). The first frame waits up to 300 ms for the worker; a slower result is applied on a later signal with one relayout. The log line `system fonts: ui=… mono=… faces=[…]` lists the files chosen. Only the OS accessibility text scale changes sizes; `uiBaseFontSize` keeps its 14/15 px defaults.
+Completed discovery invalidates synchronous and asynchronous layouts, typography-dependent caches and wrapped diff row heights. System faces get ascender/descender adjustments to fit the primary face's line height. The first frame waits up to 300 ms for startup resolution; later results trigger relayout. `system fonts: …` and `system font fallback: …` log the chosen sources. Accessibility text scale still owns size changes.
 
 ## Source ownership
 
 - Rust daemon: `packages/daemon/src`; CLI commands in `cli/`, providers in `providers/`, process ownership in `daemon_control/`, desktop IPC in `desktop_host/`.
 - Native client: `packages/gui` (Makepad shell, theme, common widgets, `src/features/*`), `packages/gui-core` (host connections, directory synchronization, persisted client state), `packages/gui-platform` (desktop host, updater, tray, notifications, pickers, audio, Android/iOS sources).
+- Embedded Tailscale: `packages/tailnet` (Rust lifecycle, portable Go/C engine, maintained tsnet source and encrypted state), OS credential providers in `packages/gui-platform`, transport and host policy in `packages/client` and `packages/gui-core`.
 - Terminal emulation: `packages/terminal` (`paseo-terminal`, Ghostty VT for daemon screens, terminal tabs and logs) and its vendored `libghostty-vt-sys` build-script patch under `vendor/`.
 - Native build, packaging and release: `xtask/src`; packaging resources, the Android Gradle project and vendored Makepad Android Java: `packaging/`.
 - Rust SDKs: `packages/client`, `packages/protocol`, `packages/plugin`, `packages/highlight`; relay: `packages/relay`.

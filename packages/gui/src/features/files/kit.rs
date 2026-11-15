@@ -64,7 +64,14 @@ impl DrawFilesImage {
     /// A texture in `rect` in a draw call of its own. The texture is bound before the call is
     /// opened: Makepad copies the slots into a new call, and a call with an empty slot accepts
     /// any later texture, so binding afterwards draws the next textures black.
-    pub fn draw_texture(&mut self, cx: &mut Cx2d, rect: Rect, texture: &Texture, radius: f64, opacity: f32) {
+    pub fn draw_texture(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        texture: &Texture,
+        radius: f64,
+        opacity: f32,
+    ) {
         self.draw_vars.set_texture(0, texture);
         self.new_draw_call(cx);
         self.radius = radius as f32;
@@ -114,7 +121,12 @@ fn family_id(dt: &DrawText) -> FontFamilyId {
 
 fn text_color(color: Vec4) -> TextColor {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    TextColor { r: byte(color.x), g: byte(color.y), b: byte(color.z), a: byte(color.w) }
+    TextColor {
+        r: byte(color.x),
+        g: byte(color.y),
+        b: byte(color.z),
+        a: byte(color.w),
+    }
 }
 
 impl Kit {
@@ -185,11 +197,23 @@ impl Kit {
     }
 
     /// A plain one-style layout (no wrap unless `max_width`).
-    pub fn layout(&mut self, cx: &mut Cx, spec: TextSpec, text: &str, max_width: Option<f64>) -> Rc<LaidoutText> {
+    pub fn layout(
+        &mut self,
+        cx: &mut Cx,
+        spec: TextSpec,
+        text: &str,
+        max_width: Option<f64>,
+    ) -> Rc<LaidoutText> {
         self.painter.layout(cx, spec, text, max_width)
     }
 
-    pub fn draw_laidout(&mut self, cx: &mut Cx2d, spec: TextSpec, pos: DVec2, laidout: &LaidoutText) {
+    pub fn draw_laidout(
+        &mut self,
+        cx: &mut Cx2d,
+        spec: TextSpec,
+        pos: DVec2,
+        laidout: &LaidoutText,
+    ) {
         let size = laidout_size(laidout);
         let dt = match spec.font {
             Font::Regular => &mut self.painter.text_regular,
@@ -211,7 +235,14 @@ impl Kit {
     }
 
     /// A texture in `rect` (new draw call: each texture needs its own).
-    pub fn texture(&mut self, cx: &mut Cx2d, rect: Rect, texture: &Texture, radius: f64, opacity: f32) {
+    pub fn texture(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        texture: &Texture,
+        radius: f64,
+        opacity: f32,
+    ) {
         self.image.draw_texture(cx, rect, texture, radius, opacity);
     }
 
@@ -220,7 +251,15 @@ impl Kit {
         self.painter.fill(cx, rect, color, radius);
     }
 
-    pub fn outline(&mut self, cx: &mut Cx2d, rect: Rect, fill: Vec4, border: Vec4, width: f64, radius: f64) {
+    pub fn outline(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        fill: Vec4,
+        border: Vec4,
+        width: f64,
+        radius: f64,
+    ) {
         self.painter.outline(cx, rect, fill, border, width, radius);
     }
 
@@ -236,7 +275,14 @@ impl Kit {
         self.painter.icon(cx, rect, name, size, color);
     }
 
-    pub fn text_in(&mut self, cx: &mut Cx2d, rect: Rect, spec: TextSpec, text: &str, align_x: f64) -> Rect {
+    pub fn text_in(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        spec: TextSpec,
+        text: &str,
+        align_x: f64,
+    ) -> Rect {
         self.painter.text_in(cx, rect, spec, text, align_x)
     }
 
@@ -244,11 +290,24 @@ impl Kit {
         self.painter.measure(cx, spec, text)
     }
 
-    pub fn paragraph(&mut self, cx: &mut Cx2d, pos: DVec2, max_width: f64, spec: TextSpec, text: &str) -> DVec2 {
+    pub fn paragraph(
+        &mut self,
+        cx: &mut Cx2d,
+        pos: DVec2,
+        max_width: f64,
+        spec: TextSpec,
+        text: &str,
+    ) -> DVec2 {
         self.painter.paragraph(cx, pos, max_width, spec, text)
     }
 
-    pub fn paragraph_height(&mut self, cx: &mut Cx, max_width: f64, spec: TextSpec, text: &str) -> f64 {
+    pub fn paragraph_height(
+        &mut self,
+        cx: &mut Cx,
+        max_width: f64,
+        spec: TextSpec,
+        text: &str,
+    ) -> f64 {
         self.painter.paragraph_height(cx, max_width, spec, text)
     }
 
@@ -264,11 +323,17 @@ impl Kit {
 }
 
 pub fn laidout_size(laidout: &LaidoutText) -> DVec2 {
-    dvec2(laidout.size_in_lpxs.width as f64, laidout.size_in_lpxs.height as f64)
+    dvec2(
+        laidout.size_in_lpxs.width as f64,
+        laidout.size_in_lpxs.height as f64,
+    )
 }
 
 pub fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
-    Rect { pos: dvec2(x, y), size: dvec2(w.max(0.0), h.max(0.0)) }
+    Rect {
+        pos: dvec2(x, y),
+        size: dvec2(w.max(0.0), h.max(0.0)),
+    }
 }
 
 pub fn spec(font: Font, size: f64, color: Vec4) -> TextSpec {
@@ -280,10 +345,25 @@ pub fn hex_color(hex: &str) -> Vec4 {
     let digits = hex.trim_start_matches('#');
     let value = u32::from_str_radix(digits, 16).unwrap_or(0xffffff);
     let (r, g, b, a) = match digits.len() {
-        8 => (value >> 24, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff),
-        _ => ((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff, 0xff),
+        8 => (
+            value >> 24,
+            (value >> 16) & 0xff,
+            (value >> 8) & 0xff,
+            value & 0xff,
+        ),
+        _ => (
+            (value >> 16) & 0xff,
+            (value >> 8) & 0xff,
+            value & 0xff,
+            0xff,
+        ),
     };
-    vec4(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0)
+    vec4(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+        a as f32 / 255.0,
+    )
 }
 
 /// Pointer coordinates of `hit` moved by `-shift`. A parent turtle's alignment (a centred
@@ -335,5 +415,8 @@ pub fn unshift_hit(hit: Hit, shift: DVec2) -> Hit {
 
 /// `rect` in drawn coordinates moved to where it is on screen (see [`unshift_hit`]).
 pub fn shifted(rect: Rect, shift: DVec2) -> Rect {
-    Rect { pos: rect.pos + shift, size: rect.size }
+    Rect {
+        pos: rect.pos + shift,
+        size: rect.size,
+    }
 }

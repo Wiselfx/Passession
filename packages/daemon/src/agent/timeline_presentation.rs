@@ -35,7 +35,8 @@ fn humanize(name: &str) -> String {
 fn leaf(name: &str) -> Option<String> {
     let name = name.trim().to_lowercase();
     if name
-        .split(|c: char| !c.is_ascii_alphanumeric()).rfind(|s| !s.is_empty())
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .rfind(|s| !s.is_empty())
         == Some("speak")
     {
         return None;
@@ -49,9 +50,10 @@ fn leaf(name: &str) -> Option<String> {
             return Some(segments[2..].join("__"));
         }
     } else if let Some((namespace, leaf)) = name.split_once('.')
-        && (namespace == "paseo" || namespace.starts_with("paseo_")) {
-            return Some(leaf.into());
-        }
+        && (namespace == "paseo" || namespace.starts_with("paseo_"))
+    {
+        return Some(leaf.into());
+    }
     None
 }
 pub(super) fn external_tool_name(name: &str) -> bool {
@@ -60,7 +62,8 @@ pub(super) fn external_tool_name(name: &str) -> bool {
         return false;
     }
     if name
-        .split(|c: char| !c.is_ascii_alphanumeric()).rfind(|s| !s.is_empty())
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .rfind(|s| !s.is_empty())
         == Some("speak")
     {
         return true;
@@ -241,16 +244,15 @@ pub fn tool_display(item: &Value) -> Value {
             _ => ("", ""),
         };
         if matches!(text(detail, "type"), "read" | "edit" | "write")
-            && let Some(cwd) = item["cwd"].as_str().filter(|s| !s.is_empty()) {
-                let cwd = cwd.trim_end_matches('/');
-                if summary == cwd {
-                    summary = ".";
-                } else if let Some(rest) =
-                    summary.strip_prefix(cwd).and_then(|p| p.strip_prefix('/'))
-                {
-                    summary = rest;
-                }
+            && let Some(cwd) = item["cwd"].as_str().filter(|s| !s.is_empty())
+        {
+            let cwd = cwd.trim_end_matches('/');
+            if summary == cwd {
+                summary = ".";
+            } else if let Some(rest) = summary.strip_prefix(cwd).and_then(|p| p.strip_prefix('/')) {
+                summary = rest;
             }
+        }
         let mut label = if label.is_empty() {
             let trimmed = name.trim();
             if trimmed.contains([':', '.', '/']) || trimmed.contains("__") {

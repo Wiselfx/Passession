@@ -36,14 +36,22 @@ pub(crate) fn definitions(agent_scope: bool) -> Vec<Value> {
             "Start script",
             "Start a configured paseo.json script in an agent's directory.",
             json!({"agentId":{"type":"string"},"scriptName":{"type":"string","minLength":1}}),
-            if agent_scope { &["scriptName"] } else { &["agentId", "scriptName"] },
+            if agent_scope {
+                &["scriptName"]
+            } else {
+                &["agentId", "scriptName"]
+            },
         ),
         definition(
             "stop_script",
             "Stop script",
             "Stop a configured script in an agent's directory.",
             json!({"agentId":{"type":"string"},"scriptName":{"type":"string","minLength":1}}),
-            if agent_scope { &["scriptName"] } else { &["agentId", "scriptName"] },
+            if agent_scope {
+                &["scriptName"]
+            } else {
+                &["agentId", "scriptName"]
+            },
         ),
         definition(
             "list_terminals",
@@ -96,7 +104,15 @@ mod tool_contract_tests {
     #[test]
     fn tool_catalog_exposes_session_scripts_without_workspace_lifecycle() {
         let tools = definitions(true);
-        for retired in ["create_workspace", "list_workspaces", "rename_workspace", "archive_workspace", "list_workspace_scripts", "start_workspace_script", "stop_workspace_script"] {
+        for retired in [
+            "create_workspace",
+            "list_workspaces",
+            "rename_workspace",
+            "archive_workspace",
+            "list_workspace_scripts",
+            "start_workspace_script",
+            "stop_workspace_script",
+        ] {
             assert!(!tools.iter().any(|tool| tool["name"] == retired));
         }
         for name in ["list_scripts", "start_script", "stop_script"] {
@@ -123,16 +139,27 @@ pub(crate) async fn execute(
     let result = match name {
         "list_scripts" | "start_script" | "stop_script" => {
             if input.get("workspaceId").is_some() {
-                return Err(super::input_error("Use agentId to select the script directory"));
+                return Err(super::input_error(
+                    "Use agentId to select the script directory",
+                ));
             }
-            let id = input.get("agentId").and_then(Value::as_str).or(caller)
-                .ok_or_else(|| super::input_error("agentId is required outside an agent-scoped session"))?;
+            let id = input
+                .get("agentId")
+                .and_then(Value::as_str)
+                .or(caller)
+                .ok_or_else(|| {
+                    super::input_error("agentId is required outside an agent-scoped session")
+                })?;
             let agent = caller_agent(app, id).await?;
             let owner = required(&agent, "workspaceId")?;
             match name {
                 "list_scripts" => json!({"scripts":app.terminals.script_list(owner).await?}),
-                "start_script" => json!({"script":app.terminals.script_start(owner, required(&input,"scriptName")?).await?}),
-                _ => json!({"script":app.terminals.script_stop(owner, required(&input,"scriptName")?).await?}),
+                "start_script" => {
+                    json!({"script":app.terminals.script_start(owner, required(&input,"scriptName")?).await?})
+                }
+                _ => {
+                    json!({"script":app.terminals.script_stop(owner, required(&input,"scriptName")?).await?})
+                }
             }
         }
         "list_terminals" => {
@@ -243,7 +270,9 @@ impl<'a> TerminalFilter<'a> {
     fn parse(input: &'a Value) -> Result<Option<Self>> {
         let Some(query) = input.get("query") else {
             if input.get("contextLines").is_some() || input.get("matchLimit").is_some() {
-                return Err(super::input_error("contextLines and matchLimit require query"));
+                return Err(super::input_error(
+                    "contextLines and matchLimit require query",
+                ));
             }
             return Ok(None);
         };
@@ -315,9 +344,9 @@ impl<'a> TerminalFilter<'a> {
         let total_matches = matches.len();
         let returned_matches = total_matches.min(self.match_limit);
         let truncated = total_matches > returned_matches;
-        let next_range = matches.get(self.match_limit).map(|row| {
-            json!({"start":origin + row,"end":origin + lines.len() - 1})
-        });
+        let next_range = matches
+            .get(self.match_limit)
+            .map(|row| json!({"start":origin + row,"end":origin + lines.len() - 1}));
         let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
         for row in matches.into_iter().take(self.match_limit) {
             let start = row.saturating_sub(self.context_lines);
@@ -338,9 +367,10 @@ impl<'a> TerminalFilter<'a> {
                 while ranges.peek().is_some_and(|range| row >= range.end) {
                     ranges.next();
                 }
-                ranges.peek().filter(|range| range.contains(&row)).map(|_| {
-                    json!({"index":origin + row,"text":text,"matched":matched[row]})
-                })
+                ranges
+                    .peek()
+                    .filter(|range| range.contains(&row))
+                    .map(|_| json!({"index":origin + row,"text":text,"matched":matched[row]}))
             })
             .collect();
         json!({
@@ -364,7 +394,6 @@ async fn existing_terminal(
         .await
         .map_err(|_| super::input_error(format!("Terminal {id} not found")))
 }
-
 
 pub(crate) async fn resolve_scoped_cwd(
     app: &Arc<AppState>,
@@ -442,7 +471,6 @@ fn trimmed<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 fn flag(value: &Value, key: &str, default: bool) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
-
 
 fn terminal_summary(terminal: &Value) -> Value {
     json!({"id":terminal["id"],"name":terminal["name"],"cwd":terminal["cwd"]})
@@ -616,25 +644,34 @@ mod tests {
     use super::*;
 
     fn filtered(input: Value, lines: &[&str], total: usize, start: Option<f64>) -> Value {
-        TerminalFilter::parse(&input)
-            .unwrap()
-            .unwrap()
-            .capture("terminal", lines.iter().map(|line| (*line).into()).collect(), total, start)
+        TerminalFilter::parse(&input).unwrap().unwrap().capture(
+            "terminal",
+            lines.iter().map(|line| (*line).into()).collect(),
+            total,
+            start,
+        )
     }
 
     #[test]
     fn capture_filter_preserves_unfiltered_requests_and_validates_inputs() {
-        assert!(TerminalFilter::parse(&json!({
-            "terminalId":"terminal","start":-2.5,"end":3.9,"stripAnsi":false
-        })).unwrap().is_none());
+        assert!(
+            TerminalFilter::parse(&json!({
+                "terminalId":"terminal","start":-2.5,"end":3.9,"stripAnsi":false
+            }))
+            .unwrap()
+            .is_none()
+        );
         let defaults = json!({"query":" "});
         let defaults = TerminalFilter::parse(&defaults).unwrap().unwrap();
         assert_eq!(defaults.query, " ");
         assert_eq!(defaults.context_lines, 2);
         assert_eq!(defaults.match_limit, 20);
         for input in [
-            json!({"query":""}), json!({"query":null}), json!({"query":12}),
-            json!({"contextLines":1}), json!({"matchLimit":1}),
+            json!({"query":""}),
+            json!({"query":null}),
+            json!({"query":12}),
+            json!({"contextLines":1}),
+            json!({"matchLimit":1}),
             json!({"query":"x","contextLines":-1}),
             json!({"query":"x","contextLines":21}),
             json!({"query":"x","contextLines":1.5}),
@@ -646,13 +683,23 @@ mod tests {
             json!({"query":"x","matchLimit":true}),
         ] {
             let error = TerminalFilter::parse(&input).err().unwrap();
-            assert!(error.downcast_ref::<crate::providers::api::NativeToolInputError>().is_some(), "{input}");
+            assert!(
+                error
+                    .downcast_ref::<crate::providers::api::NativeToolInputError>()
+                    .is_some(),
+                "{input}"
+            );
         }
-        assert!(TerminalFilter::parse(&json!({
-            "query":"x","contextLines":20.0,"matchLimit":100
-        })).is_ok());
-        let definition = definitions(false).into_iter()
-            .find(|tool| tool["name"] == "capture_terminal").unwrap();
+        assert!(
+            TerminalFilter::parse(&json!({
+                "query":"x","contextLines":20.0,"matchLimit":100
+            }))
+            .is_ok()
+        );
+        let definition = definitions(false)
+            .into_iter()
+            .find(|tool| tool["name"] == "capture_terminal")
+            .unwrap();
         for mut input in [
             json!({"terminalId":"t","query":""}),
             json!({"terminalId":"t","query":"x","contextLines":21}),
@@ -680,8 +727,12 @@ mod tests {
             // Captured windows follow screen_tests' inclusive bounds, including
             // reversed fractional ranges which are empty before truncation.
             let result = filtered(json!({"query":"e","contextLines":2}), &lines, 4, start);
-            let indices: Vec<_> = result["lines"].as_array().unwrap().iter()
-                .map(|line| line["index"].as_u64().unwrap()).collect();
+            let indices: Vec<_> = result["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line["index"].as_u64().unwrap())
+                .collect();
             assert_eq!(indices, expected, "{start:?}");
             assert_eq!(result["totalLines"], 4);
             if let (Some(first), Some(last)) = (expected.first(), expected.last()) {
@@ -696,22 +747,36 @@ mod tests {
     fn capture_filter_merges_context_and_keeps_unicode_and_literal_text() {
         let result = filtered(
             json!({"query":"ÉRROR [x]","contextLines":1}),
-            &["before", "érror [x] 日本語", "between", "ÉRROR [x] again", "after"],
+            &[
+                "before",
+                "érror [x] 日本語",
+                "between",
+                "ÉRROR [x] again",
+                "after",
+            ],
             20,
             Some(10.8),
         );
         assert_eq!(result["totalMatches"], 2);
-        assert_eq!(result["lines"], json!([
-            {"index":10,"text":"before","matched":false},
-            {"index":11,"text":"érror [x] 日本語","matched":true},
-            {"index":12,"text":"between","matched":false},
-            {"index":13,"text":"ÉRROR [x] again","matched":true},
-            {"index":14,"text":"after","matched":false}
-        ]));
+        assert_eq!(
+            result["lines"],
+            json!([
+                {"index":10,"text":"before","matched":false},
+                {"index":11,"text":"érror [x] 日本語","matched":true},
+                {"index":12,"text":"between","matched":false},
+                {"index":13,"text":"ÉRROR [x] again","matched":true},
+                {"index":14,"text":"after","matched":false}
+            ])
+        );
         assert_eq!(result["inspectedRange"], json!({"start":10,"end":14}));
         assert_eq!(result["truncated"], false);
         assert!(result["nextRange"].is_null());
-        let literal = filtered(json!({"query":".*","contextLines":0}), &["error", ".*"], 2, None);
+        let literal = filtered(
+            json!({"query":".*","contextLines":0}),
+            &["error", ".*"],
+            2,
+            None,
+        );
         assert_eq!(literal["totalMatches"], 1);
         assert_eq!(literal["lines"][0]["index"], 1);
     }
@@ -726,7 +791,13 @@ mod tests {
         );
         assert_eq!(result["totalMatches"], 1);
         assert_eq!(result["lines"].as_array().unwrap().len(), 3);
-        assert!(result["lines"].as_array().unwrap().iter().all(|line| line["matched"] == true));
+        assert!(
+            result["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|line| line["matched"] == true)
+        );
         assert_eq!(result["lines"][0]["index"], 6);
         let overlapping = filtered(
             json!({"query":"x\nx","contextLines":0}),
@@ -758,10 +829,17 @@ mod tests {
         assert_eq!(result["nextRange"], json!({"start":8,"end":9}));
         assert_eq!(result["lines"].as_array().unwrap().len(), 3);
         assert_eq!(result["indexScope"], "snapshot");
-        assert!(result["notice"].as_str().unwrap().contains("not a complete error audit"));
+        assert!(
+            result["notice"]
+                .as_str()
+                .unwrap()
+                .contains("not a complete error audit")
+        );
         let bounded = filtered(
             json!({"query":"x","contextLines":20,"matchLimit":1}),
-            &["x", "x"], 2, None,
+            &["x", "x"],
+            2,
+            None,
         );
         assert_eq!(bounded["lines"].as_array().unwrap().len(), 2);
         assert_eq!(bounded["lines"][1]["matched"], true);

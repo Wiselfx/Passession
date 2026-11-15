@@ -1,7 +1,7 @@
 //! Project identity presentation (`project_settings_panel.dart` `projectViewKey`,
 //! `_identityFill`, `ProjectIconSquare`).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::rpc::str_of;
 
@@ -44,7 +44,10 @@ pub fn identity_fill(key: &str) -> u32 {
 /// The white initial of the last path segment, `?` when empty.
 pub fn project_initial(name: &str) -> String {
     let trimmed = name.trim();
-    let label = trimmed.split('/').rfind(|s| !s.is_empty()).unwrap_or(trimmed);
+    let label = trimmed
+        .split('/')
+        .rfind(|s| !s.is_empty())
+        .unwrap_or(trimmed);
     label
         .chars()
         .next()
@@ -68,8 +71,14 @@ mod tests {
 
     #[test]
     fn view_key_prefers_project_key() {
-        assert_eq!(project_view_key("s", &json!({"projectKey": "k", "projectId": "p"})), "k");
-        assert_eq!(project_view_key("s", &json!({"projectId": "p"})), "[\"s\",\"p\"]");
+        assert_eq!(
+            project_view_key("s", &json!({"projectKey": "k", "projectId": "p"})),
+            "k"
+        );
+        assert_eq!(
+            project_view_key("s", &json!({"projectId": "p"})),
+            "[\"s\",\"p\"]"
+        );
     }
 
     #[test]

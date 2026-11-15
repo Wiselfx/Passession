@@ -3,12 +3,12 @@ use crate::{
     state::AppState,
     transport::{OutboundFrame, context::MAX_BUFFERED_BYTES},
 };
-use paseo_protocol::crypto::{
-    Frame, HANDSHAKE_TIMEOUT, KeyPair, MAX_WIRE_BYTES, SecureChannel, SecurityMode,
-};
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
+use paseo_protocol::crypto::{
+    Frame, HANDSHAKE_TIMEOUT, KeyPair, MAX_WIRE_BYTES, SecureChannel, SecurityMode,
+};
 use std::{
     collections::VecDeque,
     sync::{
@@ -193,10 +193,10 @@ pub(super) async fn run(
         && tokio::time::timeout(Duration::from_secs(1), &mut task)
             .await
             .is_err()
-        {
-            task.abort();
-            let _ = task.await;
-        }
+    {
+        task.abort();
+        let _ = task.await;
+    }
     result
 }
 

@@ -59,7 +59,10 @@ impl Builder {
             None => {
                 let color = *next_color;
                 *next_color += 1;
-                let index = lanes.iter().position(Option::is_none).unwrap_or(lanes.len());
+                let index = lanes
+                    .iter()
+                    .position(Option::is_none)
+                    .unwrap_or(lanes.len());
                 (index, color)
             }
         };
@@ -67,8 +70,16 @@ impl Builder {
         let mut top = Vec::new();
         for (index, slot) in lanes.iter().enumerate() {
             if let Some(l) = slot {
-                let to = if waiting.contains(&index) { lane } else { index };
-                top.push(Edge { from: index, to, color: l.color });
+                let to = if waiting.contains(&index) {
+                    lane
+                } else {
+                    index
+                };
+                top.push(Edge {
+                    from: index,
+                    to,
+                    color: l.color,
+                });
             }
         }
         // The node consumes every lane waiting for it.
@@ -81,8 +92,15 @@ impl Builder {
         let mut opened = Vec::new();
         let mut bottom = Vec::new();
         if let Some(first) = parents.first() {
-            lanes[lane] = Some(Lane { expects: first.clone(), color });
-            bottom.push(Edge { from: lane, to: lane, color });
+            lanes[lane] = Some(Lane {
+                expects: first.clone(),
+                color,
+            });
+            bottom.push(Edge {
+                from: lane,
+                to: lane,
+                color,
+            });
         }
         for parent in parents.iter().skip(1) {
             if parent == parents.first().map_or("", String::as_str) {
@@ -91,20 +109,36 @@ impl Builder {
             let existing = lanes
                 .iter()
                 .enumerate()
-                .find(|(index, slot)| *index != lane && slot.as_ref().is_some_and(|l| &l.expects == parent))
+                .find(|(index, slot)| {
+                    *index != lane && slot.as_ref().is_some_and(|l| &l.expects == parent)
+                })
                 .map(|(index, slot)| (index, slot.as_ref().map_or(0, |l| l.color)));
             match existing {
-                Some((index, lane_color)) => bottom.push(Edge { from: lane, to: index, color: lane_color }),
+                Some((index, lane_color)) => bottom.push(Edge {
+                    from: lane,
+                    to: index,
+                    color: lane_color,
+                }),
                 None => {
                     let merge_color = *next_color;
                     *next_color += 1;
-                    let index = lanes.iter().position(Option::is_none).unwrap_or(lanes.len());
+                    let index = lanes
+                        .iter()
+                        .position(Option::is_none)
+                        .unwrap_or(lanes.len());
                     if index == lanes.len() {
                         lanes.push(None);
                     }
-                    lanes[index] = Some(Lane { expects: parent.clone(), color: merge_color });
+                    lanes[index] = Some(Lane {
+                        expects: parent.clone(),
+                        color: merge_color,
+                    });
                     opened.push(index);
-                    bottom.push(Edge { from: lane, to: index, color: merge_color });
+                    bottom.push(Edge {
+                        from: lane,
+                        to: index,
+                        color: merge_color,
+                    });
                 }
             }
         }
@@ -114,14 +148,24 @@ impl Builder {
                 && index != lane
                 && !opened.contains(&index)
             {
-                bottom.push(Edge { from: index, to: index, color: l.color });
+                bottom.push(Edge {
+                    from: index,
+                    to: index,
+                    color: l.color,
+                });
             }
         }
         while lanes.last().is_some_and(Option::is_none) {
             lanes.pop();
         }
         let width = top_width.max(lanes.len()).max(lane + 1);
-        GraphRow { lane, color, top, bottom, lanes: width }
+        GraphRow {
+            lane,
+            color,
+            top,
+            bottom,
+            lanes: width,
+        }
     }
 }
 
@@ -132,7 +176,10 @@ where
     I: IntoIterator<Item = (&'a str, &'a [String])>,
 {
     let mut builder = Builder::default();
-    commits.into_iter().map(|(sha, parents)| builder.push(sha, parents)).collect()
+    commits
+        .into_iter()
+        .map(|(sha, parents)| builder.push(sha, parents))
+        .collect()
 }
 
 #[cfg(test)]
@@ -141,12 +188,20 @@ mod tests {
 
     fn commits(list: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
         list.iter()
-            .map(|(sha, parents)| (sha.to_string(), parents.iter().map(|p| p.to_string()).collect()))
+            .map(|(sha, parents)| {
+                (
+                    sha.to_string(),
+                    parents.iter().map(|p| p.to_string()).collect(),
+                )
+            })
             .collect()
     }
 
     fn graph(list: &[(String, Vec<String>)]) -> Vec<GraphRow> {
-        build(list.iter().map(|(sha, parents)| (sha.as_str(), parents.as_slice())))
+        build(
+            list.iter()
+                .map(|(sha, parents)| (sha.as_str(), parents.as_slice())),
+        )
     }
 
     fn e(from: usize, to: usize, color: usize) -> Edge {
@@ -158,10 +213,37 @@ mod tests {
         let list = commits(&[("c", &["b"]), ("b", &["a"]), ("a", &[])]);
         let rows = graph(&list);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0], GraphRow { lane: 0, color: 0, top: vec![], bottom: vec![e(0, 0, 0)], lanes: 1 });
-        assert_eq!(rows[1], GraphRow { lane: 0, color: 0, top: vec![e(0, 0, 0)], bottom: vec![e(0, 0, 0)], lanes: 1 });
+        assert_eq!(
+            rows[0],
+            GraphRow {
+                lane: 0,
+                color: 0,
+                top: vec![],
+                bottom: vec![e(0, 0, 0)],
+                lanes: 1
+            }
+        );
+        assert_eq!(
+            rows[1],
+            GraphRow {
+                lane: 0,
+                color: 0,
+                top: vec![e(0, 0, 0)],
+                bottom: vec![e(0, 0, 0)],
+                lanes: 1
+            }
+        );
         // The root commit ends its lane.
-        assert_eq!(rows[2], GraphRow { lane: 0, color: 0, top: vec![e(0, 0, 0)], bottom: vec![], lanes: 1 });
+        assert_eq!(
+            rows[2],
+            GraphRow {
+                lane: 0,
+                color: 0,
+                top: vec![e(0, 0, 0)],
+                bottom: vec![],
+                lanes: 1
+            }
+        );
     }
 
     #[test]
@@ -200,7 +282,13 @@ mod tests {
 
     #[test]
     fn octopus_merge_opens_a_lane_per_extra_parent() {
-        let list = commits(&[("o", &["p1", "p2", "p3"]), ("p3", &["r"]), ("p2", &["r"]), ("p1", &["r"]), ("r", &[])]);
+        let list = commits(&[
+            ("o", &["p1", "p2", "p3"]),
+            ("p3", &["r"]),
+            ("p2", &["r"]),
+            ("p1", &["r"]),
+            ("r", &[]),
+        ]);
         let rows = graph(&list);
         assert_eq!(rows[0].bottom, vec![e(0, 0, 0), e(0, 1, 1), e(0, 2, 2)]);
         assert_eq!(rows[0].lanes, 3);
@@ -266,11 +354,24 @@ mod tests {
 
     #[test]
     fn builder_continues_across_pages() {
-        let full = commits(&[("m", &["b", "f"]), ("f", &["a"]), ("b", &["a"]), ("x", &["a"]), ("a", &[])]);
+        let full = commits(&[
+            ("m", &["b", "f"]),
+            ("f", &["a"]),
+            ("b", &["a"]),
+            ("x", &["a"]),
+            ("a", &[]),
+        ]);
         let all = graph(&full);
         let mut builder = Builder::default();
-        let mut rows: Vec<GraphRow> = full[..2].iter().map(|(sha, parents)| builder.push(sha, parents)).collect();
-        rows.extend(full[2..].iter().map(|(sha, parents)| builder.push(sha, parents)));
+        let mut rows: Vec<GraphRow> = full[..2]
+            .iter()
+            .map(|(sha, parents)| builder.push(sha, parents))
+            .collect();
+        rows.extend(
+            full[2..]
+                .iter()
+                .map(|(sha, parents)| builder.push(sha, parents)),
+        );
         assert_eq!(rows, all);
     }
 }

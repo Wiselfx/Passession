@@ -12,13 +12,18 @@ use serde_json::{Value, json};
 use crate::common::paint::{Font, rect};
 use crate::common::{json as j, tr, tr_args};
 use crate::shell::hosts;
-use crate::shell::sheets::{ConfirmSheet, Field, FieldEvent, Sheet, SheetFlow, SheetOps, hint, row, row_leading, row_trailing, separator, spinner};
-use crate::shell::ui::Ui;
 use crate::shell::response_message;
+use crate::shell::sheets::{
+    ConfirmSheet, Field, FieldEvent, Sheet, SheetFlow, SheetOps, hint, row, row_leading,
+    row_trailing, separator, spinner,
+};
+use crate::shell::ui::Ui;
 use crate::theme::{Palette, argb};
 
 /// Original label identity colors (`styles/identity-colors.ts`).
-const LABEL_COLORS: [&str; 10] = ["violet", "sky", "emerald", "orange", "pink", "indigo", "teal", "red", "amber", "blue"];
+const LABEL_COLORS: [&str; 10] = [
+    "violet", "sky", "emerald", "orange", "pink", "indigo", "teal", "red", "amber", "blue",
+];
 
 /// Foreground variant of a label identity color; muted for unknown names.
 pub fn label_color(p: &Palette, name: &str) -> Vec4 {
@@ -70,9 +75,18 @@ impl LabelsSheet {
     pub fn new(host_id: String, workspace: Option<Value>) -> Self {
         let assigned = workspace
             .as_ref()
-            .map(|w| j::array(w, "labels").iter().map(|l| l.as_str().map_or_else(|| l.to_string(), str::to_string)).collect())
+            .map(|w| {
+                j::array(w, "labels")
+                    .iter()
+                    .map(|l| l.as_str().map_or_else(|| l.to_string(), str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
-        let page = if workspace.is_some() { Page::Pick } else { Page::Manage };
+        let page = if workspace.is_some() {
+            Page::Pick
+        } else {
+            Page::Manage
+        };
         Self {
             host_id,
             workspace,
@@ -94,28 +108,57 @@ impl LabelsSheet {
     }
 
     fn load(&self, ops: &mut SheetOps) {
-        ops.request(&self.host_id, json!({ "type": "workspace.label.list.request" }), "workspace.label.list.response", "list");
+        ops.request(
+            &self.host_id,
+            json!({ "type": "workspace.label.list.request" }),
+            "workspace.label.list.response",
+            "list",
+        );
     }
 
     fn open(&mut self, cx: &mut Cx, page: Page, label: Option<Value>) {
         self.page = page;
         self.error = None;
-        let (name, color) = label.as_ref().map_or((String::new(), "violet".to_string()), |l| (j::text(l, "name").to_string(), j::text(l, "color").to_string()));
+        let (name, color) = label
+            .as_ref()
+            .map_or((String::new(), "violet".to_string()), |l| {
+                (
+                    j::text(l, "name").to_string(),
+                    j::text(l, "color").to_string(),
+                )
+            });
         self.editing = label;
         self.name.set_text(cx, &name);
-        self.name.set_placeholder(cx, &tr(if page == Page::Edit { "workspaceLabels.manage.name" } else { "workspaceLabels.name" }));
-        self.color = if color.is_empty() { "violet".to_string() } else { color };
+        self.name.set_placeholder(
+            cx,
+            &tr(if page == Page::Edit {
+                "workspaceLabels.manage.name"
+            } else {
+                "workspaceLabels.name"
+            }),
+        );
+        self.color = if color.is_empty() {
+            "violet".to_string()
+        } else {
+            color
+        };
         if matches!(page, Page::Create | Page::Edit) {
             self.name.focus(cx);
         }
     }
 
     fn normalized_name(&self) -> String {
-        self.name.text().split_whitespace().collect::<Vec<_>>().join(" ")
+        self.name
+            .text()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn assign(&mut self, ops: &mut SheetOps, name: &str, color: &str, assigned: bool) {
-        let Some(workspace) = &self.workspace else { return };
+        let Some(workspace) = &self.workspace else {
+            return;
+        };
         self.pending.insert(name.to_lowercase());
         self.error = None;
         ops.request(
@@ -142,7 +185,9 @@ impl LabelsSheet {
     }
 
     fn save(&mut self, ops: &mut SheetOps) {
-        let Some(label) = self.editing.clone() else { return };
+        let Some(label) = self.editing.clone() else {
+            return;
+        };
         let name = self.normalized_name();
         if name.is_empty() || self.busy {
             return;
@@ -180,7 +225,13 @@ impl Sheet for LabelsSheet {
             Page::Pick => tr("workspaceLabels.title"),
             Page::Create => tr("workspaceLabels.create"),
             Page::Manage => tr("workspaceLabels.manage.title"),
-            Page::Edit => tr_args("workspaceLabels.manage.editLabel", &[("name", self.editing.as_ref().map_or("", |l| j::text(l, "name")))]),
+            Page::Edit => tr_args(
+                "workspaceLabels.manage.editLabel",
+                &[(
+                    "name",
+                    self.editing.as_ref().map_or("", |l| j::text(l, "name")),
+                )],
+            ),
         }
     }
 
@@ -197,14 +248,29 @@ impl Sheet for LabelsSheet {
         }
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
-        self.offline = hosts::host(ui_state(scope).as_ref(), &self.host_id).is_none_or(|h| !h.connected());
+        self.offline =
+            hosts::host(ui_state(scope).as_ref(), &self.host_id).is_none_or(|h| !h.connected());
         let start = y;
         let mut y = y;
         let act = |id: &str, enabled: bool| (enabled && interactive).then(|| id.to_string());
         if self.page == Page::Pick {
-            if let Some(name) = self.workspace.as_ref().map(|w| j::text(w, "name")).filter(|n| !n.is_empty()) {
+            if let Some(name) = self
+                .workspace
+                .as_ref()
+                .map(|w| j::text(w, "name"))
+                .filter(|n| !n.is_empty())
+            {
                 let spec = ui.spec(Font::Regular, 12.0, p.muted);
                 ui.text(cx, rect(x + 12.0, y - 12.0, w - 24.0, 16.0), spec, name);
                 y += 8.0;
@@ -224,9 +290,19 @@ impl Sheet for LabelsSheet {
                     let name = j::text(label, "name");
                     let id = act(&format!("pick:{i}"), !self.offline);
                     let (r, h) = row(ui, cx, x, y, w, id.as_deref(), name, None);
-                    ui.dot(cx, row_leading(r).center(), 10.0, label_color(&p, j::text(label, "color")));
+                    ui.dot(
+                        cx,
+                        row_leading(r).center(),
+                        10.0,
+                        label_color(&p, j::text(label, "color")),
+                    );
                     if self.pending.contains(&name.to_lowercase()) {
-                        spinner(ui, cx, crate::common::paint::inset(row_trailing(r), 1.0, 1.0), p.muted);
+                        spinner(
+                            ui,
+                            cx,
+                            crate::common::paint::inset(row_trailing(r), 1.0, 1.0),
+                            p.muted,
+                        );
                     } else if self.assigned.contains(name) {
                         ui.icon(cx, row_trailing(r), "check", 16.0, p.foreground);
                     }
@@ -236,19 +312,46 @@ impl Sheet for LabelsSheet {
                     y += separator(ui, cx, x, y, w);
                 }
                 let id = act("create", !self.offline);
-                let (r, h) = row(ui, cx, x, y, w, id.as_deref(), &tr("workspaceLabels.create"), None);
+                let (r, h) = row(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    id.as_deref(),
+                    &tr("workspaceLabels.create"),
+                    None,
+                );
                 ui.icon(cx, row_leading(r), "plus", 16.0, p.muted);
                 ui.icon(cx, row_trailing(r), "chevron-right", 16.0, p.muted);
                 y += h;
                 let id = act("manage", true);
-                let (r, h) = row(ui, cx, x, y, w, id.as_deref(), &tr("workspaceLabels.manage.open"), None);
+                let (r, h) = row(
+                    ui,
+                    cx,
+                    x,
+                    y,
+                    w,
+                    id.as_deref(),
+                    &tr("workspaceLabels.manage.open"),
+                    None,
+                );
                 ui.icon(cx, row_leading(r), "sliders-horizontal", 16.0, p.muted);
                 y += h;
             }
             Page::Create | Page::Edit => {
                 let edit = self.page == Page::Edit;
                 self.name.set_read_only(cx, self.offline || self.busy);
-                self.name.draw(cx, scope, rect(x + 4.0, y + 4.0, w - 8.0, if ui.compact { 44.0 } else { 32.0 }));
+                self.name.draw(
+                    cx,
+                    scope,
+                    rect(
+                        x + 4.0,
+                        y + 4.0,
+                        w - 8.0,
+                        if ui.compact { 44.0 } else { 32.0 },
+                    ),
+                );
                 y += 8.0 + if ui.compact { 44.0 } else { 32.0 };
                 // Swatches: 20px circles, 12 apart, wrapping; 2px foreground ring when selected.
                 let mut sx = x + 12.0;
@@ -266,7 +369,11 @@ impl Sheet for LabelsSheet {
                         ui.dot(cx, r.center(), 20.0, label_color(&p, color));
                     }
                     if !self.offline && !self.busy && interactive {
-                        ui.hit_tip(r, &format!("color:{color}"), &tr(&format!("workspaceLabels.colors.{color}")));
+                        ui.hit_tip(
+                            r,
+                            &format!("color:{color}"),
+                            &tr(&format!("workspaceLabels.colors.{color}")),
+                        );
                     }
                     sx += 32.0;
                 }
@@ -275,23 +382,45 @@ impl Sheet for LabelsSheet {
                 let label = if self.busy {
                     tr("workspaceLabels.creating")
                 } else {
-                    tr(if edit { "workspaceLabels.manage.save" } else { "workspaceLabels.createConfirm" })
+                    tr(if edit {
+                        "workspaceLabels.manage.save"
+                    } else {
+                        "workspaceLabels.createConfirm"
+                    })
                 };
-                let id = act("submit", !self.offline && !self.busy && !self.normalized_name().is_empty());
+                let id = act(
+                    "submit",
+                    !self.offline && !self.busy && !self.normalized_name().is_empty(),
+                );
                 let (r, h) = row(ui, cx, x, y, w, id.as_deref(), &label, None);
                 if self.busy {
-                    spinner(ui, cx, crate::common::paint::inset(row_trailing(r), 1.0, 1.0), p.muted);
+                    spinner(
+                        ui,
+                        cx,
+                        crate::common::paint::inset(row_trailing(r), 1.0, 1.0),
+                        p.muted,
+                    );
                 }
                 y += h;
                 if edit {
                     let id = act("delete", !self.offline && !self.busy);
-                    let (_, h) = row(ui, cx, x, y, w, id.as_deref(), &tr("workspaceLabels.manage.delete"), Some(p.danger));
+                    let (_, h) = row(
+                        ui,
+                        cx,
+                        x,
+                        y,
+                        w,
+                        id.as_deref(),
+                        &tr("workspaceLabels.manage.delete"),
+                        Some(p.danger),
+                    );
                     y += h;
                 }
             }
             Page::Manage => {
                 let fh = if ui.compact { 44.0 } else { 32.0 };
-                self.search.draw(cx, scope, rect(x + 4.0, y + 4.0, w - 8.0, fh));
+                self.search
+                    .draw(cx, scope, rect(x + 4.0, y + 4.0, w - 8.0, fh));
                 y += 8.0 + fh;
                 if self.labels.is_empty() {
                     y += hint(ui, cx, x, y, w, &tr("workspaceLabels.manage.empty"), false);
@@ -303,14 +432,33 @@ impl Sheet for LabelsSheet {
                     }
                     let id = act(&format!("edit:{i}"), !self.offline);
                     let (r, h) = row(ui, cx, x, y, w, id.as_deref(), name, None);
-                    ui.dot(cx, row_leading(r).center(), 10.0, label_color(&p, j::text(label, "color")));
-                    ui.icon(cx, crate::common::paint::inset(row_trailing(r), 1.0, 1.0), "pencil", 14.0, p.muted);
+                    ui.dot(
+                        cx,
+                        row_leading(r).center(),
+                        10.0,
+                        label_color(&p, j::text(label, "color")),
+                    );
+                    ui.icon(
+                        cx,
+                        crate::common::paint::inset(row_trailing(r), 1.0, 1.0),
+                        "pencil",
+                        14.0,
+                        p.muted,
+                    );
                     y += h;
                 }
             }
         }
         if self.offline {
-            y += hint(ui, cx, x, y, w, &tr("workspaceLabels.manage.offline"), false);
+            y += hint(
+                ui,
+                cx,
+                x,
+                y,
+                w,
+                &tr("workspaceLabels.manage.offline"),
+                false,
+            );
         }
         if let Some(error) = self.error.clone() {
             y += hint(ui, cx, x, y, w, &error, true);
@@ -344,11 +492,19 @@ impl Sheet for LabelsSheet {
             _ => {
                 if let Some(color) = id.strip_prefix("color:") {
                     self.color = color.to_string();
-                } else if let Some(label) = id.strip_prefix("pick:").and_then(|i| i.parse::<usize>().ok()).and_then(|i| self.labels.get(i).cloned()) {
+                } else if let Some(label) = id
+                    .strip_prefix("pick:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.labels.get(i).cloned())
+                {
                     let name = j::text(&label, "name").to_string();
                     let assigned = !self.assigned.contains(&name);
                     self.assign(ops, &name, j::text(&label, "color"), assigned);
-                } else if let Some(label) = id.strip_prefix("edit:").and_then(|i| i.parse::<usize>().ok()).and_then(|i| self.labels.get(i).cloned()) {
+                } else if let Some(label) = id
+                    .strip_prefix("edit:")
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .and_then(|i| self.labels.get(i).cloned())
+                {
                     self.open(cx, Page::Edit, Some(label));
                 }
             }
@@ -364,7 +520,8 @@ impl Sheet for LabelsSheet {
                 }
             }
             Page::Manage => {
-                if let Some(FieldEvent::Changed(text)) = self.search.handle_event(cx, event, scope) {
+                if let Some(FieldEvent::Changed(text)) = self.search.handle_event(cx, event, scope)
+                {
                     self.query = text.trim().to_lowercase();
                 }
             }
@@ -384,7 +541,13 @@ impl Sheet for LabelsSheet {
         SheetFlow::Stay
     }
 
-    fn on_response(&mut self, cx: &mut Cx, tag: &str, result: &Result<Value, CoreError>, ops: &mut SheetOps) -> SheetFlow {
+    fn on_response(
+        &mut self,
+        cx: &mut Cx,
+        tag: &str,
+        result: &Result<Value, CoreError>,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         let failure = response_message(result);
         let payload = result.as_ref().ok().cloned().unwrap_or(Value::Null);
         match tag {
@@ -400,7 +563,11 @@ impl Sheet for LabelsSheet {
                 match failure {
                     Some(error) => self.error = Some(error),
                     None => {
-                        let old = self.editing.as_ref().map(|l| j::text(l, "name").to_string()).unwrap_or_default();
+                        let old = self
+                            .editing
+                            .as_ref()
+                            .map(|l| j::text(l, "name").to_string())
+                            .unwrap_or_default();
                         if self.assigned.remove(&old) {
                             self.assigned.insert(self.normalized_name());
                         }
@@ -416,9 +583,17 @@ impl Sheet for LabelsSheet {
                 }
                 None => {
                     self.busy = false;
-                    let name = self.editing.as_ref().map(|l| j::text(l, "name").to_string()).unwrap_or_default();
+                    let name = self
+                        .editing
+                        .as_ref()
+                        .map(|l| j::text(l, "name").to_string())
+                        .unwrap_or_default();
                     let count = j::int(&payload, "affectedWorkspaceCount", 0);
-                    let key = if count == 1 { "workspaceLabels.manage.deleteMessage_one" } else { "workspaceLabels.manage.deleteMessage_other" };
+                    let key = if count == 1 {
+                        "workspaceLabels.manage.deleteMessage_one"
+                    } else {
+                        "workspaceLabels.manage.deleteMessage_other"
+                    };
                     let confirm = ConfirmSheet::new(
                         ops,
                         &tr_args("workspaceLabels.manage.deleteTitle", &[("name", &name)]),
@@ -435,7 +610,11 @@ impl Sheet for LabelsSheet {
                 match failure {
                     Some(error) => self.error = Some(error),
                     None => {
-                        let name = self.editing.as_ref().map(|l| j::text(l, "name").to_string()).unwrap_or_default();
+                        let name = self
+                            .editing
+                            .as_ref()
+                            .map(|l| j::text(l, "name").to_string())
+                            .unwrap_or_default();
                         self.assigned.remove(&name);
                         self.after_change(ops);
                         self.open(cx, Page::Manage, None);
@@ -466,7 +645,13 @@ impl Sheet for LabelsSheet {
         SheetFlow::Stay
     }
 
-    fn on_deliver(&mut self, _cx: &mut Cx, tag: &str, value: &Value, ops: &mut SheetOps) -> SheetFlow {
+    fn on_deliver(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        value: &Value,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
         if tag == "delete"
             && value.as_bool() == Some(true)
             && let Some(label) = &self.editing
@@ -485,5 +670,9 @@ impl Sheet for LabelsSheet {
 
 /// The core state as seen by sheets during draw (the dispatch scope carries `UiContext`).
 fn ui_state(scope: &mut Scope) -> std::sync::Arc<Value> {
-    scope.data.get::<crate::common::UiContext>().map(|ui| ui.state.clone()).unwrap_or_default()
+    scope
+        .data
+        .get::<crate::common::UiContext>()
+        .map(|ui| ui.state.clone())
+        .unwrap_or_default()
 }

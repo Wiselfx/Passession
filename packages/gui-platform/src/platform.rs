@@ -12,8 +12,8 @@ use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -156,8 +156,11 @@ pub fn platform() -> Option<PlatformHandle> {
 
 /// Runs one request to completion on the calling (non-GUI) thread. Used by the
 /// blocking facades (`desktop::invoke`, `notifications::*`, the tone test).
-pub(crate) fn blocking(start: impl FnOnce(&Arc<Shared>, Completion)) -> Result<PlatformValue, PlatformError> {
-    let handle = platform().ok_or_else(|| PlatformError::new("not_started", "The platform layer has not started."))?;
+pub(crate) fn blocking(
+    start: impl FnOnce(&Arc<Shared>, Completion),
+) -> Result<PlatformValue, PlatformError> {
+    let handle = platform()
+        .ok_or_else(|| PlatformError::new("not_started", "The platform layer has not started."))?;
     let id = handle.0.next_id();
     let receiver = crate::action::wait_for(id);
     start(&handle.0, Completion(id));
@@ -168,7 +171,10 @@ pub(crate) fn blocking(start: impl FnOnce(&Arc<Shared>, Completion)) -> Result<P
 
 impl Platform {
     pub fn start(cx: &mut Cx, config: PlatformConfig) -> anyhow::Result<Platform> {
-        anyhow::ensure!(HANDLE.get().is_none(), "Platform::start was already called.");
+        anyhow::ensure!(
+            HANDLE.get().is_none(),
+            "Platform::start was already called."
+        );
         native::prepare_process(cx)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -224,11 +230,12 @@ impl Platform {
 
     pub fn finish_event(&mut self, cx: &mut Cx, event: &Event) {
         if let Event::BackPressed { handled } = event
-            && !handled.get() {
-                // Leaving the app must not stop remote sessions: background the task.
-                native::background_app(cx);
-                handled.set(true);
-            }
+            && !handled.get()
+        {
+            // Leaving the app must not stop remote sessions: background the task.
+            native::background_app(cx);
+            handled.set(true);
+        }
     }
 
     pub fn observe_core_event(&mut self, event: &CoreEvent) {
@@ -247,10 +254,13 @@ impl Platform {
 }
 
 fn validate_external_url(url: &str) -> Result<String, PlatformError> {
-    let parsed = url::Url::parse(url.trim()).map_err(|_| PlatformError::invalid(format!("Not a valid URL: {url}")))?;
+    let parsed = url::Url::parse(url.trim())
+        .map_err(|_| PlatformError::invalid(format!("Not a valid URL: {url}")))?;
     match parsed.scheme() {
         "http" | "https" | "mailto" | "paseo" => Ok(parsed.to_string()),
-        scheme => Err(PlatformError::invalid(format!("Refusing to open a {scheme}: link."))),
+        scheme => Err(PlatformError::invalid(format!(
+            "Refusing to open a {scheme}: link."
+        ))),
     }
 }
 
@@ -277,7 +287,10 @@ impl PlatformHandle {
         let done = self.0.completion();
         let id = done.id();
         if !path.is_absolute() {
-            done.fail(PlatformError::invalid(format!("Paths must be absolute: {}", path.display())));
+            done.fail(PlatformError::invalid(format!(
+                "Paths must be absolute: {}",
+                path.display()
+            )));
         } else {
             native::open_path(self.shared(), path.to_owned(), done);
         }
@@ -312,10 +325,31 @@ impl PlatformHandle {
         id
     }
 
+    /// Copy a generated file to a user-selected native document destination.
+    /// The caller retains the source until completion; cancellation is `Bool(false)`.
+    pub fn save_file(&self, path: &Path, mime_type: &str, name: &str) -> PlatformRequestId {
+        let done = self.0.completion();
+        let id = done.id();
+        native::save_file(
+            self.shared(),
+            path.to_owned(),
+            mime_type.to_owned(),
+            name.to_owned(),
+            done,
+        );
+        id
+    }
+
     pub fn share_file(&self, path: &Path, mime_type: &str, name: &str) -> PlatformRequestId {
         let done = self.0.completion();
         let id = done.id();
-        native::share_file(self.shared(), path.to_owned(), mime_type.to_owned(), name.to_owned(), done);
+        native::share_file(
+            self.shared(),
+            path.to_owned(),
+            mime_type.to_owned(),
+            name.to_owned(),
+            done,
+        );
         id
     }
 
@@ -417,7 +451,9 @@ impl PlatformHandle {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             let _ = (command, args);
-            done.fail(PlatformError::unsupported("Mobile clients never manage a local daemon."));
+            done.fail(PlatformError::unsupported(
+                "Mobile clients never manage a local daemon.",
+            ));
         }
         id
     }
@@ -427,7 +463,9 @@ impl PlatformHandle {
         let id = done.id();
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         self.0.complete_blocking(done, || {
-            Ok(PlatformValue::EditorTargets(crate::desktop::editors::list_editor_targets()))
+            Ok(PlatformValue::EditorTargets(
+                crate::desktop::editors::list_editor_targets(),
+            ))
         });
         #[cfg(any(target_os = "android", target_os = "ios"))]
         done.ok(PlatformValue::EditorTargets(Vec::new()));
@@ -444,7 +482,9 @@ impl PlatformHandle {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             let _ = request;
-            done.fail(PlatformError::unsupported("Opening a local editor is a desktop feature."));
+            done.fail(PlatformError::unsupported(
+                "Opening a local editor is a desktop feature.",
+            ));
         }
         id
     }
@@ -535,7 +575,9 @@ impl PlatformHandle {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let _ = request_permission;
-            done.fail(PlatformError::unsupported("Push registration is a mobile feature."));
+            done.fail(PlatformError::unsupported(
+                "Push registration is a mobile feature.",
+            ));
         }
         id
     }
@@ -567,7 +609,12 @@ pub fn dropped_file_paths(event: &makepad_widgets::DropEvent) -> Vec<PathBuf> {
 }
 
 /// Admits `id` to the FIFO (fixing its place) and decodes on a worker.
-pub(crate) fn submit_audio(shared: &Arc<Shared>, id: PlatformRequestId, bytes: Vec<u8>, mime: String) {
+pub(crate) fn submit_audio(
+    shared: &Arc<Shared>,
+    id: PlatformRequestId,
+    bytes: Vec<u8>,
+    mime: String,
+) {
     let queue = shared.audio.clone();
     let generation = queue.admit(id);
     shared.spawn_blocking(move || {

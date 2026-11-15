@@ -1,7 +1,9 @@
+mod app_updater;
 mod assets;
 mod build;
 mod build_cache;
 mod common;
+mod components;
 mod dev;
 mod gui;
 mod libraries;
@@ -10,6 +12,7 @@ mod package;
 mod relay_cloudflare;
 mod release;
 mod signing;
+mod tailnet;
 
 use anyhow::{Result, bail};
 
@@ -20,8 +23,13 @@ fn dispatch() -> Result<()> {
     };
     let _build_lease = if matches!(
         command.as_str(),
-        "build-daemon" | "build-relay" | "stage-runtime"
-            | "container-runtime" | "package-desktop" | "package-daemon" | "relay-cloudflare"
+        "build-daemon"
+            | "build-relay"
+            | "stage-runtime"
+            | "container-runtime"
+            | "package-desktop"
+            | "package-daemon"
+            | "relay-cloudflare"
     ) {
         Some(build_cache::acquire()?)
     } else {
@@ -51,6 +59,7 @@ fn dispatch() -> Result<()> {
             assets::appimage_tools()
         }
         "release" => release::run(args),
+        "components" => components::run(args),
         "relay-cloudflare" => relay_cloudflare::run(args),
         "housekeeping" => build_cache::housekeeping(args),
         "dev" | "maintenance" => dev::run(command, args),
@@ -64,6 +73,7 @@ fn help() -> Result<()> {
         "Paseo native build and release tooling\n\n  build-daemon [--release | --profile dev-fast|debug|release]\n  build-relay [--release]\n  build-gui [linux|macos|windows|android|ios] [--profile dev-fast|debug|release] [--debug] [--run [--device ID]] [--arch arm64|x64|universal] [--format apk|aab]\n  build-gui [linux|macos|windows] --smoke [--profile dev-fast|debug|release]\n  package-desktop [linux|macos|windows]\n  package-daemon\n  stage-runtime DESTINATION [--profile dev-fast|debug|release] [--kind desktop-bundled|standalone-archive|standalone-local|container]\n      standalone-local packages the existing local build without recompiling\n  container-runtime DESTINATION\n  appimage-tools\n  housekeeping [--apply] [--staging] [--max-bytes N]\n      dry-run by default; never deletes current, running or recently used build generations\n  release <plan|record|verify|stamp|publish|notes|version|fdroid|...>\n  dev <daemon|app|cli|home> …\n  maintenance <acp-catalog|codex-titles|...>"
     );
     println!("  relay-cloudflare <build|deploy>");
+    println!("  components <plan|build|ci-plan> [options]");
     Ok(())
 }
 

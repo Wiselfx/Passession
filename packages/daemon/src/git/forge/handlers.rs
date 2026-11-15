@@ -68,8 +68,7 @@ impl ForgeEngine {
                         payload["items"] = json!([]);
                         // `resolveAuthStateForError`: "error" once a forge resolves,
                         // otherwise "no_remote".
-                        payload["authState"] = match self.resolve(cwd, env, cancel.clone()).await
-                        {
+                        payload["authState"] = match self.resolve(cwd, env, cancel.clone()).await {
                             Ok(Some(_)) => "error",
                             Ok(None) => "no_remote",
                             Err(_) => "error",
@@ -306,10 +305,10 @@ impl ForgeEngine {
                 && let Err(error) = self
                     .execute(cwd, "isAuthenticated", &json!({}), env, cancel.clone())
                     .await
-                {
-                    probe_failed = true;
-                    return Err(error);
-                }
+            {
+                probe_failed = true;
+                return Err(error);
+            }
             let Some(lookup) = self.lookup_target(cwd, env, cancel.clone()).await? else {
                 // `getUnavailablePullRequestStatus`: a Paseo-owned worktree without a lookup
                 // target is an authenticated "no PR"; any other checkout has no branch to ask.

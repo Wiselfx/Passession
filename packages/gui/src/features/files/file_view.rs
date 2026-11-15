@@ -26,8 +26,13 @@ use super::images::{self, ImageSlot};
 use super::kit::{self, Kit, rect, spec};
 use super::markdown::{ImageState, MarkdownLook, MarkdownPreview, PreviewEvent};
 use super::model::{Conflict, FileEditorStatus};
-use super::path::{FileLocation, parse_link_fragment, remote_absolute, remote_basename, remote_parent, remote_relative};
-use super::resolve::{FileTextPresentation, HTML_FILE_PANEL, IMAGE_FILE_PANEL, MARKDOWN_FILE_PANEL};
+use super::path::{
+    FileLocation, parse_link_fragment, remote_absolute, remote_basename, remote_parent,
+    remote_relative,
+};
+use super::resolve::{
+    FileTextPresentation, HTML_FILE_PANEL, IMAGE_FILE_PANEL, MARKDOWN_FILE_PANEL,
+};
 use super::session::TextView;
 use super::store::{self, Asset, OwnerEvent};
 use super::transfer::TransferMode;
@@ -78,7 +83,15 @@ enum Hot {
 impl Hot {
     /// Targets of the editor settings card (where a wheel or pan scrolls its rows).
     fn is_settings_card(&self) -> bool {
-        matches!(self, Hot::Card | Hot::SetWrap | Hot::SetHighlight | Hot::FontMinus | Hot::FontPlus | Hot::SettingsClose)
+        matches!(
+            self,
+            Hot::Card
+                | Hot::SetWrap
+                | Hot::SetHighlight
+                | Hot::FontMinus
+                | Hot::FontPlus
+                | Hot::SettingsClose
+        )
     }
 }
 
@@ -97,7 +110,12 @@ enum Pending {
     GoTo,
     Reload,
     Context,
-    OpenWith { cwd: String, path: String, line: usize, column: usize },
+    OpenWith {
+        cwd: String,
+        path: String,
+        line: usize,
+        column: usize,
+    },
 }
 
 /// What the file tab targets.
@@ -156,8 +174,12 @@ pub struct FileView {
     zoom: Zoom,
     location_applied: bool,
     observing: bool,
-    /// Web images this view fetched: the request while in flight, `None` once answered.
-    http_images: HashMap<String, Option<LiveId>>,
+    /// Core-admitted web images, scoped to the selected host HTTP authority generation.
+    http_images: HashMap<String, Option<paseo_gui_core::RequestId>>,
+    http_scope: String,
+    http_host: String,
+    http_generation: Option<u64>,
+    http_core: Option<paseo_gui_core::CoreHandle>,
     area: Area,
     /// What the last `sync` saw (session, revisions, visibility).
     sync_gate: Option<SyncGate>,
@@ -212,10 +234,17 @@ impl FileView {
             pressed: None,
             editor_drag: false,
             preview_drag: false,
-            zoom: Zoom { scale: 1.0, ..Zoom::default() },
+            zoom: Zoom {
+                scale: 1.0,
+                ..Zoom::default()
+            },
             location_applied: false,
             observing: false,
             http_images: HashMap::new(),
+            http_scope: String::new(),
+            http_host: String::new(),
+            http_generation: None,
+            http_core: None,
             area: Area::Empty,
             sync_gate: None,
         }
@@ -253,13 +282,11 @@ impl FileView {
         self.location_applied = false;
         self.match_count = 0;
         self.match_index = 0;
-        self.zoom = Zoom { scale: 1.0, ..Zoom::default() };
-        // Fetches still in flight are nobody's once this view stops listening.
-        for (url, request) in self.http_images.drain() {
-            if request.is_some() {
-                images::abandon_web_fetch(&url);
-            }
-        }
+        self.zoom = Zoom {
+            scale: 1.0,
+            ..Zoom::default()
+        };
+        self.clear_http_images();
         self.overlays.clear();
         self.preferences_loaded = false;
         self.sync_gate = None;
@@ -323,18 +350,27 @@ impl FileView {
         if let Some(editor) = self.editor.as_mut() {
             editor.focused = focus == Focus::Editor && !preview;
         }
-        if focus == Focus::None || (focus == Focus::Editor && (preview || self.editor.as_ref().is_none_or(|editor| editor.read_only))) {
+        if focus == Focus::None
+            || (focus == Focus::Editor
+                && (preview || self.editor.as_ref().is_none_or(|editor| editor.read_only)))
+        {
             cx.clear_text_input(self.area);
         }
     }
 
     /// Mounts the session for the target and keeps editor and preview in step with the model.
     fn sync(&mut self, cx: &mut Cx, ui: &mut UiContext, observing: bool) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         if !self.preferences_loaded {
             self.preferences_loaded = true;
             let preferences = ui.preferences();
-            self.font_size = preferences.get("codeFontSize").and_then(Value::as_f64).unwrap_or(12.0).clamp(MIN_CODE_FONT, MAX_CODE_FONT);
+            self.font_size = preferences
+                .get("codeFontSize")
+                .and_then(Value::as_f64)
+                .unwrap_or(12.0)
+                .clamp(MIN_CODE_FONT, MAX_CODE_FONT);
             self.wrap = preferences.get("fileWordWrap") != Some(&Value::Bool(false));
         }
         let owner = self.owner.clone();
@@ -349,14 +385,27 @@ impl FileView {
             store::with(|s| s.set_observing(cx, ui, &owner, observing));
         }
         let line_target = target.location.is_some();
-        let editor_revision = self.editor.as_ref().filter(|_| self.editor_session == Some(id)).map(|e| e.buffer.revision);
-        let gate = (id, store::with(|s| s.session(&owner).map(|session| session.revision)), editor_revision, observing);
+        let editor_revision = self
+            .editor
+            .as_ref()
+            .filter(|_| self.editor_session == Some(id))
+            .map(|e| e.buffer.revision);
+        let gate = (
+            id,
+            store::with(|s| s.session(&owner).map(|session| session.revision)),
+            editor_revision,
+            observing,
+        );
         if self.sync_gate.as_ref() == Some(&gate) && self.location_applied {
             return;
         }
         self.sync_gate = Some(gate);
         // The editor's current text, compared in the store without copying the buffer.
-        let editor_text = self.editor.as_ref().filter(|_| self.editor_session == Some(id)).map(|e| e.text());
+        let editor_text = self
+            .editor
+            .as_ref()
+            .filter(|_| self.editor_session == Some(id))
+            .map(|e| e.text());
         let snapshot = store::with(|s| {
             let session = s.session_mut(&owner)?;
             let reset = session.sync_view_mount(line_target);
@@ -373,7 +422,9 @@ impl FileView {
                 session.model().is_some(),
             ))
         });
-        let Some((reset, presentation, has_text, changed_text, editable)) = snapshot else { return };
+        let Some((reset, presentation, has_text, changed_text, editable)) = snapshot else {
+            return;
+        };
         if changed_text.is_some() {
             self.clear_text_selection(cx);
         }
@@ -404,7 +455,11 @@ impl FileView {
                 self.editor_session = Some(id);
             }
         }
-        let text = self.editor.as_ref().map(|e| e.text().to_owned()).unwrap_or_default();
+        let text = self
+            .editor
+            .as_ref()
+            .map(|e| e.text().to_owned())
+            .unwrap_or_default();
         if let Some(html) = self.html.as_ref() {
             html.update(&text);
         }
@@ -428,26 +483,60 @@ impl FileView {
     }
 
     fn is_markdown(&self) -> bool {
-        store::with(|s| s.session(&self.owner).and_then(|session| session.panel())) == Some(MARKDOWN_FILE_PANEL)
+        store::with(|s| s.session(&self.owner).and_then(|session| session.panel()))
+            == Some(MARKDOWN_FILE_PANEL)
     }
 
-    /// Markdown images: workspace paths read through the daemon, http(s) fetched natively.
-    fn request_markdown_images(&mut self, cx: &mut Cx, ui: &mut UiContext) {
-        let Some(target) = self.target.clone() else { return };
+    fn clear_http_images(&mut self) {
+        for (source, request) in self.http_images.drain() {
+            if let Some(request) = request {
+                if let Some(core) = &self.http_core {
+                    core.cancel_request(&request);
+                }
+                images::abandon_web_fetch(&format!("{}\0{source}", self.http_scope));
+            }
+        }
+    }
+
+    fn sync_http_scope(&mut self, ui: &UiContext) {
+        let Some(target) = &self.target else { return };
+        let generation = crate::common::host_record(&ui.state, &target.host_id)
+            .and_then(|host| host.get("httpGeneration"))
+            .and_then(Value::as_u64);
+        if self.http_host != target.host_id || self.http_generation != generation {
+            let host = target.host_id.clone();
+            self.clear_http_images();
+            self.http_scope = format!("{host}\0{generation:?}");
+            self.http_host = host;
+            self.http_generation = generation;
+        }
+        self.http_core.get_or_insert_with(|| ui.core.clone());
+    }
+
+    /// Web images go through core origin admission; workspace paths use daemon reads.
+    fn request_markdown_images(&mut self, _cx: &mut Cx, ui: &mut UiContext) {
+        let Some(target) = self.target.clone() else {
+            return;
+        };
+        self.sync_http_scope(ui);
         let sources: Vec<String> = self.markdown.image_keys().to_vec();
         for source in sources {
             if source.starts_with("http://") || source.starts_with("https://") {
-                // A web image another panel fetched (or is fetching) is shared, like Flutter's
-                // process-wide image cache.
-                if self.http_images.contains_key(&source) || !images::begin_web_fetch(&source) {
+                let cache_key = format!("{}\0{source}", self.http_scope);
+                if self.http_images.contains_key(&source) || !images::begin_web_fetch(&cache_key) {
                     continue;
                 }
-                let id = LiveId::from_str(&format!("{}\u{0}{source}", self.owner));
+                let id = ui.core.host_http_get(
+                    &target.host_id,
+                    &source,
+                    crate::common::host_http::IMAGE_MAX_BYTES,
+                );
                 self.http_images.insert(source.clone(), Some(id));
-                cx.http_request(id, HttpRequest::new(source.clone(), HttpMethod::GET));
                 continue;
             }
-            let Some(path) = self.resolve_link_path(&target, &source) else { continue };
+            let Some(path) = self.resolve_link_path(&target, &source) else {
+                continue;
+            };
             let key = format!("{}\u{0}md\u{0}{path}", self.owner);
             if images::slot(&key).is_some() {
                 continue;
@@ -466,7 +555,9 @@ impl FileView {
         let without_query = without_fragment.split('?').next().unwrap_or("");
         if let Some(rest) = without_query.strip_prefix("file://") {
             let path = rest.find('/').map(|i| &rest[i..]).unwrap_or(rest);
-            let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned();
+            let decoded = percent_encoding::percent_decode_str(path)
+                .decode_utf8_lossy()
+                .into_owned();
             // `file:///C:/x` on Windows hosts.
             let windows = super::path::is_windows_path(&target.cwd);
             if windows {
@@ -478,14 +569,19 @@ impl FileView {
         if has_scheme(without_query) {
             return None;
         }
-        let decoded = percent_encoding::percent_decode_str(without_query).decode_utf8_lossy().into_owned();
+        let decoded = percent_encoding::percent_decode_str(without_query)
+            .decode_utf8_lossy()
+            .into_owned();
         let file = remote_absolute(&target.cwd, &target.path);
         Some(remote_absolute(&remote_parent(&file), &decoded))
     }
 
     fn markdown_image_state(&self, target: &FileTarget, source: &str) -> ImageState {
         if source.starts_with("http://") || source.starts_with("https://") {
-            return slot_state(images::slot(&images::web_key(source)));
+            return slot_state(images::slot(&images::web_key(&format!(
+                "{}\0{source}",
+                self.http_scope
+            ))));
         }
         let Some(path) = self.resolve_link_path(target, source) else {
             return ImageState::Failed(l("Unsupported image URI").to_owned());
@@ -494,9 +590,7 @@ impl FileView {
         match images::slot(&key) {
             Some(slot) => slot_state(Some(slot)),
             None => {
-                let failed = store::with(|s| {
-                    s.asset_peek(&self.owner, &path)
-                });
+                let failed = store::with(|s| s.asset_peek(&self.owner, &path));
                 match failed {
                     Some(Asset::Failed(error)) => ImageState::Failed(error),
                     _ => ImageState::Loading,
@@ -507,34 +601,59 @@ impl FileView {
 
     /// Flutter `_link`.
     fn open_link(&mut self, ui: &mut UiContext, href: &str) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         if href.is_empty() {
             return;
         }
         let lower = href.to_ascii_lowercase();
-        if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+        if lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("mailto:")
+        {
             host::open_external(ui, href);
             return;
         }
         if has_scheme(href) && !lower.starts_with("file:") {
             let scheme = href.split(':').next().unwrap_or("");
-            host::toast(ui, lf("This link scheme is not allowed: {scheme}", &[("scheme", scheme)]), true);
+            host::toast(
+                ui,
+                lf(
+                    "This link scheme is not allowed: {scheme}",
+                    &[("scheme", scheme)],
+                ),
+                true,
+            );
             return;
         }
-        let Some(path) = self.resolve_link_path(&target, href) else { return };
+        let Some(path) = self.resolve_link_path(&target, href) else {
+            return;
+        };
         let fragment = href.split_once('#').map(|(_, f)| f).unwrap_or("");
         let suffix = match parse_link_fragment(fragment) {
             Some((line, Some(column))) => format!("#L{line}:{column}"),
             Some((line, None)) => format!("#L{line}"),
             None => String::new(),
         };
-        host::open_file(ui, &target.host_id, &target.workspace_id, &format!("{path}{suffix}"), false);
+        host::open_file(
+            ui,
+            &target.host_id,
+            &target.workspace_id,
+            &format!("{path}{suffix}"),
+            false,
+        );
     }
 
     // -----------------------------------------------------------------------------------------
     // Actions
 
-    fn with_model(&mut self, cx: &mut Cx, ui: &mut UiContext, f: impl FnOnce(&mut super::model::FileEditorModel, &mut dyn super::model::ModelIo)) {
+    fn with_model(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        f: impl FnOnce(&mut super::model::FileEditorModel, &mut dyn super::model::ModelIo),
+    ) {
         let owner = self.owner.clone();
         store::with(|s| s.with_model(cx, ui, &owner, f));
     }
@@ -545,9 +664,18 @@ impl FileView {
 
     /// Original `handleReload`: confirms first when the buffer has unsaved changes.
     fn reload(&mut self, cx: &mut Cx, ui: &mut UiContext) {
-        let modified = store::with(|s| s.session(&self.owner).is_some_and(|session| session.modified()));
+        let modified = store::with(|s| {
+            s.session(&self.owner)
+                .is_some_and(|session| session.modified())
+        });
         if modified {
-            let id = overlay::confirm(ui, &t("panels.file.editor.reloadTitle"), &t("panels.file.editor.reloadMessage"), &t("panels.file.editor.reload"), true);
+            let id = overlay::confirm(
+                ui,
+                &t("panels.file.editor.reloadTitle"),
+                &t("panels.file.editor.reloadMessage"),
+                &t("panels.file.editor.reload"),
+                true,
+            );
             self.overlays.insert(id, Pending::Reload);
             return;
         }
@@ -559,7 +687,9 @@ impl FileView {
     }
 
     fn edited(&mut self, cx: &mut Cx, ui: &mut UiContext) {
-        let Some(editor) = self.editor.as_ref() else { return };
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
         let text = editor.text().to_owned();
         self.with_model(cx, ui, move |m, io| m.edit(text, io));
         if self.find_visible {
@@ -580,13 +710,17 @@ impl FileView {
     }
 
     fn count_matches(&mut self) {
-        let Some(editor) = self.editor.as_ref() else { return };
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
         self.match_count = find_matches(editor.text(), self.query.text(), self.match_case).len();
         self.match_index = 0;
     }
 
     fn find_next(&mut self, ui: &mut UiContext, previous: bool) {
-        let Some(editor) = self.editor.as_mut() else { return };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
         let needle = self.query.text().to_owned();
         let matches = find_matches(editor.text(), &needle, self.match_case);
         self.match_count = matches.len();
@@ -602,9 +736,18 @@ impl FileView {
         });
         let selection = editor.buffer.selection;
         let next = if previous {
-            matches.iter().rev().find(|&&index| index < selection.start()).copied().unwrap_or(*matches.last().unwrap())
+            matches
+                .iter()
+                .rev()
+                .find(|&&index| index < selection.start())
+                .copied()
+                .unwrap_or(*matches.last().unwrap())
         } else {
-            matches.iter().find(|&&index| index >= selection.end()).copied().unwrap_or(matches[0])
+            matches
+                .iter()
+                .find(|&&index| index >= selection.end())
+                .copied()
+                .unwrap_or(matches[0])
         };
         let len = match_len(editor.text(), next, &needle, self.match_case);
         editor.select(next, next + len);
@@ -613,26 +756,39 @@ impl FileView {
     }
 
     fn replace_selection(&mut self, cx: &mut Cx, ui: &mut UiContext) {
-        let Some(editor) = self.editor.as_mut() else { return };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
         if editor.read_only {
             return;
         }
         let selection = editor.buffer.selection;
         let selected = editor.buffer.selected_text().to_owned();
         let needle = self.query.text().to_owned();
-        let same = if self.match_case { selected == needle } else { selected.to_lowercase() == needle.to_lowercase() };
+        let same = if self.match_case {
+            selected == needle
+        } else {
+            selected.to_lowercase() == needle.to_lowercase()
+        };
         if selection.is_empty() || !same {
             self.find_next(ui, false);
             return;
         }
         let replacement = self.replacement.text().to_owned();
-        editor.buffer.replace(selection.start(), selection.end(), &replacement, super::editor::buffer::EditKind::Other);
+        editor.buffer.replace(
+            selection.start(),
+            selection.end(),
+            &replacement,
+            super::editor::buffer::EditKind::Other,
+        );
         self.edited(cx, ui);
         self.find_next(ui, false);
     }
 
     fn replace_all(&mut self, cx: &mut Cx, ui: &mut UiContext) {
-        let Some(editor) = self.editor.as_mut() else { return };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
         let needle = self.query.text().to_owned();
         if editor.read_only || needle.is_empty() {
             return;
@@ -652,8 +808,14 @@ impl FileView {
         }
         out.push_str(&text[last..]);
         let head = editor.buffer.selection.head.min(out.len());
-        editor.buffer.replace(0, text.len(), &out, super::editor::buffer::EditKind::Other);
-        editor.buffer.set_selection(super::editor::buffer::Selection::caret(super::editor::buffer::floor_boundary(&out, head)));
+        editor
+            .buffer
+            .replace(0, text.len(), &out, super::editor::buffer::EditKind::Other);
+        editor
+            .buffer
+            .set_selection(super::editor::buffer::Selection::caret(
+                super::editor::buffer::floor_boundary(&out, head),
+            ));
         self.edited(cx, ui);
         if let Some(editor) = self.editor.as_ref() {
             self.match_count = find_matches(editor.text(), &needle, self.match_case).len();
@@ -662,45 +824,79 @@ impl FileView {
 
     /// Flutter `_attach`: whole file or the selected lines.
     fn attach(&mut self, ui: &mut UiContext, selection_only: bool) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let mut selection = json!({ "kind": "whole_file" });
-        if selection_only
-            && let Some(editor) = self.editor.as_ref() {
-                let sel = editor.buffer.selection;
-                if !sel.is_empty() {
-                    let start = editor.buffer.location(sel.start()).0;
-                    let end = editor.buffer.location((sel.end() - 1).max(sel.start())).0;
-                    selection = json!({ "kind": "line_range", "startLine": start, "endLine": end });
-                }
+        if selection_only && let Some(editor) = self.editor.as_ref() {
+            let sel = editor.buffer.selection;
+            if !sel.is_empty() {
+                let start = editor.buffer.location(sel.start()).0;
+                let end = editor.buffer.location((sel.end() - 1).max(sel.start())).0;
+                selection = json!({ "kind": "line_range", "startLine": start, "endLine": end });
             }
+        }
         host::add_to_chat(
             &target.host_id,
             &target.workspace_id,
-            vec![json!({ "kind": "workspace_file", "path": remote_absolute(&target.cwd, &target.path), "selection": selection })],
+            vec![
+                json!({ "kind": "workspace_file", "path": remote_absolute(&target.cwd, &target.path), "selection": selection }),
+            ],
         );
-        host::toast(ui, l("File reference added to chat; unsaved edits are not uploaded"), false);
+        host::toast(
+            ui,
+            l("File reference added to chat; unsaved edits are not uploaded"),
+            false,
+        );
     }
 
     fn download(&mut self, ui: &mut UiContext, mode: TransferMode) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let owner = self.owner.clone();
         let (mime, current) = store::with(|s| {
             let session = s.session(&owner);
-            let mime = session.and_then(|session| session.stat()).and_then(|stat| stat.mime_type().map(str::to_owned));
+            let mime = session
+                .and_then(|session| session.stat())
+                .and_then(|stat| stat.mime_type().map(str::to_owned));
             let current = session
                 .and_then(|session| session.model())
                 .filter(|model| model.modified())
                 .map(|model| Arc::new(model.file_content().into_bytes()));
             (mime, current)
         });
-        store::with(|s| s.start_transfer(ui, &owner, &target.host_id, &target.cwd, &target.path, mode, mime, current));
+        store::with(|s| {
+            s.start_transfer(
+                ui,
+                &owner,
+                &target.host_id,
+                &target.cwd,
+                &target.path,
+                mode,
+                mime,
+                current,
+            )
+        });
     }
 
     fn open_html(&mut self, ui: &mut UiContext) {
-        let Some(target) = self.target.clone() else { return };
-        let text = self.editor.as_ref().map(|e| e.text().to_owned()).unwrap_or_default();
+        let Some(target) = self.target.clone() else {
+            return;
+        };
+        let text = self
+            .editor
+            .as_ref()
+            .map(|e| e.text().to_owned())
+            .unwrap_or_default();
         if self.html.is_none() {
-            self.html = Some(HtmlPreview::start(ui.core.clone(), &target.host_id, &target.cwd, &target.path, text.clone()));
+            self.html = Some(HtmlPreview::start(
+                ui.core.clone(),
+                &target.host_id,
+                &target.cwd,
+                &target.path,
+                text.clone(),
+            ));
         }
         let html = self.html.as_mut().unwrap();
         html.update(&text);
@@ -711,41 +907,104 @@ impl FileView {
     }
 
     fn copy_path(&mut self, ui: &mut UiContext, absolute: bool) {
-        let Some(target) = self.target.as_ref() else { return };
-        let path = if absolute { remote_absolute(&target.cwd, &target.path) } else { remote_relative(&target.cwd, &target.path) };
+        let Some(target) = self.target.as_ref() else {
+            return;
+        };
+        let path = if absolute {
+            remote_absolute(&target.cwd, &target.path)
+        } else {
+            remote_relative(&target.cwd, &target.path)
+        };
         host::copy_text(ui, path, Some(t("common.states.copied")));
     }
 
     fn location(&self) -> (usize, usize) {
-        self.editor.as_ref().map(SourceEditor::location).unwrap_or((1, 1))
+        self.editor
+            .as_ref()
+            .map(SourceEditor::location)
+            .unwrap_or((1, 1))
     }
 
-    fn more_menu(&mut self, ui: &mut UiContext, anchor: Rect, has_text: bool, panel_html: bool, has_selection: bool) {
+    fn more_menu(
+        &mut self,
+        ui: &mut UiContext,
+        anchor: Rect,
+        has_text: bool,
+        panel_html: bool,
+        has_selection: bool,
+    ) {
         let mut entries = Vec::new();
         if has_text {
             if panel_html {
-                entries.push(MenuItem::new("html", l("Preview HTML in system browser")).icon("globe").entry());
+                entries.push(
+                    MenuItem::new("html", l("Preview HTML in system browser"))
+                        .icon("globe")
+                        .entry(),
+                );
                 entries.push(MenuEntry::Separator);
             }
-            entries.push(MenuItem::new("find", l("Find / Replace")).icon("search").entry());
+            entries.push(
+                MenuItem::new("find", l("Find / Replace"))
+                    .icon("search")
+                    .entry(),
+            );
             entries.push(MenuItem::new("goto", l("Go to line")).icon("hash").entry());
-            entries.push(MenuItem::new("settings", l("Editor settings")).icon("settings-2").entry());
+            entries.push(
+                MenuItem::new("settings", l("Editor settings"))
+                    .icon("settings-2")
+                    .entry(),
+            );
             entries.push(MenuEntry::Separator);
         }
-        entries.push(MenuItem::new("download", l("Save a copy / Download")).icon("download").entry());
-        entries.push(MenuItem::new("share", t("downloads.shareFile")).icon("share-2").entry());
-        entries.push(MenuItem::new("external", l("Open downloaded copy externally")).icon("external-link").entry());
-        let local = self.target.as_ref().is_some_and(|target| host::is_local_desktop_host(ui, &target.host_id));
+        entries.push(
+            MenuItem::new("download", l("Save a copy / Download"))
+                .icon("download")
+                .entry(),
+        );
+        entries.push(
+            MenuItem::new("share", t("downloads.shareFile"))
+                .icon("share-2")
+                .entry(),
+        );
+        entries.push(
+            MenuItem::new("external", l("Open downloaded copy externally"))
+                .icon("external-link")
+                .entry(),
+        );
+        let local = self
+            .target
+            .as_ref()
+            .is_some_and(|target| host::is_local_desktop_host(ui, &target.host_id));
         if local {
-            entries.push(MenuItem::new("local", l("Open in editor / file manager")).icon("square-pen").entry());
+            entries.push(
+                MenuItem::new("local", l("Open in editor / file manager"))
+                    .icon("square-pen")
+                    .entry(),
+            );
         }
         entries.push(MenuEntry::Separator);
-        entries.push(MenuItem::new("chat", t("workspace.fileActions.addToChat")).icon("message-square-plus").entry());
+        entries.push(
+            MenuItem::new("chat", t("workspace.fileActions.addToChat"))
+                .icon("message-square-plus")
+                .entry(),
+        );
         if has_text && has_selection {
-            entries.push(MenuItem::new("selection", l("Add selected lines to chat")).icon("text-select").entry());
+            entries.push(
+                MenuItem::new("selection", l("Add selected lines to chat"))
+                    .icon("text-select")
+                    .entry(),
+            );
         }
-        entries.push(MenuItem::new("relative", t("workspace.fileActions.copyRelativePath")).icon("copy").entry());
-        entries.push(MenuItem::new("absolute", t("workspace.fileActions.copyPath")).icon("copy").entry());
+        entries.push(
+            MenuItem::new("relative", t("workspace.fileActions.copyRelativePath"))
+                .icon("copy")
+                .entry(),
+        );
+        entries.push(
+            MenuItem::new("absolute", t("workspace.fileActions.copyPath"))
+                .icon("copy")
+                .entry(),
+        );
         let id = overlay::open_menu(ui, kit::shifted(anchor, self.hit_shift), None, entries);
         self.overlays.insert(id, Pending::More);
     }
@@ -771,10 +1030,14 @@ impl FileView {
             "share" => self.download(ui, TransferMode::Share),
             "external" => self.download(ui, TransferMode::Open),
             "local" => {
-                let Some(target) = self.target.clone() else { return };
+                let Some(target) = self.target.clone() else {
+                    return;
+                };
                 let (line, column) = self.location();
                 let owner = self.owner.clone();
-                store::with(|s| s.open_local_editor(ui, &owner, &target.cwd, &target.path, line, column));
+                store::with(|s| {
+                    s.open_local_editor(ui, &owner, &target.cwd, &target.path, line, column)
+                });
             }
             "chat" => self.attach(ui, false),
             "selection" => self.attach(ui, true),
@@ -782,7 +1045,14 @@ impl FileView {
             "relative" => self.copy_path(ui, false),
             "goto" => {
                 let (line, column) = self.location();
-                let id = overlay::prompt_text(ui, l("Go to line:column"), None, &format!("{line}:{column}"), "", &t("common.actions.save"));
+                let id = overlay::prompt_text(
+                    ui,
+                    l("Go to line:column"),
+                    None,
+                    &format!("{line}:{column}"),
+                    "",
+                    &t("common.actions.save"),
+                );
                 self.overlays.insert(id, Pending::GoTo);
             }
             _ => {}
@@ -791,24 +1061,51 @@ impl FileView {
     }
 
     fn context_menu(&mut self, ui: &mut UiContext, at: DVec2) {
-        let Some(editor) = self.editor.as_ref() else { return };
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
         let has_selection = !editor.buffer.selection.is_empty();
         let editable = !editor.read_only;
         let mut entries = Vec::new();
         if editable {
-            entries.push(MenuItem::new("cut", l("Cut")).icon("scissors").enabled(has_selection).entry());
+            entries.push(
+                MenuItem::new("cut", l("Cut"))
+                    .icon("scissors")
+                    .enabled(has_selection)
+                    .entry(),
+            );
         }
-        entries.push(MenuItem::new("copy", t("common.actions.copy")).icon("copy").enabled(has_selection).entry());
+        entries.push(
+            MenuItem::new("copy", t("common.actions.copy"))
+                .icon("copy")
+                .enabled(has_selection)
+                .entry(),
+        );
         if editable {
-            entries.push(MenuItem::new("paste", l("Paste")).icon("clipboard-paste").entry());
+            entries.push(
+                MenuItem::new("paste", l("Paste"))
+                    .icon("clipboard-paste")
+                    .entry(),
+            );
         }
-        entries.push(MenuItem::new("all", t("common.actions.selectAll")).icon("text-select").entry());
-        let id = overlay::open_menu(ui, kit::shifted(rect(at.x, at.y, 0.0, 0.0), self.hit_shift), None, entries);
+        entries.push(
+            MenuItem::new("all", t("common.actions.selectAll"))
+                .icon("text-select")
+                .entry(),
+        );
+        let id = overlay::open_menu(
+            ui,
+            kit::shifted(rect(at.x, at.y, 0.0, 0.0), self.hit_shift),
+            None,
+            entries,
+        );
         self.overlays.insert(id, Pending::Context);
     }
 
     fn run_context(&mut self, cx: &mut Cx, ui: &mut UiContext, action: &str) {
-        let Some(editor) = self.editor.as_mut() else { return };
+        let Some(editor) = self.editor.as_mut() else {
+            return;
+        };
         match action {
             "cut" => {
                 if let Some(text) = editor.cut() {
@@ -839,10 +1136,11 @@ impl FileView {
                 continue;
             }
             if let Some((id, args)) = overlay::result_of(command)
-                && let Some(pending) = self.overlays.remove(&id) {
-                    answers.push((pending, args.clone()));
-                    command.handled = true;
-                }
+                && let Some(pending) = self.overlays.remove(&id)
+            {
+                answers.push((pending, args.clone()));
+                command.handled = true;
+            }
         }
         let any = !answers.is_empty();
         for (pending, args) in answers {
@@ -868,8 +1166,14 @@ impl FileView {
                 Pending::GoTo => {
                     if let Some(text) = args.get("text").and_then(Value::as_str) {
                         let mut parts = text.split(':');
-                        let line = parts.next().and_then(|p| p.trim().parse().ok()).unwrap_or(1);
-                        let column = parts.next().and_then(|p| p.trim().parse().ok()).unwrap_or(1);
+                        let line = parts
+                            .next()
+                            .and_then(|p| p.trim().parse().ok())
+                            .unwrap_or(1);
+                        let column = parts
+                            .next()
+                            .and_then(|p| p.trim().parse().ok())
+                            .unwrap_or(1);
                         let owner = self.owner.clone();
                         store::with(|s| {
                             if let Some(session) = s.session_mut(&owner) {
@@ -884,7 +1188,12 @@ impl FileView {
                         cx.set_key_focus(self.area);
                     }
                 }
-                Pending::OpenWith { cwd, path, line, column } => {
+                Pending::OpenWith {
+                    cwd,
+                    path,
+                    line,
+                    column,
+                } => {
                     if let Some(value) = args.get("value").and_then(Value::as_str) {
                         store::with(|s| s.open_editor(value, &cwd, &path, line, column));
                     }
@@ -901,15 +1210,38 @@ impl FileView {
             match event {
                 OwnerEvent::Clipboard(text) => {
                     if let Some(editor) = self.editor.as_mut()
-                        && editor.paste(&text) {
-                            self.edited(cx, ui);
-                        }
+                        && editor.paste(&text)
+                    {
+                        self.edited(cx, ui);
+                    }
                 }
-                OwnerEvent::EditorTargets { targets, cwd, path, line, column } => {
-                    let entries = targets.into_iter().map(|(id, label)| MenuItem::new(id, label).entry()).collect();
+                OwnerEvent::EditorTargets {
+                    targets,
+                    cwd,
+                    path,
+                    line,
+                    column,
+                } => {
+                    let entries = targets
+                        .into_iter()
+                        .map(|(id, label)| MenuItem::new(id, label).entry())
+                        .collect();
                     let anchor = self.hits.rect_of(&Hot::More).unwrap_or_default();
-                    let id = overlay::open_menu(ui, kit::shifted(anchor, self.hit_shift), Some(l("Open with").to_owned()), entries);
-                    self.overlays.insert(id, Pending::OpenWith { cwd, path, line, column });
+                    let id = overlay::open_menu(
+                        ui,
+                        kit::shifted(anchor, self.hit_shift),
+                        Some(l("Open with").to_owned()),
+                        entries,
+                    );
+                    self.overlays.insert(
+                        id,
+                        Pending::OpenWith {
+                            cwd,
+                            path,
+                            line,
+                            column,
+                        },
+                    );
                 }
             }
         }
@@ -920,8 +1252,17 @@ impl FileView {
     // Events
 
     /// Returns whether the view changed.
-    pub fn handle_event(&mut self, cx: &mut Cx, kit: &mut Kit, event: &Event, ui: &mut UiContext, area: Area, observing: bool) -> bool {
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        event: &Event,
+        ui: &mut UiContext,
+        area: Area,
+        observing: bool,
+    ) -> bool {
         self.area = area;
+        self.sync_http_scope(ui);
         self.query.observe_event(event);
         self.replacement.observe_event(event);
         if let Some(editor) = self.editor.as_mut() {
@@ -938,41 +1279,43 @@ impl FileView {
             changed |= self.query.blink.handle_event(event);
             changed |= self.replacement.blink.handle_event(event);
         }
-        if let Event::NetworkResponses(responses) = event {
-            for item in responses.iter() {
-                if let Some((source, request)) = self.http_images.iter_mut().find(|(_, id)| **id == Some(item.request_id)) {
-                    let body = match &item.response {
-                        NetworkResponse::HttpResponse(response) if response.status_code < 400 => {
-                            Some(Ok(response.get_body().cloned().unwrap_or_default()))
-                        }
-                        // Flutter `NetworkImageLoadException` text.
-                        NetworkResponse::HttpResponse(response) => {
-                            Some(Err(format!("HTTP request failed, statusCode: {}, {source}", response.status_code)))
-                        }
-                        NetworkResponse::HttpRequestError(error) => Some(Err(error.message.clone())),
-                        _ => None,
-                    };
-                    if let Some(body) = body {
-                        *request = None;
-                        images::finish_web_fetch(source, body);
-                        changed = true;
-                    }
-                }
-            }
+        for event in &ui.events {
+            let paseo_gui_core::CoreEvent::Response {
+                request_id, result, ..
+            } = event
+            else {
+                continue;
+            };
+            let Some((source, request)) = self
+                .http_images
+                .iter_mut()
+                .find(|(_, id)| id.as_deref() == Some(request_id.as_str()))
+            else {
+                continue;
+            };
+            let body = result
+                .as_ref()
+                .map_err(|error| error.message.clone())
+                .and_then(crate::common::host_http::image_body)
+                .map(|(bytes, _)| bytes);
+            *request = None;
+            images::finish_web_fetch(&format!("{}\0{source}", self.http_scope), body);
+            changed = true;
         }
         if let Event::Signal = event
-            && let Some(html) = self.html.as_mut() {
-                let (ready, errors) = html.poll();
-                if ready && html.open_pending {
-                    html.open_pending = false;
-                    if let Some(url) = html.url.clone() {
-                        host::open_external(ui, &url);
-                    }
-                }
-                for error in errors {
-                    host::toast(ui, error, true);
+            && let Some(html) = self.html.as_mut()
+        {
+            let (ready, errors) = html.poll();
+            if ready && html.open_pending {
+                html.open_pending = false;
+                if let Some(url) = html.url.clone() {
+                    host::open_external(ui, &url);
                 }
             }
+            for error in errors {
+                host::toast(ui, error, true);
+            }
+        }
         changed |= self.handle_commands(cx, ui);
         changed |= self.handle_owner_events(cx, ui);
         self.sync(cx, ui, observing);
@@ -1001,7 +1344,9 @@ impl FileView {
         } else if !self.replace_expanded {
             self.replacement.cancel_selection_handles(cx);
         }
-        if (!handles_enabled || preview) && let Some(editor) = self.editor.as_mut() {
+        if (!handles_enabled || preview)
+            && let Some(editor) = self.editor.as_mut()
+        {
             editor.cancel_selection_handles(cx);
         }
         let mut handle_consumed = false;
@@ -1025,7 +1370,9 @@ impl FileView {
             changed |= self.hit(cx, kit, &hit, ui);
         }
         let scrolling = observing && area.is_valid(cx) && !self.settings_open;
-        changed |= self.markdown.animate_scroll(cx, event, scrolling && preview);
+        changed |= self
+            .markdown
+            .animate_scroll(cx, event, scrolling && preview);
         if let Some(editor) = self.editor.as_mut() {
             changed |= editor.animate_scroll(cx, event, &look, scrolling && !preview);
         }
@@ -1034,7 +1381,11 @@ impl FileView {
 
     fn editor_look(&self, ui: &UiContext) -> EditorLook {
         let palette = theme::current_palette();
-        let theme_name = ui.preference("syntaxTheme").and_then(Value::as_str).unwrap_or("one").to_owned();
+        let theme_name = ui
+            .preference("syntaxTheme")
+            .and_then(Value::as_str)
+            .unwrap_or("one")
+            .to_owned();
         EditorLook {
             font_size: theme::current_typography().system_size(self.font_size),
             compact: ui.compact,
@@ -1051,10 +1402,14 @@ impl FileView {
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
                 let hot = self.hits.at(fe.abs);
                 let cursor = match &hot {
-                    Some(Hot::Editor) | Some(Hot::FindField) | Some(Hot::ReplaceField) => MouseCursor::Text,
+                    Some(Hot::Editor) | Some(Hot::FindField) | Some(Hot::ReplaceField) => {
+                        MouseCursor::Text
+                    }
                     Some(Hot::Preview) if self.markdown.is_link(fe.abs) => MouseCursor::Hand,
                     Some(Hot::Preview) => MouseCursor::Text,
-                    Some(Hot::Image) | Some(Hot::Scrim) | Some(Hot::Card) | None => MouseCursor::Default,
+                    Some(Hot::Image) | Some(Hot::Scrim) | Some(Hot::Card) | None => {
+                        MouseCursor::Default
+                    }
                     Some(_) => MouseCursor::Hand,
                 };
                 cx.set_cursor(cursor);
@@ -1068,7 +1423,8 @@ impl FileView {
             Hit::FingerScroll(fe) => {
                 let hot = self.hits.at(fe.abs);
                 if self.settings_open && hot.as_ref().is_some_and(Hot::is_settings_card) {
-                    let next = (self.settings_scroll + fe.scroll.y).clamp(0.0, self.settings_scroll_max);
+                    let next =
+                        (self.settings_scroll + fe.scroll.y).clamp(0.0, self.settings_scroll_max);
                     let changed = next != self.settings_scroll;
                     self.settings_scroll = next;
                     return changed;
@@ -1100,7 +1456,8 @@ impl FileView {
                 self.preview_drag = false;
                 self.settings_touch.reset();
                 if self.settings_open && hot.as_ref().is_some_and(Hot::is_settings_card) {
-                    self.settings_touch.begin(fe.abs, fe.time, fe.device.is_touch());
+                    self.settings_touch
+                        .begin(fe.abs, fe.time, fe.device.is_touch());
                 }
                 match hot {
                     Some(Hot::Editor) => {
@@ -1108,9 +1465,10 @@ impl FileView {
                             self.set_focus(cx, Focus::Editor);
                         }
                         self.editor_drag = true;
-                        let result = self.editor.as_mut().map(|editor| {
-                            editor.handle_hit(cx, kit, &look, hit)
-                        });
+                        let result = self
+                            .editor
+                            .as_mut()
+                            .map(|editor| editor.handle_hit(cx, kit, &look, hit));
                         if let Some(at) = result.and_then(|result| result.context_menu) {
                             self.context_menu(ui, at);
                         }
@@ -1164,15 +1522,28 @@ impl FileView {
                     // A pan over the settings card scrolls its rows instead of pressing one.
                     self.pressed = None;
                     let max = self.settings_scroll_max;
-                    self.settings_touch.apply_delta(&mut self.settings_scroll, dy, max);
+                    self.settings_touch
+                        .apply_delta(&mut self.settings_scroll, dy, max);
                 }
                 true
             }
             Hit::FingerLongPress(fe) => {
-                match self.pressed.clone().filter(|hot| Some(hot) == self.hits.at(fe.abs).as_ref()) {
-                    Some(Hot::Editor) if self.editor.as_ref().is_some_and(|editor| editor.wants_touch_focus(hit)) => {
+                match self
+                    .pressed
+                    .clone()
+                    .filter(|hot| Some(hot) == self.hits.at(fe.abs).as_ref())
+                {
+                    Some(Hot::Editor)
+                        if self
+                            .editor
+                            .as_ref()
+                            .is_some_and(|editor| editor.wants_touch_focus(hit)) =>
+                    {
                         self.editor_drag = true;
-                        let result = self.editor.as_mut().map(|editor| editor.handle_hit(cx, kit, &look, hit));
+                        let result = self
+                            .editor
+                            .as_mut()
+                            .map(|editor| editor.handle_hit(cx, kit, &look, hit));
                         self.set_focus(cx, Focus::Editor);
                         cx.set_key_focus(self.area);
                         if let Some(at) = result.and_then(|result| result.context_menu) {
@@ -1200,11 +1571,23 @@ impl FileView {
             }
             Hit::FingerUp(fe) => {
                 let hot = self.hits.at(fe.abs);
-                let touch_focus = if hot == Some(Hot::Editor) && self.editor_drag && self.editor.as_ref().is_some_and(|editor| editor.wants_touch_focus(hit)) {
+                let touch_focus = if hot == Some(Hot::Editor)
+                    && self.editor_drag
+                    && self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.wants_touch_focus(hit))
+                {
                     Some(Focus::Editor)
-                } else if hot == Some(Hot::FindField) && self.pressed == Some(Hot::FindField) && self.query.wants_touch_focus(hit) {
+                } else if hot == Some(Hot::FindField)
+                    && self.pressed == Some(Hot::FindField)
+                    && self.query.wants_touch_focus(hit)
+                {
                     Some(Focus::Find)
-                } else if hot == Some(Hot::ReplaceField) && self.pressed == Some(Hot::ReplaceField) && self.replacement.wants_touch_focus(hit) {
+                } else if hot == Some(Hot::ReplaceField)
+                    && self.pressed == Some(Hot::ReplaceField)
+                    && self.replacement.wants_touch_focus(hit)
+                {
                     Some(Focus::Replace)
                 } else {
                     None
@@ -1217,13 +1600,15 @@ impl FileView {
                     }
                 }
                 if self.editor_drag
-                    && let Some(editor) = self.editor.as_mut() {
-                        editor.handle_hit(cx, kit, &look, hit);
-                    }
+                    && let Some(editor) = self.editor.as_mut()
+                {
+                    editor.handle_hit(cx, kit, &look, hit);
+                }
                 if self.preview_drag
-                    && let PreviewEvent::Link(href) = self.markdown.handle_hit(cx, self.area, hit) {
-                        self.open_link(ui, &href);
-                    }
+                    && let PreviewEvent::Link(href) = self.markdown.handle_hit(cx, self.area, hit)
+                {
+                    self.open_link(ui, &href);
+                }
                 if self.pressed == Some(Hot::FindField) {
                     self.query.handle_hit(cx, kit, hit);
                 } else if self.pressed == Some(Hot::ReplaceField) {
@@ -1259,7 +1644,10 @@ impl FileView {
                     }
                     Focus::Editor => {
                         if !self.preview_visible() {
-                            let result = self.editor.as_mut().map(|editor| editor.handle_hit(cx, kit, &look, hit));
+                            let result = self
+                                .editor
+                                .as_mut()
+                                .map(|editor| editor.handle_hit(cx, kit, &look, hit));
                             if result.is_some_and(|r| r.text_changed) {
                                 self.edited(cx, ui);
                             }
@@ -1283,7 +1671,10 @@ impl FileView {
                         if self.preview_visible() {
                             self.markdown.handle_hit(cx, self.area, hit);
                         } else {
-                            let result = self.editor.as_mut().map(|editor| editor.handle_hit(cx, kit, &look, hit));
+                            let result = self
+                                .editor
+                                .as_mut()
+                                .map(|editor| editor.handle_hit(cx, kit, &look, hit));
                             if result.is_some_and(|r| r.text_changed) {
                                 self.edited(cx, ui);
                             }
@@ -1294,7 +1685,10 @@ impl FileView {
                 true
             }
             Hit::KeyFocusLost(_) => {
-                ui.push(UiEffect::SetFocusScope { owner: self.focus_owner, scope: None });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.focus_owner,
+                    scope: None,
+                });
                 self.clear_text_selection(cx);
                 cx.clear_text_input(self.area);
                 #[cfg(not(target_os = "android"))]
@@ -1302,7 +1696,10 @@ impl FileView {
                 true
             }
             Hit::KeyFocus(_) => {
-                ui.push(UiEffect::SetFocusScope { owner: self.focus_owner, scope: Some("editable".into()) });
+                ui.push(UiEffect::SetFocusScope {
+                    owner: self.focus_owner,
+                    scope: Some("editable".into()),
+                });
                 self.set_focus(cx, self.focus);
                 true
             }
@@ -1319,7 +1716,15 @@ impl FileView {
         })
     }
 
-    fn key_down(&mut self, cx: &mut Cx, kit: &mut Kit, ui: &mut UiContext, look: &EditorLook, hit: &Hit, ke: &KeyEvent) -> bool {
+    fn key_down(
+        &mut self,
+        cx: &mut Cx,
+        kit: &mut Kit,
+        ui: &mut UiContext,
+        look: &EditorLook,
+        hit: &Hit,
+        ke: &KeyEvent,
+    ) -> bool {
         let primary = ke.modifiers.is_primary();
         if primary && ke.key_code == KeyCode::KeyS {
             self.save(cx, ui);
@@ -1339,9 +1744,15 @@ impl FileView {
                     self.close_find(cx);
                     return true;
                 }
-                let field = if self.focus == Focus::Find { &mut self.query } else { &mut self.replacement };
+                let field = if self.focus == Focus::Find {
+                    &mut self.query
+                } else {
+                    &mut self.replacement
+                };
                 match field.handle_hit(cx, kit, hit) {
-                    FieldEvent::Submitted { shift } if self.focus == Focus::Find => self.find_next(ui, shift),
+                    FieldEvent::Submitted { shift } if self.focus == Focus::Find => {
+                        self.find_next(ui, shift)
+                    }
                     FieldEvent::Changed if self.focus == Focus::Find => self.count_matches(),
                     _ => {}
                 }
@@ -1352,7 +1763,10 @@ impl FileView {
                     self.markdown.handle_hit(cx, self.area, hit);
                     return true;
                 }
-                let result = self.editor.as_mut().map(|editor| editor.handle_hit(cx, kit, look, hit));
+                let result = self
+                    .editor
+                    .as_mut()
+                    .map(|editor| editor.handle_hit(cx, kit, look, hit));
                 if result.is_some_and(|r| r.text_changed) {
                     self.edited(cx, ui);
                 }
@@ -1382,7 +1796,11 @@ impl FileView {
                         false,
                     )
                 });
-                let has_selection = has_selection || self.editor.as_ref().is_some_and(|e| !e.buffer.selection.is_empty());
+                let has_selection = has_selection
+                    || self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|e| !e.buffer.selection.is_empty());
                 self.more_menu(ui, anchor, has_text, panel_html, has_selection);
             }
             Hot::Segment(index) => {
@@ -1390,7 +1808,11 @@ impl FileView {
                 let owner = self.owner.clone();
                 store::with(|s| {
                     if let Some(session) = s.session_mut(&owner) {
-                        session.view = if index == 0 { TextView::Preview } else { TextView::Source };
+                        session.view = if index == 0 {
+                            TextView::Preview
+                        } else {
+                            TextView::Source
+                        };
                     }
                 });
             }
@@ -1407,9 +1829,14 @@ impl FileView {
             Hot::Overwrite => self.overwrite(cx, ui),
             Hot::Retry => {
                 let owner = self.owner.clone();
-                let state = store::with(|s| s.session(&owner).map(|session| (session.status(), session.model().map(|m| m.status()))));
+                let state = store::with(|s| {
+                    s.session(&owner)
+                        .map(|session| (session.status(), session.model().map(|m| m.status())))
+                });
                 match state {
-                    Some((Snapshot::Ready(_), Some(FileEditorStatus::Failed))) => self.with_model(cx, ui, |m, io| m.reload(io)),
+                    Some((Snapshot::Ready(_), Some(FileEditorStatus::Failed))) => {
+                        self.with_model(cx, ui, |m, io| m.reload(io))
+                    }
                     Some((Snapshot::Ready(_), _)) => store::with(|s| s.retry_read(cx, ui, &owner)),
                     _ => store::with(|s| s.retry(cx, ui, &owner)),
                 }
@@ -1436,21 +1863,35 @@ impl FileView {
                 }
             }
             Hot::TransferCancel(id) => store::with(|s| s.cancel_transfer(ui, id)),
-            Hot::FindField | Hot::ReplaceField | Hot::Editor | Hot::Preview | Hot::Image | Hot::Card => {}
+            Hot::FindField
+            | Hot::ReplaceField
+            | Hot::Editor
+            | Hot::Preview
+            | Hot::Image
+            | Hot::Card => {}
         }
     }
 
     // -----------------------------------------------------------------------------------------
     // Drawing
 
-    pub fn draw(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, ui: &UiContext, widget_area: Area) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        ui: &UiContext,
+        widget_area: Area,
+    ) {
         self.area = widget_area;
         self.hits.clear();
         let p = theme::current_palette();
         let ty = theme::current_typography();
         kit.fill(cx, area, p.surface0, 0.0);
         let owner = self.owner.clone();
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let state = store::with(|s| {
             s.session(&owner).map(|session| {
                 (
@@ -1459,14 +1900,32 @@ impl FileView {
                     session.presentation(),
                     session.view,
                     session.current_text().is_some(),
-                    session.model().map(|m| (m.status(), m.conflict(), m.modified(), m.error().map(str::to_owned))),
-                    session.text().map(|r| (r.loading(), r.error().map(str::to_owned))),
-                    session.bytes().map(|r| (r.loading(), r.error().map(str::to_owned), r.value().cloned())),
+                    session.model().map(|m| {
+                        (
+                            m.status(),
+                            m.conflict(),
+                            m.modified(),
+                            m.error().map(str::to_owned),
+                        )
+                    }),
+                    session
+                        .text()
+                        .map(|r| (r.loading(), r.error().map(str::to_owned))),
+                    session.bytes().map(|r| {
+                        (
+                            r.loading(),
+                            r.error().map(str::to_owned),
+                            r.value().cloned(),
+                        )
+                    }),
                     session.stat().cloned(),
                 )
             })
         });
-        let Some((status, panel, presentation, view, has_text, model, reader, bytes, stat)) = state else { return };
+        let Some((status, panel, presentation, view, has_text, model, reader, bytes, stat)) = state
+        else {
+            return;
+        };
         let snapshot_ready = matches!(status, Snapshot::Ready(_));
         if !snapshot_ready {
             self.draw_load_state(cx, kit, area, &status, Look { p: &p, ty: &ty }, widget_area);
@@ -1482,31 +1941,62 @@ impl FileView {
         let mut right = bar.pos.x + bar.size.x - ui::toolbar_trailing_padding(compact);
         let by = bar.pos.y + (toolbar_h - size) / 2.0;
         let more = rect(right - size, by, size, size);
-        ui::icon_button(cx, kit, more, "ellipsis", self.state_of(&Hot::More, true), compact, &p);
+        ui::icon_button(
+            cx,
+            kit,
+            more,
+            "ellipsis",
+            self.state_of(&Hot::More, true),
+            compact,
+            &p,
+        );
         self.hits.push(more, Hot::More);
         right -= size + 1.0;
         if has_text && model.is_some() {
             let model_status = model.as_ref().map(|m| m.0);
             let reload = rect(right - size, by, size, size);
             let reload_enabled = model_status != Some(FileEditorStatus::Saving);
-            ui::icon_button(cx, kit, reload, "rotate-cw", self.state_of(&Hot::Reload, reload_enabled), compact, &p);
+            ui::icon_button(
+                cx,
+                kit,
+                reload,
+                "rotate-cw",
+                self.state_of(&Hot::Reload, reload_enabled),
+                compact,
+                &p,
+            );
             if reload_enabled {
                 self.hits.push(reload, Hot::Reload);
             }
             right -= size + 1.0;
             let save = rect(right - size, by, size, size);
-            let save_enabled = matches!(model_status, Some(FileEditorStatus::Dirty | FileEditorStatus::Error));
-            ui::icon_button(cx, kit, save, "save", self.state_of(&Hot::Save, save_enabled), compact, &p);
+            let save_enabled = matches!(
+                model_status,
+                Some(FileEditorStatus::Dirty | FileEditorStatus::Error)
+            );
+            ui::icon_button(
+                cx,
+                kit,
+                save,
+                "save",
+                self.state_of(&Hot::Save, save_enabled),
+                compact,
+                &p,
+            );
             if save_enabled {
                 self.hits.push(save, Hot::Save);
             }
             right -= size + 1.0;
         }
         right -= 12.0;
-        let has_preview = matches!(panel, Some(p) if p == MARKDOWN_FILE_PANEL || p == HTML_FILE_PANEL);
+        let has_preview =
+            matches!(panel, Some(p) if p == MARKDOWN_FILE_PANEL || p == HTML_FILE_PANEL);
         let show_preview = has_preview && view == TextView::Preview;
         if has_text && has_preview {
-            let labels = [t("panels.file.editor.preview"), t("panels.file.editor.source")];
+            let labels = [
+                t("panels.file.editor.preview"),
+                t("panels.file.editor.source"),
+            ];
             let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
             let selected = if view == TextView::Preview { 0 } else { 1 };
             let hovered = match self.hovered {
@@ -1514,7 +2004,17 @@ impl FileView {
                 _ => None,
             };
             let width = ui::segmented_width(cx, kit, &labels, &ty);
-            let rects = ui::segmented(cx, kit, right, bar.pos.y + toolbar_h / 2.0, &labels, selected, hovered, &p, &ty);
+            let rects = ui::segmented(
+                cx,
+                kit,
+                right,
+                bar.pos.y + toolbar_h / 2.0,
+                &labels,
+                selected,
+                hovered,
+                &p,
+                &ty,
+            );
             for (index, r) in rects.into_iter().enumerate() {
                 self.hits.push(r, Hot::Segment(index));
             }
@@ -1522,65 +2022,147 @@ impl FileView {
         }
         let small = ty.ui_size(12.0);
         // Status (editable text only).
-        if has_text
-            && let Some((model_status, _, _, _)) = &model {
-                let mut items: Vec<(String, Vec4)> = Vec::new();
-                if !show_preview {
-                    let (line, column) = self.location();
-                    items.push((ta("panels.file.editor.cursor", &[("line", &line.to_string()), ("column", &column.to_string())]), p.muted));
-                }
-                match model_status {
-                    FileEditorStatus::Error => items.push((t("panels.file.editor.saveFailed"), p.danger)),
-                    FileEditorStatus::Saving => items.push((t("panels.file.editor.saving"), p.muted)),
-                    _ => {}
-                }
-                for (label, color) in items {
-                    let font = Font::Regular;
-                    let w = kit.measure(cx, spec(font, small, color), &label).x;
-                    kit.text_in(cx, rect(right - w, bar.pos.y, w + 1.0, toolbar_h), spec(font, small, color), &label, 0.0);
-                    right -= w + 8.0;
-                }
-                if *model_status == FileEditorStatus::Saving {
-                    ui::spinner(cx, kit, rect(right - 14.0, bar.pos.y, 14.0, toolbar_h), 14.0, p.muted, clock::phase(900));
-                    clock::register(cx, widget_area);
-                    right -= 14.0 + 8.0;
-                }
-                if *model_status == FileEditorStatus::Dirty {
-                    kit.dot(cx, dvec2(right - 3.0, bar.pos.y + toolbar_h / 2.0), 6.0, p.muted);
-                    right -= 6.0 + 8.0;
-                }
-                right -= 4.0;
+        if has_text && let Some((model_status, _, _, _)) = &model {
+            let mut items: Vec<(String, Vec4)> = Vec::new();
+            if !show_preview {
+                let (line, column) = self.location();
+                items.push((
+                    ta(
+                        "panels.file.editor.cursor",
+                        &[("line", &line.to_string()), ("column", &column.to_string())],
+                    ),
+                    p.muted,
+                ));
             }
+            match model_status {
+                FileEditorStatus::Error => {
+                    items.push((t("panels.file.editor.saveFailed"), p.danger))
+                }
+                FileEditorStatus::Saving => items.push((t("panels.file.editor.saving"), p.muted)),
+                _ => {}
+            }
+            for (label, color) in items {
+                let font = Font::Regular;
+                let w = kit.measure(cx, spec(font, small, color), &label).x;
+                kit.text_in(
+                    cx,
+                    rect(right - w, bar.pos.y, w + 1.0, toolbar_h),
+                    spec(font, small, color),
+                    &label,
+                    0.0,
+                );
+                right -= w + 8.0;
+            }
+            if *model_status == FileEditorStatus::Saving {
+                ui::spinner(
+                    cx,
+                    kit,
+                    rect(right - 14.0, bar.pos.y, 14.0, toolbar_h),
+                    14.0,
+                    p.muted,
+                    clock::phase(900),
+                );
+                clock::register(cx, widget_area);
+                right -= 14.0 + 8.0;
+            }
+            if *model_status == FileEditorStatus::Dirty {
+                kit.dot(
+                    cx,
+                    dvec2(right - 3.0, bar.pos.y + toolbar_h / 2.0),
+                    6.0,
+                    p.muted,
+                );
+                right -= 6.0 + 8.0;
+            }
+            right -= 4.0;
+        }
         // Metadata (left).
         let meta_w = (right - bar.pos.x - 12.0).max(0.0);
         let file_size = ui::file_size(stat.as_ref().map(|s| s.size()).unwrap_or(0));
         let meta = if has_text {
-            let lines = self.editor.as_ref().map(SourceEditor::line_count).unwrap_or(1);
-            format!("{file_size}   {}", ta("panels.file.editor.lines", &[("count", &lines.to_string())]))
+            let lines = self
+                .editor
+                .as_ref()
+                .map(SourceEditor::line_count)
+                .unwrap_or(1);
+            format!(
+                "{file_size}   {}",
+                ta("panels.file.editor.lines", &[("count", &lines.to_string())])
+            )
         } else {
-            format!("{}   {file_size}", remote_basename(&target.path, Some(&target.cwd)))
+            format!(
+                "{}   {file_size}",
+                remote_basename(&target.path, Some(&target.cwd))
+            )
         };
-        kit.text_in(cx, rect(bar.pos.x + 12.0, bar.pos.y, meta_w, toolbar_h), spec(Font::Regular, small, p.muted), &meta, 0.0);
+        kit.text_in(
+            cx,
+            rect(bar.pos.x + 12.0, bar.pos.y, meta_w, toolbar_h),
+            spec(Font::Regular, small, p.muted),
+            &meta,
+            0.0,
+        );
         let mut top = bar.pos.y + toolbar_h;
         // Alerts.
         if let Some((model_status, conflict, modified, _)) = &model
-            && *model_status == FileEditorStatus::Conflict {
-                top = match conflict {
-                    Some(Conflict::Deleted) => self.draw_alert(cx, kit, area, top, &t("panels.file.editor.deletedTitle"), Some(&t("panels.file.editor.preservedDescription")), p.warning, true, &[], &p, &ty),
-                    _ => {
-                        let mut actions: Vec<(Hot, String)> = Vec::new();
-                        if *modified {
-                            actions.push((Hot::Overwrite, t("panels.file.editor.overwrite")));
-                        }
-                        actions.push((Hot::AlertReload, t("panels.file.editor.reload")));
-                        let description = modified.then(|| t("panels.file.editor.conflictDescription"));
-                        self.draw_alert(cx, kit, area, top, &t("panels.file.editor.changedOnDisk"), description.as_deref(), p.warning, true, &actions, &p, &ty)
+            && *model_status == FileEditorStatus::Conflict
+        {
+            top = match conflict {
+                Some(Conflict::Deleted) => self.draw_alert(
+                    cx,
+                    kit,
+                    area,
+                    top,
+                    &t("panels.file.editor.deletedTitle"),
+                    Some(&t("panels.file.editor.preservedDescription")),
+                    p.warning,
+                    true,
+                    &[],
+                    &p,
+                    &ty,
+                ),
+                _ => {
+                    let mut actions: Vec<(Hot, String)> = Vec::new();
+                    if *modified {
+                        actions.push((Hot::Overwrite, t("panels.file.editor.overwrite")));
                     }
-                };
-            }
+                    actions.push((Hot::AlertReload, t("panels.file.editor.reload")));
+                    let description = modified.then(|| t("panels.file.editor.conflictDescription"));
+                    self.draw_alert(
+                        cx,
+                        kit,
+                        area,
+                        top,
+                        &t("panels.file.editor.changedOnDisk"),
+                        description.as_deref(),
+                        p.warning,
+                        true,
+                        &actions,
+                        &p,
+                        &ty,
+                    )
+                }
+            };
+        }
         let bottom = area.pos.y + area.size.y;
         let content = rect(area.pos.x, top, area.size.x, (bottom - top).max(0.0));
-        self.draw_content(cx, kit, content, ui, &target, panel, presentation, show_preview, has_text, model.as_ref().map(|m| (m.0, m.3.clone())), reader, bytes, stat.as_ref().map(|s| s.size()).unwrap_or(0), stat.as_ref().and_then(|s| s.mime_type().map(str::to_owned)), widget_area);
+        self.draw_content(
+            cx,
+            kit,
+            content,
+            ui,
+            &target,
+            panel,
+            presentation,
+            show_preview,
+            has_text,
+            model.as_ref().map(|m| (m.0, m.3.clone())),
+            reader,
+            bytes,
+            stat.as_ref().map(|s| s.size()).unwrap_or(0),
+            stat.as_ref().and_then(|s| s.mime_type().map(str::to_owned)),
+            widget_area,
+        );
         if self.find_visible && has_text {
             self.draw_find(cx, kit, content, &p, &ty, compact, widget_area);
         }
@@ -1600,7 +2182,15 @@ impl FileView {
     }
 
     /// Centred column of a message and optional actions (Flutter `_centerState`).
-    fn center_state(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, lines: &[(String, Vec4)], buttons: &[CenterButton], look: Look) {
+    fn center_state(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        lines: &[(String, Vec4)],
+        buttons: &[CenterButton],
+        look: Look,
+    ) {
         let Look { p, ty } = look;
         let base = ty.ui_size(14.0);
         let width = (area.size.x - 32.0).max(1.0);
@@ -1619,45 +2209,125 @@ impl FileView {
         }
         let mut y = area.pos.y + ((area.size.y - total) / 2.0).max(16.0);
         for ((text, color), h) in lines.iter().zip(heights) {
-            let w = kit.measure(cx, spec(Font::Regular, base, *color), text).x.min(width);
-            kit.paragraph(cx, dvec2(area.pos.x + (area.size.x - w) / 2.0, y), width, spec(Font::Regular, base, *color), text);
+            let w = kit
+                .measure(cx, spec(Font::Regular, base, *color), text)
+                .x
+                .min(width);
+            kit.paragraph(
+                cx,
+                dvec2(area.pos.x + (area.size.x - w) / 2.0, y),
+                width,
+                spec(Font::Regular, base, *color),
+                text,
+            );
             y += h + 12.0;
         }
         if !buttons.is_empty() {
-            let widths: Vec<f64> = buttons.iter().map(|(_, label, icon, _)| ui::button_width(cx, kit, label, *icon, ButtonSize::Sm, ty)).collect();
+            let widths: Vec<f64> = buttons
+                .iter()
+                .map(|(_, label, icon, _)| {
+                    ui::button_width(cx, kit, label, *icon, ButtonSize::Sm, ty)
+                })
+                .collect();
             let total_w = widths.iter().sum::<f64>() + 8.0 * (buttons.len() - 1) as f64;
             let mut x = area.pos.x + (area.size.x - total_w) / 2.0;
             for ((hot, label, icon, variant), w) in buttons.iter().zip(widths) {
                 let r = rect(x, y, w, button_h);
                 let st = self.state_of(hot, true);
-                ui::button(cx, kit, r, label, *icon, *variant, ButtonSize::Sm, st, p, ty);
+                ui::button(
+                    cx,
+                    kit,
+                    r,
+                    label,
+                    *icon,
+                    *variant,
+                    ButtonSize::Sm,
+                    st,
+                    p,
+                    ty,
+                );
                 self.hits.push(r, hot.clone());
                 x += w + 8.0;
             }
         }
     }
 
-    fn draw_load_state(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, status: &Snapshot, look: Look, widget_area: Area) {
+    fn draw_load_state(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        status: &Snapshot,
+        look: Look,
+        widget_area: Area,
+    ) {
         let Look { p, ty } = look;
         match status {
             Snapshot::Loading => self.loading(cx, kit, area, p, ty, widget_area),
-            Snapshot::Missing => {
-                self.center_state(cx, kit, area, &[(t("panels.file.notFound"), p.danger)], &[(Hot::Retry, t("common.actions.retry"), None, ButtonVariant::Outline)], look)
-            }
+            Snapshot::Missing => self.center_state(
+                cx,
+                kit,
+                area,
+                &[(t("panels.file.notFound"), p.danger)],
+                &[(
+                    Hot::Retry,
+                    t("common.actions.retry"),
+                    None,
+                    ButtonVariant::Outline,
+                )],
+                look,
+            ),
             Snapshot::Error(error) => {
-                let message = if error.is_empty() { t("panels.file.failedToLoad") } else { error.clone() };
-                self.center_state(cx, kit, area, &[(message, p.danger)], &[(Hot::Retry, t("common.actions.retry"), None, ButtonVariant::Outline)], look)
+                let message = if error.is_empty() {
+                    t("panels.file.failedToLoad")
+                } else {
+                    error.clone()
+                };
+                self.center_state(
+                    cx,
+                    kit,
+                    area,
+                    &[(message, p.danger)],
+                    &[(
+                        Hot::Retry,
+                        t("common.actions.retry"),
+                        None,
+                        ButtonVariant::Outline,
+                    )],
+                    look,
+                )
             }
             Snapshot::Ready(_) => {}
         }
     }
 
-    fn loading(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, p: &Palette, ty: &Typography, widget_area: Area) {
+    fn loading(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        p: &Palette,
+        ty: &Typography,
+        widget_area: Area,
+    ) {
         let cy = area.pos.y + area.size.y / 2.0;
-        ui::spinner(cx, kit, rect(area.pos.x + area.size.x / 2.0 - 10.0, cy - 26.0, 20.0, 20.0), 20.0, p.muted, clock::phase(900));
+        ui::spinner(
+            cx,
+            kit,
+            rect(area.pos.x + area.size.x / 2.0 - 10.0, cy - 26.0, 20.0, 20.0),
+            20.0,
+            p.muted,
+            clock::phase(900),
+        );
         clock::register(cx, widget_area);
         let base = ty.ui_size(14.0);
-        kit.text_in(cx, rect(area.pos.x, cy + 2.0, area.size.x, base * 1.5), spec(Font::Regular, base, p.muted), &t("panels.file.loading"), 0.5);
+        kit.text_in(
+            cx,
+            rect(area.pos.x, cy + 2.0, area.size.x, base * 1.5),
+            spec(Font::Regular, base, p.muted),
+            &t("panels.file.loading"),
+            0.5,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1682,36 +2352,84 @@ impl FileView {
         let p = theme::current_palette();
         let ty = theme::current_typography();
         if panel == Some(IMAGE_FILE_PANEL) {
-            let Some((loading, error, value)) = bytes else { return };
+            let Some((loading, error, value)) = bytes else {
+                return;
+            };
             if loading {
                 return self.loading(cx, kit, area, &p, &ty, widget_area);
             }
             if let Some(error) = error {
-                return self.center_state(cx, kit, area, &[(error, p.danger)], &[], Look { p: &p, ty: &ty });
+                return self.center_state(
+                    cx,
+                    kit,
+                    area,
+                    &[(error, p.danger)],
+                    &[],
+                    Look { p: &p, ty: &ty },
+                );
             }
             if let Some(bytes) = value {
-                self.draw_image(cx, kit, area, bytes, mime.as_deref().unwrap_or(""), &p, &ty, widget_area);
+                self.draw_image(
+                    cx,
+                    kit,
+                    area,
+                    bytes,
+                    mime.as_deref().unwrap_or(""),
+                    &p,
+                    &ty,
+                    widget_area,
+                );
             }
             return;
         }
         let Some(panel) = panel else {
-            let lines = [(t("panels.file.binaryPreviewUnavailable"), p.muted), (ui::file_size(size), p.muted)];
+            let lines = [
+                (t("panels.file.binaryPreviewUnavailable"), p.muted),
+                (ui::file_size(size), p.muted),
+            ];
             let buttons = [
-                (Hot::Download, l("Save / Download").to_owned(), Some("download"), ButtonVariant::Outline),
-                (Hot::OpenCopy, l("Open a downloaded copy").to_owned(), Some("external-link"), ButtonVariant::Outline),
+                (
+                    Hot::Download,
+                    l("Save / Download").to_owned(),
+                    Some("download"),
+                    ButtonVariant::Outline,
+                ),
+                (
+                    Hot::OpenCopy,
+                    l("Open a downloaded copy").to_owned(),
+                    Some("external-link"),
+                    ButtonVariant::Outline,
+                ),
             ];
             return self.center_state(cx, kit, area, &lines, &buttons, Look { p: &p, ty: &ty });
         };
         if presentation == Some(FileTextPresentation::Unsupported) {
-            let lines = [(t("panels.file.tooLargeToDisplay"), p.muted), (ui::file_size(size), p.muted)];
+            let lines = [
+                (t("panels.file.tooLargeToDisplay"), p.muted),
+                (ui::file_size(size), p.muted),
+            ];
             return self.center_state(cx, kit, area, &lines, &[], Look { p: &p, ty: &ty });
         }
         if let Some((status, error)) = model {
             match status {
-                FileEditorStatus::Loading => return self.loading(cx, kit, area, &p, &ty, widget_area),
+                FileEditorStatus::Loading => {
+                    return self.loading(cx, kit, area, &p, &ty, widget_area);
+                }
                 FileEditorStatus::Failed => {
                     let message = error.unwrap_or_else(|| t("panels.file.failedToLoad"));
-                    return self.center_state(cx, kit, area, &[(message, p.danger)], &[(Hot::Retry, t("common.actions.retry"), None, ButtonVariant::Outline)], Look { p: &p, ty: &ty });
+                    return self.center_state(
+                        cx,
+                        kit,
+                        area,
+                        &[(message, p.danger)],
+                        &[(
+                            Hot::Retry,
+                            t("common.actions.retry"),
+                            None,
+                            ButtonVariant::Outline,
+                        )],
+                        Look { p: &p, ty: &ty },
+                    );
                 }
                 _ => {}
             }
@@ -1720,14 +2438,25 @@ impl FileView {
                 return self.loading(cx, kit, area, &p, &ty, widget_area);
             }
             if let Some(error) = error {
-                return self.center_state(cx, kit, area, &[(error, p.danger)], &[], Look { p: &p, ty: &ty });
+                return self.center_state(
+                    cx,
+                    kit,
+                    area,
+                    &[(error, p.danger)],
+                    &[],
+                    Look { p: &p, ty: &ty },
+                );
             }
         }
         if !has_text {
             return;
         }
         if show_preview && panel == MARKDOWN_FILE_PANEL {
-            let look = MarkdownLook { palette: p, typography: ty, compact_width: area.size.x < 768.0 };
+            let look = MarkdownLook {
+                palette: p,
+                typography: ty,
+                compact_width: area.size.x < 768.0,
+            };
             let images_epoch = self.markdown_images_epoch(target);
             let mut markdown = std::mem::take(&mut self.markdown);
             {
@@ -1742,15 +2471,38 @@ impl FileView {
         if show_preview && panel == HTML_FILE_PANEL {
             let base = ty.ui_size(14.0);
             let cy = area.pos.y + area.size.y / 2.0;
-            kit.icon(cx, rect(area.pos.x, cy - 80.0, area.size.x, 32.0), "file-code", 32.0, p.muted);
+            kit.icon(
+                cx,
+                rect(area.pos.x, cy - 80.0, area.size.x, 32.0),
+                "file-code",
+                32.0,
+                p.muted,
+            );
             let inner = rect(area.pos.x, cy - 36.0, area.size.x, area.size.y / 2.0 + 36.0);
             let lines = [
-                (l("HTML previews open in your system browser.").to_owned(), p.foreground),
-                (l("Relative workspace assets are served locally; scripts are disabled.").to_owned(), p.muted),
+                (
+                    l("HTML previews open in your system browser.").to_owned(),
+                    p.foreground,
+                ),
+                (
+                    l("Relative workspace assets are served locally; scripts are disabled.")
+                        .to_owned(),
+                    p.muted,
+                ),
             ];
             let buttons = [
-                (Hot::OpenHtml, l("Open HTML preview").to_owned(), Some("external-link"), ButtonVariant::Primary),
-                (Hot::ShowSource, t("panels.file.editor.source"), None, ButtonVariant::Outline),
+                (
+                    Hot::OpenHtml,
+                    l("Open HTML preview").to_owned(),
+                    Some("external-link"),
+                    ButtonVariant::Primary,
+                ),
+                (
+                    Hot::ShowSource,
+                    t("panels.file.editor.source"),
+                    None,
+                    ButtonVariant::Outline,
+                ),
             ];
             let _ = base;
             return self.center_state(cx, kit, inner, &lines, &buttons, Look { p: &p, ty: &ty });
@@ -1766,78 +2518,173 @@ impl FileView {
     fn markdown_images_epoch(&self, target: &FileTarget) -> u64 {
         let mut epoch = 0u64;
         for source in self.markdown.image_keys() {
-            epoch = epoch.wrapping_mul(31).wrapping_add(match self.markdown_image_state(target, source) {
-                ImageState::Loading => 1,
-                ImageState::Ready { width, height, .. } => 2 + (width * 7 + height) as u64,
-                ImageState::Failed(_) => 3,
-            });
+            epoch = epoch.wrapping_mul(31).wrapping_add(
+                match self.markdown_image_state(target, source) {
+                    ImageState::Loading => 1,
+                    ImageState::Ready { width, height, .. } => 2 + (width * 7 + height) as u64,
+                    ImageState::Failed(_) => 3,
+                },
+            );
         }
         epoch
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_image(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, bytes: Arc<Vec<u8>>, mime: &str, p: &Palette, ty: &Typography, widget_area: Area) {
+    fn draw_image(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        bytes: Arc<Vec<u8>>,
+        mime: &str,
+        p: &Palette,
+        ty: &Typography,
+        widget_area: Area,
+    ) {
         let key = format!("{}\u{0}file\u{0}{:p}", self.owner, Arc::as_ptr(&bytes));
         if self.zoom.key != key {
             if !self.zoom.key.is_empty() {
                 images::forget_prefix(&self.zoom.key);
             }
-            self.zoom = Zoom { scale: 1.0, key: key.clone(), ..Zoom::default() };
+            self.zoom = Zoom {
+                scale: 1.0,
+                key: key.clone(),
+                ..Zoom::default()
+            };
             images::request(&key, bytes, mime, 512);
         }
         match images::slot(&key) {
-            Some(ImageSlot::Ready { texture, width, height }) => {
+            Some(ImageSlot::Ready {
+                texture,
+                width,
+                height,
+            }) => {
                 cx.begin_turtle(Walk::abs_rect(area), Layout::default());
                 let (w, h) = (width as f64, height as f64);
                 let fit = (area.size.x / w).min(area.size.y / h).min(1.0);
                 let scale = fit * self.zoom.scale;
                 let (dw, dh) = (w * scale, h * scale);
-                let r = rect(area.pos.x + (area.size.x - dw) / 2.0 + self.zoom.offset.x, area.pos.y + (area.size.y - dh) / 2.0 + self.zoom.offset.y, dw, dh);
+                let r = rect(
+                    area.pos.x + (area.size.x - dw) / 2.0 + self.zoom.offset.x,
+                    area.pos.y + (area.size.y - dh) / 2.0 + self.zoom.offset.y,
+                    dw,
+                    dh,
+                );
                 kit.texture(cx, r, &texture, 0.0, 1.0);
                 cx.end_turtle();
                 self.hits.push(area, Hot::Image);
             }
-            Some(ImageSlot::Failed(error)) => self.center_state(cx, kit, area, &[(error, p.danger)], &[], Look { p, ty }),
+            Some(ImageSlot::Failed(error)) => {
+                self.center_state(cx, kit, area, &[(error, p.danger)], &[], Look { p, ty })
+            }
             _ => self.loading(cx, kit, area, p, ty, widget_area),
         }
     }
 
     /// Original `FileConflictAlert` strip; returns the new top.
     #[allow(clippy::too_many_arguments)]
-    fn draw_alert(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, top: f64, title: &str, description: Option<&str>, tone: Vec4, icon: bool, actions: &[(Hot, String)], p: &Palette, ty: &Typography) -> f64 {
+    fn draw_alert(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        top: f64,
+        title: &str,
+        description: Option<&str>,
+        tone: Vec4,
+        icon: bool,
+        actions: &[(Hot, String)],
+        p: &Palette,
+        ty: &Typography,
+    ) -> f64 {
         let base = ty.ui_size(14.0);
         let small = ty.ui_size(12.0);
         let glyph = if icon { 16.0 + 12.0 } else { 0.0 };
-        let button_widths: Vec<f64> = actions.iter().map(|(_, label)| ui::button_width(cx, kit, label, None, ButtonSize::Sm, ty)).collect();
-        let buttons_w: f64 = button_widths.iter().sum::<f64>() + 8.0 * actions.len().saturating_sub(1) as f64;
+        let button_widths: Vec<f64> = actions
+            .iter()
+            .map(|(_, label)| ui::button_width(cx, kit, label, None, ButtonSize::Sm, ty))
+            .collect();
+        let buttons_w: f64 =
+            button_widths.iter().sum::<f64>() + 8.0 * actions.len().saturating_sub(1) as f64;
         let wide = area.size.x >= 420.0;
-        let text_w = (area.size.x - 24.0 - glyph - if wide && !actions.is_empty() { buttons_w + 12.0 } else { 0.0 }).max(1.0);
+        let text_w = (area.size.x
+            - 24.0
+            - glyph
+            - if wide && !actions.is_empty() {
+                buttons_w + 12.0
+            } else {
+                0.0
+            })
+        .max(1.0);
         let title_h = kit.paragraph_height(cx, text_w, spec(Font::Medium, base, tone), title);
-        let desc_h = description.map(|d| kit.paragraph_height(cx, text_w, spec(Font::Regular, small, p.muted), d) + 4.0).unwrap_or(0.0);
+        let desc_h = description
+            .map(|d| kit.paragraph_height(cx, text_w, spec(Font::Regular, small, p.muted), d) + 4.0)
+            .unwrap_or(0.0);
         let message_h = title_h + desc_h;
         let button_h = ButtonSize::Sm.height().max(small * 1.4 + 12.0);
-        let content_h = if actions.is_empty() || wide { message_h.max(if actions.is_empty() { 0.0 } else { button_h }) } else { message_h + 8.0 + button_h };
+        let content_h = if actions.is_empty() || wide {
+            message_h.max(if actions.is_empty() { 0.0 } else { button_h })
+        } else {
+            message_h + 8.0 + button_h
+        };
         let h = (content_h + 16.0).max(48.0);
         let strip = rect(area.pos.x, top, area.size.x, h);
         kit.fill(cx, strip, p.surface1, 0.0);
         kit.hline(cx, strip.pos.x, strip.pos.y + h - 1.0, strip.size.x, tone);
         let mut x = strip.pos.x + 12.0;
-        let message_top = if wide || actions.is_empty() { strip.pos.y + (h - message_h) / 2.0 } else { strip.pos.y + 8.0 };
+        let message_top = if wide || actions.is_empty() {
+            strip.pos.y + (h - message_h) / 2.0
+        } else {
+            strip.pos.y + 8.0
+        };
         if icon {
-            kit.icon(cx, rect(x, message_top, 16.0, title_h), "triangle-alert", 16.0, tone);
+            kit.icon(
+                cx,
+                rect(x, message_top, 16.0, title_h),
+                "triangle-alert",
+                16.0,
+                tone,
+            );
             x += glyph;
         }
-        kit.paragraph(cx, dvec2(x, message_top), text_w, spec(Font::Medium, base, tone), title);
+        kit.paragraph(
+            cx,
+            dvec2(x, message_top),
+            text_w,
+            spec(Font::Medium, base, tone),
+            title,
+        );
         if let Some(description) = description {
-            kit.paragraph(cx, dvec2(x, message_top + title_h + 4.0), text_w, spec(Font::Regular, small, p.muted), description);
+            kit.paragraph(
+                cx,
+                dvec2(x, message_top + title_h + 4.0),
+                text_w,
+                spec(Font::Regular, small, p.muted),
+                description,
+            );
         }
         if !actions.is_empty() {
             let mut bx = strip.pos.x + strip.size.x - 12.0 - buttons_w;
-            let by = if wide { strip.pos.y + (h - button_h) / 2.0 } else { strip.pos.y + h - 8.0 - button_h };
+            let by = if wide {
+                strip.pos.y + (h - button_h) / 2.0
+            } else {
+                strip.pos.y + h - 8.0 - button_h
+            };
             for ((hot, label), w) in actions.iter().zip(button_widths) {
                 let r = rect(bx, by, w, button_h);
                 let st = self.state_of(hot, true);
-                ui::button(cx, kit, r, label, None, ButtonVariant::Outline, ButtonSize::Sm, st, p, ty);
+                ui::button(
+                    cx,
+                    kit,
+                    r,
+                    label,
+                    None,
+                    ButtonVariant::Outline,
+                    ButtonSize::Sm,
+                    st,
+                    p,
+                    ty,
+                );
                 self.hits.push(r, hot.clone());
                 bx += w + 8.0;
             }
@@ -1847,7 +2694,16 @@ impl FileView {
 
     /// Original `PaneFind`: a floating card ≤340px at the top right.
     #[allow(clippy::too_many_arguments)]
-    fn draw_find(&mut self, cx: &mut Cx2d, kit: &mut Kit, content: Rect, p: &Palette, ty: &Typography, compact: bool, widget_area: Area) {
+    fn draw_find(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        content: Rect,
+        p: &Palette,
+        ty: &Typography,
+        compact: bool,
+        widget_area: Area,
+    ) {
         kit.painter.new_layer(cx);
         let can_replace = self.editor.as_ref().is_some_and(|e| !e.read_only);
         let button = ui::toolbar_button_size(compact);
@@ -1855,7 +2711,11 @@ impl FileView {
         let width = (content.size.x - 16.0).min(340.0);
         let left = content.pos.x + content.size.x - 8.0 - width + 6.0;
         let right = left + width - 12.0;
-        let x = if can_replace { left + button + 4.0 } else { left };
+        let x = if can_replace {
+            left + button + 4.0
+        } else {
+            left
+        };
         let can_navigate = self.match_count > 0;
         // Trailing buttons of the first row; below the field's minimum width the
         // keyboard-reachable ones (Enter / Shift+Enter navigate) go first.
@@ -1874,22 +2734,56 @@ impl FileView {
         }
         let field_right = right - trailing_w(buttons.len());
         let replace_open = can_replace && self.replace_expanded;
-        let size = if compact { ButtonSize::Sm } else { ButtonSize::Xs };
+        let size = if compact {
+            ButtonSize::Sm
+        } else {
+            ButtonSize::Xs
+        };
         let labels = [t("paneFind.replace"), t("paneFind.replaceAll")];
-        let widths: Vec<f64> = if replace_open { labels.iter().map(|label| ui::button_width(cx, kit, label, None, size, ty)).collect() } else { Vec::new() };
+        let widths: Vec<f64> = if replace_open {
+            labels
+                .iter()
+                .map(|label| ui::button_width(cx, kit, label, None, size, ty))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let replace_buttons_w = widths.iter().sum::<f64>() + 4.0;
         // Replace buttons share the replacement row when the field keeps its minimum width, else get their own row.
         let replace_inline = right - replace_buttons_w - 4.0 - x >= FIND_FIELD_MIN_WIDTH;
-        let rows = if !replace_open { 1.0 } else if replace_inline { 2.0 } else { 3.0 };
-        let card = rect(left - 6.0, content.pos.y + 8.0, width, 12.0 + rows * row_h + (rows - 1.0) * 4.0);
+        let rows = if !replace_open {
+            1.0
+        } else if replace_inline {
+            2.0
+        } else {
+            3.0
+        };
+        let card = rect(
+            left - 6.0,
+            content.pos.y + 8.0,
+            width,
+            12.0 + rows * row_h + (rows - 1.0) * 4.0,
+        );
         ui::card(cx, kit, card, p, 8.0);
         // Blocks the editor below the card's padding and disabled buttons.
         self.hits.push(card, Hot::Card);
         let y = card.pos.y + 6.0;
         if can_replace {
             let r = rect(left, y + (row_h - button) / 2.0, button, button);
-            let icon = if self.replace_expanded { "chevron-down" } else { "chevron-right" };
-            ui::icon_button(cx, kit, r, icon, self.state_of(&Hot::ToggleReplace, true), compact, p);
+            let icon = if self.replace_expanded {
+                "chevron-down"
+            } else {
+                "chevron-right"
+            };
+            ui::icon_button(
+                cx,
+                kit,
+                r,
+                icon,
+                self.state_of(&Hot::ToggleReplace, true),
+                compact,
+                p,
+            );
             self.hits.push(r, Hot::ToggleReplace);
         }
         let mut bx = field_right + 4.0;
@@ -1908,28 +2802,74 @@ impl FileView {
         } else if self.match_count == 0 {
             t("paneFind.noMatches")
         } else if self.match_index > 0 {
-            ta("paneFind.position", &[("current", &self.match_index.to_string()), ("total", &self.match_count.to_string())])
+            ta(
+                "paneFind.position",
+                &[
+                    ("current", &self.match_index.to_string()),
+                    ("total", &self.match_count.to_string()),
+                ],
+            )
         } else {
-            ta("paneFind.total", &[("total", &self.match_count.to_string())])
+            ta(
+                "paneFind.total",
+                &[("total", &self.match_count.to_string())],
+            )
         };
         let field = rect(x, y, field_right - x, row_h);
         self.query.focused = self.focus == Focus::Find;
-        self.query.draw(cx, kit, field, &t("paneFind.placeholder"), Some(status.as_str()), ty.ui_size(14.0), p, widget_area);
+        self.query.draw(
+            cx,
+            kit,
+            field,
+            &t("paneFind.placeholder"),
+            Some(status.as_str()),
+            ty.ui_size(14.0),
+            p,
+            widget_area,
+        );
         self.hits.push(field, Hot::FindField);
         if replace_open {
             let y2 = y + row_h + 4.0;
-            let field_right = if replace_inline { right - replace_buttons_w - 4.0 } else { right };
+            let field_right = if replace_inline {
+                right - replace_buttons_w - 4.0
+            } else {
+                right
+            };
             let field = rect(x, y2, field_right - x, row_h);
             self.replacement.focused = self.focus == Focus::Replace;
-            self.replacement.draw(cx, kit, field, &t("paneFind.replaceWith"), None, ty.ui_size(14.0), p, widget_area);
+            self.replacement.draw(
+                cx,
+                kit,
+                field,
+                &t("paneFind.replaceWith"),
+                None,
+                ty.ui_size(14.0),
+                p,
+                widget_area,
+            );
             self.hits.push(field, Hot::ReplaceField);
             let by = if replace_inline { y2 } else { y2 + row_h + 4.0 };
             let mut rx = (right - replace_buttons_w).max(left);
-            for ((label, w), hot) in labels.iter().zip(widths).zip([Hot::ReplaceOne, Hot::ReplaceAll]) {
+            for ((label, w), hot) in labels
+                .iter()
+                .zip(widths)
+                .zip([Hot::ReplaceOne, Hot::ReplaceAll])
+            {
                 let height = size.height() + (ty.ui_size(12.0) - 12.0).max(0.0) * 1.4;
                 let r = rect(rx, by + (row_h - height) / 2.0, w, height);
                 let st = self.state_of(&hot, can_navigate);
-                ui::button(cx, kit, r, label, None, ButtonVariant::Ghost, size, st, p, ty);
+                ui::button(
+                    cx,
+                    kit,
+                    r,
+                    label,
+                    None,
+                    ButtonVariant::Ghost,
+                    size,
+                    st,
+                    p,
+                    ty,
+                );
                 if can_navigate {
                     self.hits.push(r, hot);
                 }
@@ -1939,7 +2879,14 @@ impl FileView {
     }
 
     /// Editor settings (Flutter `_settings` adaptive sheet) drawn as an in-panel dialog.
-    fn draw_settings(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, p: &Palette, ty: &Typography) {
+    fn draw_settings(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        p: &Palette,
+        ty: &Typography,
+    ) {
         kit.painter.new_layer(cx);
         ui::scrim(cx, kit, area);
         self.hits.push(area, Hot::Scrim);
@@ -1951,12 +2898,36 @@ impl FileView {
         let content_h = rows * row_h + (rows - 1.0) * 16.0 + 24.0;
         // The card fits the pane (16px margins); rows scroll under the header when it is short.
         let h = (header_h + content_h).min((area.size.y - 32.0).max(header_h));
-        let card = rect(area.pos.x + (area.size.x - width) / 2.0, area.pos.y + ((area.size.y - h) / 2.0).max(16.0), width, h);
+        let card = rect(
+            area.pos.x + (area.size.x - width) / 2.0,
+            area.pos.y + ((area.size.y - h) / 2.0).max(16.0),
+            width,
+            h,
+        );
         kit.outline(cx, card, p.dialog, p.border, 1.0, 12.0);
         self.hits.push(card, Hot::Card);
-        kit.text_in(cx, rect(card.pos.x + 20.0, card.pos.y + 12.0, width - 64.0, header_h - 24.0), spec(Font::Medium, ty.ui_size(16.0), p.foreground), l("Editor settings"), 0.0);
+        kit.text_in(
+            cx,
+            rect(
+                card.pos.x + 20.0,
+                card.pos.y + 12.0,
+                width - 64.0,
+                header_h - 24.0,
+            ),
+            spec(Font::Medium, ty.ui_size(16.0), p.foreground),
+            l("Editor settings"),
+            0.0,
+        );
         let close = rect(card.pos.x + width - 40.0, card.pos.y + 16.0, 24.0, 24.0);
-        ui::icon_button(cx, kit, close, "x", self.state_of(&Hot::SettingsClose, true), false, p);
+        ui::icon_button(
+            cx,
+            kit,
+            close,
+            "x",
+            self.state_of(&Hot::SettingsClose, true),
+            false,
+            p,
+        );
         self.hits.push(close, Hot::SettingsClose);
         let body = rect(card.pos.x, card.pos.y + header_h, width, h - header_h);
         self.settings_scroll_max = (content_h - body.size.y).max(0.0);
@@ -1964,29 +2935,97 @@ impl FileView {
         cx.begin_turtle(Walk::abs_rect(body), Layout::default());
         self.hits.set_clip(Some(body));
         let mut y = body.pos.y - self.settings_scroll;
-        let switches = [(l("Word wrap"), self.wrap, Hot::SetWrap), (l("Syntax highlighting"), self.highlighting, Hot::SetHighlight)];
+        let switches = [
+            (l("Word wrap"), self.wrap, Hot::SetWrap),
+            (
+                l("Syntax highlighting"),
+                self.highlighting,
+                Hot::SetHighlight,
+            ),
+        ];
         for (label, on, hot) in switches {
             let text_w = width - 40.0 - 52.0;
             let label_h = base * 1.4;
-            kit.text_in(cx, rect(card.pos.x + 20.0, y + (row_h - label_h) / 2.0, text_w, label_h), spec(Font::Regular, base, p.foreground), label, 0.0);
-            let sw = rect(card.pos.x + width - 20.0 - 40.0, y + (row_h - 24.0) / 2.0, 40.0, 24.0);
+            kit.text_in(
+                cx,
+                rect(
+                    card.pos.x + 20.0,
+                    y + (row_h - label_h) / 2.0,
+                    text_w,
+                    label_h,
+                ),
+                spec(Font::Regular, base, p.foreground),
+                label,
+                0.0,
+            );
+            let sw = rect(
+                card.pos.x + width - 20.0 - 40.0,
+                y + (row_h - 24.0) / 2.0,
+                40.0,
+                24.0,
+            );
             kit.fill(cx, sw, if on { p.accent } else { p.surface3 }, 12.0);
             let knob_x = if on { sw.pos.x + 18.0 } else { sw.pos.x + 2.0 };
-            kit.fill(cx, rect(knob_x, sw.pos.y + 2.0, 20.0, 20.0), if on { p.on_tertiary } else { p.foreground }, 10.0);
-            self.hits.push(rect(card.pos.x + 12.0, y, width - 24.0, row_h), hot);
+            kit.fill(
+                cx,
+                rect(knob_x, sw.pos.y + 2.0, 20.0, 20.0),
+                if on { p.on_tertiary } else { p.foreground },
+                10.0,
+            );
+            self.hits
+                .push(rect(card.pos.x + 12.0, y, width - 24.0, row_h), hot);
             y += row_h + 16.0;
         }
         // Code font size stepper.
-        kit.text_in(cx, rect(card.pos.x + 20.0, y, width - 160.0, row_h), spec(Font::Regular, base, p.foreground), l("Code font size"), 0.0);
+        kit.text_in(
+            cx,
+            rect(card.pos.x + 20.0, y, width - 160.0, row_h),
+            spec(Font::Regular, base, p.foreground),
+            l("Code font size"),
+            0.0,
+        );
         let bh = ButtonSize::Sm.height();
-        let plus = rect(card.pos.x + width - 20.0 - bh, y + (row_h - bh) / 2.0, bh, bh);
+        let plus = rect(
+            card.pos.x + width - 20.0 - bh,
+            y + (row_h - bh) / 2.0,
+            bh,
+            bh,
+        );
         let value = rect(plus.pos.x - 8.0 - 28.0, y, 28.0, row_h);
         let minus = rect(value.pos.x - 8.0 - bh, plus.pos.y, bh, bh);
         let minus_enabled = self.font_size > MIN_CODE_FONT;
         let plus_enabled = self.font_size < MAX_CODE_FONT;
-        ui::button(cx, kit, minus, "", Some("minus"), ButtonVariant::Outline, ButtonSize::Sm, self.state_of(&Hot::FontMinus, minus_enabled), p, ty);
-        ui::button(cx, kit, plus, "", Some("plus"), ButtonVariant::Outline, ButtonSize::Sm, self.state_of(&Hot::FontPlus, plus_enabled), p, ty);
-        kit.text_in(cx, value, spec(Font::Regular, base, p.foreground), &format!("{}", self.font_size.round()), 0.5);
+        ui::button(
+            cx,
+            kit,
+            minus,
+            "",
+            Some("minus"),
+            ButtonVariant::Outline,
+            ButtonSize::Sm,
+            self.state_of(&Hot::FontMinus, minus_enabled),
+            p,
+            ty,
+        );
+        ui::button(
+            cx,
+            kit,
+            plus,
+            "",
+            Some("plus"),
+            ButtonVariant::Outline,
+            ButtonSize::Sm,
+            self.state_of(&Hot::FontPlus, plus_enabled),
+            p,
+            ty,
+        );
+        kit.text_in(
+            cx,
+            value,
+            spec(Font::Regular, base, p.foreground),
+            &format!("{}", self.font_size.round()),
+            0.5,
+        );
         if minus_enabled {
             self.hits.push(minus, Hot::FontMinus);
         }
@@ -1998,11 +3037,33 @@ impl FileView {
     }
 
     /// The download progress dialog (Flutter `saveRemoteFile` modal).
-    fn draw_transfers(&mut self, cx: &mut Cx2d, kit: &mut Kit, area: Rect, p: &Palette, ty: &Typography) {
+    fn draw_transfers(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut Kit,
+        area: Rect,
+        p: &Palette,
+        ty: &Typography,
+    ) {
         let owner = self.owner.clone();
-        let transfers: Vec<(u64, String, u64, u64)> =
-            store::with(|s| s.transfers_of(&owner).iter().map(|t| (t.id, t.name.clone(), t.received, t.total)).collect());
-        draw_transfer_cards(cx, kit, area, &transfers, &mut self.hits, Hot::Card, Hot::TransferCancel, &self.hovered, p, ty);
+        let transfers: Vec<(u64, String, u64, u64)> = store::with(|s| {
+            s.transfers_of(&owner)
+                .iter()
+                .map(|t| (t.id, t.name.clone(), t.received, t.total))
+                .collect()
+        });
+        draw_transfer_cards(
+            cx,
+            kit,
+            area,
+            &transfers,
+            &mut self.hits,
+            Hot::Card,
+            Hot::TransferCancel,
+            &self.hovered,
+            p,
+            ty,
+        );
     }
 }
 
@@ -2020,54 +3081,137 @@ pub fn draw_transfer_cards<H: Clone + PartialEq>(
     p: &Palette,
     ty: &Typography,
 ) {
-    let Some((id, name, received, total)) = transfers.first().cloned() else { return };
+    let Some((id, name, received, total)) = transfers.first().cloned() else {
+        return;
+    };
     kit.painter.new_layer(cx);
     kit.fill(cx, area, with_alpha(vec4(0.0, 0.0, 0.0, 1.0), 0.55), 0.0);
     let width = (area.size.x - 32.0).min(520.0);
     let base = ty.ui_size(14.0);
     let small = ty.ui_size(12.0);
     let h = 24.0 + base * 1.4 * 2.0 + 12.0 + 4.0 + 12.0 + ButtonSize::Sm.height() + 24.0;
-    let card = rect(area.pos.x + (area.size.x - width) / 2.0, area.pos.y + (area.size.y - h) / 2.0, width, h);
+    let card = rect(
+        area.pos.x + (area.size.x - width) / 2.0,
+        area.pos.y + (area.size.y - h) / 2.0,
+        width,
+        h,
+    );
     kit.outline(cx, card, p.surface1, p.surface2, 1.0, 12.0);
     let title = lf("Downloading {name}", &[("name", &name)]);
     let mut y = card.pos.y + 24.0;
-    let title_h = kit.paragraph_height(cx, width - 48.0, spec(Font::Medium, base, p.foreground), &title).min(base * 1.4 * 2.0);
-    kit.paragraph(cx, dvec2(card.pos.x + 24.0, y), width - 48.0, spec(Font::Medium, base, p.foreground), &title);
+    let title_h = kit
+        .paragraph_height(
+            cx,
+            width - 48.0,
+            spec(Font::Medium, base, p.foreground),
+            &title,
+        )
+        .min(base * 1.4 * 2.0);
+    kit.paragraph(
+        cx,
+        dvec2(card.pos.x + 24.0, y),
+        width - 48.0,
+        spec(Font::Medium, base, p.foreground),
+        &title,
+    );
     y += title_h + 12.0;
     let bar = rect(card.pos.x + 24.0, y, width - 48.0, 4.0);
     kit.fill(cx, bar, p.surface3, 2.0);
     if total > 0 {
-        kit.fill(cx, rect(bar.pos.x, bar.pos.y, bar.size.x * (received as f64 / total as f64).min(1.0), 4.0), p.accent, 2.0);
+        kit.fill(
+            cx,
+            rect(
+                bar.pos.x,
+                bar.pos.y,
+                bar.size.x * (received as f64 / total as f64).min(1.0),
+                4.0,
+            ),
+            p.accent,
+            2.0,
+        );
     } else {
         let phase = clock::phase(1200);
-        kit.fill(cx, rect(bar.pos.x + bar.size.x * phase * 0.7, bar.pos.y, bar.size.x * 0.3, 4.0), p.accent, 2.0);
+        kit.fill(
+            cx,
+            rect(
+                bar.pos.x + bar.size.x * phase * 0.7,
+                bar.pos.y,
+                bar.size.x * 0.3,
+                4.0,
+            ),
+            p.accent,
+            2.0,
+        );
     }
     y += 4.0 + 12.0;
     let button_label = l("Cancel");
     let bw = ui::button_width(cx, kit, button_label, None, ButtonSize::Sm, ty);
     let bh = ButtonSize::Sm.height();
-    let progress = lf("{received} / {total} bytes", &[("received", &received.to_string()), ("total", &total.to_string())]);
-    kit.text_in(cx, rect(card.pos.x + 24.0, y, width - 48.0 - bw - 8.0, bh), spec(Font::Regular, small, p.muted), &progress, 0.0);
+    let progress = lf(
+        "{received} / {total} bytes",
+        &[
+            ("received", &received.to_string()),
+            ("total", &total.to_string()),
+        ],
+    );
+    kit.text_in(
+        cx,
+        rect(card.pos.x + 24.0, y, width - 48.0 - bw - 8.0, bh),
+        spec(Font::Regular, small, p.muted),
+        &progress,
+        0.0,
+    );
     let button = rect(card.pos.x + width - 24.0 - bw, y, bw, bh);
     let hot = cancel(id);
-    let state = Interaction { hovered: hovered.as_ref() == Some(&hot), pressed: false, enabled: true, selected: false };
-    ui::button(cx, kit, button, button_label, None, ButtonVariant::Outline, ButtonSize::Sm, state, p, ty);
+    let state = Interaction {
+        hovered: hovered.as_ref() == Some(&hot),
+        pressed: false,
+        enabled: true,
+        selected: false,
+    };
+    ui::button(
+        cx,
+        kit,
+        button,
+        button_label,
+        None,
+        ButtonVariant::Outline,
+        ButtonSize::Sm,
+        state,
+        p,
+        ty,
+    );
     hits.push(area, block);
     hits.push(button, hot);
 }
 
 fn has_scheme(value: &str) -> bool {
-    let Some(colon) = value.find(':') else { return false };
+    let Some(colon) = value.find(':') else {
+        return false;
+    };
     let scheme = &value[..colon];
     // A Windows drive letter is not a scheme.
     scheme.len() > 1
-        && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        && scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 fn slot_state(slot: Option<ImageSlot>) -> ImageState {
     match slot {
-        Some(ImageSlot::Ready { texture, width, height }) => ImageState::Ready { texture, width, height },
+        Some(ImageSlot::Ready {
+            texture,
+            width,
+            height,
+        }) => ImageState::Ready {
+            texture,
+            width,
+            height,
+        },
         Some(ImageSlot::Failed(error)) => ImageState::Failed(error),
         _ => ImageState::Loading,
     }

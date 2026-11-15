@@ -64,10 +64,10 @@ impl ProjectService {
         if let Err(error) = &result
             && (kind.starts_with("workspace.label.")
                 || matches!(kind, "project.list.request" | "fetch_workspaces_request"))
-            {
-                send_rpc_error(ctx, m, error).await?;
-                return Ok(true);
-            }
+        {
+            send_rpc_error(ctx, m, error).await?;
+            return Ok(true);
+        }
         let mut payload = match result {
             Ok(payload) => payload,
             Err(error) => failure(kind, m, &error),
@@ -148,8 +148,7 @@ impl ProjectService {
                 let mut removed = Vec::new();
                 let result = async {
                     for wid in &active {
-                        self.archive_locked(ctx.principal(), wid, None)
-                            .await?;
+                        self.archive_locked(ctx.principal(), wid, None).await?;
                         removed.push(wid.clone());
                     }
                     self.storage().await?.remove_project(id).await

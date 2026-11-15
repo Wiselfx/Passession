@@ -166,14 +166,23 @@ fn family() -> Threads {
     let mut threads = Threads::default();
     threads.replies.insert(
         "parent".into(),
-        thread(vec![message("p1", "parent text"), spawn("spawn", &["child-a", "child-b"], "Review")]),
+        thread(vec![
+            message("p1", "parent text"),
+            spawn("spawn", &["child-a", "child-b"], "Review"),
+        ]),
     );
     let mut child = vec![message("a1", "child a text")];
     child.extend((0..120).map(|n| message(&format!("a-row-{n}"), &format!("row {n}"))));
     child.push(spawn("nested", &["grandchild"], "Dig deeper"));
     threads.replies.insert("child-a".into(), thread(child));
-    threads.replies.insert("child-b".into(), thread(vec![message("b1", "child b text")]));
-    threads.replies.insert("grandchild".into(), thread(vec![message("g1", "grandchild text")]));
+    threads.replies.insert(
+        "child-b".into(),
+        thread(vec![message("b1", "child b text")]),
+    );
+    threads.replies.insert(
+        "grandchild".into(),
+        thread(vec![message("g1", "grandchild text")]),
+    );
     threads
 }
 fn request(child: &str, source: Value) -> crate::providers::api::SubagentHistoryRequest {
@@ -192,13 +201,16 @@ fn request(child: &str, source: Value) -> crate::providers::api::SubagentHistory
 
 #[tokio::test]
 async fn in_stream_replay_holds_live_rows_until_the_daemon_decides() {
-    use crate::providers::api::{ChildRowHold, EventSink, HistoryCoverage, ReplayOutcome, SubagentReplay};
+    use crate::providers::api::{
+        ChildRowHold, EventSink, HistoryCoverage, ReplayOutcome, SubagentReplay,
+    };
     let row = |id: &str, text: &str| {
         json!({"type":"provider_subagent","provider":"codex","event":{"type":"timeline","id":"child-b",
             "item":{"type":"assistant_message","text":text,"messageId":id}}})
     };
     for outcome in [ReplayOutcome::Applied, ReplayOutcome::Retained] {
-        let (sink, mut published) = EventSink::channel(64, tokio_util::sync::CancellationToken::new());
+        let (sink, mut published) =
+            EventSink::channel(64, tokio_util::sync::CancellationToken::new());
         let hold = std::sync::Arc::new(ChildRowHold::default());
         let (decide, decision) = tokio::sync::watch::channel(None);
         let mut selected = request("child-b", Value::Null);
@@ -223,7 +235,9 @@ async fn in_stream_replay_holds_live_rows_until_the_daemon_decides() {
                     Ok::<_, anyhow::Error>((snapshot, HistoryCoverage::Complete))
                 };
                 hold.publish_replay(&selected, "codex", &sink, read, |item, snapshot| {
-                    snapshot.iter().any(|row| row["messageId"] == item["messageId"])
+                    snapshot
+                        .iter()
+                        .any(|row| row["messageId"] == item["messageId"])
                 })
                 .await
             })
@@ -237,9 +251,18 @@ async fn in_stream_replay_holds_live_rows_until_the_daemon_decides() {
         assert_eq!(before["event"]["item"]["text"], "before");
         let marker = published.recv().await.unwrap();
         assert_eq!(marker["event"]["type"], "replay");
-        assert_eq!(marker["event"]["historyComplete"], false, "a running child is never authoritative");
-        assert_eq!(marker["event"]["events"][0]["event"]["item"]["text"], "done");
-        assert!(published.try_recv().is_err(), "held rows wait for the daemon");
+        assert_eq!(
+            marker["event"]["historyComplete"], false,
+            "a running child is never authoritative"
+        );
+        assert_eq!(
+            marker["event"]["events"][0]["event"]["item"]["text"],
+            "done"
+        );
+        assert!(
+            published.try_recv().is_err(),
+            "held rows wait for the daemon"
+        );
         decide.send(Some(outcome)).unwrap();
         assert!(matches!(
             task.await.unwrap().unwrap(),
@@ -250,12 +273,19 @@ async fn in_stream_replay_holds_live_rows_until_the_daemon_decides() {
             rest.push(event["event"]["item"]["text"].as_str().unwrap().to_owned());
         }
         match outcome {
-            ReplayOutcome::Applied => assert_eq!(rest, ["new"], "the applied snapshot already has b1"),
-            ReplayOutcome::Retained => assert_eq!(rest, ["done", "new"], "kept state continues as it was"),
+            ReplayOutcome::Applied => {
+                assert_eq!(rest, ["new"], "the applied snapshot already has b1")
+            }
+            ReplayOutcome::Retained => {
+                assert_eq!(rest, ["done", "new"], "kept state continues as it was")
+            }
         }
         // The hold is lifted: later rows flow straight through.
         hold.emit(&sink, row("b3", "after")).await.unwrap();
-        assert_eq!(published.recv().await.unwrap()["event"]["item"]["text"], "after");
+        assert_eq!(
+            published.recv().await.unwrap()["event"]["item"]["text"],
+            "after"
+        );
     }
 }
 
@@ -263,8 +293,13 @@ async fn in_stream_replay_holds_live_rows_until_the_daemon_decides() {
 fn a_child_not_recorded_as_finished_never_gets_an_authoritative_replay() {
     use crate::providers::api::HistoryCoverage;
     let rows = || {
-        vec![crate::providers::api::subagent_row("codex", "child-b", json!({"type":"assistant_message","text":"x"}),
-            None, HistoryCoverage::Complete)]
+        vec![crate::providers::api::subagent_row(
+            "codex",
+            "child-b",
+            json!({"type":"assistant_message","text":"x"}),
+            None,
+            HistoryCoverage::Complete,
+        )]
     };
     for (status, expected) in [
         (json!("completed"), true),
@@ -282,49 +317,81 @@ fn a_child_not_recorded_as_finished_never_gets_an_authoritative_replay() {
     }
     let mut events = rows();
     let coverage = request("child-b", Value::Null).settle(&mut events, HistoryCoverage::Unverified);
-    assert!(coverage == HistoryCoverage::Unverified, "a partial read stays partial");
+    assert!(
+        coverage == HistoryCoverage::Unverified,
+        "a partial read stays partial"
+    );
     assert_eq!(events[0]["event"]["historyComplete"], false);
 }
 
 #[tokio::test]
 async fn parent_history_announces_children_without_reading_their_threads() {
     let threads = family();
-    let history = session::load_history(&threads, "parent", None, "codex").await.unwrap();
+    let history = session::load_history(&threads, "parent", None, "codex")
+        .await
+        .unwrap();
     assert_eq!(*threads.reads.lock().unwrap(), ["parent"]);
     let children: Vec<_> = history
         .iter()
         .filter(|event| event["type"] == "provider_subagent")
         .map(|event| &event["event"])
         .collect();
-    assert!(children.iter().all(|event| event["type"] == "upsert"), "{children:?}");
-    let ids: Vec<_> = children.iter().map(|event| event["id"].as_str().unwrap()).collect();
+    assert!(
+        children.iter().all(|event| event["type"] == "upsert"),
+        "{children:?}"
+    );
+    let ids: Vec<_> = children
+        .iter()
+        .map(|event| event["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, ["child-a", "child-b"]);
     assert_eq!(children[0]["source"], json!({"threadId":"child-a"}));
     assert_eq!(children[0]["toolCallId"], "spawn");
     assert_eq!(children[0]["parentSubagentId"], Value::Null);
-    assert!(history.iter().any(|event| event["item"]["text"] == "parent text"));
+    assert!(
+        history
+            .iter()
+            .any(|event| event["item"]["text"] == "parent text")
+    );
 }
 
 #[tokio::test]
 async fn opened_child_reads_only_its_thread_and_announces_grandchildren() {
     let threads = family();
-    let (events, coverage) =
-        session::subagent_history(&threads, &request("child-a", json!({"threadId":"child-a"})), "codex", false)
-            .await
-            .unwrap();
+    let (events, coverage) = session::subagent_history(
+        &threads,
+        &request("child-a", json!({"threadId":"child-a"})),
+        "codex",
+        false,
+    )
+    .await
+    .unwrap();
     assert!(coverage == crate::providers::api::HistoryCoverage::Complete);
     assert_eq!(*threads.reads.lock().unwrap(), ["child-a"]);
-    let rows: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "timeline").collect();
-    assert_eq!(rows.len(), 122, "every row of the selected child is replayed for paging");
+    let rows: Vec<_> = events
+        .iter()
+        .filter(|e| e["event"]["type"] == "timeline")
+        .collect();
+    assert_eq!(
+        rows.len(),
+        122,
+        "every row of the selected child is replayed for paging"
+    );
     assert!(rows.iter().all(|row| row["event"]["id"] == "child-a"
         && row["event"]["historyComplete"] == true
         && row["type"] == "provider_subagent"));
     assert_eq!(rows[0]["event"]["item"]["text"], "child a text");
-    let nested: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "upsert").collect();
+    let nested: Vec<_> = events
+        .iter()
+        .filter(|e| e["event"]["type"] == "upsert")
+        .collect();
     assert_eq!(nested.len(), 1);
     assert_eq!(nested[0]["event"]["id"], "grandchild");
     assert_eq!(nested[0]["event"]["parentSubagentId"], "child-a");
-    assert_eq!(nested[0]["event"]["source"], json!({"threadId":"grandchild"}));
+    assert_eq!(
+        nested[0]["event"]["source"],
+        json!({"threadId":"grandchild"})
+    );
 }
 
 #[tokio::test]
@@ -336,17 +403,42 @@ async fn selected_child_failures_are_errors_and_retry_reads_again() {
         session::subagent_history(&threads, &selected, "codex", false),
         session::subagent_history(&threads, &selected, "codex", false),
     );
-    assert!(first.is_err() != second.is_err(), "exactly one concurrent read saw the failure");
+    assert!(
+        first.is_err() != second.is_err(),
+        "exactly one concurrent read saw the failure"
+    );
     let succeeded = first.or(second).unwrap().0;
-    let retried = session::subagent_history(&threads, &selected, "codex", false).await.unwrap().0;
-    assert_eq!(succeeded, retried, "a failure is never cached as the child's history");
-    assert_eq!(*threads.reads.lock().unwrap(), ["child-b", "child-b", "child-b"]);
-    let missing = session::subagent_history(&threads, &request("gone", Value::Null), "codex", false).await;
-    assert!(missing.unwrap_err().to_string().contains("no rollout found"));
+    let retried = session::subagent_history(&threads, &selected, "codex", false)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(
+        succeeded, retried,
+        "a failure is never cached as the child's history"
+    );
+    assert_eq!(
+        *threads.reads.lock().unwrap(),
+        ["child-b", "child-b", "child-b"]
+    );
+    let missing =
+        session::subagent_history(&threads, &request("gone", Value::Null), "codex", false).await;
+    assert!(
+        missing
+            .unwrap_err()
+            .to_string()
+            .contains("no rollout found")
+    );
     let mut torn = family();
-    torn.replies.insert("child-a".into(), json!({"thread":{"turns":[{"id":"turn"}]}}));
-    let incomplete = session::subagent_history(&torn, &request("child-a", Value::Null), "codex", false).await;
-    assert!(incomplete.is_err(), "an incomplete thread is not an empty replay");
+    torn.replies.insert(
+        "child-a".into(),
+        json!({"thread":{"turns":[{"id":"turn"}]}}),
+    );
+    let incomplete =
+        session::subagent_history(&torn, &request("child-a", Value::Null), "codex", false).await;
+    assert!(
+        incomplete.is_err(),
+        "an incomplete thread is not an empty replay"
+    );
 }
 
 #[tokio::test]
@@ -359,9 +451,18 @@ async fn cold_child_read_shows_the_current_unfinished_turn() {
         ]}}),
     );
     let (events, coverage) =
-        session::subagent_history(&threads, &request("child-b", Value::Null), "codex", false).await.unwrap();
-    let texts: Vec<_> = events.iter().filter_map(|event| event["event"]["item"]["text"].as_str()).collect();
-    assert_eq!(texts, ["partial snapshot"], "a cold read has no live stream to supply this turn");
+        session::subagent_history(&threads, &request("child-b", Value::Null), "codex", false)
+            .await
+            .unwrap();
+    let texts: Vec<_> = events
+        .iter()
+        .filter_map(|event| event["event"]["item"]["text"].as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        ["partial snapshot"],
+        "a cold read has no live stream to supply this turn"
+    );
     assert!(coverage == crate::providers::api::HistoryCoverage::Unverified);
 }
 
@@ -376,12 +477,17 @@ async fn child_turn_in_progress_is_left_to_the_live_stream() {
         ]}}),
     );
     let (events, coverage) =
-        session::subagent_history(&threads, &request("child-b", Value::Null), "codex", true).await.unwrap();
+        session::subagent_history(&threads, &request("child-b", Value::Null), "codex", true)
+            .await
+            .unwrap();
     assert!(
         coverage == crate::providers::api::HistoryCoverage::Unverified,
         "a growing child cannot be replayed authoritatively"
     );
-    let texts: Vec<_> = events.iter().map(|e| e["event"]["item"]["text"].as_str().unwrap()).collect();
+    let texts: Vec<_> = events
+        .iter()
+        .map(|e| e["event"]["item"]["text"].as_str().unwrap())
+        .collect();
     assert_eq!(
         texts,
         ["finished reply"],
@@ -393,15 +499,22 @@ async fn child_turn_in_progress_is_left_to_the_live_stream() {
 /// Parent recovery as `CodexSession::open` performs it, from the stored card hints
 /// the daemon passes in resume options.
 async fn resumed(threads: &Threads, options: &Value) -> (Vec<Value>, session::State) {
-    let mut history = session::load_history(threads, "parent", None, "codex").await.unwrap();
+    let mut history = session::load_history(threads, "parent", None, "codex")
+        .await
+        .unwrap();
     let logs = session::card_logs(options);
     session::apply_card_logs(&mut history, &logs);
     let mut state = session::State::default();
-    for event in history.iter().filter(|event| event["type"] == "provider_subagent") {
+    for event in history
+        .iter()
+        .filter(|event| event["type"] == "provider_subagent")
+    {
         let id = event["event"]["id"].as_str().unwrap().to_owned();
         let card = history
             .iter()
-            .find(|e| e["type"] == "timeline" && e["item"]["callId"] == event["event"]["toolCallId"])
+            .find(|e| {
+                e["type"] == "timeline" && e["item"]["callId"] == event["event"]["toolCallId"]
+            })
             .unwrap()["item"]
             .clone();
         state.children.insert(id.clone(), event["event"].clone());
@@ -431,7 +544,8 @@ async fn resumed_child_card_keeps_recorded_log_without_reading_child_threads() {
         "the replayed card keeps the recorded log, so reconciling it by call ID loses nothing"
     );
     let updates =
-        CodexSession::aggregate(&mut state, &[live("new progress", "b2")], Some("b2"), true).unwrap();
+        CodexSession::aggregate(&mut state, &[live("new progress", "b2")], Some("b2"), true)
+            .unwrap();
     assert_eq!(updates.len(), 1);
     assert_eq!(updates[0]["item"]["callId"], "spawn");
     assert_eq!(
@@ -445,8 +559,14 @@ async fn resumed_child_card_keeps_recorded_log_without_reading_child_threads() {
         "[Assistant] reviewed the parser\n[Assistant] new progress and more",
         "new text is appended exactly once"
     );
-    assert_eq!(*threads.reads.lock().unwrap(), ["parent"], "no child thread is read before its pane opens");
-    session::subagent_history(&threads, &request("child-b", Value::Null), "codex", false).await.unwrap();
+    assert_eq!(
+        *threads.reads.lock().unwrap(),
+        ["parent"],
+        "no child thread is read before its pane opens"
+    );
+    session::subagent_history(&threads, &request("child-b", Value::Null), "codex", false)
+        .await
+        .unwrap();
     assert_eq!(*threads.reads.lock().unwrap(), ["parent", "child-b"]);
 }
 
@@ -461,8 +581,12 @@ async fn card_without_recorded_log_shows_only_observed_activity() {
         .unwrap();
     assert_eq!(card["item"]["detail"]["log"], "");
     let updates =
-        CodexSession::aggregate(&mut state, &[live("new progress", "b2")], Some("b2"), true).unwrap();
-    assert_eq!(updates[0]["item"]["detail"]["log"], "[Assistant] new progress");
+        CodexSession::aggregate(&mut state, &[live("new progress", "b2")], Some("b2"), true)
+            .unwrap();
+    assert_eq!(
+        updates[0]["item"]["detail"]["log"],
+        "[Assistant] new progress"
+    );
     assert_eq!(*threads.reads.lock().unwrap(), ["parent"]);
 }
 
@@ -476,7 +600,10 @@ async fn resumed_partial_child_item_continues_without_repeating() {
     let updates =
         CodexSession::aggregate(&mut previous, &[live("Hello ", "b2")], Some("b2"), true).unwrap();
     let card = updates[0]["item"].clone();
-    assert_eq!(card["detail"]["log"], "[Assistant] First.\n[Assistant] Hello");
+    assert_eq!(
+        card["detail"]["log"],
+        "[Assistant] First.\n[Assistant] Hello"
+    );
     // The daemon stores that card and hands its log and identities back on resume.
     let options = json!({"subagentCardLogs":{"spawn":card["detail"]["log"]},
         "subagentCardEntries":{"spawn":card["metadata"]["subagentLog"]}});
@@ -487,7 +614,10 @@ async fn resumed_partial_child_item_continues_without_repeating() {
             .find(|e| e["type"] == "timeline" && e["item"]["callId"] == "spawn")
             .unwrap();
         assert_eq!(replayed["item"]["detail"]["log"], card["detail"]["log"]);
-        assert_eq!(replayed["item"]["metadata"]["subagentLog"], card["metadata"]["subagentLog"]);
+        assert_eq!(
+            replayed["item"]["metadata"]["subagentLog"],
+            card["metadata"]["subagentLog"]
+        );
         // The same native item continues: by its next delta, or by its full text.
         let continued = if full {
             CodexSession::aggregate(&mut state, &[live("Hello world", "b2")], Some("b2"), false)
@@ -496,8 +626,7 @@ async fn resumed_partial_child_item_continues_without_repeating() {
         }
         .unwrap();
         assert_eq!(
-            continued[0]["item"]["detail"]["log"],
-            "[Assistant] First.\n[Assistant] Hello world",
+            continued[0]["item"]["detail"]["log"], "[Assistant] First.\n[Assistant] Hello world",
             "full={full}: the resumed item is neither repeated nor truncated"
         );
         // A distinct item, even with text repeating an earlier one, appends once.
@@ -508,5 +637,9 @@ async fn resumed_partial_child_item_continues_without_repeating() {
             "[Assistant] First.\n[Assistant] Hello world\n[Assistant] First."
         );
     }
-    assert_eq!(*threads.reads.lock().unwrap(), ["parent", "parent", "parent"], "no child thread read");
+    assert_eq!(
+        *threads.reads.lock().unwrap(),
+        ["parent", "parent", "parent"],
+        "no child thread read"
+    );
 }

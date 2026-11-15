@@ -1,5 +1,5 @@
-use paseo_client::process::{CommandOutput, CommandSpec};
 use anyhow::{Result, anyhow, bail};
+use paseo_client::process::{CommandOutput, CommandSpec};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -291,9 +291,11 @@ pub async fn operation_base(
             .or_else(|| m.get("baseRefName").and_then(Value::as_str))
     });
     if let (Some(stored), Some(requested)) = (stored, requested)
-        && stored != requested && branch_name(stored) != requested {
-            bail!("Base ref mismatch: stored {stored}, requested {requested}");
-        }
+        && stored != requested
+        && branch_name(stored) != requested
+    {
+        bail!("Base ref mismatch: stored {stored}, requested {requested}");
+    }
     if let Some(base) = stored.or(requested) {
         safe_ref(base)?;
         return Ok(Some(base.to_string()));

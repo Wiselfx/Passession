@@ -1,6 +1,7 @@
 use crate::{
-    agent, automation, config, daemon_admin, daemon_control::WorkerExit, files, git, mcp, plugins,
-    projects,
+    agent, automation, config, daemon_admin,
+    daemon_control::WorkerExit,
+    files, git, mcp, plugins, projects,
     providers::registry::ProviderRegistry,
     terminals,
     transport::{self, RequestContext},
@@ -139,7 +140,9 @@ impl AppState {
 
     /// The first intent wins, so teardown failures never rewrite an explicit stop/restart.
     fn request_exit(&self, kind: u8) {
-        let _ = self.shutdown_kind.compare_exchange(0, kind, Ordering::AcqRel, Ordering::Acquire);
+        let _ = self
+            .shutdown_kind
+            .compare_exchange(0, kind, Ordering::AcqRel, Ordering::Acquire);
         self.cancel.cancel();
     }
 
@@ -165,7 +168,8 @@ impl AppState {
             self.agents.handle(context, message).await?;
             return Ok(());
         }
-        let _update_admission = crate::daemon_admin::update_operation::wire_admission(self, message)?;
+        let _update_admission =
+            crate::daemon_admin::update_operation::wire_admission(self, message)?;
         if self.transport.handle(context, message).await?
             || self.daemon_admin.handle(context, message).await?
             || self.config.handle(context, message).await?
@@ -267,9 +271,10 @@ impl AppState {
         stop!(FILES, "files", self.files.shutdown());
         stop!(GIT, "git", self.git.shutdown());
         if let Err(error) = self.mcp.shutdown().await
-            && failure.is_none() {
-                failure = Some(error);
-            }
+            && failure.is_none()
+        {
+            failure = Some(error);
+        }
         match failure {
             Some(error) => Err(error),
             None => Ok(()),
@@ -314,7 +319,7 @@ pub async fn run_daemon(home: PathBuf, options: Value) -> Result<i32> {
         let identity=app.transport.identity();
         let server_id=identity["serverId"].as_str().context("Daemon identity is missing")?;
         crate::daemon_control::publish_worker_ready(&listen,server_id)?;
-        tracing::info!(%listen,%server_id,version=env!("CARGO_PKG_VERSION"),"Paseo native daemon ready");
+        tracing::info!(%listen,%server_id,version=crate::VERSION,"Paseo native daemon ready");
         app.cancel.cancelled().await;
         Ok(())
     }.await;

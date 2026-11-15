@@ -16,7 +16,11 @@ const SCAN_WINDOW_CHARS: usize = MAX_SUMMARY_CHARS * 4;
 pub fn to_summary_text(value: &str) -> Option<String> {
     let chars: Vec<char> = value.chars().collect();
     let partial = chars.len() > SCAN_WINDOW_CHARS;
-    let window: String = if partial { chars[..SCAN_WINDOW_CHARS].iter().collect() } else { value.to_owned() };
+    let window: String = if partial {
+        chars[..SCAN_WINDOW_CHARS].iter().collect()
+    } else {
+        value.to_owned()
+    };
     let collapsed = window.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
         return None;
@@ -61,7 +65,10 @@ pub fn paseo_tool_leaf_name(name: &str) -> Option<String> {
     }
     if normalized.contains("__") {
         let segments: Vec<&str> = normalized.split("__").filter(|s| !s.is_empty()).collect();
-        if segments.len() >= 3 && segments[0] == "mcp" && (segments[1] == "paseo" || segments[1].starts_with("paseo_")) {
+        if segments.len() >= 3
+            && segments[0] == "mcp"
+            && (segments[1] == "paseo" || segments[1].starts_with("paseo_"))
+        {
             return Some(segments[2..].join("__"));
         }
         return None;
@@ -94,15 +101,83 @@ struct PaseoEntry {
     output_fields: Option<&'static [&'static str]>,
 }
 
-const WORKSPACE_FIELDS: &[&str] = &["title", "workspaceId", "projectId", "isolation", "path", "mode", "worktreeSlug", "branchName", "baseBranch", "branch", "prNumber", "forge"];
-const AGENT_FIELDS: &[&str] = &["title", "agentId", "provider", "workspaceId", "cwd", "sessionMode", "modeId", "background", "notifyOnFinish", "internal", "settings", "labels"];
-const AUTOMATION_FIELDS: &[&str] = &["name", "id", "cron", "timezone", "provider", "cwd", "isolation", "maxRuns", "expiresIn", "clearExpires"];
-const BROWSER_FIELDS: &[&str] = &["browserId", "url", "ref", "sourceRef", "targetRef", "value", "text", "key", "button", "doubleClick", "modifiers", "filePaths", "fullPage", "maxEntries", "timeoutMs", "deltaX", "deltaY", "width", "height", "function"];
+const WORKSPACE_FIELDS: &[&str] = &[
+    "title",
+    "workspaceId",
+    "projectId",
+    "isolation",
+    "path",
+    "mode",
+    "worktreeSlug",
+    "branchName",
+    "baseBranch",
+    "branch",
+    "prNumber",
+    "forge",
+];
+const AGENT_FIELDS: &[&str] = &[
+    "title",
+    "agentId",
+    "provider",
+    "workspaceId",
+    "cwd",
+    "sessionMode",
+    "modeId",
+    "background",
+    "notifyOnFinish",
+    "internal",
+    "settings",
+    "labels",
+];
+const AUTOMATION_FIELDS: &[&str] = &[
+    "name",
+    "id",
+    "cron",
+    "timezone",
+    "provider",
+    "cwd",
+    "isolation",
+    "maxRuns",
+    "expiresIn",
+    "clearExpires",
+];
+const BROWSER_FIELDS: &[&str] = &[
+    "browserId",
+    "url",
+    "ref",
+    "sourceRef",
+    "targetRef",
+    "value",
+    "text",
+    "key",
+    "button",
+    "doubleClick",
+    "modifiers",
+    "filePaths",
+    "fullPage",
+    "maxEntries",
+    "timeoutMs",
+    "deltaX",
+    "deltaY",
+    "width",
+    "height",
+    "function",
+];
 const AUTOMATION_OUTPUT: &[&str] = &["id", "status", "nextRunAt", "expiresAt"];
 
 /// A catalogued Paseo tool; its title is `agentStream.paseoTools.<leaf>`.
-const fn entry(context: Context, prompt_field: Option<&'static str>, input_order: &'static [&'static str], output_fields: Option<&'static [&'static str]>) -> PaseoEntry {
-    PaseoEntry { context, prompt_field, input_order, output_fields }
+const fn entry(
+    context: Context,
+    prompt_field: Option<&'static str>,
+    input_order: &'static [&'static str],
+    output_fields: Option<&'static [&'static str]>,
+) -> PaseoEntry {
+    PaseoEntry {
+        context,
+        prompt_field,
+        input_order,
+        output_fields,
+    }
 }
 
 const fn browser(context: Context) -> PaseoEntry {
@@ -112,34 +187,129 @@ const fn browser(context: Context) -> PaseoEntry {
 fn paseo_catalog(leaf: &str) -> Option<PaseoEntry> {
     use Context::*;
     Some(match leaf {
-        "create_agent" => entry(Field(&["title", "initialPrompt"]), Some("initialPrompt"), AGENT_FIELDS, Some(&["agentId", "status", "currentModeId", "cwd"])),
-        "send_agent_prompt" => entry(Field(&["prompt"]), Some("prompt"), AGENT_FIELDS, Some(&["status", "lastMessage", "permission"])),
+        "create_agent" => entry(
+            Field(&["title", "initialPrompt"]),
+            Some("initialPrompt"),
+            AGENT_FIELDS,
+            Some(&["agentId", "status", "currentModeId", "cwd"]),
+        ),
+        "send_agent_prompt" => entry(
+            Field(&["prompt"]),
+            Some("prompt"),
+            AGENT_FIELDS,
+            Some(&["status", "lastMessage", "permission"]),
+        ),
         "get_agent_status" => entry(TargetAgent, Option::None, &["agentId"], Option::None),
-        "get_agent_activity" => entry(TargetAgent, Option::None, &["agentId", "limit"], Option::None),
-        "list_agents" => entry(None, Option::None, &["cwd", "statuses", "sinceHours", "limit", "includeArchived"], Option::None),
-        "update_agent" => entry(FieldOrTargetAgent("name"), Option::None, AGENT_FIELDS, Option::None),
-        "set_agent_mode" => entry(Field(&["modeId"]), Option::None, &["agentId", "modeId"], Option::None),
+        "get_agent_activity" => entry(
+            TargetAgent,
+            Option::None,
+            &["agentId", "limit"],
+            Option::None,
+        ),
+        "list_agents" => entry(
+            None,
+            Option::None,
+            &["cwd", "statuses", "sinceHours", "limit", "includeArchived"],
+            Option::None,
+        ),
+        "update_agent" => entry(
+            FieldOrTargetAgent("name"),
+            Option::None,
+            AGENT_FIELDS,
+            Option::None,
+        ),
+        "set_agent_mode" => entry(
+            Field(&["modeId"]),
+            Option::None,
+            &["agentId", "modeId"],
+            Option::None,
+        ),
         "cancel_agent" => entry(TargetAgent, Option::None, &["agentId"], Option::None),
         "archive_agent" => entry(TargetAgent, Option::None, &["agentId"], Option::None),
         "kill_agent" => entry(TargetAgent, Option::None, &["agentId"], Option::None),
         "list_pending_permissions" => entry(None, Option::None, &[], Option::None),
-        "respond_to_permission" => entry(TargetAgent, Option::None, &["agentId", "requestId", "response"], Option::None),
-        "create_workspace" => entry(Workspace, Option::None, WORKSPACE_FIELDS, Some(&["workspaceId", "projectId"])),
+        "respond_to_permission" => entry(
+            TargetAgent,
+            Option::None,
+            &["agentId", "requestId", "response"],
+            Option::None,
+        ),
+        "create_workspace" => entry(
+            Workspace,
+            Option::None,
+            WORKSPACE_FIELDS,
+            Some(&["workspaceId", "projectId"]),
+        ),
         "list_hosts" => entry(None, Option::None, &[], Option::None),
         "list_workspaces" => entry(None, Option::None, &[], Option::None),
-        "rename_workspace" => entry(Field(&["title"]), Option::None, &["title", "workspaceId"], Option::None),
-        "archive_workspace" => entry(Field(&["workspaceId"]), Option::None, &["workspaceId"], Some(&["workspaceId", "archivedAgentIds", "removedDirectory"])),
+        "rename_workspace" => entry(
+            Field(&["title"]),
+            Option::None,
+            &["title", "workspaceId"],
+            Option::None,
+        ),
+        "archive_workspace" => entry(
+            Field(&["workspaceId"]),
+            Option::None,
+            &["workspaceId"],
+            Some(&["workspaceId", "archivedAgentIds", "removedDirectory"]),
+        ),
         "list_workspace_scripts" => entry(None, Option::None, &["workspaceId"], Option::None),
-        "start_workspace_script" => entry(Field(&["scriptName"]), Option::None, &["workspaceId", "scriptName"], Option::None),
-        "stop_workspace_script" => entry(Field(&["scriptName"]), Option::None, &["workspaceId", "scriptName"], Option::None),
-        "create_terminal" => entry(Field(&["name", "command"]), Option::None, &["cwd", "workspaceId", "name", "command"], Option::None),
+        "start_workspace_script" => entry(
+            Field(&["scriptName"]),
+            Option::None,
+            &["workspaceId", "scriptName"],
+            Option::None,
+        ),
+        "stop_workspace_script" => entry(
+            Field(&["scriptName"]),
+            Option::None,
+            &["workspaceId", "scriptName"],
+            Option::None,
+        ),
+        "create_terminal" => entry(
+            Field(&["name", "command"]),
+            Option::None,
+            &["cwd", "workspaceId", "name", "command"],
+            Option::None,
+        ),
         "list_terminals" => entry(None, Option::None, &["cwd", "all"], Option::None),
-        "capture_terminal" => entry(Field(&["terminalId"]), Option::None, &["terminalId", "lines"], Option::None),
-        "send_terminal_keys" => entry(Field(&["keys"]), Option::None, &["terminalId", "keys", "literal"], Option::None),
-        "kill_terminal" => entry(Field(&["terminalId"]), Option::None, &["terminalId"], Option::None),
-        "create_schedule" => entry(Field(&["name", "cron"]), Some("prompt"), AUTOMATION_FIELDS, Some(AUTOMATION_OUTPUT)),
-        "create_heartbeat" => entry(Field(&["name", "cron"]), Some("prompt"), AUTOMATION_FIELDS, Some(AUTOMATION_OUTPUT)),
-        "update_schedule" => entry(Field(&["name", "id"]), Some("prompt"), AUTOMATION_FIELDS, Option::None),
+        "capture_terminal" => entry(
+            Field(&["terminalId"]),
+            Option::None,
+            &["terminalId", "lines"],
+            Option::None,
+        ),
+        "send_terminal_keys" => entry(
+            Field(&["keys"]),
+            Option::None,
+            &["terminalId", "keys", "literal"],
+            Option::None,
+        ),
+        "kill_terminal" => entry(
+            Field(&["terminalId"]),
+            Option::None,
+            &["terminalId"],
+            Option::None,
+        ),
+        "create_schedule" => entry(
+            Field(&["name", "cron"]),
+            Some("prompt"),
+            AUTOMATION_FIELDS,
+            Some(AUTOMATION_OUTPUT),
+        ),
+        "create_heartbeat" => entry(
+            Field(&["name", "cron"]),
+            Some("prompt"),
+            AUTOMATION_FIELDS,
+            Some(AUTOMATION_OUTPUT),
+        ),
+        "update_schedule" => entry(
+            Field(&["name", "id"]),
+            Some("prompt"),
+            AUTOMATION_FIELDS,
+            Option::None,
+        ),
         "list_schedules" => entry(None, Option::None, &[], Option::None),
         "inspect_schedule" => entry(Field(&["id"]), Option::None, &["id"], Option::None),
         "schedule_logs" => entry(Field(&["id"]), Option::None, &["id"], Option::None),
@@ -149,9 +319,19 @@ fn paseo_catalog(leaf: &str) -> Option<PaseoEntry> {
         "delete_schedule" => entry(Field(&["id"]), Option::None, &["id"], Option::None),
         "delete_heartbeat" => entry(Field(&["id"]), Option::None, &["id"], Option::None),
         "list_providers" => entry(None, Option::None, &[], Option::None),
-        "list_models" => entry(Field(&["provider"]), Option::None, &["provider"], Option::None),
+        "list_models" => entry(
+            Field(&["provider"]),
+            Option::None,
+            &["provider"],
+            Option::None,
+        ),
         "list_profiles" => entry(None, Option::None, &[], Option::None),
-        "inspect_provider" => entry(Field(&["provider"]), Option::None, &["provider", "cwd", "settings"], Option::None),
+        "inspect_provider" => entry(
+            Field(&["provider"]),
+            Option::None,
+            &["provider", "cwd", "settings"],
+            Option::None,
+        ),
         "browser_list_tabs" => browser(None),
         "browser_new_tab" => browser(Field(&["url"])),
         "browser_close_tab" => browser(Field(&["browserId"])),
@@ -190,7 +370,12 @@ fn is_present(value: &Value) -> bool {
 fn apply_context(context: Context, input: &Value, target: Option<&str>) -> Value {
     match context {
         Context::None => Value::Null,
-        Context::Field(keys) => keys.iter().map(|k| get(input, k)).find(|v| is_present(v)).cloned().unwrap_or(Value::Null),
+        Context::Field(keys) => keys
+            .iter()
+            .map(|k| get(input, k))
+            .find(|v| is_present(v))
+            .cloned()
+            .unwrap_or(Value::Null),
         Context::TargetAgent => target.map(|t| json!(t)).unwrap_or(Value::Null),
         Context::FieldOrTargetAgent(key) => {
             if is_present(get(input, key)) {
@@ -201,17 +386,27 @@ fn apply_context(context: Context, input: &Value, target: Option<&str>) -> Value
         }
         Context::Workspace => {
             let base = get(input, "path").as_str().map(|path| {
-                path.split(['\\', '/']).rfind(|s| !s.is_empty()).unwrap_or("").to_owned()
+                path.split(['\\', '/'])
+                    .rfind(|s| !s.is_empty())
+                    .unwrap_or("")
+                    .to_owned()
             });
             let base_value = base.map(Value::String).unwrap_or(Value::Null);
-            [get(input, "title"), get(input, "branchName"), get(input, "branch"), &base_value]
-                .into_iter()
-                .find(|v| is_present(v))
-                .cloned()
-                .unwrap_or(Value::Null)
+            [
+                get(input, "title"),
+                get(input, "branchName"),
+                get(input, "branch"),
+                &base_value,
+            ]
+            .into_iter()
+            .find(|v| is_present(v))
+            .cloned()
+            .unwrap_or(Value::Null)
         }
         Context::Viewport => match (get(input, "width"), get(input, "height")) {
-            (Value::Number(w), Value::Number(h)) => json!(format!("{}×{}", num_text(w), num_text(h))),
+            (Value::Number(w), Value::Number(h)) => {
+                json!(format!("{}×{}", num_text(w), num_text(h)))
+            }
             _ => Value::Null,
         },
     }
@@ -230,7 +425,11 @@ fn read_tool_input(detail: &Value) -> Value {
         return json!({});
     }
     let input = get(detail, "input");
-    if input.is_object() { input.clone() } else { json!({}) }
+    if input.is_object() {
+        input.clone()
+    } else {
+        json!({})
+    }
 }
 
 fn read_string(value: &Value) -> Option<String> {
@@ -243,7 +442,11 @@ fn format_context(value: &Value) -> Option<String> {
         Value::Number(n) => Some(num_text(n)),
         Value::Array(items) if !items.is_empty() => {
             let head = items[0].as_str().and_then(to_summary_text)?;
-            Some(if items.len() > 1 { format!("{head} +{}", items.len() - 1) } else { head })
+            Some(if items.len() > 1 {
+                format!("{head} +{}", items.len() - 1)
+            } else {
+                head
+            })
         }
         _ => None,
     }
@@ -275,15 +478,24 @@ pub fn paseo_tool_target_agent_id(tool_name: &str, detail: &Value) -> Option<Str
     read_string(get(&read_tool_input(detail), "agentId"))
 }
 
-fn paseo_tool_display(tool_name: &str, detail: &Value, target_agent_title: Option<&str>) -> Option<(String, Option<String>)> {
+fn paseo_tool_display(
+    tool_name: &str,
+    detail: &Value,
+    target_agent_title: Option<&str>,
+) -> Option<(String, Option<String>)> {
     let leaf = paseo_tool_leaf_name(tool_name)?;
     let Some(entry) = paseo_catalog(&leaf) else {
         return Some((humanize_leaf_name(&leaf), None));
     };
     let input = read_tool_input(detail);
-    let target = target_agent_title.map(str::to_owned).or_else(|| read_string(get(&input, "agentId")));
+    let target = target_agent_title
+        .map(str::to_owned)
+        .or_else(|| read_string(get(&input, "agentId")));
     let context = apply_context(entry.context, &input, target.as_deref());
-    Some((t(&format!("agentStream.paseoTools.{leaf}")), format_context(&context)))
+    Some((
+        t(&format!("agentStream.paseoTools.{leaf}")),
+        format_context(&context),
+    ))
 }
 
 // ---- paseo-tool-presentation/agent-message.ts ----
@@ -364,7 +576,9 @@ const LABELLED_FIELDS: &[&str] = &[
 ];
 
 fn field_label(key: &str) -> Option<String> {
-    LABELLED_FIELDS.contains(&key).then(|| t(&format!("agentStream.toolFields.{key}")))
+    LABELLED_FIELDS
+        .contains(&key)
+        .then(|| t(&format!("agentStream.toolFields.{key}")))
 }
 
 fn humanize_key(key: &str) -> String {
@@ -374,7 +588,10 @@ fn humanize_key(key: &str) -> String {
     let mut spaced = String::with_capacity(key.len() + 4);
     let chars: Vec<char> = key.chars().collect();
     for (i, c) in chars.iter().enumerate() {
-        if i > 0 && c.is_ascii_uppercase() && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit()) {
+        if i > 0
+            && c.is_ascii_uppercase()
+            && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit())
+        {
             spaced.push(' ');
         }
         spaced.push(*c);
@@ -395,14 +612,22 @@ fn indent(value: &str, spaces: usize) -> String {
 fn format_value(value: &Value) -> String {
     match value {
         Value::Null => t("agentStream.toolValues.none"),
-        Value::Bool(b) => t(if *b { "agentStream.toolValues.yes" } else { "agentStream.toolValues.no" }),
+        Value::Bool(b) => t(if *b {
+            "agentStream.toolValues.yes"
+        } else {
+            "agentStream.toolValues.no"
+        }),
         Value::String(s) => s.clone(),
         Value::Number(n) => num_text(n),
         Value::Array(items) => {
             if items.is_empty() {
                 return t("agentStream.toolValues.none");
             }
-            items.iter().map(|item| format!("• {}", indent(&format_value(item), 2))).collect::<Vec<_>>().join("\n")
+            items
+                .iter()
+                .map(|item| format!("• {}", indent(&format_value(item), 2)))
+                .collect::<Vec<_>>()
+                .join("\n")
         }
         Value::Object(map) => {
             if map.is_empty() {
@@ -416,17 +641,28 @@ fn format_value(value: &Value) -> String {
     }
 }
 
-fn fields_from_value(value: &Value, order: &[&str], omitted: Option<&str>, included: Option<&[&str]>) -> Vec<(String, String)> {
+fn fields_from_value(
+    value: &Value,
+    order: &[&str],
+    omitted: Option<&str>,
+    included: Option<&[&str]>,
+) -> Vec<(String, String)> {
     if value.is_null() {
         return Vec::new();
     }
     let Some(object) = value.as_object() else {
         let formatted = format_value(value);
-        return if formatted.is_empty() { Vec::new() } else { vec![(t("agentStream.toolValues.value"), formatted)] };
+        return if formatted.is_empty() {
+            Vec::new()
+        } else {
+            vec![(t("agentStream.toolValues.value"), formatted)]
+        };
     };
     let mut keys: Vec<&String> = object
         .keys()
-        .filter(|k| Some(k.as_str()) != omitted && included.is_none_or(|inc| inc.contains(&k.as_str())))
+        .filter(|k| {
+            Some(k.as_str()) != omitted && included.is_none_or(|inc| inc.contains(&k.as_str()))
+        })
         .collect();
     let rank: BTreeMap<&str, usize> = order.iter().enumerate().map(|(i, k)| (*k, i)).collect();
     keys.sort_by(|a, b| {
@@ -434,11 +670,15 @@ fn fields_from_value(value: &Value, order: &[&str], omitted: Option<&str>, inclu
         let rb = rank.get(b.as_str()).copied().unwrap_or(1 << 30);
         ra.cmp(&rb).then_with(|| a.cmp(b))
     });
-    keys.into_iter().map(|k| (humanize_key(k), format_value(&object[k]))).collect()
+    keys.into_iter()
+        .map(|k| (humanize_key(k), format_value(&object[k])))
+        .collect()
 }
 
 fn unwrap_mcp_result(output: &Value) -> Value {
-    let Some(map) = output.as_object() else { return output.clone() };
+    let Some(map) = output.as_object() else {
+        return output.clone();
+    };
     if map.get("structuredContent").is_some_and(|v| !v.is_null()) {
         return map["structuredContent"].clone();
     }
@@ -458,7 +698,11 @@ fn unwrap_mcp_result(output: &Value) -> Value {
 }
 
 /// Prompt/Details/Result sections for Paseo MCP tools; None for other tools.
-pub fn build_paseo_tool_detail_sections(tool_name: &str, input: &Value, output: &Value) -> Option<Vec<PaseoDetailSection>> {
+pub fn build_paseo_tool_detail_sections(
+    tool_name: &str,
+    input: &Value,
+    output: &Value,
+) -> Option<Vec<PaseoDetailSection>> {
     let leaf = paseo_tool_leaf_name(tool_name)?;
     let spec = paseo_catalog(&leaf);
     let mut sections = Vec::new();
@@ -466,16 +710,38 @@ pub fn build_paseo_tool_detail_sections(tool_name: &str, input: &Value, output: 
     if let (Some(field), true) = (prompt_field, input.is_object())
         && let Some(prompt) = non_empty_str(get(input, field))
     {
-        sections.push(PaseoDetailSection { title: t("agentStream.toolSections.prompt"), text: Some(prompt.to_owned()), fields: Vec::new() });
+        sections.push(PaseoDetailSection {
+            title: t("agentStream.toolSections.prompt"),
+            text: Some(prompt.to_owned()),
+            fields: Vec::new(),
+        });
     }
-    let input_fields = fields_from_value(input, spec.as_ref().map(|s| s.input_order).unwrap_or(&[]), prompt_field, None);
+    let input_fields = fields_from_value(
+        input,
+        spec.as_ref().map(|s| s.input_order).unwrap_or(&[]),
+        prompt_field,
+        None,
+    );
     if !input_fields.is_empty() {
-        sections.push(PaseoDetailSection { title: t("agentStream.toolSections.details"), text: None, fields: input_fields });
+        sections.push(PaseoDetailSection {
+            title: t("agentStream.toolSections.details"),
+            text: None,
+            fields: input_fields,
+        });
     }
     let outputs = spec.as_ref().and_then(|s| s.output_fields);
-    let output_fields = fields_from_value(&unwrap_mcp_result(output), outputs.unwrap_or(&[]), None, outputs);
+    let output_fields = fields_from_value(
+        &unwrap_mcp_result(output),
+        outputs.unwrap_or(&[]),
+        None,
+        outputs,
+    );
     if !output_fields.is_empty() {
-        sections.push(PaseoDetailSection { title: t("agentStream.toolSections.result"), text: None, fields: output_fields });
+        sections.push(PaseoDetailSection {
+            title: t("agentStream.toolSections.result"),
+            text: None,
+            fields: output_fields,
+        });
     }
     Some(sections)
 }
@@ -497,9 +763,18 @@ fn canonical_display(detail: &Value, cwd: Option<&str>) -> (String, Option<Strin
     let s = |key: &str| Some(str_of(get(detail, key)).to_owned());
     match str_of(get(detail, "type")) {
         "shell" => ("Shell".into(), s("command")),
-        "read" => ("Read".into(), Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd))),
-        "edit" => ("Edit".into(), Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd))),
-        "write" => ("Write".into(), Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd))),
+        "read" => (
+            "Read".into(),
+            Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd)),
+        ),
+        "edit" => (
+            "Edit".into(),
+            Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd)),
+        ),
+        "write" => (
+            "Write".into(),
+            Some(strip_cwd_prefix(str_of(get(detail, "filePath")), cwd)),
+        ),
         "search" => ("Search".into(), s("query")),
         "fetch" => ("Fetch".into(), s("url")),
         "worktree_setup" => ("Worktree setup".into(), s("branchName")),
@@ -547,7 +822,11 @@ fn icon_by_name(name: &str) -> ToolGlyph {
     }
 }
 
-pub fn resolve_tool_call_icon(tool_name: &str, detail: Option<&Value>, agent_message: bool) -> ToolGlyph {
+pub fn resolve_tool_call_icon(
+    tool_name: &str,
+    detail: Option<&Value>,
+    agent_message: bool,
+) -> ToolGlyph {
     if agent_message {
         return ToolGlyph::Paseo;
     }
@@ -570,7 +849,9 @@ pub fn resolve_tool_call_icon(tool_name: &str, detail: Option<&Value>, agent_mes
     if lower == "task" {
         return ToolGlyph::Bot;
     }
-    let Some(detail) = detail else { return ToolGlyph::Wrench };
+    let Some(detail) = detail else {
+        return ToolGlyph::Wrench;
+    };
     match str_of(get(detail, "type")) {
         "shell" | "worktree_setup" => ToolGlyph::SquareTerminal,
         "read" => ToolGlyph::Eye,
@@ -584,7 +865,27 @@ pub fn resolve_tool_call_icon(tool_name: &str, detail: Option<&Value>, agent_mes
 
 // ---- utils/extract-tool-call-file-path.ts ----
 
-const SHELL_FILE_COMMANDS: &[&str] = &["cat", "bat", "less", "more", "head", "tail", "wc", "nl", "tac", "od", "xxd", "file", "stat", "column", "md5", "md5sum", "sha1sum", "sha256sum", "shasum"];
+const SHELL_FILE_COMMANDS: &[&str] = &[
+    "cat",
+    "bat",
+    "less",
+    "more",
+    "head",
+    "tail",
+    "wc",
+    "nl",
+    "tac",
+    "od",
+    "xxd",
+    "file",
+    "stat",
+    "column",
+    "md5",
+    "md5sum",
+    "sha1sum",
+    "sha256sum",
+    "shasum",
+];
 
 fn path_from_shell_command(command: &str) -> Option<String> {
     let trimmed = command.trim();
@@ -603,7 +904,9 @@ fn path_from_shell_command(command: &str) -> Option<String> {
         let previous = tokens[tokens.len() - 2];
         if !previous.starts_with('-') {
             let before = tokens[tokens.len() - 3];
-            let short_flag = before.len() == 2 && before.starts_with('-') && before.as_bytes()[1].is_ascii_alphabetic();
+            let short_flag = before.len() == 2
+                && before.starts_with('-')
+                && before.as_bytes()[1].is_ascii_alphabetic();
             if !short_flag {
                 return None;
             }
@@ -645,7 +948,12 @@ pub fn has_meaningful_tool_call_detail(detail: &Value) -> bool {
     match str_of(d("type")) {
         "shell" => true,
         "read" | "write" => present(d("filePath")) || present(d("content")),
-        "edit" => present(d("filePath")) || present(d("unifiedDiff")) || present(d("oldString")) || present(d("newString")),
+        "edit" => {
+            present(d("filePath"))
+                || present(d("unifiedDiff"))
+                || present(d("oldString"))
+                || present(d("newString"))
+        }
         "search" => {
             !str_of(d("query")).trim().is_empty()
                 || present(d("content"))
@@ -717,7 +1025,11 @@ impl ToolCallPresentation {
     }
 }
 
-pub fn build_tool_call_presentation(item: &Value, cwd: Option<&str>, target_agent_title: Option<&str>) -> ToolCallPresentation {
+pub fn build_tool_call_presentation(
+    item: &Value,
+    cwd: Option<&str>,
+    target_agent_title: Option<&str>,
+) -> ToolCallPresentation {
     let name = str_of(get(item, "name")).to_owned();
     let status = str_or(get(item, "status"), "completed").to_owned();
     let error = get(item, "error");
@@ -728,8 +1040,13 @@ pub fn build_tool_call_presentation(item: &Value, cwd: Option<&str>, target_agen
         json!({"type": "unknown", "input": null, "output": null})
     };
     let agent_message = get(item, "agentMessage");
-    let agent_display = agent_message.is_object().then(|| build_agent_message_display(agent_message));
-    let detail = agent_display.as_ref().map(|d| d.2.clone()).unwrap_or_else(|| raw_detail.clone());
+    let agent_display = agent_message
+        .is_object()
+        .then(|| build_agent_message_display(agent_message));
+    let detail = agent_display
+        .as_ref()
+        .map(|d| d.2.clone())
+        .unwrap_or_else(|| raw_detail.clone());
     let error_text = tool_call_error_text(&status, error);
 
     let paseo = match &agent_display {
@@ -742,24 +1059,48 @@ pub fn build_tool_call_presentation(item: &Value, cwd: Option<&str>, target_agen
             let (canonical_name, canonical_summary) = canonical_display(&raw_detail, cwd);
             let lower = name.trim().to_lowercase();
             let unknown = get(&raw_detail, "type") == "unknown";
-            let (override_name, override_summary): (Option<&str>, Option<String>) = if unknown && lower == "task" {
-                (Some("Task"), read_string(get(metadata, "subAgentActivity")))
-            } else if unknown && lower == "thinking" {
-                (Some("Thinking"), None)
-            } else if unknown && lower == "eval" {
-                (Some("Eval"), get(get(&raw_detail, "input"), "title").as_str().and_then(to_summary_text))
-            } else if lower == "terminal" {
-                let label = if get(&raw_detail, "type") == "plain_text" { read_string(get(&raw_detail, "label")) } else { None };
-                (Some("Terminal"), label)
+            let (override_name, override_summary): (Option<&str>, Option<String>) =
+                if unknown && lower == "task" {
+                    (Some("Task"), read_string(get(metadata, "subAgentActivity")))
+                } else if unknown && lower == "thinking" {
+                    (Some("Thinking"), None)
+                } else if unknown && lower == "eval" {
+                    (
+                        Some("Eval"),
+                        get(get(&raw_detail, "input"), "title")
+                            .as_str()
+                            .and_then(to_summary_text),
+                    )
+                } else if lower == "terminal" {
+                    let label = if get(&raw_detail, "type") == "plain_text" {
+                        read_string(get(&raw_detail, "label"))
+                    } else {
+                        None
+                    };
+                    (Some("Terminal"), label)
+                } else {
+                    (None, None)
+                };
+            let display = override_name
+                .map(|label| {
+                    if label == "Thinking" {
+                        super::i18n::t("agentStream.thinking")
+                    } else {
+                        label.to_owned()
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if canonical_name.is_empty() {
+                        humanize_tool_name(&name)
+                    } else {
+                        canonical_name
+                    }
+                });
+            let summary = if override_name.is_some() {
+                override_summary
             } else {
-                (None, None)
+                canonical_summary
             };
-            let display = override_name.map(|label| {
-                if label == "Thinking" { super::i18n::t("agentStream.thinking") } else { label.to_owned() }
-            }).unwrap_or_else(|| {
-                if canonical_name.is_empty() { humanize_tool_name(&name) } else { canonical_name }
-            });
-            let summary = if override_name.is_some() { override_summary } else { canonical_summary };
             (display, summary)
         }
     };
@@ -911,7 +1252,11 @@ pub fn build_line_diff(original: &str, updated: &str) -> Vec<(DiffKind, String)>
     let mut dp = vec![vec![0usize; n + 1]; m + 1];
     for i in (0..m).rev() {
         for j in (0..n).rev() {
-            dp[i][j] = if a[i] == b[j] { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
+            dp[i][j] = if a[i] == b[j] {
+                dp[i + 1][j + 1] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
         }
     }
     let mut out = Vec::new();
@@ -944,11 +1289,23 @@ pub fn build_line_diff(original: &str, updated: &str) -> Vec<(DiffKind, String)>
 #[derive(Clone, Debug)]
 pub enum DetailBlock {
     /// Full-bleed surface1 mono block (shell: `$ ` muted prefix).
-    Shell { command: String, output: String },
-    SubAgentLog { session: Option<String>, actions: Vec<(String, Option<String>)>, log: String, fallback: String },
+    Shell {
+        command: String,
+        output: String,
+    },
+    SubAgentLog {
+        session: Option<String>,
+        actions: Vec<(String, Option<String>)>,
+        log: String,
+        fallback: String,
+    },
     Diff(Vec<(DiffKind, String)>),
     /// Read/write content: highlighted by path, gutter when start line known.
-    Source { content: String, path: String, start_line: Option<i64> },
+    Source {
+        content: String,
+        path: String,
+        start_line: Option<i64>,
+    },
     /// Bordered surface2 scroll area with plain code text.
     Code(String),
     /// Bare code text (search file paths, web results, annotations).
@@ -990,7 +1347,12 @@ fn tool_name_label(name: &str) -> String {
 
 /// `ToolCallDetailsContent._sections` (+ the trailing error section).
 /// `i18n` maps catalog keys (toolCallDetails.input/output/subAgentActivity).
-pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option<&str>, i18n: &dyn Fn(&str) -> String) -> Vec<DetailBlock> {
+pub fn detail_blocks(
+    detail: &Value,
+    tool_name: Option<&str>,
+    error_text: Option<&str>,
+    i18n: &dyn Fn(&str) -> String,
+) -> Vec<DetailBlock> {
     let d = |k: &str| get(detail, k);
     let mut blocks = Vec::new();
     match str_of(d("type")) {
@@ -1016,7 +1378,10 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
                     (!tool.is_empty()).then(|| (tool.to_owned(), after.trim().to_owned()))
                 });
                 match parsed {
-                    Some((tool, summary)) => actions.push((tool_name_label(&tool), (!summary.is_empty()).then_some(summary))),
+                    Some((tool, summary)) => actions.push((
+                        tool_name_label(&tool),
+                        (!summary.is_empty()).then_some(summary),
+                    )),
                     None => remaining.push(line.to_owned()),
                 }
             }
@@ -1030,7 +1395,12 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
                 (true, true) => i18n("toolCallDetails.subAgentActivity"),
             };
             let session = non_empty_str(d("childSessionId")).map(str::to_owned);
-            blocks.push(DetailBlock::SubAgentLog { session, actions, log, fallback });
+            blocks.push(DetailBlock::SubAgentLog {
+                session,
+                actions,
+                log,
+                fallback,
+            });
         }
         "edit" => {
             let lines = if !d("unifiedDiff").is_null() {
@@ -1042,13 +1412,21 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
         }
         "write" => {
             if present(d("content")) {
-                blocks.push(DetailBlock::Source { content: str_of(d("content")).to_owned(), path: str_of(d("filePath")).to_owned(), start_line: None });
+                blocks.push(DetailBlock::Source {
+                    content: str_of(d("content")).to_owned(),
+                    path: str_of(d("filePath")).to_owned(),
+                    start_line: None,
+                });
             }
         }
         "read" => {
             if present(d("content")) {
                 let start = d("offset").as_f64().map(|v| v as i64).unwrap_or(1);
-                blocks.push(DetailBlock::Source { content: str_of(d("content")).to_owned(), path: str_of(d("filePath")).to_owned(), start_line: Some(start) });
+                blocks.push(DetailBlock::Source {
+                    content: str_of(d("content")).to_owned(),
+                    path: str_of(d("filePath")).to_owned(),
+                    start_line: Some(start),
+                });
             }
         }
         "search" => {
@@ -1056,7 +1434,13 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
                 blocks.push(DetailBlock::Code(str_of(d("content")).to_owned()));
             }
             if !list(d("filePaths")).is_empty() {
-                blocks.push(DetailBlock::BareCode(list(d("filePaths")).iter().map(|v| str_of(v).to_owned()).collect::<Vec<_>>().join("\n")));
+                blocks.push(DetailBlock::BareCode(
+                    list(d("filePaths"))
+                        .iter()
+                        .map(|v| str_of(v).to_owned())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ));
             }
             if !list(d("webResults")).is_empty() {
                 blocks.push(DetailBlock::BareCode(
@@ -1068,18 +1452,32 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
                 ));
             }
             if !list(d("annotations")).is_empty() {
-                blocks.push(DetailBlock::BareCode(list(d("annotations")).iter().map(|v| str_of(v).to_owned()).collect::<Vec<_>>().join("\n\n")));
+                blocks.push(DetailBlock::BareCode(
+                    list(d("annotations"))
+                        .iter()
+                        .map(|v| str_of(v).to_owned())
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                ));
             }
         }
         "fetch" => {
             let url = str_of(d("url"));
             let result = str_of(d("result"));
-            blocks.push(DetailBlock::Code(if result.is_empty() { url.to_owned() } else { format!("{url}\n\n{result}") }));
+            blocks.push(DetailBlock::Code(if result.is_empty() {
+                url.to_owned()
+            } else {
+                format!("{url}\n\n{result}")
+            }));
         }
         "plain_text" => {
             let text = str_of(d("text"));
             // Some tools publish their command or wait target only as a label.
-            let content = if text.trim().is_empty() { str_of(d("label")) } else { text };
+            let content = if text.trim().is_empty() {
+                str_of(d("label"))
+            } else {
+                text
+            };
             if !content.trim().is_empty() {
                 blocks.push(DetailBlock::PlainText(content.to_owned()));
             }
@@ -1087,12 +1485,17 @@ pub fn detail_blocks(detail: &Value, tool_name: Option<&str>, error_text: Option
         "unknown" => {
             let input = d("input");
             let output = d("output");
-            if let Some(sections) = tool_name.and_then(|name| build_paseo_tool_detail_sections(name, input, output)) {
+            if let Some(sections) =
+                tool_name.and_then(|name| build_paseo_tool_detail_sections(name, input, output))
+            {
                 blocks.extend(sections.into_iter().map(DetailBlock::Paseo));
             } else if input.is_string() && output.is_null() {
                 blocks.push(DetailBlock::PlainText(str_of(input).to_owned()));
             } else {
-                for (key, value) in [("toolCallDetails.input", input), ("toolCallDetails.output", output)] {
+                for (key, value) in [
+                    ("toolCallDetails.input", input),
+                    ("toolCallDetails.output", output),
+                ] {
                     if !meaningful_value(value) {
                         continue;
                     }
@@ -1129,8 +1532,16 @@ mod eval_tests {
         let result = json!({"content":[{"type":"text","text":"결과"}],
             "details":{"title":"not the request title"}});
         for status in ["running", "completed", "failed"] {
-            let output = if status == "running" { Value::Null } else { result.clone() };
-            let error = if status == "failed" { json!("execution failed") } else { Value::Null };
+            let output = if status == "running" {
+                Value::Null
+            } else {
+                result.clone()
+            };
+            let error = if status == "failed" {
+                json!("execution failed")
+            } else {
+                Value::Null
+            };
             let item = json!({"type":"tool_call","name":"eval","status":status,"error":error,
                 "detail":{"type":"unknown","input":request,"output":output}});
             let presentation = build_tool_call_presentation(&item, None, None);
@@ -1138,19 +1549,42 @@ mod eval_tests {
             assert_eq!(presentation.summary.as_deref(), Some("오류 상태 집계"));
             assert!(presentation.can_open_details);
             assert!(!presentation.is_loading_details);
-            let blocks = detail_blocks(&presentation.detail, Some("eval"),
-                presentation.error_text.as_deref(), &str::to_owned);
-            let payloads: Vec<Value> = blocks.iter().filter_map(|block| match block {
-                DetailBlock::JsonBox(text) => Some(serde_json::from_str(text).unwrap()),
-                _ => None,
-            }).collect();
-            assert_eq!(payloads, if status == "running" { vec![request.clone()] }
-                else { vec![request.clone(), result.clone()] });
-            let errors: Vec<&str> = blocks.iter().filter_map(|block| match block {
-                DetailBlock::Error(error) => Some(error.as_str()),
-                _ => None,
-            }).collect();
-            assert_eq!(errors, if status == "failed" { vec!["execution failed"] } else { vec![] });
+            let blocks = detail_blocks(
+                &presentation.detail,
+                Some("eval"),
+                presentation.error_text.as_deref(),
+                &str::to_owned,
+            );
+            let payloads: Vec<Value> = blocks
+                .iter()
+                .filter_map(|block| match block {
+                    DetailBlock::JsonBox(text) => Some(serde_json::from_str(text).unwrap()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                payloads,
+                if status == "running" {
+                    vec![request.clone()]
+                } else {
+                    vec![request.clone(), result.clone()]
+                }
+            );
+            let errors: Vec<&str> = blocks
+                .iter()
+                .filter_map(|block| match block {
+                    DetailBlock::Error(error) => Some(error.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                errors,
+                if status == "failed" {
+                    vec!["execution failed"]
+                } else {
+                    vec![]
+                }
+            );
         }
         for title in [Value::Null, json!(" \n\t")] {
             let item = json!({"name":"eval","status":"completed",
@@ -1179,18 +1613,31 @@ mod catalog_tests {
         for catalog in catalogs() {
             let stream = &catalog["agentStream"];
             for field in LABELLED_FIELDS {
-                assert!(stream["toolFields"][field].is_string(), "agentStream.toolFields.{field}");
+                assert!(
+                    stream["toolFields"][field].is_string(),
+                    "agentStream.toolFields.{field}"
+                );
             }
             let tools = stream["paseoTools"].as_object().unwrap();
             for leaf in tools.keys() {
-                assert!(paseo_catalog(leaf).is_some(), "agentStream.paseoTools.{leaf} has no catalog entry");
+                assert!(
+                    paseo_catalog(leaf).is_some(),
+                    "agentStream.paseoTools.{leaf} has no catalog entry"
+                );
             }
             for key in ["agentMessage", "toolSections", "toolValues"] {
                 assert!(stream[key].is_object(), "agentStream.{key}");
             }
         }
         let [en, ko] = catalogs();
-        let keys = |c: &Value| c["agentStream"]["paseoTools"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        let keys = |c: &Value| {
+            c["agentStream"]["paseoTools"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(keys(&en), keys(&ko));
         assert_eq!(keys(&en).len(), 62);
     }

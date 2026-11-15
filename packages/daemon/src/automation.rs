@@ -484,12 +484,12 @@ impl AutomationService {
                 let _writer = store.writer.lock().await;
                 if let Some(mut current) = store.get(&s.id).await?
                     && current.status == "active"
-                        && current.next_run_at.is_some()
-                        && current.should_complete(now)
-                    {
-                        current.complete(now);
-                        store.write(&current).await?;
-                    }
+                    && current.next_run_at.is_some()
+                    && current.should_complete(now)
+                {
+                    current.complete(now);
+                    store.write(&current).await?;
+                }
             } else if date(s.next_run_at.as_deref().unwrap())? <= now {
                 self.run(&s.id, false, now).await?;
             }
@@ -676,9 +676,10 @@ impl AutomationService {
                     if let Target::NewAgent { config } = &s.target
                         && (run.agent_id.is_none()
                             || config["archiveOnFinish"].as_bool().unwrap_or(true))
-                            && let Some(id) = run.workspace_id.as_ref().and_then(Value::as_str) {
-                                cleanup.push(id.to_owned());
-                            }
+                        && let Some(id) = run.workspace_id.as_ref().and_then(Value::as_str)
+                    {
+                        cleanup.push(id.to_owned());
+                    }
                     run.status = "failed".into();
                     run.ended_at = Some(timestamp(now));
                     run.error = Some("Daemon restarted before the scheduled run completed".into());
@@ -688,15 +689,16 @@ impl AutomationService {
                     s.complete(now);
                 }
                 if s.status == "active"
-                    && let Some(next) = &s.next_run_at {
-                        let next = date(next)?;
-                        if next <= now {
-                            s.next_run_at = Some(timestamp(
-                                s.cadence.advance_past(s.cadence.next(next)?, now)?,
-                            ));
-                            dirty = true;
-                        }
+                    && let Some(next) = &s.next_run_at
+                {
+                    let next = date(next)?;
+                    if next <= now {
+                        s.next_run_at = Some(timestamp(
+                            s.cadence.advance_past(s.cadence.next(next)?, now)?,
+                        ));
+                        dirty = true;
                     }
+                }
                 if dirty {
                     s.updated_at = timestamp(now);
                     store.write(&s).await?;
@@ -723,11 +725,11 @@ impl AutomationService {
                 let _writer = store.writer.lock().await;
                 if let Some(mut current) = store.get(&s.id).await?
                     && current.status != "completed"
-                        && matches!(&current.target,Target::Agent {agent_id:id} if id==agent_id)
-                    {
-                        current.complete(self.now());
-                        store.write(&current).await?;
-                    }
+                    && matches!(&current.target,Target::Agent {agent_id:id} if id==agent_id)
+                {
+                    current.complete(self.now());
+                    store.write(&current).await?;
+                }
             }
         }
         Ok(())

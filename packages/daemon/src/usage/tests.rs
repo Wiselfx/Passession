@@ -134,14 +134,17 @@ async fn builtin_kiro_reports_expiry_without_an_external_plugin_or_auth_writes()
     let home = tempfile::tempdir().unwrap();
     let auth = home.path().join("auth.sqlite3");
     let db = rusqlite::Connection::open(&auth).unwrap();
-    db.execute_batch("CREATE TABLE credentials (id TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+    db.execute_batch("CREATE TABLE credentials (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .unwrap();
     db.execute(
         "INSERT INTO credentials VALUES ('active', ?1)",
         [json!({
             "kind":"social","provider":"github","access_token":"private-fixture-token",
             "expires_at":"2000-01-01T00:00:00Z"
-        }).to_string()],
-    ).unwrap();
+        })
+        .to_string()],
+    )
+    .unwrap();
     drop(db);
     let before = std::fs::read(&auth).unwrap();
     let context = UsageContext {
@@ -154,20 +157,43 @@ async fn builtin_kiro_reports_expiry_without_an_external_plugin_or_auth_writes()
     };
     let service = UsageService::new(home.path().into());
     let runtime = service.runtime(&context, CancellationToken::new());
-    let sources: Vec<_> = registered_sources(&runtime).unwrap().into_iter()
-        .filter(|source| matches!(source, Source::Kiro)).collect();
-    let scope = UsageScope { provider: None, model: None, env: BTreeMap::new() };
-    let result = service.discover_and_fetch(
-        super::DiscoveryContext { runtime: &runtime, scope: &scope, agent: None },
-        &sources, true, &runtime.cancel, None,
-    ).await.unwrap();
-    let expected_id = format!("kiro:{}", hash_account_key(auth.canonicalize().unwrap().to_str().unwrap()));
+    let sources: Vec<_> = registered_sources(&runtime)
+        .unwrap()
+        .into_iter()
+        .filter(|source| matches!(source, Source::Kiro))
+        .collect();
+    let scope = UsageScope {
+        provider: None,
+        model: None,
+        env: BTreeMap::new(),
+    };
+    let result = service
+        .discover_and_fetch(
+            super::DiscoveryContext {
+                runtime: &runtime,
+                scope: &scope,
+                agent: None,
+            },
+            &sources,
+            true,
+            &runtime.cancel,
+            None,
+        )
+        .await
+        .unwrap();
+    let expected_id = format!(
+        "kiro:{}",
+        hash_account_key(auth.canonicalize().unwrap().to_str().unwrap())
+    );
     assert_eq!(result.entries[0]["id"], expected_id);
-    assert_eq!(result.entries[0]["report"], json!({
-        "status":"unavailable","problem":{
-            "kind":"expired","expiresAt":"2000-01-01T00:00:00.000Z","refreshedBy":"omp-kiro"
-        }
-    }));
+    assert_eq!(
+        result.entries[0]["report"],
+        json!({
+            "status":"unavailable","problem":{
+                "kind":"expired","expiresAt":"2000-01-01T00:00:00.000Z","refreshedBy":"omp-kiro"
+            }
+        })
+    );
     assert!(!result.entries.to_string().contains("private-fixture-token"));
     assert_eq!(std::fs::read(auth).unwrap(), before);
 }

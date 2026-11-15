@@ -241,7 +241,7 @@ pub fn sign_mac(bundle: &Path, stage: &Path, application: bool) -> Result<()> {
             }
             execute(cmd.arg(path), false)?;
         }
-        if !application {
+        if !application && bundle.join("bundle-provenance.json").is_file() {
             crate::build::refresh_runtime_hash(bundle)?;
         }
         if application {
@@ -469,6 +469,25 @@ fn pe_imports(path: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(names)
+}
+
+/// The Zig-built Go DLL statically includes its compiler runtime. Any other
+/// imported DLL must be supplied by Windows, not by the builder's PATH.
+pub fn require_system_imports(image: &Path) -> Result<()> {
+    let system = PathBuf::from(env::var_os("SystemRoot").context("Windows SystemRoot is missing")?)
+        .join("System32");
+    for name in pe_imports(image)? {
+        let lower = name.to_ascii_lowercase();
+        ensure!(
+            !name.contains(['/', '\\'])
+                && (lower.starts_with("api-ms-win-")
+                    || lower.starts_with("ext-ms-win-")
+                    || system.join(&name).is_file()),
+            "{} requires non-system DLL {name}; the embedded runtime must not depend on an installed compiler or Tailscale",
+            image.display()
+        );
+    }
+    Ok(())
 }
 
 /// Select the CRT DLLs that `machine` processes load. The ARM64 redistributable also carries

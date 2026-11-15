@@ -512,15 +512,28 @@ async fn invalid_negotiation_and_cross_origin_sse_endpoint_are_rejected() {
 async fn stdio_owns_process_env_cwd_out_of_order_replies_and_cancellation() {
     // Compile a std-only native fixture; no interpreter or libtest stdout banners.
     let executable_home = tempfile::tempdir().unwrap();
-    let executable = executable_home.path().join(format!("mcp-fixture{}", std::env::consts::EXE_SUFFIX));
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_stdio.rs");
+    let executable = executable_home
+        .path()
+        .join(format!("mcp-fixture{}", std::env::consts::EXE_SUFFIX));
+    let source =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp_stdio.rs");
     let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     let compiled = tokio::process::Command::new(compiler)
-        .arg("--edition=2024").arg(&source).arg("-o").arg(&executable)
-        .output().await.unwrap();
-    assert!(compiled.status.success(), "native MCP fixture compilation failed: {}", String::from_utf8_lossy(&compiled.stderr));
+        .arg("--edition=2024")
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "native MCP fixture compilation failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
     let home = tempfile::tempdir().unwrap();
-    let config = json!({"type":"stdio","command":executable,"args":[],"env":{"MCP_FIXTURE_ENV":"overlay"}});
+    let config =
+        json!({"type":"stdio","command":executable,"args":[],"env":{"MCP_FIXTURE_ENV":"overlay"}});
     let client = McpConnection::connect(
         "stdio-fixture",
         &config,

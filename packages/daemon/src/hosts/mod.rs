@@ -3,10 +3,12 @@ mod routes;
 mod tests;
 
 use crate::{state::AppState, transport::RequestContext};
-use paseo_client::transport::{HostError, HostFrame, connector, decode_frame, encode_frame, target};
-use paseo_protocol::crypto::SecurityMode;
 use anyhow::{Result, anyhow, ensure};
 use bytes::Bytes;
+use paseo_client::transport::{
+    HostError, HostFrame, connector, decode_frame, encode_frame, target,
+};
+use paseo_protocol::crypto::SecurityMode;
 pub use routes::HostClient;
 use serde_json::{Value, json};
 use std::{
@@ -24,7 +26,6 @@ use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore, mpsc, oneshot, watch},
 };
 use tokio_util::sync::CancellationToken;
-
 
 #[derive(Clone)]
 pub struct HostsService {

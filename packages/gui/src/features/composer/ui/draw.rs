@@ -43,7 +43,15 @@ pub struct DrawComposerImage {
 impl DrawComposerImage {
     /// Draw `texture` (pixel `size`) into `rect`: cover-fitted and centred, or letterboxed
     /// (`contain`) for the full preview.
-    pub fn paint(&mut self, cx: &mut Cx2d, rect: Rect, texture: &Texture, size: (usize, usize), radius: f64, contain: bool) {
+    pub fn paint(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        texture: &Texture,
+        size: (usize, usize),
+        radius: f64,
+        contain: bool,
+    ) {
         self.draw_vars.set_texture(0, texture);
         let image_aspect = size.0.max(1) as f64 / size.1.max(1) as f64;
         let rect_aspect = rect.size.x.max(1.0) / rect.size.y.max(1.0);

@@ -7,21 +7,25 @@
 
 use std::collections::HashMap;
 
-use makepad_widgets::*;
 use crate::features::workspace::kit::{WaModalWidgetExt, WaModalWidgetRefExt};
-use serde_json::{json, Map, Value};
+use makepad_widgets::*;
+use serde_json::{Map, Value, json};
 
 use super::model;
 use super::timezone;
 use crate::common::UiContext;
+use crate::common::provider_icon::ProviderIconWidgetRefExt;
+use crate::common::widgets::{PLabelWidgetRefExt, PSwitchWidgetRefExt};
 use crate::features::composer::{agent_form, controls_model};
 use crate::features::workspace::host::{self, Host};
 use crate::features::workspace::i18n::{l, t};
-use crate::common::provider_icon::ProviderIconWidgetRefExt;
-use crate::common::widgets::{PLabelWidgetRefExt, PSwitchWidgetRefExt};
-use crate::features::workspace::kit::{set_optional, sync_input, WaButtonRef, WaButtonWidgetRefExt, WaInputWidgetRefExt};
-use crate::features::workspace::rpc::{array_of, object_of, str_of, str_or, Pending};
-use crate::features::workspace::select::{Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt};
+use crate::features::workspace::kit::{
+    WaButtonRef, WaButtonWidgetRefExt, WaInputWidgetRefExt, set_optional, sync_input,
+};
+use crate::features::workspace::rpc::{Pending, array_of, object_of, str_of, str_or};
+use crate::features::workspace::select::{
+    Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt,
+};
 
 live_design! {
     use link::theme::*;
@@ -100,7 +104,12 @@ live_design! {
 /// A `SelectFieldTrigger` value: the display, or the muted placeholder.
 fn set_field(cx: &mut Cx, button: &WaButtonRef, display: Option<&str>, placeholder: &str) {
     button.set_text(cx, display.unwrap_or(placeholder));
-    button.set_color(cx, display.is_none().then(|| crate::theme::current_palette().muted));
+    button.set_color(
+        cx,
+        display
+            .is_none()
+            .then(|| crate::theme::current_palette().muted),
+    );
 }
 
 #[derive(Clone, Debug, DefaultNone)]
@@ -190,11 +199,14 @@ impl WaScheduleEditor {
     }
 
     fn host<'a>(&self, ctx: &'a UiContext) -> Option<Host<'a>> {
-        self.server_id.as_deref().and_then(|id| host::host(&ctx.state, id))
+        self.server_id
+            .as_deref()
+            .and_then(|id| host::host(&ctx.state, id))
     }
 
     fn multiplicity(&self, ctx: &UiContext) -> bool {
-        self.host(ctx).is_some_and(|h| h.supports("workspaceMultiplicity"))
+        self.host(ctx)
+            .is_some_and(|h| h.supports("workspaceMultiplicity"))
     }
 
     fn project<'a>(&self, ctx: &'a UiContext) -> Option<&'a Value> {
@@ -208,13 +220,15 @@ impl WaScheduleEditor {
         !self.cwd.trim().is_empty()
     }
 
-
     fn can_manage(&self, ctx: &UiContext) -> bool {
-        self.host(ctx).is_none_or(|h| h.has_permission("automation.manage"))
+        self.host(ctx)
+            .is_none_or(|h| h.has_permission("automation.manage"))
     }
 
     fn enabled_entries(&self) -> impl Iterator<Item = &Value> {
-        self.entries.iter().filter(|e| e.get("enabled") != Some(&Value::Bool(false)))
+        self.entries
+            .iter()
+            .filter(|e| e.get("enabled") != Some(&Value::Bool(false)))
     }
 
     fn entry(&self, id: Option<&str>) -> Option<&Value> {
@@ -222,7 +236,9 @@ impl WaScheduleEditor {
     }
 
     fn models(&self, id: Option<&str>) -> Vec<Value> {
-        self.entry(id).map(agent_form::selectable_models).unwrap_or_default()
+        self.entry(id)
+            .map(agent_form::selectable_models)
+            .unwrap_or_default()
     }
 
     /// Form-model `resolveEffectiveModel`: the chosen model, else the default, else the first.
@@ -234,17 +250,25 @@ impl WaScheduleEditor {
         models
             .iter()
             .find(|m| str_of(m, "id") == model_id.trim())
-            .or_else(|| models.iter().find(|m| m.get("isDefault") == Some(&Value::Bool(true))))
+            .or_else(|| {
+                models
+                    .iter()
+                    .find(|m| m.get("isDefault") == Some(&Value::Bool(true)))
+            })
             .or_else(|| models.first())
             .cloned()
     }
 
     fn mode_options(&self) -> Vec<Value> {
-        self.entry(self.provider.as_deref()).map(|e| array_of(e, "modes").to_vec()).unwrap_or_default()
+        self.entry(self.provider.as_deref())
+            .map(|e| array_of(e, "modes").to_vec())
+            .unwrap_or_default()
     }
 
     fn thinking_options(&self) -> Vec<Value> {
-        self.effective_model(self.provider.as_deref(), &self.model).map(|m| array_of(&m, "thinkingOptions").to_vec()).unwrap_or_default()
+        self.effective_model(self.provider.as_deref(), &self.model)
+            .map(|m| array_of(&m, "thinkingOptions").to_vec())
+            .unwrap_or_default()
     }
 
     fn resolve_thinking(&self, id: &str, model_id: &str, requested: &str) -> String {
@@ -254,13 +278,20 @@ impl WaScheduleEditor {
 
     /// `resolvePreferredModeId` without preferences: the default mode, else the first.
     fn default_mode(&self, id: &str) -> String {
-        let Some(entry) = self.entry(Some(id)) else { return String::new() };
+        let Some(entry) = self.entry(Some(id)) else {
+            return String::new();
+        };
         let modes = array_of(entry, "modes");
         let preferred = str_of(entry, "defaultModeId");
-        if !preferred.is_empty() && (modes.is_empty() || modes.iter().any(|m| str_of(m, "id") == preferred)) {
+        if !preferred.is_empty()
+            && (modes.is_empty() || modes.iter().any(|m| str_of(m, "id") == preferred))
+        {
             return preferred.to_owned();
         }
-        modes.first().map(|m| str_of(m, "id").to_owned()).unwrap_or_default()
+        modes
+            .first()
+            .map(|m| str_of(m, "id").to_owned())
+            .unwrap_or_default()
     }
 
     /// `buildEntryModelSelection` kind: `models`, `loading` or `error`.
@@ -269,7 +300,11 @@ impl WaScheduleEditor {
             return "models";
         }
         if str_of(entry, "status") == "loading" {
-            return if self.host(ctx).is_some_and(|h| h.connected()) { "loading" } else { "error" };
+            return if self.host(ctx).is_some_and(|h| h.connected()) {
+                "loading"
+            } else {
+                "error"
+            };
         }
         "error"
     }
@@ -282,18 +317,30 @@ impl WaScheduleEditor {
         if !message.is_empty() {
             return message.to_owned();
         }
-        t(if str_of(entry, "status") == "unavailable" { "providerSelection.unavailable" } else { "providerSelection.unknownError" })
+        t(if str_of(entry, "status") == "unavailable" {
+            "providerSelection.unavailable"
+        } else {
+            "providerSelection.unknownError"
+        })
     }
 
     /// `isSelectedModelValidForProviders`.
     fn model_valid(&self, ctx: &UiContext) -> bool {
-        let Some(id) = self.provider.as_deref() else { return false };
-        let Some(entry) = self.enabled_entries().find(|e| str_of(e, "provider") == id) else { return false };
+        let Some(id) = self.provider.as_deref() else {
+            return false;
+        };
+        let Some(entry) = self.enabled_entries().find(|e| str_of(e, "provider") == id) else {
+            return false;
+        };
         if self.selection_kind(entry, ctx) != "models" {
             return false;
         }
         let selected = self.model.trim();
-        selected.is_empty() || self.models(Some(id)).iter().any(|m| str_of(m, "id") == selected)
+        selected.is_empty()
+            || self
+                .models(Some(id))
+                .iter()
+                .any(|m| str_of(m, "id") == selected)
     }
 
     /// `resolveSelectedModelLabel`.
@@ -301,7 +348,11 @@ impl WaScheduleEditor {
         let id = self.provider.as_deref();
         let entry = id.and_then(|id| self.enabled_entries().find(|e| str_of(e, "provider") == id));
         let Some(entry) = entry else {
-            return if self.catalog_loading { t("providerSelection.loading") } else { t("providerSelection.selectModel") };
+            return if self.catalog_loading {
+                t("providerSelection.loading")
+            } else {
+                t("providerSelection.selectModel")
+            };
         };
         match self.selection_kind(entry, ctx) {
             "loading" => return t("providerSelection.loading"),
@@ -315,7 +366,11 @@ impl WaScheduleEditor {
             return selected.to_owned();
         }
         found
-            .or_else(|| models.iter().find(|m| m.get("isDefault") == Some(&Value::Bool(true))))
+            .or_else(|| {
+                models
+                    .iter()
+                    .find(|m| m.get("isDefault") == Some(&Value::Bool(true)))
+            })
             .or_else(|| models.first())
             .map(controls_model::model_label)
             .unwrap_or_else(|| t("providerSelection.selectModel"))
@@ -323,9 +378,14 @@ impl WaScheduleEditor {
 
     /// `resolveSnapshotSelection` once the snapshot lands.
     fn resolve_selection(&mut self) {
-        let Some(id) = self.provider.clone() else { return };
+        let Some(id) = self.provider.clone() else {
+            return;
+        };
         let models = self.models(Some(&id));
-        if !self.model.is_empty() && !models.is_empty() && let Some(canonical) = agent_form::find_model_by_reference(Some(&models), &self.model) {
+        if !self.model.is_empty()
+            && !models.is_empty()
+            && let Some(canonical) = agent_form::find_model_by_reference(Some(&models), &self.model)
+        {
             self.model = str_of(canonical, "id").to_owned();
         }
         if self.mode.is_empty() {
@@ -333,7 +393,10 @@ impl WaScheduleEditor {
         }
         if !models.is_empty() {
             let requested = if self.thinking.is_empty() {
-                self.thinking_drafts.get(&format!("{id}:{}", self.model)).cloned().unwrap_or_default()
+                self.thinking_drafts
+                    .get(&format!("{id}:{}", self.model))
+                    .cloned()
+                    .unwrap_or_default()
             } else {
                 self.thinking.clone()
             };
@@ -353,7 +416,13 @@ impl WaScheduleEditor {
         };
         self.catalog_loading = true;
         self.catalog_error = None;
-        self.pending.send(&ctx.core, &server, "get_providers_snapshot_request", json!({ "cwd": dir }), Req::Catalog(self.catalog_generation));
+        self.pending.send(
+            &ctx.core,
+            &server,
+            "get_providers_snapshot_request",
+            json!({ "cwd": dir }),
+            Req::Catalog(self.catalog_generation),
+        );
     }
 
     /// `setHost`: a new host clears the project and model selection.
@@ -400,20 +469,32 @@ impl WaScheduleEditor {
                 .map(|m| str_of(m, "id").to_owned())
                 .unwrap_or_default()
         };
-        let draft = self.thinking_drafts.get(&format!("{id}:{picked}")).cloned().unwrap_or_default();
+        let draft = self
+            .thinking_drafts
+            .get(&format!("{id}:{picked}"))
+            .cloned()
+            .unwrap_or_default();
         let next_thinking = self.resolve_thinking(id, &picked, &draft);
         if !picked.is_empty() && !next_thinking.is_empty() {
-            self.thinking_drafts.insert(format!("{id}:{picked}"), next_thinking.clone());
+            self.thinking_drafts
+                .insert(format!("{id}:{picked}"), next_thinking.clone());
         }
-        self.mode = if self.provider.as_deref() == Some(id) && !self.mode.trim().is_empty() { self.mode.clone() } else { self.default_mode(id) };
+        self.mode = if self.provider.as_deref() == Some(id) && !self.mode.trim().is_empty() {
+            self.mode.clone()
+        } else {
+            self.default_mode(id)
+        };
         self.provider = Some(id.to_owned());
         self.model = picked;
         self.thinking = next_thinking;
     }
 
     fn set_thinking(&mut self, id: &str) {
-        if let Some(provider) = &self.provider && !self.model.is_empty() {
-            self.thinking_drafts.insert(format!("{provider}:{}", self.model), id.to_owned());
+        if let Some(provider) = &self.provider
+            && !self.model.is_empty()
+        {
+            self.thinking_drafts
+                .insert(format!("{provider}:{}", self.model), id.to_owned());
         }
         self.thinking = id.to_owned();
     }
@@ -430,7 +511,10 @@ impl WaScheduleEditor {
         if self.heartbeat {
             return self.cadence_changed;
         }
-        if self.prompt.trim().is_empty() || (!self.editing && self.project(ctx).is_none()) || !self.has_project() {
+        if self.prompt.trim().is_empty()
+            || (!self.editing && self.project(ctx).is_none())
+            || !self.has_project()
+        {
             return false;
         }
         self.model_valid(ctx)
@@ -439,7 +523,10 @@ impl WaScheduleEditor {
     /// Save stays pressable while only required fields are missing, so pressing it can say
     /// which; it is disabled while saving, without permission or with nothing to save.
     fn can_press_save(&self, ctx: &UiContext) -> bool {
-        !self.saving && self.can_manage(ctx) && self.cadence_error().is_none() && (!self.heartbeat || self.cadence_changed)
+        !self.saving
+            && self.can_manage(ctx)
+            && self.cadence_error().is_none()
+            && (!self.heartbeat || self.cadence_changed)
     }
 
     /// The required-field hint of each new-agent field still missing after a Save attempt.
@@ -450,7 +537,10 @@ impl WaScheduleEditor {
         let missing = match field {
             "prompt" => self.prompt.trim().is_empty(),
             "host" => self.server_id.is_none(),
-            "project" => self.server_id.is_some() && ((!self.editing && self.project(ctx).is_none()) || !self.has_project()),
+            "project" => {
+                self.server_id.is_some()
+                    && ((!self.editing && self.project(ctx).is_none()) || !self.has_project())
+            }
             "model" => self.has_project() && !self.model_valid(ctx),
             _ => false,
         };
@@ -475,11 +565,20 @@ impl WaScheduleEditor {
             return;
         }
         self.error = None;
-        if self.schedule.as_ref().is_some_and(|schedule| str_of(object_of(object_of(schedule, "target"), "config"), "isolation") == "worktree") {
+        if self.schedule.as_ref().is_some_and(|schedule| {
+            str_of(
+                object_of(object_of(schedule, "target"), "config"),
+                "isolation",
+            ) == "worktree"
+        }) {
             self.error = Some(l("Worktree schedules are no longer supported. Create a new schedule for a local directory.").into());
             return;
         }
-        let Some(server) = self.server_id.clone().filter(|id| host::host(&ctx.state, id).is_some()) else {
+        let Some(server) = self
+            .server_id
+            .clone()
+            .filter(|id| host::host(&ctx.state, id).is_some())
+        else {
             self.error = Some(t("common.errors.daemonClientUnavailable"));
             return;
         };
@@ -490,13 +589,29 @@ impl WaScheduleEditor {
         let max = model::parse_max_runs(&self.max_runs);
         let lifecycle = self.multiplicity(ctx);
         let name = self.name.trim().to_owned();
-        let schedule_id = self.schedule.as_ref().and_then(|s| s.get("id").cloned()).unwrap_or(Value::Null);
-        let optional = |value: &str| if value.is_empty() { Value::Null } else { Value::String(value.to_owned()) };
+        let schedule_id = self
+            .schedule
+            .as_ref()
+            .and_then(|s| s.get("id").cloned())
+            .unwrap_or(Value::Null);
+        let optional = |value: &str| {
+            if value.is_empty() {
+                Value::Null
+            } else {
+                Value::String(value.to_owned())
+            }
+        };
         let fields = if self.heartbeat {
             json!({ "scheduleId": schedule_id, "cadence": self.cadence() })
         } else if self.editing {
             let mut config = Map::new();
-            config.insert("provider".into(), self.provider.clone().map(Value::String).unwrap_or(Value::Null));
+            config.insert(
+                "provider".into(),
+                self.provider
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
             config.insert("model".into(), optional(&self.model));
             config.insert("modeId".into(), optional(&self.mode));
             config.insert("thinkingOptionId".into(), optional(&self.thinking));
@@ -513,13 +628,26 @@ impl WaScheduleEditor {
                 fields.insert("cadence".into(), self.cadence());
             }
             fields.insert("newAgentConfig".into(), Value::Object(config));
-            fields.insert("maxRuns".into(), max.map(Value::from).unwrap_or(Value::Null));
+            fields.insert(
+                "maxRuns".into(),
+                max.map(Value::from).unwrap_or(Value::Null),
+            );
             Value::Object(fields)
         } else {
             let mut config = Map::new();
-            config.insert("provider".into(), self.provider.clone().map(Value::String).unwrap_or(Value::Null));
+            config.insert(
+                "provider".into(),
+                self.provider
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
             config.insert("cwd".into(), self.cwd.trim().into());
-            for (key, value) in [("model", &self.model), ("modeId", &self.mode), ("thinkingOptionId", &self.thinking)] {
+            for (key, value) in [
+                ("model", &self.model),
+                ("modeId", &self.mode),
+                ("thinkingOptionId", &self.thinking),
+            ] {
                 if !value.is_empty() {
                     config.insert(key.into(), value.clone().into());
                 }
@@ -537,7 +665,10 @@ impl WaScheduleEditor {
                 fields.insert("name".into(), name.into());
             }
             fields.insert("cadence".into(), self.cadence());
-            fields.insert("target".into(), json!({ "type": "new-agent", "config": Value::Object(config) }));
+            fields.insert(
+                "target".into(),
+                json!({ "type": "new-agent", "config": Value::Object(config) }),
+            );
             if let Some(max) = max {
                 fields.insert("maxRuns".into(), max.into());
             }
@@ -545,10 +676,23 @@ impl WaScheduleEditor {
         };
         let action = if self.editing { "update" } else { "create" };
         self.saving = true;
-        self.pending.send_typed(&ctx.core, &server, &format!("schedule/{action}"), fields, &format!("schedule/{action}/response"), Req::Save);
+        self.pending.send_typed(
+            &ctx.core,
+            &server,
+            &format!("schedule/{action}"),
+            fields,
+            &format!("schedule/{action}/response"),
+            Req::Save,
+        );
     }
 
-    fn handle_core(&mut self, cx: &mut Cx, uid: WidgetUid, path: &HeapLiveIdPath, ctx: &mut UiContext) {
+    fn handle_core(
+        &mut self,
+        cx: &mut Cx,
+        uid: WidgetUid,
+        path: &HeapLiveIdPath,
+        ctx: &mut UiContext,
+    ) {
         if !self.open {
             return;
         }
@@ -570,7 +714,8 @@ impl WaScheduleEditor {
                     self.catalog_loading = false;
                     match result {
                         Ok(body) => {
-                            self.catalog_scope = Some(str_of(&body, "cwd").trim().trim_end_matches('/').to_owned());
+                            self.catalog_scope =
+                                Some(str_of(&body, "cwd").trim().trim_end_matches('/').to_owned());
                             self.apply_catalog(cx, ctx, &body);
                         }
                         Err(error) => self.catalog_error = Some(error.to_string()),
@@ -590,12 +735,20 @@ impl WaScheduleEditor {
                 }
             }
         }
-        if let Some((_, event)) = ctx.host_events().filter(|(host, event)| {
-            Some(*host) == self.server_id.as_deref()
-                && str_of(event, "type") == "providers_snapshot_update"
-                && self.catalog_scope.as_deref()
-                    == Some(str_of(object_of(event, "payload"), "cwd").trim().trim_end_matches('/'))
-        }).last() {
+        if let Some((_, event)) = ctx
+            .host_events()
+            .filter(|(host, event)| {
+                Some(*host) == self.server_id.as_deref()
+                    && str_of(event, "type") == "providers_snapshot_update"
+                    && self.catalog_scope.as_deref()
+                        == Some(
+                            str_of(object_of(event, "payload"), "cwd")
+                                .trim()
+                                .trim_end_matches('/'),
+                        )
+            })
+            .last()
+        {
             let body = object_of(event, "payload");
             if body.get("entries").is_some() || body.get("compactSnapshot").is_some() {
                 self.catalog_generation += 1;
@@ -612,7 +765,9 @@ impl WaScheduleEditor {
         self.catalog_loading = false;
         self.catalog_error = None;
         self.resolve_selection();
-        self.view.wa_select(id!(select)).refresh(cx, "model", || self.model_request(ctx));
+        self.view
+            .wa_select(id!(select))
+            .refresh(cx, "model", || self.model_request(ctx));
     }
 
     fn model_request(&self, ctx: &UiContext) -> SelectRequest {
@@ -623,15 +778,27 @@ impl WaScheduleEditor {
             let kind = self.selection_kind(entry, ctx);
             let separated = !options.is_empty();
             if kind != "models" {
-                let description = if kind == "loading" { t("providerSelection.loading") } else { self.selection_error(entry) };
-                options.push(SelectOption::new(format!("{id}\u{0}"), label).description(description).enabled(false).separated(separated));
+                let description = if kind == "loading" {
+                    t("providerSelection.loading")
+                } else {
+                    self.selection_error(entry)
+                };
+                options.push(
+                    SelectOption::new(format!("{id}\u{0}"), label)
+                        .description(description)
+                        .enabled(false)
+                        .separated(separated),
+                );
                 continue;
             }
             for (index, row) in agent_form::selectable_models(entry).iter().enumerate() {
                 options.push(
-                    SelectOption::new(format!("{id}\u{0}{}", str_of(row, "id")), controls_model::model_label(row))
-                        .description(format!("{label} · {}", str_of(row, "id")))
-                        .separated(index == 0 && separated),
+                    SelectOption::new(
+                        format!("{id}\u{0}{}", str_of(row, "id")),
+                        controls_model::model_label(row),
+                    )
+                    .description(format!("{label} · {}", str_of(row, "id")))
+                    .separated(index == 0 && separated),
                 );
             }
         }
@@ -642,7 +809,11 @@ impl WaScheduleEditor {
         } else {
             t("providerSelection.readiness.noProviders")
         };
-        let selected = format!("{}\u{0}{}", self.provider.clone().unwrap_or_default(), self.model.trim());
+        let selected = format!(
+            "{}\u{0}{}",
+            self.provider.clone().unwrap_or_default(),
+            self.model.trim()
+        );
         SelectRequest::new(t("providerSelection.selectModel"), options)
             .selected(Some(&selected))
             .searchable(t("modelSelector.searchAllPlaceholder"))
@@ -659,7 +830,10 @@ impl WaScheduleEditor {
         }
         let view = self.root();
         let modal = view.wa_modal(id!(modal));
-        if view.wa_button(id!(cancel)).clicked(actions) || view.wa_button(id!(sheet.header.close)).clicked(actions) || !modal.is_open() {
+        if view.wa_button(id!(cancel)).clicked(actions)
+            || view.wa_button(id!(sheet.header.close)).clicked(actions)
+            || !modal.is_open()
+        {
             if self.saving {
                 modal.open(cx);
             } else {
@@ -692,8 +866,17 @@ impl WaScheduleEditor {
             self.view.redraw(cx);
         }
         if view.wa_button(id!(host)).clicked(actions) && !self.editing {
-            let options = host::hosts(&ctx.state).iter().map(|h| SelectOption::new(h.id(), h.label()).leading(Leading::Status(h.status()))).collect();
-            self.open_select(cx, "host", SelectRequest::new(l("Host"), options).selected(self.server_id.as_deref()).empty(l("No hosts found")));
+            let options = host::hosts(&ctx.state)
+                .iter()
+                .map(|h| SelectOption::new(h.id(), h.label()).leading(Leading::Status(h.status())))
+                .collect();
+            self.open_select(
+                cx,
+                "host",
+                SelectRequest::new(l("Host"), options)
+                    .selected(self.server_id.as_deref())
+                    .empty(l("No hosts found")),
+            );
         }
         if view.wa_button(id!(project)).clicked(actions) && self.server_id.is_some() {
             let mut seen = Vec::new();
@@ -704,7 +887,8 @@ impl WaScheduleEditor {
                     continue;
                 }
                 seen.push(path.clone());
-                let label = str_or(project, "projectDisplayName", &model::shorten_path(&path)).to_owned();
+                let label =
+                    str_or(project, "projectDisplayName", &model::shorten_path(&path)).to_owned();
                 options.push(SelectOption::new(path, label).glyph("folder"));
             }
             let selected = self.project(ctx).map(|_| self.cwd.trim().to_owned());
@@ -726,9 +910,17 @@ impl WaScheduleEditor {
             let options: Vec<SelectOption> = self
                 .thinking_options()
                 .iter()
-                .map(|o| SelectOption::new(str_of(o, "id"), controls_model::format_thinking_option_label(o, &extra)).glyph("brain"))
+                .map(|o| {
+                    SelectOption::new(
+                        str_of(o, "id"),
+                        controls_model::format_thinking_option_label(o, &extra),
+                    )
+                    .glyph("brain")
+                })
                 .collect();
-            let mut request = SelectRequest::new(l("Select thinking"), options.clone()).selected(Some(self.thinking.trim())).empty(l("No thinking options found"));
+            let mut request = SelectRequest::new(l("Select thinking"), options.clone())
+                .selected(Some(self.thinking.trim()))
+                .empty(l("No thinking options found"));
             if options.len() > 6 {
                 request = request.searchable("");
             }
@@ -740,16 +932,28 @@ impl WaScheduleEditor {
                 .iter()
                 .map(|m| SelectOption::new(str_of(m, "id"), str_or(m, "label", str_of(m, "id"))))
                 .collect();
-            let mut request = SelectRequest::new(l("Select mode"), options.clone()).selected(Some(self.mode.trim())).empty(l("No modes found"));
+            let mut request = SelectRequest::new(l("Select mode"), options.clone())
+                .selected(Some(self.mode.trim()))
+                .empty(l("No modes found"));
             if options.len() > 6 {
                 request = request.searchable("");
             }
             self.open_select(cx, "mode", request);
         }
         if view.wa_button(id!(cadence_preset)).clicked(actions) {
-            let options = model::CADENCE_PRESETS.iter().map(|(id, label, _)| SelectOption::new(*id, l(label))).collect();
-            let preset = model::CADENCE_PRESETS.iter().find(|p| p.2 == self.cron.trim()).map(|p| p.0);
-            self.open_select(cx, "cadence", SelectRequest::new(l("Cadence"), options).selected(preset));
+            let options = model::CADENCE_PRESETS
+                .iter()
+                .map(|(id, label, _)| SelectOption::new(*id, l(label)))
+                .collect();
+            let preset = model::CADENCE_PRESETS
+                .iter()
+                .find(|p| p.2 == self.cron.trim())
+                .map(|p| p.0);
+            self.open_select(
+                cx,
+                "cadence",
+                SelectRequest::new(l("Cadence"), options).selected(preset),
+            );
         }
         if let Some((token, value)) = view.wa_select(id!(select)).picked(actions) {
             match token.as_str() {
@@ -789,7 +993,15 @@ impl WaScheduleEditor {
         };
         view.widget(id!(sheet.header.title)).set_text(cx, title);
         let permission = self.host(ctx).is_some() && !self.can_manage(ctx);
-        set_optional(cx, &view.widget(id!(permission)), if permission { l("This connection does not have automation.manage permission.") } else { "" });
+        set_optional(
+            cx,
+            &view.widget(id!(permission)),
+            if permission {
+                l("This connection does not have automation.manage permission.")
+            } else {
+                ""
+            },
+        );
         let field = |path: &[LiveId], label: &str, visible: bool, cx: &mut Cx| {
             let widget = view.widget(path);
             widget.set_visible(cx, visible);
@@ -802,25 +1014,35 @@ impl WaScheduleEditor {
         // Read-only heartbeat target.
         let target = field(id!(target_field), l("Target"), heartbeat, cx);
         if heartbeat {
-            let agent_id = self.schedule.as_ref().map(|s| str_of(object_of(s, "target"), "agentId").to_owned()).unwrap_or_default();
+            let agent_id = self
+                .schedule
+                .as_ref()
+                .map(|s| str_of(object_of(s, "target"), "agentId").to_owned())
+                .unwrap_or_default();
             let label = match self.host(ctx).and_then(|h| h.agent(&agent_id)) {
                 None => l("Agent unavailable").to_owned(),
-                Some(agent) if str_of(agent, "title").trim().is_empty() => l("Untitled agent").to_owned(),
+                Some(agent) if str_of(agent, "title").trim().is_empty() => {
+                    l("Untitled agent").to_owned()
+                }
                 Some(agent) => str_of(agent, "title").trim().to_owned(),
             };
             target.widget(id!(target_box.text)).set_text(cx, &label);
         }
         field(id!(name_field), l("Name"), !heartbeat, cx);
-        view.wa_input(id!(name)).set_empty_text(cx, l("Optional").into());
+        view.wa_input(id!(name))
+            .set_empty_text(cx, l("Optional").into());
         // Required fields left empty say so once Save was pressed.
         let error_color = crate::theme::current_palette().field_error;
         let show_hint = |field: &WidgetRef, text: &str, error: bool, cx: &mut Cx| {
             set_optional(cx, &field.widget(id!(hint)), text);
-            field.plabel(id!(hint.text)).set_color(cx, error.then_some(error_color));
+            field
+                .plabel(id!(hint.text))
+                .set_color(cx, error.then_some(error_color));
         };
         let prompt_field = field(id!(prompt_field), l("Prompt"), !heartbeat, cx);
         show_hint(&prompt_field, &self.required_hint(ctx, "prompt"), true, cx);
-        view.wa_input(id!(prompt)).set_empty_text(cx, l("What should the agent do each run?").into());
+        view.wa_input(id!(prompt))
+            .set_empty_text(cx, l("What should the agent do each run?").into());
         let hosts = host::hosts(&ctx.state);
         let show_host = !heartbeat && (self.editing || hosts.len() > 1);
         let host_field = field(id!(host_field), l("Host"), show_host, cx);
@@ -835,7 +1057,14 @@ impl WaScheduleEditor {
         let project_field = field(id!(project_field), l("Project"), show_project, cx);
         if show_project {
             let display = match self.project(ctx) {
-                Some(project) => Some(str_or(project, "projectDisplayName", &model::shorten_path(self.cwd.trim())).to_owned()),
+                Some(project) => Some(
+                    str_or(
+                        project,
+                        "projectDisplayName",
+                        &model::shorten_path(self.cwd.trim()),
+                    )
+                    .to_owned(),
+                ),
                 None if self.has_project() => Some(model::shorten_path(self.cwd.trim())),
                 None => None,
             };
@@ -844,7 +1073,12 @@ impl WaScheduleEditor {
             button.set_enabled(cx, self.server_id.is_some());
             match self.server_id {
                 None => show_hint(&project_field, l("Choose a host first."), false, cx),
-                Some(_) => show_hint(&project_field, &self.required_hint(ctx, "project"), true, cx),
+                Some(_) => show_hint(
+                    &project_field,
+                    &self.required_hint(ctx, "project"),
+                    true,
+                    cx,
+                ),
             }
         }
         let has_project = !heartbeat && self.has_project();
@@ -854,37 +1088,72 @@ impl WaScheduleEditor {
             let label = if self.model.trim().is_empty() {
                 self.selected_model_label(ctx)
             } else {
-                self.effective_model(self.provider.as_deref(), &self.model).map(|m| controls_model::model_label(&m)).unwrap_or_else(|| self.model.trim().to_owned())
+                self.effective_model(self.provider.as_deref(), &self.model)
+                    .map(|m| controls_model::model_label(&m))
+                    .unwrap_or_else(|| self.model.trim().to_owned())
             };
             let button = view.wa_button(id!(model));
             button.set_text(cx, &label);
-            button.set_color(cx, self.model.trim().is_empty().then(|| crate::theme::current_palette().muted));
+            button.set_color(
+                cx,
+                self.model
+                    .trim()
+                    .is_empty()
+                    .then(|| crate::theme::current_palette().muted),
+            );
             button.set_enabled(cx, self.server_id.is_some());
             // The trigger leads with the provider glyph laid over its leading edge.
             let provider = self.provider.clone().filter(|p| !p.trim().is_empty());
-            view.widget(id!(model_box.provider_box)).set_visible(cx, provider.is_some());
-            button.apply_over(cx, live! { lead_space: (if provider.is_some() { 24.0 } else { 0.0 }) });
+            view.widget(id!(model_box.provider_box))
+                .set_visible(cx, provider.is_some());
+            button.apply_over(
+                cx,
+                live! { lead_space: (if provider.is_some() { 24.0 } else { 0.0 }) },
+            );
             if let Some(provider) = &provider {
-                view.provider_icon(id!(model_box.provider)).set_provider(cx, provider, None);
+                view.provider_icon(id!(model_box.provider))
+                    .set_provider(cx, provider, None);
             }
         }
         let thinking_options = self.thinking_options();
-        let show_thinking = has_project && self.provider.is_some() && !self.model.trim().is_empty() && !thinking_options.is_empty();
+        let show_thinking = has_project
+            && self.provider.is_some()
+            && !self.model.trim().is_empty()
+            && !thinking_options.is_empty();
         field(id!(thinking_field), l("Thinking"), show_thinking, cx);
         if show_thinking {
             let extra = t("agentControls.thinking.extraHigh");
-            let current = thinking_options.iter().find(|o| str_of(o, "id") == self.thinking.trim()).cloned().unwrap_or_else(|| json!({ "id": self.thinking.trim() }));
-            let label = (!self.thinking.trim().is_empty()).then(|| controls_model::format_thinking_option_label(&current, &extra));
-            set_field(cx, &view.wa_button(id!(thinking)), label.as_deref(), l("Select thinking"));
+            let current = thinking_options
+                .iter()
+                .find(|o| str_of(o, "id") == self.thinking.trim())
+                .cloned()
+                .unwrap_or_else(|| json!({ "id": self.thinking.trim() }));
+            let label = (!self.thinking.trim().is_empty())
+                .then(|| controls_model::format_thinking_option_label(&current, &extra));
+            set_field(
+                cx,
+                &view.wa_button(id!(thinking)),
+                label.as_deref(),
+                l("Select thinking"),
+            );
         }
         let modes = self.mode_options();
         let show_mode = has_project && self.provider.is_some() && !modes.is_empty();
         let mode_field = field(id!(mode_field), l("Mode"), show_mode, cx);
         if show_mode {
             let label = (!self.mode.trim().is_empty()).then(|| {
-                modes.iter().find(|m| str_of(m, "id") == self.mode.trim()).map(|m| str_or(m, "label", str_of(m, "id")).to_owned()).unwrap_or_else(|| self.mode.trim().to_owned())
+                modes
+                    .iter()
+                    .find(|m| str_of(m, "id") == self.mode.trim())
+                    .map(|m| str_or(m, "label", str_of(m, "id")).to_owned())
+                    .unwrap_or_else(|| self.mode.trim().to_owned())
             });
-            set_field(cx, &view.wa_button(id!(mode)), label.as_deref(), l("Default mode"));
+            set_field(
+                cx,
+                &view.wa_button(id!(mode)),
+                label.as_deref(),
+                l("Default mode"),
+            );
             set_optional(cx, &mode_field.widget(id!(hint)), "");
         }
         let show_archive = has_project && self.multiplicity(ctx);
@@ -893,23 +1162,41 @@ impl WaScheduleEditor {
         let cadence = field(id!(cadence_field), l("Cadence"), true, cx);
         let expression = self.cron.trim().to_owned();
         let preset = model::CADENCE_PRESETS.iter().find(|p| p.2 == expression);
-        view.wa_button(id!(cadence_preset)).set_text(cx, preset.map(|p| l(p.1)).unwrap_or(l("Custom cron")));
+        view.wa_button(id!(cadence_preset))
+            .set_text(cx, preset.map(|p| l(p.1)).unwrap_or(l("Custom cron")));
         let (note, error) = match self.cadence_error() {
             Some(error) => (error, true),
             None if expression.is_empty() => (String::new(), false),
-            None => (model::describe_cron(&expression, Some(&self.timezone)).unwrap_or(expression), false),
+            None => (
+                model::describe_cron(&expression, Some(&self.timezone)).unwrap_or(expression),
+                false,
+            ),
         };
         set_optional(cx, &cadence.widget(id!(cadence_note)), &note);
         let p = crate::theme::current_palette();
-        cadence.plabel(id!(cadence_note.text)).set_color(cx, Some(if error { p.field_error } else { p.muted }));
+        cadence
+            .plabel(id!(cadence_note.text))
+            .set_color(cx, Some(if error { p.field_error } else { p.muted }));
         field(id!(max_runs_field), l("Max runs"), !heartbeat, cx);
-        view.wa_input(id!(max_runs)).set_empty_text(cx, l("Unlimited").into());
-        set_optional(cx, &view.widget(id!(body.error)), self.error.as_deref().unwrap_or(""));
+        view.wa_input(id!(max_runs))
+            .set_empty_text(cx, l("Unlimited").into());
+        set_optional(
+            cx,
+            &view.widget(id!(body.error)),
+            self.error.as_deref().unwrap_or(""),
+        );
         let cancel = view.wa_button(id!(cancel));
         cancel.set_text(cx, l("Cancel"));
         cancel.set_enabled(cx, !self.saving);
         let save = view.wa_button(id!(save));
-        save.set_text(cx, if self.editing { l("Save changes") } else { l("Create schedule") });
+        save.set_text(
+            cx,
+            if self.editing {
+                l("Save changes")
+            } else {
+                l("Create schedule")
+            },
+        );
         save.set_busy(cx, self.saving);
         save.set_enabled(cx, self.can_press_save(ctx));
     }
@@ -923,7 +1210,9 @@ impl Widget for WaScheduleEditor {
             self.handle_core(cx, uid, &path, ctx);
         }
         self.view.handle_event(cx, event, scope);
-        if let Event::Actions(actions) = event && let Some(ctx) = scope.data.get_mut::<UiContext>() {
+        if let Event::Actions(actions) = event
+            && let Some(ctx) = scope.data.get_mut::<UiContext>()
+        {
             self.handle_actions(cx, actions, ctx);
         }
     }
@@ -939,13 +1228,19 @@ impl Widget for WaScheduleEditor {
 impl WaScheduleEditorRef {
     /// Opens the sheet for a new schedule (`None`) or the given row (tagged `_serverId`).
     pub fn open(&self, cx: &mut Cx, hosts: &[String], schedule: Option<Value>) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         let editing = schedule.is_some();
         let source = schedule.clone().unwrap_or(Value::Null);
         let target = object_of(&source, "target");
         let saved = object_of(target, "config");
         let cadence = object_of(&source, "cadence").clone();
-        let saved_zone = if str_of(&cadence, "type") == "cron" { str_of(&cadence, "timezone").to_owned() } else { String::new() };
+        let saved_zone = if str_of(&cadence, "type") == "cron" {
+            str_of(&cadence, "timezone").to_owned()
+        } else {
+            String::new()
+        };
         let provider = str_of(saved, "provider");
         let next = &mut *inner;
         next.open = true;
@@ -956,8 +1251,12 @@ impl WaScheduleEditorRef {
         next.mode = str_of(saved, "modeId").to_owned();
         next.thinking = str_of(saved, "thinkingOptionId").to_owned();
         next.thinking_drafts.clear();
-        if let Some(provider) = &next.provider && !next.model.is_empty() && !next.thinking.is_empty() {
-            next.thinking_drafts.insert(format!("{provider}:{}", next.model), next.thinking.clone());
+        if let Some(provider) = &next.provider
+            && !next.model.is_empty()
+            && !next.thinking.is_empty()
+        {
+            next.thinking_drafts
+                .insert(format!("{provider}:{}", next.model), next.thinking.clone());
         }
         next.server_id = if editing {
             Some(str_of(&source, "_serverId").to_owned())
@@ -969,12 +1268,20 @@ impl WaScheduleEditorRef {
         next.cwd = str_of(saved, "cwd").to_owned();
         next.archive = saved.get("archiveOnFinish") != Some(&Value::Bool(false));
         next.saved_zone = !saved_zone.is_empty();
-        next.timezone = if saved_zone.is_empty() { timezone::device_time_zone() } else { saved_zone };
+        next.timezone = if saved_zone.is_empty() {
+            timezone::device_time_zone()
+        } else {
+            saved_zone
+        };
         next.name = str_of(&source, "name").to_owned();
         next.prompt = str_of(&source, "prompt").to_owned();
         let hourly = json!({ "type": "every", "everyMs": 3_600_000 });
         next.cron = model::cron_expression_for(if editing { &cadence } else { &hourly });
-        next.max_runs = source.get("maxRuns").filter(|v| !v.is_null()).map(|v| v.to_string()).unwrap_or_default();
+        next.max_runs = source
+            .get("maxRuns")
+            .filter(|v| !v.is_null())
+            .map(|v| v.to_string())
+            .unwrap_or_default();
         next.entries.clear();
         next.catalog_error = None;
         next.catalog_loading = false;
@@ -983,7 +1290,8 @@ impl WaScheduleEditorRef {
         next.saving = false;
         next.error = None;
         next.attempted = false;
-        next.load_catalog_pending = !next.heartbeat && next.server_id.is_some() && !next.cwd.trim().is_empty();
+        next.load_catalog_pending =
+            !next.heartbeat && next.server_id.is_some() && !next.cwd.trim().is_empty();
         next.catalog_loading = next.load_catalog_pending;
         let view = inner.root();
         sync_input(cx, &view.wa_input(id!(name)), &inner.name);
@@ -995,6 +1303,8 @@ impl WaScheduleEditorRef {
     }
 
     pub fn saved(&self, actions: &Actions) -> bool {
-        actions.filter_widget_actions(self.widget_uid()).any(|a| matches!(a.cast(), ScheduleEditorAction::Saved))
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .any(|a| matches!(a.cast(), ScheduleEditorAction::Saved))
     }
 }

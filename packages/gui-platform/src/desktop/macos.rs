@@ -2,20 +2,23 @@
 //! paseo_desktop_integrations plugin, flutter_local_notifications macOS and
 //! tray_manager). Delegate methods are added to Makepad's `NSAppDelegate`.
 
-use super::{deliver, notification_clicked, Activation, DesktopNotification, NativeSignal};
+use super::{Activation, DesktopNotification, NativeSignal, deliver, notification_clicked};
 use crate::{
-    action::*,
-    apple::{self, imp, ns_string, rust_string, user_notifications, Id, BOOL_ENC},
-    platform::{Completion, Shared},
     Bootstrap,
+    action::*,
+    apple::{self, BOOL_ENC, Id, imp, ns_string, rust_string, user_notifications},
+    platform::{Completion, Shared},
 };
-use objc2::{class, msg_send, runtime::{AnyObject, Bool, Sel}};
+use objc2::{
+    class, msg_send,
+    runtime::{AnyObject, Bool, Sel},
+};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -44,13 +47,21 @@ pub(crate) fn bootstrap(argv: &[String]) -> Bootstrap {
     }
     let args: Vec<String> = argv.iter().skip(1).cloned().collect();
     let mut open: Vec<OsString> = vec!["-b".into(), BUNDLE_ID.into()];
-    if let Some(link) = args.iter().find(|a| a.to_ascii_lowercase().starts_with("paseo:")) {
+    if let Some(link) = args
+        .iter()
+        .find(|a| a.to_ascii_lowercase().starts_with("paseo:"))
+    {
         open.push(link.into());
     } else if let Some(path) = crate::deep_link::open_project_path_from_argv(&args) {
         open.push(path.into());
     }
-    let ok = std::process::Command::new("/usr/bin/open").args(&open).status().is_ok_and(|s| s.success());
-    Bootstrap::Forwarded { exit_code: if ok { 0 } else { 1 } }
+    let ok = std::process::Command::new("/usr/bin/open")
+        .args(&open)
+        .status()
+        .is_ok_and(|s| s.success());
+    Bootstrap::Forwarded {
+        exit_code: if ok { 0 } else { 1 },
+    }
 }
 
 // ----- app delegate additions -----
@@ -68,12 +79,22 @@ extern "C" fn open_urls(_this: &AnyObject, _sel: Sel, _app: Id, urls: Id) {
             let is_file: bool = msg_send![url, isFileURL];
             if is_file {
                 let standardized: Id = msg_send![url, URLByStandardizingPath];
-                if let Some(path) = rust_string(msg_send![standardized, path]).filter(|p| Path::new(p).is_dir()) {
-                    deliver(NativeSignal::Activation(Activation { url: None, project_path: Some(path), initial: !ready }));
+                if let Some(path) =
+                    rust_string(msg_send![standardized, path]).filter(|p| Path::new(p).is_dir())
+                {
+                    deliver(NativeSignal::Activation(Activation {
+                        url: None,
+                        project_path: Some(path),
+                        initial: !ready,
+                    }));
                 }
             } else if let Some(text) = rust_string(msg_send![url, absoluteString]) {
                 if text.to_ascii_lowercase().starts_with("paseo:") {
-                    deliver(NativeSignal::Activation(Activation { url: Some(text), project_path: None, initial: !ready }));
+                    deliver(NativeSignal::Activation(Activation {
+                        url: Some(text),
+                        project_path: None,
+                        initial: !ready,
+                    }));
                 }
             }
         }
@@ -109,14 +130,24 @@ extern "C" fn should_terminate(_this: &AnyObject, _sel: Sel, _app: Id) -> usize 
 
 pub(crate) fn prepare_process() -> anyhow::Result<()> {
     unsafe {
-        apple::add_method(c"NSAppDelegate", c"application:openURLs:", imp!(open_urls), "v@:@@");
+        apple::add_method(
+            c"NSAppDelegate",
+            c"application:openURLs:",
+            imp!(open_urls),
+            "v@:@@",
+        );
         apple::add_method(
             c"NSAppDelegate",
             c"applicationShouldHandleReopen:hasVisibleWindows:",
             imp!(should_handle_reopen),
             &format!("{BOOL_ENC}@:@{BOOL_ENC}"),
         );
-        apple::add_method(c"NSAppDelegate", c"applicationShouldTerminate:", imp!(should_terminate), "Q@:@");
+        apple::add_method(
+            c"NSAppDelegate",
+            c"applicationShouldTerminate:",
+            imp!(should_terminate),
+            "Q@:@",
+        );
     }
     Ok(())
 }
@@ -164,23 +195,43 @@ pub(crate) fn start_lifecycle(_shared: &Arc<Shared>) {
             usingBlock: &*active
         ];
         let _: Id = msg_send![token2, retain];
-        OBSERVERS.lock().unwrap().0.extend([token as usize, token2 as usize]);
+        OBSERVERS
+            .lock()
+            .unwrap()
+            .0
+            .extend([token as usize, token2 as usize]);
     }
     deliver(NativeSignal::LifecycleStarted(Ok(())));
 }
 
 // ----- notifications -----
 
-extern "C" fn did_receive_response(_this: &AnyObject, _sel: Sel, _center: Id, response: Id, completion: Id) {
+extern "C" fn did_receive_response(
+    _this: &AnyObject,
+    _sel: Sel,
+    _center: Id,
+    response: Id,
+    completion: Id,
+) {
     let (identifier, info) = user_notifications::response_info(response);
     if let Some(payload) = info.get("payload").and_then(|p| p.as_str()) {
-        notification_clicked(payload, identifier.parse::<i64>().ok(), user_notifications::action_identifier(response));
+        notification_clicked(
+            payload,
+            identifier.parse::<i64>().ok(),
+            user_notifications::action_identifier(response),
+        );
     }
     call_void_block(completion);
 }
 
 /// Foreground presentation: banner + list + sound (original presentAlert/Banner/List/Sound).
-extern "C" fn will_present(_this: &AnyObject, _sel: Sel, _center: Id, _notification: Id, completion: Id) {
+extern "C" fn will_present(
+    _this: &AnyObject,
+    _sel: Sel,
+    _center: Id,
+    _notification: Id,
+    completion: Id,
+) {
     // UNNotificationPresentationOptionSound 2 | List 8 | Banner 16
     let options: usize = 2 | 8 | 16;
     call_usize_block(completion, options);
@@ -208,8 +259,16 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
             c"PaseoNotificationDelegate",
             class!(NSObject),
             &[
-                (c"userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:", imp!(did_receive_response), "v@:@@@?"),
-                (c"userNotificationCenter:willPresentNotification:withCompletionHandler:", imp!(will_present), "v@:@@@?"),
+                (
+                    c"userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:",
+                    imp!(did_receive_response),
+                    "v@:@@@?",
+                ),
+                (
+                    c"userNotificationCenter:willPresentNotification:withCompletionHandler:",
+                    imp!(will_present),
+                    "v@:@@@?",
+                ),
             ],
         );
         let delegate: Id = msg_send![class, new];
@@ -218,7 +277,9 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
     Ok(())
 }
 
-pub(crate) async fn show_notification(notification: &DesktopNotification) -> Result<(), PlatformError> {
+pub(crate) async fn show_notification(
+    notification: &DesktopNotification,
+) -> Result<(), PlatformError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     user_notifications::add(
         &notification.id.to_string(),
@@ -230,22 +291,31 @@ pub(crate) async fn show_notification(notification: &DesktopNotification) -> Res
             let _ = tx.send(result);
         },
     );
-    rx.await.unwrap_or_else(|_| Err(PlatformError::native("Notification delivery was dropped.")))
+    rx.await
+        .unwrap_or_else(|_| Err(PlatformError::native("Notification delivery was dropped.")))
 }
 
 pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    user_notifications::request_authorization(move |result| done.finish(result.map(PlatformValue::Permission)));
+    user_notifications::request_authorization(move |result| {
+        done.finish(result.map(PlatformValue::Permission))
+    });
 }
 
 pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Completion) {
-    user_notifications::authorization_status(move |state| done.ok(PlatformValue::Permission(state)));
+    user_notifications::authorization_status(move |state| {
+        done.ok(PlatformValue::Permission(state))
+    });
 }
 
 pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completion) {
     apple::on_main_queue(move || unsafe {
         let app: Id = msg_send![class!(NSApplication), sharedApplication];
         let tile: Id = msg_send![app, dockTile];
-        let label: Id = if count == 0 { std::ptr::null_mut() } else { ns_string(&count.to_string()) };
+        let label: Id = if count == 0 {
+            std::ptr::null_mut()
+        } else {
+            ns_string(&count.to_string())
+        };
         let _: () = msg_send![tile, setBadgeLabel: label];
         let _: () = msg_send![tile, display];
         done.ok(PlatformValue::None);
@@ -267,7 +337,10 @@ pub(crate) fn idle_milliseconds() -> Result<u64, PlatformError> {
     // kCGEventSourceStateCombinedSessionState 0; kCGAnyInputEventType ~0.
     let seconds = unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) };
     if !seconds.is_finite() || seconds < 0.0 {
-        return Err(PlatformError::new("idle_failed", "CoreGraphics could not read system idle time"));
+        return Err(PlatformError::new(
+            "idle_failed",
+            "CoreGraphics could not read system idle time",
+        ));
     }
     Ok((seconds * 1000.0) as u64)
 }
@@ -314,7 +387,8 @@ impl NativeWindows {
                     let _: () = msg_send![window, deminiaturize: std::ptr::null_mut::<AnyObject>()];
                 }
                 if visible || minimized || hidden.contains(&(window as usize)) {
-                    let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
+                    let _: () =
+                        msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<AnyObject>()];
                 }
             }
             let _: () = msg_send![app, activateIgnoringOtherApps: true];
@@ -324,7 +398,7 @@ impl NativeWindows {
 
 // ----- tray -----
 
-pub(crate) use super::native_tray::{create_tray, tray_host_available, Tray};
+pub(crate) use super::native_tray::{Tray, create_tray, tray_host_available};
 
 // ----- open / reveal / share -----
 
@@ -348,7 +422,13 @@ pub(crate) fn reveal(workspace: &Path, file: Option<&Path>) -> Result<(), Platfo
 }
 
 /// share_plus macOS: NSSharingServicePicker anchored to the key window.
-pub(crate) fn share_file(_shared: &Arc<Shared>, path: PathBuf, _mime_type: String, _name: String, done: Completion) {
+pub(crate) fn share_file(
+    _shared: &Arc<Shared>,
+    path: PathBuf,
+    _mime_type: String,
+    _name: String,
+    done: Completion,
+) {
     apple::on_main_queue(move || unsafe {
         let app: Id = msg_send![class!(NSApplication), sharedApplication];
         let mut window: Id = msg_send![app, keyWindow];
@@ -356,7 +436,9 @@ pub(crate) fn share_file(_shared: &Arc<Shared>, path: PathBuf, _mime_type: Strin
             window = msg_send![app, mainWindow];
         }
         if window.is_null() {
-            done.fail(PlatformError::native("No window is available to anchor the share sheet."));
+            done.fail(PlatformError::native(
+                "No window is available to anchor the share sheet.",
+            ));
             return;
         }
         let view: Id = msg_send![window, contentView];
@@ -365,7 +447,8 @@ pub(crate) fn share_file(_shared: &Arc<Shared>, path: PathBuf, _mime_type: Strin
         let picker: Id = msg_send![picker, initWithItems: items];
         let bounds: objc2_rect::Rect = msg_send![view, bounds];
         // NSMinYEdge 1
-        let _: () = msg_send![picker, showRelativeToRect: bounds, ofView: view, preferredEdge: 1usize];
+        let _: () =
+            msg_send![picker, showRelativeToRect: bounds, ofView: view, preferredEdge: 1usize];
         done.ok(PlatformValue::None);
     });
 }
@@ -399,11 +482,20 @@ mod objc2_rect {
 pub(crate) fn memory_usage() -> (Option<u64>, Option<u64>) {
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as i32;
-    let read = unsafe { libc::proc_pidinfo(std::process::id() as i32, libc::PROC_PIDTASKINFO, 0, (&raw mut info).cast(), size) };
+    let read = unsafe {
+        libc::proc_pidinfo(
+            std::process::id() as i32,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
     let resident = (read == size).then_some(info.pti_resident_size);
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     // ru_maxrss is in bytes on macOS.
-    let peak = (unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0).then_some(usage.ru_maxrss as u64);
+    let peak = (unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0)
+        .then_some(usage.ru_maxrss as u64);
     (resident, peak)
 }
 

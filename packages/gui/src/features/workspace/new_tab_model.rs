@@ -1,6 +1,6 @@
 //! Pure parts of the local-directory session creation form.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::rpc::str_of;
 
@@ -25,7 +25,11 @@ pub fn feature_value<'a>(config: &'a Value, feature: &'a Value) -> &'a Value {
 /// `withFeature`: the config with one feature value set.
 pub fn with_feature(config: &Value, id: &str, value: Value) -> Value {
     let mut next = config.as_object().cloned().unwrap_or_default();
-    let mut values = next.get("featureValues").and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut values = next
+        .get("featureValues")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     values.insert(id.to_owned(), value);
     next.insert("featureValues".into(), Value::Object(values));
     Value::Object(next)
@@ -37,7 +41,10 @@ mod tests {
 
     #[test]
     fn session_source_uses_existing_directory() {
-        assert_eq!(workspace_source("/existing/worktree"), json!({"kind": "directory", "path": "/existing/worktree"}));
+        assert_eq!(
+            workspace_source("/existing/worktree"),
+            json!({"kind": "directory", "path": "/existing/worktree"})
+        );
         assert_eq!(SOURCES, ["directory", "clone", "new-directory"]);
     }
 }

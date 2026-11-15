@@ -11,8 +11,8 @@ pub mod profiles;
 pub mod providers;
 pub mod shortcuts;
 pub mod system;
+pub mod tailnet;
 pub mod usage;
-
 
 use serde_json::Value;
 
@@ -26,6 +26,7 @@ use super::ui::overlay::{self, SheetHead};
 pub struct View {
     pub hosts: Vec<HostView>,
     pub prefs: Value,
+    pub tailnet: Value,
     pub compact: bool,
     pub desktop: bool,
 }
@@ -37,7 +38,10 @@ impl View {
 
     /// Flutter `activeHost`: the chosen host, else the first saved one.
     pub fn active_host(&self, s: &Settings) -> Option<&HostView> {
-        s.host.as_deref().and_then(|id| self.host(id)).or(self.hosts.first())
+        s.host
+            .as_deref()
+            .and_then(|id| self.host(id))
+            .or(self.hosts.first())
     }
 }
 
@@ -60,6 +64,7 @@ pub fn draw_section(ui: &mut Ui, s: &Settings, v: &View, section: &str) {
             "usage" => usage::draw_usage(ui, s, v, host),
             "terminals" => daemon::draw_terminals(ui, s, host),
             "plugins" => plugins::draw_plugins(ui, s, host),
+            "version" => host::draw_version_page(ui, s, host),
             _ => {}
         }
         return;
@@ -71,23 +76,32 @@ pub fn draw_section(ui: &mut Ui, s: &Settings, v: &View, section: &str) {
         "about" => about::draw_about(ui, s, v),
         "appearance" => appearance::draw_appearance(ui, s, v),
         "shortcuts" => shortcuts::draw_shortcuts(ui, s, v),
+        "tailscale" => tailnet::draw(ui, s, v),
         other => app::draw_app_section(ui, s, v, other),
     }
 }
 
 /// Starts the loads the visible section needs (once per connection).
 pub fn ensure(s: &mut Settings, env: &mut Env, v: &View) {
-    let section = s.section.clone().unwrap_or_else(|| if v.compact { String::new() } else { "general".into() });
+    let section = s.section.clone().unwrap_or_else(|| {
+        if v.compact {
+            String::new()
+        } else {
+            "general".into()
+        }
+    });
     if let Some(host_section) = section.strip_prefix("host/") {
-        let Some(host) = v.active_host(s).cloned() else { return };
+        let Some(host) = v.active_host(s).cloned() else {
+            return;
+        };
         match host_section {
             "host" => {
                 daemon::ensure_daemon(s, env, &host);
-                host::ensure_update_card(s, env, &host);
                 if host.local && v.desktop {
                     system::ensure_local_daemon(s, env);
                 }
             }
+            "version" => host::ensure_version_page(s, env, &host),
             "connections" => {
                 daemon::ensure_daemon(s, env, &host);
                 daemon::ensure_connected_hosts(s, env, &host);
@@ -115,6 +129,7 @@ pub fn ensure(s: &mut Settings, env: &mut Env, v: &View) {
         "local-daemon" => system::ensure_local_daemon(s, env),
         "notifications" => system::ensure_notifications(s, env),
         "about" => about::ensure_about(s, env, v),
+        "tailscale" => tailnet::ensure(s, env),
         _ => {}
     }
 }
@@ -133,6 +148,7 @@ pub fn on_status_change(s: &mut Settings, host_id: &str) {
     usage::on_status_change(s, host_id);
     plugins::reset(s, host_id);
     profiles::reset(s, host_id);
+    host::reset_version_check(s, host_id);
 }
 
 pub fn sheet_head(s: &Settings, v: &View, sheet: &Sheet) -> SheetHead {

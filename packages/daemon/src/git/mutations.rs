@@ -229,6 +229,29 @@ pub async fn commit(
     execute(cwd, &["commit", "-m", message], env, cancel).await
 }
 
+// A file selection cannot promise to commit a nested checkout's contents.
+// Reject gitlinks even when their worktree directory has been removed.
+fn selected_index_paths(bytes: &[u8]) -> Result<std::collections::BTreeSet<String>> {
+    let mut paths = std::collections::BTreeSet::new();
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or_else(|| anyhow!("Invalid Git index record"))?;
+        let path = std::str::from_utf8(&record[tab + 1..])?;
+        if record.starts_with(b"160000 ") {
+            bail!(
+                "Selected path is a Git submodule or embedded repository; commit it with Git separately: {path}"
+            );
+        }
+        paths.insert(path.to_owned());
+    }
+    Ok(paths)
+}
+
 /// Commit full working-tree contents of exact changed paths, never the rest of
 /// the user's index. Build the commit from HEAD in a private index, then update
 /// only selected entries in a copy of the real index after Git advances HEAD.
@@ -253,7 +276,13 @@ pub async fn commit_selected(
     }
     let root = require_worktree_root(cwd, env, cancel.clone()).await?;
     let directory = git_dir(&root, env, cancel.clone()).await?;
-    for state in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"] {
+    for state in [
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "rebase-merge",
+        "rebase-apply",
+    ] {
         if directory.join(state).exists() {
             bail!("Finish or abort the in-progress Git operation before committing selected files");
         }
@@ -276,7 +305,10 @@ pub async fn commit_selected(
     let mut isolated = env.clone();
     isolated.insert(
         "GIT_INDEX_FILE".into(),
-        temporary_index.to_str().ok_or_else(|| anyhow!("Non-UTF-8 Git directory"))?.into(),
+        temporary_index
+            .to_str()
+            .ok_or_else(|| anyhow!("Non-UTF-8 Git directory"))?
+            .into(),
     );
     match tokio::fs::copy(&index, &temporary_index).await {
         Ok(_) => {}
@@ -287,8 +319,14 @@ pub async fn commit_selected(
     }
     let status = checked(
         &root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all", "--renames"]
-            .map(str::to_owned),
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--renames",
+        ]
+        .map(str::to_owned),
         &isolated,
         cancel.clone(),
         READ_LIMIT,
@@ -297,20 +335,28 @@ pub async fn commit_selected(
     .await?;
     let mut changed = std::collections::BTreeSet::new();
     let mut renames = Vec::new();
-    let mut records = status.split(|byte| *byte == 0).filter(|record| !record.is_empty());
+    let mut records = status
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
         if record.len() < 4 {
             bail!("Invalid Git status record");
         }
         let path = std::str::from_utf8(&record[3..])?.to_owned();
-        if matches!(&record[..2], b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU") {
+        if matches!(
+            &record[..2],
+            b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU"
+        ) {
             bail!("Resolve Git conflicts before committing selected files: {path}");
         }
         changed.insert(path.clone());
         if record[0] == b'R' || record[1] == b'R' || record[0] == b'C' || record[1] == b'C' {
             let original = std::str::from_utf8(
-                records.next().ok_or_else(|| anyhow!("Missing Git rename source"))?,
-            )?.to_owned();
+                records
+                    .next()
+                    .ok_or_else(|| anyhow!("Missing Git rename source"))?,
+            )?
+            .to_owned();
             // Copies do not remove their source; only a rename is one selection.
             if record[0] == b'R' || record[1] == b'R' {
                 changed.insert(original.clone());
@@ -332,7 +378,31 @@ pub async fn commit_selected(
         }
     }
     let selected: Vec<String> = selected.into_iter().collect();
-    let before = optional(&root, &["rev-parse", "--verify", "HEAD"], &isolated, cancel.clone()).await?;
+    let mut inventory = vec![
+        "--literal-pathspecs".into(),
+        "ls-files".into(),
+        "--stage".into(),
+        "-z".into(),
+        "--".into(),
+    ];
+    inventory.extend_from_slice(&selected);
+    let original = checked(
+        &root,
+        &inventory,
+        &isolated,
+        cancel.clone(),
+        READ_LIMIT,
+        READ_TIMEOUT,
+    )
+    .await?;
+    let original = selected_index_paths(&original)?;
+    let before = optional(
+        &root,
+        &["rev-parse", "--verify", "HEAD"],
+        &isolated,
+        cancel.clone(),
+    )
+    .await?;
     let preserved_index = scratch.path().join("preserved-index");
     tokio::fs::copy(&temporary_index, &preserved_index).await?;
     execute(
@@ -340,25 +410,67 @@ pub async fn commit_selected(
         &["read-tree", before.as_deref().unwrap_or("--empty")],
         &isolated,
         cancel.clone(),
-    ).await?;
+    )
+    .await?;
     // A staged addition deleted again in the worktree has no entry to add.
-    let mut inventory = vec![
-        "--literal-pathspecs".into(), "ls-files".into(), "-z".into(), "--".into(),
-    ];
-    inventory.extend_from_slice(&selected);
+    // Check HEAD's modes as well: a staged deletion has no real-index entry.
     let tracked = checked(
-        &root, &inventory, &isolated, cancel.clone(), READ_LIMIT, READ_TIMEOUT,
-    ).await?;
-    let tracked: std::collections::BTreeSet<&[u8]> =
-        tracked.split(|byte| *byte == 0).collect();
-    let mut add = vec!["--literal-pathspecs".into(), "add".into(), "-A".into(), "--".into()];
+        &root,
+        &inventory,
+        &isolated,
+        cancel.clone(),
+        READ_LIMIT,
+        READ_TIMEOUT,
+    )
+    .await?;
+    let tracked = selected_index_paths(&tracked)?;
+    let mut add = vec![
+        "--literal-pathspecs".into(),
+        "add".into(),
+        "-A".into(),
+        "--".into(),
+    ];
     for path in &selected {
-        if tracked.contains(path.as_bytes()) || root.join(path).symlink_metadata().is_ok() {
+        let present = match tokio::fs::symlink_metadata(root.join(path)).await {
+            Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => true,
+            Ok(_) => bail!(
+                "Selected path is not a regular file or symlink; commit directories and submodules with Git separately: {path}"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        if tracked.contains(path) || present {
             add.push(path.clone());
+        } else if !original.contains(path) {
+            bail!("Selected untracked file disappeared; refresh before committing: {path}");
         }
     }
     if add.len() > 4 {
-        checked(&root, &add, &isolated, cancel.clone(), READ_LIMIT, MUTATION_TIMEOUT).await?;
+        checked(
+            &root,
+            &add,
+            &isolated,
+            cancel.clone(),
+            READ_LIMIT,
+            MUTATION_TIMEOUT,
+        )
+        .await?;
+    }
+    // Recheck what Git actually staged: a file may become a directory between
+    // our metadata read and git add. Never commit invented descendant selections.
+    let staged = checked(
+        &root,
+        &inventory,
+        &isolated,
+        cancel.clone(),
+        READ_LIMIT,
+        READ_TIMEOUT,
+    )
+    .await?;
+    for path in selected_index_paths(&staged)? {
+        if selected.binary_search(&path).is_err() {
+            bail!("Selected file became a directory; refresh before committing: {path}");
+        }
     }
     if cancel.is_cancelled() {
         bail!("Git mutation cancelled before commit");
@@ -368,30 +480,68 @@ pub async fn commit_selected(
     let settlement = CancellationToken::new();
     let args = ["commit", "-m", message].map(str::to_owned);
     let committed = checked(
-        &root, &args, &isolated, settlement.clone(), READ_LIMIT, MUTATION_TIMEOUT,
-    ).await;
-    let after = optional(&root, &["rev-parse", "--verify", "HEAD"], &isolated, settlement.clone()).await
-        .map_err(|error| anyhow!("Selected commit outcome is unknown; inspect Git before retrying: {error}"))?;
+        &root,
+        &args,
+        &isolated,
+        settlement.clone(),
+        READ_LIMIT,
+        MUTATION_TIMEOUT,
+    )
+    .await;
+    let after = optional(
+        &root,
+        &["rev-parse", "--verify", "HEAD"],
+        &isolated,
+        settlement.clone(),
+    )
+    .await
+    .map_err(|error| {
+        anyhow!("Selected commit outcome is unknown; inspect Git before retrying: {error}")
+    })?;
     if after == before {
         committed?;
         bail!("Selected commit did not advance HEAD");
     }
-    let sha = after.ok_or_else(|| anyhow!("Selected commit outcome is unknown; HEAD is missing"))?;
+    let sha =
+        after.ok_or_else(|| anyhow!("Selected commit outcome is unknown; HEAD is missing"))?;
     // Even if the command timed out after advancing HEAD, preserve all unrelated
     // index entries and do not pretend the operation was rolled back.
     isolated.insert(
         "GIT_INDEX_FILE".into(),
-        preserved_index.to_str().ok_or_else(|| anyhow!("Non-UTF-8 Git directory"))?.into(),
+        preserved_index
+            .to_str()
+            .ok_or_else(|| anyhow!("Non-UTF-8 Git directory"))?
+            .into(),
     );
-    let mut reset = vec!["--literal-pathspecs".into(), "reset".into(), "-q".into(), sha.clone(), "--".into()];
+    let mut reset = vec![
+        "--literal-pathspecs".into(),
+        "reset".into(),
+        "-q".into(),
+        sha.clone(),
+        "--".into(),
+    ];
     reset.extend_from_slice(&selected);
-    checked(&root, &reset, &isolated, settlement, READ_LIMIT, MUTATION_TIMEOUT).await
-        .map_err(|error| anyhow!("Commit {sha} exists but index settlement failed: {error}; inspect Git before retrying"))?;
+    checked(
+        &root,
+        &reset,
+        &isolated,
+        settlement,
+        READ_LIMIT,
+        MUTATION_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        anyhow!(
+            "Commit {sha} exists but index settlement failed: {error}; inspect Git before retrying"
+        )
+    })?;
     tokio::fs::copy(&preserved_index, &lock_path).await
         .map_err(|error| anyhow!("Commit {sha} exists but index settlement failed: {error}; inspect Git before retrying"))?;
     tokio::fs::rename(&lock_path, &index).await
         .map_err(|error| anyhow!("Commit {sha} exists but index settlement failed: {error}; inspect Git before retrying"))?;
-    committed.map_err(|error| anyhow!("Commit {sha} exists; Git reported: {error}. Inspect Git before retrying"))?;
+    committed.map_err(|error| {
+        anyhow!("Commit {sha} exists; Git reported: {error}. Inspect Git before retrying")
+    })?;
     Ok(sha)
 }
 pub async fn rename(
@@ -474,13 +624,14 @@ async fn merge_error(
         let conflicted = ["UU", "AA", "DD", "AU", "UA", "UD", "DU"]
             .iter()
             .any(|code| line.starts_with(code))
-            && line.get(2..).is_some_and(|rest| rest.starts_with(char::is_whitespace));
+            && line
+                .get(2..)
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace));
         conflicted.then(|| line.get(3..).unwrap_or("").trim().to_owned())
     }));
     files.retain(|file| !file.is_empty());
     let lower = details.to_lowercase();
-    if !files.is_empty() || lower.contains("conflict") || lower.contains("automatic merge failed")
-    {
+    if !files.is_empty() || lower.contains("conflict") || lower.contains("automatic merge failed") {
         let _ = execute(cwd, &["merge", "--abort"], env, cancel).await;
         return MergeConflict {
             message: if from {
@@ -584,9 +735,10 @@ pub async fn merge_to_base(
         .await),
     };
     if operation == root
-        && let Some(original) = original.filter(|b| b != target) {
-            let _ = execute(&operation, &["checkout", &original], env, cancel.clone()).await;
-        }
+        && let Some(original) = original.filter(|b| b != target)
+    {
+        let _ = execute(&operation, &["checkout", &original], env, cancel.clone()).await;
+    }
     result?;
     Ok(operation)
 }
@@ -788,26 +940,25 @@ pub async fn push(
         upstream_merge
             .as_deref()
             .and_then(|s| s.strip_prefix("refs/heads/")),
+    ) && optional(
+        cwd,
+        &["config", "--get", &format!("remote.{remote}.url")],
+        env,
+        cancel.clone(),
     )
-        && optional(
+    .await?
+    .is_some()
+    {
+        safe_ref(&remote)?;
+        safe_ref(head)?;
+        return execute(
             cwd,
-            &["config", "--get", &format!("remote.{remote}.url")],
+            &["push", "-u", &remote, &format!("HEAD:refs/heads/{head}")],
             env,
-            cancel.clone(),
+            cancel,
         )
-        .await?
-        .is_some()
-        {
-            safe_ref(&remote)?;
-            safe_ref(head)?;
-            return execute(
-                cwd,
-                &["push", "-u", &remote, &format!("HEAD:refs/heads/{head}")],
-                env,
-                cancel,
-            )
-            .await;
-        }
+        .await;
+    }
     if optional(
         cwd,
         &["config", "--get", "remote.origin.url"],

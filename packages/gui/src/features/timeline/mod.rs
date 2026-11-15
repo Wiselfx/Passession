@@ -24,6 +24,7 @@ pub mod json;
 pub mod layout;
 pub mod links;
 pub mod markdown;
+pub mod mermaid;
 pub mod outline;
 pub mod paint;
 pub mod panel;
@@ -33,13 +34,19 @@ pub mod rows;
 pub mod scrollbar;
 pub mod session;
 pub mod store;
-pub mod tools;
 pub mod tool_sheet;
+pub mod tools;
 pub mod tracks;
 
-pub use panel::{ChatPanel, ChatPanelRef, ChatPanelWidgetExt, ChatPanelWidgetRefExt, ChatTarget, conversation_actions};
+pub use panel::{
+    ChatPanel, ChatPanelRef, ChatPanelWidgetExt, ChatPanelWidgetRefExt, ChatTarget,
+    conversation_actions,
+};
 pub use store::{handle_event, release_session, release_subagent};
-pub use tool_sheet::{close_tool_call_sheet, draw_tool_call_sheets, handle_tool_call_sheets, show_tool_call_sheet, tool_call_sheet_settled};
+pub use tool_sheet::{
+    close_tool_call_sheet, draw_tool_call_sheets, handle_tool_call_sheets, show_tool_call_sheet,
+    tool_call_sheet_settled,
+};
 
 use makepad_widgets::*;
 

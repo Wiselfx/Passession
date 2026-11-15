@@ -6,7 +6,7 @@ use makepad_widgets::*;
 live_design! {
     link paseo_makepad_theme;
     use link::shaders::*;
-    
+
     // GLOBAL PARAMETERS
     pub THEME_COLOR_CONTRAST = 1.0
     pub THEME_COLOR_TINT = #0000ff
@@ -22,7 +22,7 @@ live_design! {
     pub THEME_SPACE_2 = (1.0 * (THEME_SPACE_FACTOR))
     pub THEME_SPACE_3 = (1.5 * (THEME_SPACE_FACTOR))
 
-    pub THEME_MSPACE_1 = {top: (THEME_SPACE_1), right: (THEME_SPACE_1), bottom: (THEME_SPACE_1), left: (THEME_SPACE_1)} 
+    pub THEME_MSPACE_1 = {top: (THEME_SPACE_1), right: (THEME_SPACE_1), bottom: (THEME_SPACE_1), left: (THEME_SPACE_1)}
     pub THEME_MSPACE_H_1 = {top: 0., right: (THEME_SPACE_1), bottom: 0., left: (THEME_SPACE_1)}
     pub THEME_MSPACE_V_1 = {top: (THEME_SPACE_1), right: 0., bottom: (THEME_SPACE_1), left: 0.}
     pub THEME_MSPACE_2 = {top: (THEME_SPACE_2), right: (THEME_SPACE_2), bottom: (THEME_SPACE_2), left: (THEME_SPACE_2)}
@@ -294,7 +294,7 @@ live_design! {
     pub THEME_COLOR_VAL_1_FOCUS = (THEME_COLOR_OPAQUE_U_2)
     pub THEME_COLOR_VAL_1_DRAG = (THEME_COLOR_OPAQUE_U_2)
     pub THEME_COLOR_VAL_1_DISABLED = (THEME_COLOR_OPAQUE_U_1)
-    
+
     pub THEME_COLOR_VAL_2 = (THEME_COLOR_OPAQUE_U_2)
     pub THEME_COLOR_VAL_2_HOVER = (THEME_COLOR_OPAQUE_U_3)
     pub THEME_COLOR_VAL_2_FOCUS = (THEME_COLOR_OPAQUE_U_3)
@@ -392,11 +392,14 @@ live_design! {
         line_spacing: 1.2
     }
     // Jetendard v0.1.0 (JetBrains Mono Nerd Font Mono + Pretendard Korean, OFL-1.1, shipped
-    // unmodified): Hangul spans exactly two Latin cells, so it needs no proportional fallback.
+    // unmodified): Hangul spans exactly two Latin cells. Missing glyphs resolve
+    // through the OS after the bundled chain without replacing these mono metrics.
     pub THEME_FONT_CODE = {
         font_size: (THEME_FONT_SIZE_CODE),
         font_family:{
             latin = font("crate://self/resources/fonts/Jetendard-Regular.ttf", 0.0, 0.0),
+            korean = font("crate://self/resources/fonts/NotoSansKR-Regular.otf", 0.0, 0.0),
+            emoji = font("crate://makepad_fonts_emoji/resources/NotoColorEmoji.ttf", 0.0, 0.0)
         },
         line_spacing: 1.35
     }

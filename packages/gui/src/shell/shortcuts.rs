@@ -23,8 +23,14 @@ thread_local! {
 
 fn matches_platform(binding: &Value) -> bool {
     let when = j::object(binding, "when");
-    let mac_ok = when.get("mac").and_then(Value::as_bool).is_none_or(|mac| mac == IS_MAC);
-    let desktop_ok = when.get("desktop").and_then(Value::as_bool).is_none_or(|desktop| desktop != IS_MOBILE);
+    let mac_ok = when
+        .get("mac")
+        .and_then(Value::as_bool)
+        .is_none_or(|mac| mac == IS_MAC);
+    let desktop_ok = when
+        .get("desktop")
+        .and_then(Value::as_bool)
+        .is_none_or(|desktop| desktop != IS_MOBILE);
     mac_ok && desktop_ok
 }
 
@@ -40,7 +46,12 @@ pub fn parse_combo(value: &str) -> Option<Vec<Value>> {
         let mut chord = Map::new();
         chord.insert("key".into(), json!(key.to_lowercase()));
         chord.insert("code".into(), json!(key));
-        for (name, flag) in [("Ctrl", "ctrl"), ("Alt", "alt"), ("Shift", "shift"), ("Mod", "mod")] {
+        for (name, flag) in [
+            ("Ctrl", "ctrl"),
+            ("Alt", "alt"),
+            ("Shift", "shift"),
+            ("Mod", "mod"),
+        ] {
             if parts.contains(&name) {
                 chord.insert(flag.into(), json!(true));
             }
@@ -68,7 +79,11 @@ impl Binding {
     }
     pub fn label(&self) -> &str {
         let label = j::text(j::object(&self.data, "help"), "label");
-        if label.is_empty() { self.action() } else { label }
+        if label.is_empty() {
+            self.action()
+        } else {
+            label
+        }
     }
     pub fn combo(&self) -> &str {
         j::text(&self.data, "combo")
@@ -84,7 +99,10 @@ pub fn bindings(overrides: &Value) -> Vec<Binding> {
                     Some(raw) => parse_combo(raw).unwrap_or_default(),
                     None => j::array(data, "parsedChord").to_vec(),
                 };
-                Binding { data: data.clone(), chord }
+                Binding {
+                    data: data.clone(),
+                    chord,
+                }
             })
             .collect()
     })
@@ -107,13 +125,19 @@ impl FocusScope {
     pub fn update(&mut self, owner: WidgetUid, scope: Option<String>) {
         if let Some(scope) = scope {
             self.0 = Some((owner, scope));
-        } else if self.0.as_ref().is_some_and(|(current, _)| *current == owner) {
+        } else if self
+            .0
+            .as_ref()
+            .is_some_and(|(current, _)| *current == owner)
+        {
             self.0 = None;
         }
     }
 
     pub fn name(&self) -> &str {
-        self.0.as_ref().map_or("workspace", |(_, scope)| scope.as_str())
+        self.0
+            .as_ref()
+            .map_or("workspace", |(_, scope)| scope.as_str())
     }
 }
 
@@ -129,7 +153,10 @@ pub struct Router {
 impl Router {
     /// Rebuilds bindings when `preferences.keyboardShortcuts` changes.
     pub fn update(&mut self, preferences: &Value) {
-        let overrides = preferences.get("keyboardShortcuts").cloned().unwrap_or(Value::Null);
+        let overrides = preferences
+            .get("keyboardShortcuts")
+            .cloned()
+            .unwrap_or(Value::Null);
         let key = overrides.to_string();
         if key == self.overrides_key && !self.bindings.is_empty() {
             return;
@@ -159,7 +186,9 @@ impl Router {
 
     fn enabled(binding: &Binding, focus_scope: &str, command_center: bool) -> bool {
         let when = j::object(&binding.data, "when");
-        if when.get("editable") == Some(&Value::Bool(false)) && (focus_scope == "editable" || focus_scope == "message-input") {
+        if when.get("editable") == Some(&Value::Bool(false))
+            && (focus_scope == "editable" || focus_scope == "message-input")
+        {
             return false;
         }
         if when.get("terminal") == Some(&Value::Bool(false)) && focus_scope == "terminal" {
@@ -184,23 +213,36 @@ impl Router {
         focus_scope: &str,
         command_center: bool,
     ) -> Option<Option<Dispatch>> {
-        if matches!(event.key_code, KeyCode::Control | KeyCode::Alt | KeyCode::Shift | KeyCode::Logo | KeyCode::Capslock) {
+        if matches!(
+            event.key_code,
+            KeyCode::Control | KeyCode::Alt | KeyCode::Shift | KeyCode::Logo | KeyCode::Capslock
+        ) {
             return None;
         }
         let initial = self.step == 0;
         let step = self.step;
-        let pool = if initial { &self.bindings } else { &self.candidates };
+        let pool = if initial {
+            &self.bindings
+        } else {
+            &self.candidates
+        };
         let matches: Vec<Binding> = pool
             .iter()
             .filter(|b| {
                 b.chord.len() > step
                     && step_matches(&b.chord[step], event)
-                    && !(event.is_repeat && b.data.get("repeat") == Some(&Value::Bool(false)) && b.chord.len() == step + 1)
+                    && !(event.is_repeat
+                        && b.data.get("repeat") == Some(&Value::Bool(false))
+                        && b.chord.len() == step + 1)
                     && Self::enabled(b, focus_scope, command_center)
             })
             .cloned()
             .collect();
-        let advancing: Vec<Binding> = matches.iter().filter(|b| b.chord.len() > step + 1).cloned().collect();
+        let advancing: Vec<Binding> = matches
+            .iter()
+            .filter(|b| b.chord.len() > step + 1)
+            .cloned()
+            .collect();
         let completed = matches.iter().find(|b| b.chord.len() == step + 1).cloned();
         if let Some(binding) = completed
             && (!initial || advancing.is_empty())
@@ -214,7 +256,10 @@ impl Router {
                     }
                 }
                 "delta" => {
-                    args.insert("delta".into(), payload.get("delta").cloned().unwrap_or(json!(1)));
+                    args.insert(
+                        "delta".into(),
+                        payload.get("delta").cloned().unwrap_or(json!(1)),
+                    );
                 }
                 _ => {}
             }
@@ -409,7 +454,13 @@ pub fn format_step(step: &str) -> String {
     let modifiers: Vec<String> = parts
         .iter()
         .filter(|p| !p.is_empty())
-        .map(|p| if p.eq_ignore_ascii_case("cmd") { "meta".to_string() } else { p.to_lowercase() })
+        .map(|p| {
+            if p.eq_ignore_ascii_case("cmd") {
+                "meta".to_string()
+            } else {
+                p.to_lowercase()
+            }
+        })
         .collect();
     if IS_MAC {
         let symbols: String = ["ctrl", "alt", "shift", "mod", "meta"]
@@ -431,7 +482,13 @@ pub fn format_step(step: &str) -> String {
             "alt" => "Alt".to_string(),
             "shift" => "Shift".to_string(),
             // The Super key is "Win" only on Windows; Linux desktops call it Super.
-            "meta" => if cfg!(target_os = "windows") { "Win".to_string() } else { "Super".to_string() },
+            "meta" => {
+                if cfg!(target_os = "windows") {
+                    "Win".to_string()
+                } else {
+                    "Super".to_string()
+                }
+            }
             other => other.to_string(),
         })
         .collect();
@@ -441,14 +498,23 @@ pub fn format_step(step: &str) -> String {
 
 /// Display combo of a whole chord.
 pub fn format_combo(combo: &str) -> String {
-    combo.split_whitespace().map(format_step).collect::<Vec<_>>().join(" ")
+    combo
+        .split_whitespace()
+        .map(format_step)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The effective combo of the first binding with `help.id == help_id`.
 pub fn label_for_help_id(preferences: &Value, help_id: &str) -> Option<String> {
-    let overrides = preferences.get("keyboardShortcuts").cloned().unwrap_or(Value::Null);
+    let overrides = preferences
+        .get("keyboardShortcuts")
+        .cloned()
+        .unwrap_or(Value::Null);
     BASE.with(|base| {
-        let binding = base.iter().find(|b| j::text(j::object(b, "help"), "id") == help_id)?;
+        let binding = base
+            .iter()
+            .find(|b| j::text(j::object(b, "help"), "id") == help_id)?;
         let combo = overrides
             .get(j::text(binding, "id"))
             .and_then(Value::as_str)
@@ -525,7 +591,10 @@ pub const SECTIONS: [(&str, &str); 5] = [
 
 /// Rows of the shortcut help dialog: (section title key, [(label, effective combo)]).
 pub fn help_rows(preferences: &Value, query: &str) -> Vec<(String, Vec<(String, String)>)> {
-    let overrides = preferences.get("keyboardShortcuts").cloned().unwrap_or(Value::Null);
+    let overrides = preferences
+        .get("keyboardShortcuts")
+        .cloned()
+        .unwrap_or(Value::Null);
     let query = query.trim().to_lowercase();
     BASE.with(|base| {
         let mut sections = Vec::new();
@@ -538,7 +607,11 @@ pub fn help_rows(preferences: &Value, query: &str) -> Vec<(String, Vec<(String, 
                 if j::text(help, "section") != id {
                     continue;
                 }
-                let help_id = if j::text(help, "id").is_empty() { j::text(binding, "action") } else { j::text(help, "id") };
+                let help_id = if j::text(help, "id").is_empty() {
+                    j::text(binding, "action")
+                } else {
+                    j::text(help, "id")
+                };
                 if seen.contains(&help_id) {
                     continue;
                 }
@@ -593,7 +666,12 @@ mod tests {
         KeyEvent {
             key_code: code,
             is_repeat: false,
-            modifiers: KeyModifiers { shift, control, alt: false, logo: false },
+            modifiers: KeyModifiers {
+                shift,
+                control,
+                alt: false,
+                logo: false,
+            },
             time: 0.0,
         }
     }
@@ -632,20 +710,33 @@ mod tests {
         let raw: Value = serde_json::from_str(CATALOG).unwrap();
         let bindings = raw.as_array().unwrap();
         for combo in ["Cmd+N", "Ctrl+N"] {
-            let binding = bindings.iter().find(|b| j::text(b, "combo") == combo).unwrap();
+            let binding = bindings
+                .iter()
+                .find(|b| j::text(b, "combo") == combo)
+                .unwrap();
             assert_eq!(j::text(binding, "action"), "agent.new");
         }
         for help in ["session-jump-index", "session-prev", "session-next"] {
-            let matching: Vec<_> = bindings.iter().filter(|b| j::text(j::object(b, "help"), "id") == help).collect();
+            let matching: Vec<_> = bindings
+                .iter()
+                .filter(|b| j::text(j::object(b, "help"), "id") == help)
+                .collect();
             assert!(!matching.is_empty());
             for binding in matching {
-                assert!(matches!(j::text(binding, "action"), "session.navigate.index" | "session.navigate.relative"));
+                assert!(matches!(
+                    j::text(binding, "action"),
+                    "session.navigate.index" | "session.navigate.relative"
+                ));
                 assert_eq!(j::text(j::object(binding, "help"), "section"), "sessions");
             }
         }
         assert!(!bindings.iter().any(|b| matches!(
             j::text(b, "action"),
-            "workspace.new" | "worktree.new" | "workspace.archive" | "workspace.pin" | "workspace.tab.target.changes"
+            "workspace.new"
+                | "worktree.new"
+                | "workspace.archive"
+                | "workspace.pin"
+                | "workspace.tab.target.changes"
         )));
     }
 
@@ -653,18 +744,25 @@ mod tests {
     #[test]
     fn every_help_id_has_a_localized_label() {
         let raw: Value = serde_json::from_str(CATALOG).unwrap();
-        let catalogs: Vec<Value> = [include_str!("../../resources/locales/en.json"), include_str!("../../resources/locales/ko.json")]
-            .iter()
-            .map(|text| serde_json::from_str(text).unwrap())
-            .collect();
+        let catalogs: Vec<Value> = [
+            include_str!("../../resources/locales/en.json"),
+            include_str!("../../resources/locales/ko.json"),
+        ]
+        .iter()
+        .map(|text| serde_json::from_str(text).unwrap())
+        .collect();
         for binding in raw.as_array().unwrap() {
             let id = j::text(j::object(binding, "help"), "id");
             if id.is_empty() {
                 continue;
             }
-            let key = help_locale_key(id).unwrap_or_else(|| panic!("help id {id} has no locale key"));
+            let key =
+                help_locale_key(id).unwrap_or_else(|| panic!("help id {id} has no locale key"));
             for catalog in &catalogs {
-                assert!(catalog["settings"]["shortcuts"]["help"][key].is_string(), "settings.shortcuts.help.{key} missing for {id}");
+                assert!(
+                    catalog["settings"]["shortcuts"]["help"][key].is_string(),
+                    "settings.shortcuts.help.{key} missing for {id}"
+                );
             }
         }
     }
@@ -673,16 +771,39 @@ mod tests {
     #[test]
     fn non_mac_bindings_cover_panes_and_do_not_collide() {
         let raw: Value = serde_json::from_str(CATALOG).unwrap();
-        let non_mac: Vec<&Value> = raw.as_array().unwrap().iter().filter(|b| j::object(b, "when").get("mac") == Some(&Value::Bool(false))).collect();
-        for action in ["workspace.pane.split.right", "workspace.pane.split.down", "workspace.pane.focus.left", "workspace.pane.move-tab.down", "workspace.pane.close", "session.next-attention"] {
-            assert!(non_mac.iter().any(|b| j::text(b, "action") == action), "no non-mac binding for {action}");
+        let non_mac: Vec<&Value> = raw
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| j::object(b, "when").get("mac") == Some(&Value::Bool(false)))
+            .collect();
+        for action in [
+            "workspace.pane.split.right",
+            "workspace.pane.split.down",
+            "workspace.pane.focus.left",
+            "workspace.pane.move-tab.down",
+            "workspace.pane.close",
+            "session.next-attention",
+        ] {
+            assert!(
+                non_mac.iter().any(|b| j::text(b, "action") == action),
+                "no non-mac binding for {action}"
+            );
         }
         let mut seen = std::collections::HashMap::new();
         for binding in raw.as_array().unwrap() {
             let when = j::object(binding, "when");
-            let platform = (when.get("mac").and_then(Value::as_bool), when.get("desktop").and_then(Value::as_bool), when.get("focusScope").cloned());
-            let key = (format!("{platform:?}"), j::text(binding, "combo").to_string());
-            if let Some(previous) = seen.insert(key.clone(), j::text(binding, "action").to_string()) {
+            let platform = (
+                when.get("mac").and_then(Value::as_bool),
+                when.get("desktop").and_then(Value::as_bool),
+                when.get("focusScope").cloned(),
+            );
+            let key = (
+                format!("{platform:?}"),
+                j::text(binding, "combo").to_string(),
+            );
+            if let Some(previous) = seen.insert(key.clone(), j::text(binding, "action").to_string())
+            {
                 assert_eq!(previous, j::text(binding, "action"), "{key:?} bound twice");
             }
         }

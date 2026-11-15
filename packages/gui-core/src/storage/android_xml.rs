@@ -60,7 +60,9 @@ pub(crate) fn parse(text: &str) -> Map<String, Value> {
         let self_closing = tag.ends_with('/');
         match kind {
             "string" if !self_closing => {
-                let Some(end) = rest.find("</string>") else { break };
+                let Some(end) = rest.find("</string>") else {
+                    break;
+                };
                 values.insert(name, Value::String(unescape(&rest[..end])));
                 rest = &rest[end + "</string>".len()..];
             }
@@ -86,12 +88,16 @@ pub(crate) fn parse(text: &str) -> Map<String, Value> {
                 }
             }
             "set" if !self_closing => {
-                let Some(end) = rest.find("</set>") else { break };
+                let Some(end) = rest.find("</set>") else {
+                    break;
+                };
                 let mut items = Vec::new();
                 let mut body = &rest[..end];
                 while let Some(start) = body.find("<string>") {
                     let after = &body[start + "<string>".len()..];
-                    let Some(stop) = after.find("</string>") else { break };
+                    let Some(stop) = after.find("</string>") else {
+                        break;
+                    };
                     items.push(Value::String(unescape(&after[..stop])));
                     body = &after[stop + "</string>".len()..];
                 }
@@ -118,7 +124,10 @@ mod tests {
     <string name="flutter.empty" />
 </map>"#;
         let values = parse(xml);
-        assert_eq!(values["flutter.paseo.chat.drafts.v1"], "{\"drafts\":{}} & ä");
+        assert_eq!(
+            values["flutter.paseo.chat.drafts.v1"],
+            "{\"drafts\":{}} & ä"
+        );
         assert_eq!(values["flutter.paseo.relayProtected.k"], true);
         assert_eq!(values["flutter.count"], 3);
         assert_eq!(values["flutter.empty"], "");

@@ -29,7 +29,12 @@ pub struct Screen {
 }
 
 fn emulator(rows: u16, cols: u16, scrollback: usize) -> Result<Emulator, Error> {
-    Emulator::new(Options { rows, cols, scrollback, respond: false })
+    Emulator::new(Options {
+        rows,
+        cols,
+        scrollback,
+        respond: false,
+    })
 }
 
 impl Screen {
@@ -53,7 +58,12 @@ impl Screen {
 
     /// Replaces the screen with a snapshot or restore rendering, at the snapshot's size or
     /// the current one.
-    pub fn replace(&mut self, text: &str, size: Option<(u16, u16)>, title: Option<&str>) -> Result<(), Error> {
+    pub fn replace(
+        &mut self,
+        text: &str,
+        size: Option<(u16, u16)>,
+        title: Option<&str>,
+    ) -> Result<(), Error> {
         let (rows, cols) = size.unwrap_or((self.rows(), self.cols()));
         self.emulator = emulator(rows, cols, self.scrollback)?;
         self.lines.clear();
@@ -135,8 +145,16 @@ impl Screen {
         self.emulator.encode_key(key, modifiers)
     }
 
-    pub fn encode_mouse_wheel(&mut self, up: bool, col: u16, row: u16, modifiers: Modifiers, count: usize) -> Vec<u8> {
-        self.emulator.encode_mouse_wheel(up, col, row, modifiers, count)
+    pub fn encode_mouse_wheel(
+        &mut self,
+        up: bool,
+        col: u16,
+        row: u16,
+        modifiers: Modifiers,
+        count: usize,
+    ) -> Vec<u8> {
+        self.emulator
+            .encode_mouse_wheel(up, col, row, modifiers, count)
     }
 
     pub fn encode_paste(&self, text: &str) -> Vec<u8> {
@@ -150,7 +168,11 @@ impl Screen {
         let minimum = total.min(history + cursor + 1);
         let mut count = total;
         while count > minimum {
-            if !self.read(count - 1, 1).first().is_some_and(|line| line.is_blank()) {
+            if !self
+                .read(count - 1, 1)
+                .first()
+                .is_some_and(|line| line.is_blank())
+            {
                 break;
             }
             count -= 1;
@@ -165,7 +187,9 @@ impl Screen {
             self.lines.clear();
         }
         for row in start..end {
-            self.lines.entry(row).or_insert_with(|| self.emulator.line(row));
+            self.lines
+                .entry(row)
+                .or_insert_with(|| self.emulator.line(row));
         }
         (start..end).map(|row| &self.lines[&row]).collect()
     }
@@ -174,7 +198,14 @@ impl Screen {
     /// all) visit every row once.
     pub fn read_uncached(&self, start: usize, count: usize) -> Vec<Line> {
         let end = start.saturating_add(count).min(self.total_rows());
-        (start..end).map(|row| self.lines.get(&row).cloned().unwrap_or_else(|| self.emulator.line(row))).collect()
+        (start..end)
+            .map(|row| {
+                self.lines
+                    .get(&row)
+                    .cloned()
+                    .unwrap_or_else(|| self.emulator.line(row))
+            })
+            .collect()
     }
 
     /// `renderedText`: the first `count` presented rows as logical lines, soft wraps
@@ -267,7 +298,13 @@ mod tests {
     #[test]
     fn all_sgr_attributes_survive_restore_and_reset() {
         let mut screen = screen_with("");
-        screen.replace("\x1b[1;2;3;4;7;8;9mstyled\x1b[0mnormal", Some((3, 40)), None).unwrap();
+        screen
+            .replace(
+                "\x1b[1;2;3;4;7;8;9mstyled\x1b[0mnormal",
+                Some((3, 40)),
+                None,
+            )
+            .unwrap();
         let line = screen.read(0, 1)[0].clone();
         let styled = &line.runs[0].style;
         assert!(styled.bold && styled.dim && styled.italic && styled.underline);

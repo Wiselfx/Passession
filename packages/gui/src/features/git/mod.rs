@@ -9,8 +9,8 @@
 pub mod actions;
 pub mod changes;
 pub mod chrome;
-pub mod controller;
 pub mod commit_view;
+pub mod controller;
 pub mod diff_doc;
 pub mod forge_url;
 pub mod graph;
@@ -34,8 +34,8 @@ pub mod text;
 pub mod wire;
 
 pub use header::{
-    GitActionsButton, GitActionsButtonRef, GitActionsButtonWidgetRefExt, OpenInButton, OpenInButtonRef,
-    OpenInButtonWidgetRefExt,
+    GitActionsButton, GitActionsButtonRef, GitActionsButtonWidgetRefExt, OpenInButton,
+    OpenInButtonRef, OpenInButtonWidgetRefExt,
 };
 pub use paint::GitPaint;
 pub use panel::{GitPanel, GitPanelRef, GitPanelWidgetRefExt};

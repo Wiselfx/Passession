@@ -9,7 +9,10 @@ pub mod appearance {
         time::{Duration, Instant},
     };
 
-    pub use crate::fonts::{parse_family_list, system_fonts, FontFace, FontRequest, RoleSet, SystemFonts};
+    pub use crate::fonts::{
+        FontFace, FontRequest, Role, RoleSet, SystemFonts, fallback_fonts, parse_family_list,
+        system_fonts,
+    };
 
     /// Android's SP-to-DP curve, sampled at its nonlinear font-scaling knots.
     /// Display density is removed on the Java side; these are text metrics only.
@@ -37,9 +40,14 @@ pub mod appearance {
 
         /// `from_dp` for OS-provided samples: `None` unless they start at 0
         /// and strictly increase.
-        #[cfg_attr(not(any(target_os = "android", target_os = "ios", test)), allow(dead_code))]
+        #[cfg_attr(
+            not(any(target_os = "android", target_os = "ios", test)),
+            allow(dead_code)
+        )]
         pub(crate) fn checked(dp: [f64; 10]) -> Option<Self> {
-            let valid = dp[0] == 0.0 && dp.iter().all(|value| value.is_finite()) && dp.windows(2).all(|pair| pair[1] > pair[0]);
+            let valid = dp[0] == 0.0
+                && dp.iter().all(|value| value.is_finite())
+                && dp.windows(2).all(|pair| pair[1] > pair[0]);
             valid.then_some(Self { dp })
         }
 
@@ -47,7 +55,8 @@ pub mod appearance {
         /// the identity when it is not a valid curve.
         #[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
         pub(crate) fn from_curve(scale: impl Fn(f64) -> f64) -> Self {
-            Self::checked(Self::SP.map(|sp| if sp == 0.0 { 0.0 } else { scale(sp) })).unwrap_or_default()
+            Self::checked(Self::SP.map(|sp| if sp == 0.0 { 0.0 } else { scale(sp) }))
+                .unwrap_or_default()
         }
 
         /// A uniform OS text-scale factor (GNOME `text-scaling-factor`,
@@ -57,14 +66,19 @@ pub mod appearance {
             if !factor.is_finite() || factor <= 0.0 {
                 return Self::default();
             }
-            Self { dp: Self::SP.map(|sp| sp * factor) }
+            Self {
+                dp: Self::SP.map(|sp| sp * factor),
+            }
         }
 
         pub fn logical_size(&self, sp: f64) -> f64 {
             if self.dp == Self::SP {
                 return sp;
             }
-            let upper = Self::SP.iter().position(|knot| *knot >= sp).unwrap_or(Self::SP.len() - 1);
+            let upper = Self::SP
+                .iter()
+                .position(|knot| *knot >= sp)
+                .unwrap_or(Self::SP.len() - 1);
             if upper == 0 {
                 return sp;
             }
@@ -88,7 +102,9 @@ pub mod appearance {
 
     fn read<R>(f: impl FnOnce(&Cached) -> R) -> R {
         let mut cache = CACHE.lock().unwrap();
-        let stale = cache.as_ref().is_none_or(|c| c.at.elapsed() > Duration::from_secs(5));
+        let stale = cache
+            .as_ref()
+            .is_none_or(|c| c.at.elapsed() > Duration::from_secs(5));
         if stale {
             #[cfg(target_os = "android")]
             let (dark, language, text_scale) = crate::native::system_appearance();
@@ -150,7 +166,8 @@ pub mod appearance {
             assert_eq!(identity.logical_size(13.25), 13.25);
             let linear = TextScale::from_dp(TextScale::SP.map(|sp| sp * 1.5));
             assert_eq!(linear.logical_size(13.25), 19.875);
-            let nonlinear = TextScale::from_dp([0.0, 16.0, 20.0, 24.0, 28.0, 34.0, 36.0, 40.0, 46.0, 116.0]);
+            let nonlinear =
+                TextScale::from_dp([0.0, 16.0, 20.0, 24.0, 28.0, 34.0, 36.0, 40.0, 46.0, 116.0]);
             assert_eq!(nonlinear.logical_size(16.0), 31.0);
             assert_eq!(nonlinear.logical_size(24.0), 40.0);
             assert_eq!(nonlinear.logical_size(200.0), 232.0);
@@ -163,9 +180,15 @@ pub mod appearance {
             assert_eq!(TextScale::from_factor(2.25).logical_size(100.0), 225.0);
             assert_eq!(TextScale::from_factor(0.0), TextScale::default());
             assert_eq!(TextScale::from_factor(f64::NAN), TextScale::default());
-            assert_eq!(TextScale::checked([0.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]), None);
+            assert_eq!(
+                TextScale::checked([0.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
+                None
+            );
             assert!(TextScale::checked(TextScale::SP).is_some());
-            assert_eq!(TextScale::from_curve(|sp| sp * 2.0).logical_size(14.0), 28.0);
+            assert_eq!(
+                TextScale::from_curve(|sp| sp * 2.0).logical_size(14.0),
+                28.0
+            );
             assert_eq!(TextScale::from_curve(|_| 17.0), TextScale::default());
         }
     }
@@ -173,7 +196,9 @@ pub mod appearance {
 
 /// OS notifications.
 pub mod notifications {
-    use crate::{action::PlatformValue, notification_policy::NotificationRequest, platform::blocking};
+    use crate::{
+        action::PlatformValue, notification_policy::NotificationRequest, platform::blocking,
+    };
 
     /// Asks for notification permission; `true` when allowed.
     pub fn request_permission() -> Result<bool, String> {
@@ -216,7 +241,9 @@ pub mod desktop {
         {
             let command = command.to_owned();
             let args = args.clone();
-            match crate::platform::blocking(move |shared, done| crate::desktop::invoke_command(shared, command, args, done)) {
+            match crate::platform::blocking(move |shared, done| {
+                crate::desktop::invoke_command(shared, command, args, done)
+            }) {
                 Ok(crate::action::PlatformValue::Json(value)) => Ok(value),
                 Ok(_) => Ok(Value::Null),
                 Err(error) => Err(error.message),
@@ -248,7 +275,9 @@ pub mod desktop {
     pub fn local_daemon() -> LocalDaemon {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            let Some(handle) = crate::platform() else { return LocalDaemon::Unavailable };
+            let Some(handle) = crate::platform() else {
+                return LocalDaemon::Unavailable;
+            };
             match handle.0.desktop.local_daemon() {
                 (true, _, _) => LocalDaemon::Starting,
                 (false, Some(failure), _) => LocalDaemon::Failed(failure),
@@ -266,7 +295,8 @@ pub mod desktop {
 /// Settings diagnostics playback test.
 pub(crate) fn play_thinking_tone() -> Result<(), String> {
     use crate::{action::PlatformValue, audio};
-    let handle = crate::platform().ok_or_else(|| "The platform layer has not started.".to_owned())?;
+    let handle =
+        crate::platform().ok_or_else(|| "The platform layer has not started.".to_owned())?;
     let shared = handle.0.clone();
     let id = shared.next_id();
     let receiver = crate::action::wait_for(id);
@@ -275,7 +305,12 @@ pub(crate) fn play_thinking_tone() -> Result<(), String> {
     let submit = shared.clone();
     shared.on_main(move |cx, state| {
         state.audio.cancel(cx);
-        crate::platform::submit_audio(&submit, id, audio::THINKING_TONE_PCM16_16K.to_vec(), audio::THINKING_TONE_MIME.to_owned());
+        crate::platform::submit_audio(
+            &submit,
+            id,
+            audio::THINKING_TONE_PCM16_16K.to_vec(),
+            audio::THINKING_TONE_MIME.to_owned(),
+        );
     });
     match receiver.recv() {
         Ok(Ok(PlatformValue::Bool(true))) => Ok(()),

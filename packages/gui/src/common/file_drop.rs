@@ -53,7 +53,11 @@ impl ZoneState {
             Event::Drag(drag) => {
                 let over = self.claim(drag.abs, &drag.items, &drag.handled, true);
                 if over {
-                    *drag.response.lock().unwrap() = if accepts { DragResponse::Copy } else { DragResponse::None };
+                    *drag.response.lock().unwrap() = if accepts {
+                        DragResponse::Copy
+                    } else {
+                        DragResponse::None
+                    };
                 }
                 self.dragging = over && accepts;
                 None
@@ -73,9 +77,19 @@ impl ZoneState {
     }
 
     /// Whether an unclaimed file drag is over the zone; `take` marks it claimed.
-    fn claim(&self, abs: DVec2, items: &[DragItem], handled: &std::sync::Mutex<bool>, take: bool) -> bool {
+    fn claim(
+        &self,
+        abs: DVec2,
+        items: &[DragItem],
+        handled: &std::sync::Mutex<bool>,
+        take: bool,
+    ) -> bool {
         let mut handled = handled.lock().unwrap();
-        let over = !*handled && self.rect.contains(abs) && items.iter().any(|item| matches!(item, DragItem::FilePath { .. }));
+        let over = !*handled
+            && self.rect.contains(abs)
+            && items
+                .iter()
+                .any(|item| matches!(item, DragItem::FilePath { .. }));
         if over && take {
             *handled = true;
         }
@@ -102,7 +116,12 @@ pub struct FileDropZone {
 
 impl FileDropZone {
     /// Routes `event`; returns the files dropped on the zone while `accepts`.
-    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event, accepts: bool) -> Option<Vec<PathBuf>> {
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        accepts: bool,
+    ) -> Option<Vec<PathBuf>> {
         if self.next_frame.is_event(event).is_some() {
             self.list.redraw(cx);
         }
@@ -130,7 +149,11 @@ impl FileDropZone {
         let now = now();
         let step = ((now - self.shown_at) / FADE_SECONDS).clamp(0.0, 1.0);
         self.shown_at = now;
-        self.shown = if target > self.shown { (self.shown + step).min(target) } else { (self.shown - step).max(target) };
+        self.shown = if target > self.shown {
+            (self.shown + step).min(target)
+        } else {
+            (self.shown - step).max(target)
+        };
         // The list is begun every frame so a drag can redraw it before it ever showed.
         self.list.begin_always(cx);
         if self.shown > 0.0 {
@@ -138,13 +161,33 @@ impl FileDropZone {
             let typography = theme::current_typography();
             self.painter.new_layer(cx);
             self.painter.set_alpha(self.shown as f32);
-            self.painter.fill(cx, rect, Vec4 { w: 0.7, ..palette.surface0 }, 0.0);
+            self.painter.fill(
+                cx,
+                rect,
+                Vec4 {
+                    w: 0.7,
+                    ..palette.surface0
+                },
+                0.0,
+            );
             let spec = TextSpec::new(Font::Medium, typography.ui_size(14.0), palette.foreground);
             let label = tr("composer.attachments.dropFilesHere");
             let label_height = self.painter.line_height(cx, spec);
             let top = rect.pos.y + (rect.size.y - (32.0 + 8.0 + label_height)) * 0.5;
-            self.painter.icon(cx, rect_of(rect.pos.x, top, rect.size.x, 32.0), "upload", 32.0, palette.primary);
-            self.painter.text_in(cx, rect_of(rect.pos.x, top + 40.0, rect.size.x, label_height), spec, &label, 0.5);
+            self.painter.icon(
+                cx,
+                rect_of(rect.pos.x, top, rect.size.x, 32.0),
+                "upload",
+                32.0,
+                palette.primary,
+            );
+            self.painter.text_in(
+                cx,
+                rect_of(rect.pos.x, top + 40.0, rect.size.x, label_height),
+                spec,
+                &label,
+                0.5,
+            );
             self.painter.set_alpha(1.0);
         }
         self.list.end(cx);
@@ -164,10 +207,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn file(path: &str) -> DragItem {
-        DragItem::FilePath { path: path.to_owned(), internal_id: None }
+        DragItem::FilePath {
+            path: path.to_owned(),
+            internal_id: None,
+        }
     }
 
-    fn drag(abs: DVec2, items: Vec<DragItem>) -> (Event, Arc<Mutex<DragResponse>>, Arc<Mutex<bool>>) {
+    fn drag(
+        abs: DVec2,
+        items: Vec<DragItem>,
+    ) -> (Event, Arc<Mutex<DragResponse>>, Arc<Mutex<bool>>) {
         let response = Arc::new(Mutex::new(DragResponse::None));
         let handled = Arc::new(Mutex::new(false));
         let event = Event::Drag(DragEvent {
@@ -182,13 +231,21 @@ mod tests {
 
     fn drop_at(abs: DVec2, items: Vec<DragItem>) -> (Event, Arc<Mutex<bool>>) {
         let handled = Arc::new(Mutex::new(false));
-        let event = Event::Drop(DropEvent { modifiers: KeyModifiers::default(), handled: handled.clone(), abs, items: Arc::new(items) });
+        let event = Event::Drop(DropEvent {
+            modifiers: KeyModifiers::default(),
+            handled: handled.clone(),
+            abs,
+            items: Arc::new(items),
+        });
         (event, handled)
     }
 
     /// A chat pane: the conversation fills it, the composer card sits at its bottom.
     fn pane() -> ZoneState {
-        ZoneState { rect: rect_of(300.0, 40.0, 900.0, 800.0), dragging: false }
+        ZoneState {
+            rect: rect_of(300.0, 40.0, 900.0, 800.0),
+            dragging: false,
+        }
     }
 
     #[test]
@@ -201,11 +258,19 @@ mod tests {
         assert!(*handled.lock().unwrap());
         assert!(zone.dragging);
 
-        let files = vec![file("/tmp/a.txt"), file("/home/u/한글 파일 이름.txt"), file("C:\\Users\\u\\그림 one.png")];
+        let files = vec![
+            file("/tmp/a.txt"),
+            file("/home/u/한글 파일 이름.txt"),
+            file("C:\\Users\\u\\그림 one.png"),
+        ];
         let (event, handled) = drop_at(dvec2(700.0, 120.0), files);
         assert_eq!(
             zone.route(&event, true),
-            Some(vec![PathBuf::from("/tmp/a.txt"), PathBuf::from("/home/u/한글 파일 이름.txt"), PathBuf::from("C:\\Users\\u\\그림 one.png")])
+            Some(vec![
+                PathBuf::from("/tmp/a.txt"),
+                PathBuf::from("/home/u/한글 파일 이름.txt"),
+                PathBuf::from("C:\\Users\\u\\그림 one.png")
+            ])
         );
         assert!(*handled.lock().unwrap());
         assert!(!zone.dragging);
@@ -239,7 +304,10 @@ mod tests {
         assert!(!zone.dragging);
 
         // Dragged text is not a file.
-        let text = DragItem::String { value: "hello".into(), internal_id: None };
+        let text = DragItem::String {
+            value: "hello".into(),
+            internal_id: None,
+        };
         let (event, response, handled) = drag(dvec2(700.0, 400.0), vec![text.clone()]);
         assert_eq!(zone.route(&event, true), None);
         assert_eq!(*response.lock().unwrap(), DragResponse::None);

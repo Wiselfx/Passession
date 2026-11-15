@@ -135,7 +135,12 @@ pub enum OverlayKind {
         /// Bottom sheet on compact layouts (`compactSheet`, default true).
         sheet: bool,
     },
-    Confirm { title: String, message: String, confirm_label: String, destructive: bool },
+    Confirm {
+        title: String,
+        message: String,
+        confirm_label: String,
+        destructive: bool,
+    },
     Prompt {
         title: String,
         message: Option<String>,
@@ -226,7 +231,10 @@ impl SelectOption {
     pub fn matches(&self, needle: &str) -> bool {
         needle.is_empty()
             || self.label.to_lowercase().contains(needle)
-            || self.description.as_ref().is_some_and(|d| d.to_lowercase().contains(needle))
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|d| d.to_lowercase().contains(needle))
     }
 }
 
@@ -257,12 +265,19 @@ pub struct WindowModal {
 
 impl WindowModal {
     pub fn sync(slot: &mut Option<Self>, ui: &UiContext, owner: u64, open: bool) {
-        if !open || slot.as_ref().is_some_and(|modal| modal.window_id != ui.window_id) {
+        if !open
+            || slot
+                .as_ref()
+                .is_some_and(|modal| modal.window_id != ui.window_id)
+        {
             *slot = None;
         }
         if open && slot.is_none() {
             set_window_modal(ui, owner, true);
-            *slot = Some(Self { window_id: ui.window_id.clone(), owner });
+            *slot = Some(Self {
+                window_id: ui.window_id.clone(),
+                owner,
+            });
         }
     }
 }
@@ -293,7 +308,10 @@ pub fn set_window_modal(ui: &UiContext, owner: u64, open: bool) {
         let mut modals = modals.borrow_mut();
         if !open {
             modals.retain(|modal| !(modal.window == ui.window_id && modal.widget == owner));
-        } else if let Some(modal) = modals.iter_mut().find(|modal| modal.window == ui.window_id && modal.widget == owner) {
+        } else if let Some(modal) = modals
+            .iter_mut()
+            .find(|modal| modal.window == ui.window_id && modal.widget == owner)
+        {
             // Retained owners sync every frame; only an actual opening changes z-order.
             modal.tab = Some(ui.tab_key.as_deref().unwrap_or(PAGE_OWNER).to_owned());
         } else {
@@ -309,7 +327,9 @@ pub fn set_window_modal(ui: &UiContext, owner: u64, open: bool) {
 /// Releases one sheet's slot on hide, retarget or drop, when no `UiContext` is available.
 pub fn release_window_modal(window_id: &str, owner: u64) {
     WINDOW_MODALS.with(|modals| {
-        modals.borrow_mut().retain(|m| !(m.window == window_id && m.widget == owner));
+        modals
+            .borrow_mut()
+            .retain(|m| !(m.window == window_id && m.widget == owner));
     });
 }
 
@@ -321,7 +341,11 @@ pub(crate) fn window_modal_open(window: &str) -> bool {
 /// Only the top sheet's originating tab receives input; other panes keep receiving updates.
 pub(crate) fn window_modal_accepts_tab(window: &str, tab: &str) -> bool {
     WINDOW_MODALS.with(|modals| {
-        modals.borrow().iter().rev().find(|m| m.window == window)
+        modals
+            .borrow()
+            .iter()
+            .rev()
+            .find(|m| m.window == window)
             .is_none_or(|m| m.tab.as_deref() == Some(tab))
     })
 }
@@ -329,7 +353,11 @@ pub(crate) fn window_modal_accepts_tab(window: &str, tab: &str) -> bool {
 /// Snapshot before dispatch when multiple retained modals share a tab.
 pub fn window_modal_accepts_owner(window: &str, owner: u64) -> bool {
     WINDOW_MODALS.with(|modals| {
-        modals.borrow().iter().rev().find(|modal| modal.window == window)
+        modals
+            .borrow()
+            .iter()
+            .rev()
+            .find(|modal| modal.window == window)
             .is_none_or(|modal| modal.widget == owner)
     })
 }
@@ -358,8 +386,14 @@ pub fn fit_in_viewport(mut popup: Rect, viewport: Rect, margin: f64) -> Rect {
     let my = margin.max(0.0).min(height * 0.5);
     popup.size.x = popup.size.x.clamp(0.0, width - 2.0 * mx);
     popup.size.y = popup.size.y.clamp(0.0, height - 2.0 * my);
-    popup.pos.x = popup.pos.x.clamp(viewport.pos.x + mx, viewport.pos.x + width - mx - popup.size.x);
-    popup.pos.y = popup.pos.y.clamp(viewport.pos.y + my, viewport.pos.y + height - my - popup.size.y);
+    popup.pos.x = popup.pos.x.clamp(
+        viewport.pos.x + mx,
+        viewport.pos.x + width - mx - popup.size.x,
+    );
+    popup.pos.y = popup.pos.y.clamp(
+        viewport.pos.y + my,
+        viewport.pos.y + height - my - popup.size.y,
+    );
     popup
 }
 
@@ -436,7 +470,15 @@ pub struct Tip {
 /// pointer position (`FingerHoverEvent::abs`); prefer [`tooltip_at`] with the control's rect,
 /// which places the tooltip as Flutter does.
 pub fn tooltip(ui: &UiContext, text: Option<&str>, abs: DVec2) {
-    tooltip_at(ui, text, Rect { pos: abs, size: DVec2::default() }, 0.5);
+    tooltip_at(
+        ui,
+        text,
+        Rect {
+            pos: abs,
+            size: DVec2::default(),
+        },
+        0.5,
+    );
 }
 
 /// Flutter `Tooltip(waitDuration:)` anchored to the control `anchor`: centred on it, 24px
@@ -445,7 +487,11 @@ pub fn tooltip_at(ui: &UiContext, text: Option<&str>, anchor: Rect, wait: f64) {
     if ui.compact {
         return;
     }
-    let request = text.filter(|t| !t.is_empty()).map(|t| Tip { text: t.to_string(), anchor, wait });
+    let request = text.filter(|t| !t.is_empty()).map(|t| Tip {
+        text: t.to_string(),
+        anchor,
+        wait,
+    });
     queue_tooltip(&ui.window_id, request);
     makepad_widgets::SignalToUI::set_ui_signal();
 }
@@ -488,7 +534,12 @@ pub(crate) fn next_id() -> u64 {
 
 fn enqueue(ui: &UiContext, kind: OverlayKind) -> u64 {
     let id = next_id();
-    let request = OverlayRequest { id, owner: owner_of(ui), window: ui.window_id.clone(), kind };
+    let request = OverlayRequest {
+        id,
+        owner: owner_of(ui),
+        window: ui.window_id.clone(),
+        kind,
+    };
     QUEUE.with(|queue| queue.borrow_mut().push(request));
     id
 }
@@ -503,13 +554,22 @@ pub struct MenuOptions {
 
 impl Default for MenuOptions {
     fn default() -> Self {
-        Self { width: 220.0, align_end: false, sheet: true }
+        Self {
+            width: 220.0,
+            align_end: false,
+            sheet: true,
+        }
     }
 }
 
 /// Anchored menu (desktop) / bottom sheet (compact). `anchor` is the trigger rect in window
 /// coordinates.
-pub fn open_menu(ui: &mut UiContext, anchor: Rect, title: Option<String>, entries: Vec<MenuEntry>) -> u64 {
+pub fn open_menu(
+    ui: &mut UiContext,
+    anchor: Rect,
+    title: Option<String>,
+    entries: Vec<MenuEntry>,
+) -> u64 {
     open_menu_with(ui, anchor, title, entries, MenuOptions::default())
 }
 
@@ -524,12 +584,30 @@ pub fn open_menu_with(
     enqueue(ui, menu_kind(anchor, title, entries, options))
 }
 
-pub(crate) fn menu_kind(anchor: Rect, title: Option<String>, entries: Vec<MenuEntry>, options: MenuOptions) -> OverlayKind {
-    OverlayKind::Menu { title, anchor, entries, width: options.width, align_end: options.align_end, sheet: options.sheet }
+pub(crate) fn menu_kind(
+    anchor: Rect,
+    title: Option<String>,
+    entries: Vec<MenuEntry>,
+    options: MenuOptions,
+) -> OverlayKind {
+    OverlayKind::Menu {
+        title,
+        anchor,
+        entries,
+        width: options.width,
+        align_end: options.align_end,
+        sheet: options.sheet,
+    }
 }
 
 /// Original `confirmAction`.
-pub fn confirm(ui: &mut UiContext, title: &str, message: &str, confirm_label: &str, destructive: bool) -> u64 {
+pub fn confirm(
+    ui: &mut UiContext,
+    title: &str,
+    message: &str,
+    confirm_label: &str,
+    destructive: bool,
+) -> u64 {
     ui.effects.push(crate::common::UiEffect::Redraw);
     enqueue(
         ui,
@@ -551,7 +629,15 @@ pub fn prompt_text(
     placeholder: &str,
     confirm_label: &str,
 ) -> u64 {
-    enqueue_prompt(ui, title, message, initial, placeholder, confirm_label, false)
+    enqueue_prompt(
+        ui,
+        title,
+        message,
+        initial,
+        placeholder,
+        confirm_label,
+        false,
+    )
 }
 
 /// Original `promptText(multiline: true)`: a 4–12 line field where Enter inserts a newline;
@@ -564,7 +650,15 @@ pub fn prompt_multiline(
     placeholder: &str,
     confirm_label: &str,
 ) -> u64 {
-    enqueue_prompt(ui, title, message, initial, placeholder, confirm_label, true)
+    enqueue_prompt(
+        ui,
+        title,
+        message,
+        initial,
+        placeholder,
+        confirm_label,
+        true,
+    )
 }
 
 fn enqueue_prompt(
@@ -637,8 +731,28 @@ impl SelectRequest {
 /// `{"value": <option value>}` or `{"cancelled": true}`.
 pub fn open_select(ui: &mut UiContext, anchor: Rect, request: SelectRequest) -> u64 {
     ui.effects.push(crate::common::UiEffect::Redraw);
-    let SelectRequest { title, options, value, searchable, search_placeholder, empty_text, min_width } = request;
-    enqueue(ui, OverlayKind::Select { title, anchor, options, value, searchable, search_placeholder, empty_text, min_width })
+    let SelectRequest {
+        title,
+        options,
+        value,
+        searchable,
+        search_placeholder,
+        empty_text,
+        min_width,
+    } = request;
+    enqueue(
+        ui,
+        OverlayKind::Select {
+            title,
+            anchor,
+            options,
+            value,
+            searchable,
+            search_placeholder,
+            empty_text,
+            min_width,
+        },
+    )
 }
 
 /// Requests for one window's shell; others stay queued for their own window.
@@ -682,24 +796,48 @@ mod tests {
     #[test]
     fn back_is_claimed_once_and_repeated_escape_does_not_unwind_stack() {
         use makepad_widgets::{Event, KeyCode, KeyEvent};
-        let back = Event::BackPressed { handled: Cell::new(false) };
+        let back = Event::BackPressed {
+            handled: Cell::new(false),
+        };
         assert!(take_dismissal(&back));
         assert!(!take_dismissal(&back));
-        let escape = KeyEvent { key_code: KeyCode::Escape, ..Default::default() };
+        let escape = KeyEvent {
+            key_code: KeyCode::Escape,
+            ..Default::default()
+        };
         assert!(take_dismissal(&Event::KeyDown(escape)));
-        assert!(!take_dismissal(&Event::KeyDown(KeyEvent { is_repeat: true, ..escape })));
-        assert!(!take_dismissal(&Event::KeyDown(KeyEvent { key_code: KeyCode::ReturnKey, ..Default::default() })));
+        assert!(!take_dismissal(&Event::KeyDown(KeyEvent {
+            is_repeat: true,
+            ..escape
+        })));
+        assert!(!take_dismissal(&Event::KeyDown(KeyEvent {
+            key_code: KeyCode::ReturnKey,
+            ..Default::default()
+        })));
     }
 
     #[test]
     fn popup_fits_keyboard_viewport_and_degenerate_window() {
         use makepad_widgets::dvec2;
-        let popup = Rect { pos: dvec2(-20.0, 400.0), size: dvec2(480.0, 300.0) };
-        let viewport = Rect { pos: dvec2(20.0, 30.0), size: dvec2(320.0, 140.0) };
+        let popup = Rect {
+            pos: dvec2(-20.0, 400.0),
+            size: dvec2(480.0, 300.0),
+        };
+        let viewport = Rect {
+            pos: dvec2(20.0, 30.0),
+            size: dvec2(320.0, 140.0),
+        };
         let fitted = fit_in_viewport(popup, viewport, 8.0);
         assert_eq!(fitted.pos, dvec2(28.0, 38.0));
         assert_eq!(fitted.size, dvec2(304.0, 124.0));
-        let tiny = fit_in_viewport(popup, Rect { pos: dvec2(10.0, 12.0), size: dvec2(4.0, 0.0) }, 8.0);
+        let tiny = fit_in_viewport(
+            popup,
+            Rect {
+                pos: dvec2(10.0, 12.0),
+                size: dvec2(4.0, 0.0),
+            },
+            8.0,
+        );
         assert_eq!(tiny.pos, dvec2(12.0, 12.0));
         assert_eq!(tiny.size, dvec2(0.0, 0.0));
     }
@@ -708,8 +846,16 @@ mod tests {
     fn modal_owner_gates_siblings_even_when_they_share_a_tab() {
         WINDOW_MODALS.with(|modals| {
             *modals.borrow_mut() = vec![
-                WindowModalOwner { window: "main".into(), widget: 1, tab: Some("same".into()) },
-                WindowModalOwner { window: "main".into(), widget: 2, tab: Some("same".into()) },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 1,
+                    tab: Some("same".into()),
+                },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 2,
+                    tab: Some("same".into()),
+                },
             ];
         });
         assert!(!window_modal_accepts_owner("main", 1));
@@ -721,7 +867,11 @@ mod tests {
 
     #[test]
     fn tooltip_enter_wins_over_sibling_leave_in_either_order() {
-        let tip = Tip { text: "file.rs".into(), anchor: Rect::default(), wait: 0.3 };
+        let tip = Tip {
+            text: "file.rs".into(),
+            anchor: Rect::default(),
+            wait: 0.3,
+        };
         for enter_first in [true, false] {
             if enter_first {
                 queue_tooltip("main", Some(tip.clone()));
@@ -738,8 +888,15 @@ mod tests {
 
     #[test]
     fn tooltip_updates_keep_windows_independent() {
-        let first = Tip { text: "first.rs".into(), anchor: Rect::default(), wait: 0.3 };
-        let next = Tip { text: "next.rs".into(), ..first.clone() };
+        let first = Tip {
+            text: "first.rs".into(),
+            anchor: Rect::default(),
+            wait: 0.3,
+        };
+        let next = Tip {
+            text: "next.rs".into(),
+            ..first.clone()
+        };
         queue_tooltip("main", Some(first.clone()));
         queue_tooltip("secondary", Some(first.clone()));
         queue_tooltip("main", Some(next.clone()));
@@ -752,9 +909,21 @@ mod tests {
     fn releasing_modal_preserves_nested_owners_and_other_windows() {
         WINDOW_MODALS.with(|modals| {
             *modals.borrow_mut() = vec![
-                WindowModalOwner { window: "main".into(), widget: 1, tab: Some("parent".into()) },
-                WindowModalOwner { window: "main".into(), widget: 2, tab: Some("child".into()) },
-                WindowModalOwner { window: "secondary".into(), widget: 1, tab: Some("other".into()) },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 1,
+                    tab: Some("parent".into()),
+                },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 2,
+                    tab: Some("child".into()),
+                },
+                WindowModalOwner {
+                    window: "secondary".into(),
+                    widget: 1,
+                    tab: Some("other".into()),
+                },
             ];
         });
         assert!(!window_modal_accepts_tab("main", "parent"));
@@ -780,8 +949,16 @@ mod tests {
     fn closing_top_modal_restores_its_parent_tab_input() {
         WINDOW_MODALS.with(|modals| {
             *modals.borrow_mut() = vec![
-                WindowModalOwner { window: "main".into(), widget: 1, tab: Some("parent".into()) },
-                WindowModalOwner { window: "main".into(), widget: 2, tab: Some("child".into()) },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 1,
+                    tab: Some("parent".into()),
+                },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 2,
+                    tab: Some("child".into()),
+                },
             ];
         });
         assert!(!window_modal_accepts_tab("main", "parent"));
@@ -796,11 +973,22 @@ mod tests {
     fn page_modal_blocks_tabs_and_releases_on_drop() {
         WINDOW_MODALS.with(|modals| {
             *modals.borrow_mut() = vec![
-                WindowModalOwner { window: "main".into(), widget: 1, tab: Some("parent".into()) },
-                WindowModalOwner { window: "main".into(), widget: 2, tab: Some(PAGE_OWNER.into()) },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 1,
+                    tab: Some("parent".into()),
+                },
+                WindowModalOwner {
+                    window: "main".into(),
+                    widget: 2,
+                    tab: Some(PAGE_OWNER.into()),
+                },
             ];
         });
-        let modal = WindowModal { window_id: "main".into(), owner: 2 };
+        let modal = WindowModal {
+            window_id: "main".into(),
+            owner: 2,
+        };
         assert!(window_modal_accepts_tab("main", PAGE_OWNER));
         assert!(!window_modal_accepts_tab("main", "parent"));
         drop(modal);

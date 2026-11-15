@@ -22,13 +22,15 @@ pub fn custom_item(family: &str, message: &Value, call_id: &str) -> Option<Value
     }
     let kind = first(&[&message["customType"]]).unwrap_or("custom-message");
     if family == "omp" {
-        if kind == "skill-prompt" && message["attribution"] == "user"
-            && let Some(name) = first(&[&message["details"]["name"]]) {
-                let args = string(&message["details"]["args"]).trim();
-                return Some(
-                    json!({"type":"user_message","text":format!("/skill:{name}{}",if args.is_empty(){String::new()}else{format!(" {args}")})}),
-                );
-            }
+        if kind == "skill-prompt"
+            && message["attribution"] == "user"
+            && let Some(name) = first(&[&message["details"]["name"]])
+        {
+            let args = string(&message["details"]["args"]).trim();
+            return Some(
+                json!({"type":"user_message","text":format!("/skill:{name}{}",if args.is_empty(){String::new()}else{format!(" {args}")})}),
+            );
+        }
         if kind == "advisor" {
             let notes: Vec<&Value> = array(&message["details"]["notes"])
                 .iter()

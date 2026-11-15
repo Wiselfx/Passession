@@ -1,11 +1,11 @@
 use super::compat;
-use paseo_client::process::CommandSpec;
-use crate::{ providers::{
+use crate::providers::{
     acp::rpc::{Rpc, RpcError},
     api::{AgentSession, EventSink, LaunchContext, ProviderSpec, RewindTarget},
-}, };
+};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::CommandSpec;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -311,17 +311,17 @@ impl Inner {
                         "timeline" | "permission_requested" | "permission_resolved" | "turn_failed"
                     )
                 )
-                && let Some(turn) = &state.turn {
-                    event["turnId"] = json!(turn);
-                }
+                && let Some(turn) = &state.turn
+            {
+                event["turnId"] = json!(turn);
+            }
             let deliver = (state.ready || event["type"] == "permission_requested") && !state.replay;
             state.history.push(event.clone());
             deliver
         };
-        if deliver
-            && let Some(sink) = &self.sink {
-                sink.emit(event).await?;
-            }
+        if deliver && let Some(sink) = &self.sink {
+            sink.emit(event).await?;
+        }
         Ok(())
     }
     fn runtime(&self) -> Value {
@@ -737,7 +737,10 @@ impl AgentSession for HopliteSession {
     async fn steer_active_turn(&self, _prompt: Value, _options: Value) -> Result<Value> {
         Ok(json!({"status":"unavailable"}))
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         for event in self.history() {
             sink.emit(event).await?;
         }

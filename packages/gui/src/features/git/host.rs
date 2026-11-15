@@ -10,7 +10,10 @@ pub fn translate(key: &str, args: &[(&'static str, String)]) -> String {
     if args.is_empty() {
         return crate::common::tr(key);
     }
-    let borrowed: Vec<(&str, &str)> = args.iter().map(|(name, value)| (*name, value.as_str())).collect();
+    let borrowed: Vec<(&str, &str)> = args
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
     crate::common::tr_args(key, &borrowed)
 }
 
@@ -35,18 +38,26 @@ pub fn supports(ui: &UiContext, host_id: &str, feature: &str) -> bool {
 }
 
 pub fn workspaces<'a>(ui: &'a UiContext, host_id: &str) -> &'a [Value] {
-    host(ui, host_id).map(|h| array(h, "workspaces")).unwrap_or(&[])
+    host(ui, host_id)
+        .map(|h| array(h, "workspaces"))
+        .unwrap_or(&[])
 }
 
 /// Original `CheckoutGitActions._workspace`: by id, else by checkout directory.
-pub fn workspace<'a>(ui: &'a UiContext, host_id: &str, workspace_id: &str, directory: &str) -> Option<&'a Value> {
+pub fn workspace<'a>(
+    ui: &'a UiContext,
+    host_id: &str,
+    workspace_id: &str,
+    directory: &str,
+) -> Option<&'a Value> {
     let all = workspaces(ui, host_id);
     if !workspace_id.is_empty()
         && let Some(found) = all.iter().find(|w| text(w, "id") == workspace_id)
     {
         return Some(found);
     }
-    all.iter().find(|w| text(w, "workspaceDirectory") == directory)
+    all.iter()
+        .find(|w| text(w, "workspaceDirectory") == directory)
 }
 
 pub fn preferences(ui: &UiContext) -> &Value {
@@ -78,7 +89,11 @@ pub fn agent_label(ui: &UiContext, host_id: &str, agent_id: &str) -> String {
         };
         if text(agent, "id") == agent_id {
             let title = text(agent, "title");
-            return if title.is_empty() { text(agent, "name").to_owned() } else { title.to_owned() };
+            return if title.is_empty() {
+                text(agent, "name").to_owned()
+            } else {
+                title.to_owned()
+            };
         }
     }
     String::new()
@@ -86,7 +101,11 @@ pub fn agent_label(ui: &UiContext, host_id: &str, agent_id: &str) -> String {
 
 /// The workspace's live top-level agents (not archived, no parent) as
 /// `(id, title or name)`, in host order.
-pub fn workspace_agents(ui: &UiContext, host_id: &str, workspace_id: &str) -> Vec<(String, String)> {
+pub fn workspace_agents(
+    ui: &UiContext,
+    host_id: &str,
+    workspace_id: &str,
+) -> Vec<(String, String)> {
     let Some(host) = host(ui, host_id) else {
         return Vec::new();
     };
@@ -109,7 +128,11 @@ pub fn workspace_agents(ui: &UiContext, host_id: &str, workspace_id: &str) -> Ve
         })
         .map(|agent| {
             let title = text(agent, "title");
-            let label = if title.is_empty() { text(agent, "name") } else { title };
+            let label = if title.is_empty() {
+                text(agent, "name")
+            } else {
+                title
+            };
             (text(agent, "id").to_owned(), label.to_owned())
         })
         .collect()

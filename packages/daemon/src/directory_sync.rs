@@ -233,17 +233,16 @@ impl DirectorySyncService {
         seq: Option<u64>,
         include_background: bool,
     ) -> Result<Value> {
-        if include_sequence
-            && let Some(seq) = seq {
-                let object = payload
-                    .as_object_mut()
-                    .context("Directory update payload must be an object")?;
-                object.insert(
-                    "generation".into(),
-                    Value::String(self.generation(include_background).to_owned()),
-                );
-                object.insert("seq".into(), Value::from(seq));
-            }
+        if include_sequence && let Some(seq) = seq {
+            let object = payload
+                .as_object_mut()
+                .context("Directory update payload must be an object")?;
+            object.insert(
+                "generation".into(),
+                Value::String(self.generation(include_background).to_owned()),
+            );
+            object.insert("seq".into(), Value::from(seq));
+        }
         Ok(payload)
     }
 }

@@ -6,8 +6,8 @@
 //! value comes back as [`WaSelectRef::picked`]. Dismissal (Escape, background tap, close)
 //! reports [`WaSelectRef::dismissed`].
 
+use super::kit::WaModalWidgetExt;
 use makepad_widgets::*;
-use super::kit::{WaModalWidgetExt};
 
 use crate::common::widgets::{PLabelWidgetRefExt, SurfaceRole, SurfaceWidgetRefExt};
 
@@ -102,7 +102,12 @@ pub struct SelectOption {
 
 impl SelectOption {
     pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self { value: value.into(), label: label.into(), enabled: true, ..Default::default() }
+        Self {
+            value: value.into(),
+            label: label.into(),
+            enabled: true,
+            ..Default::default()
+        }
     }
 
     pub fn description(mut self, text: impl Into<String>) -> Self {
@@ -157,7 +162,11 @@ pub struct SelectRequest {
 
 impl SelectRequest {
     pub fn new(title: impl Into<String>, options: Vec<SelectOption>) -> Self {
-        Self { title: title.into(), options, ..Default::default() }
+        Self {
+            title: title.into(),
+            options,
+            ..Default::default()
+        }
     }
 
     pub fn selected(mut self, value: Option<&str>) -> Self {
@@ -212,11 +221,22 @@ pub struct WaSelect {
 
 impl WaSelect {
     fn apply_request(&mut self, cx: &mut Cx, request: SelectRequest) {
-        self.view.wa_input(id!(search)).set_empty_text(cx, request.search_placeholder.clone());
-        self.view.widget(id!(search_wrap)).set_visible(cx, request.searchable);
-        let rows = request.options.len() + request.options.iter().filter(|o| o.separator_before).count();
+        self.view
+            .wa_input(id!(search))
+            .set_empty_text(cx, request.search_placeholder.clone());
+        self.view
+            .widget(id!(search_wrap))
+            .set_visible(cx, request.searchable);
+        let rows = request.options.len()
+            + request
+                .options
+                .iter()
+                .filter(|o| o.separator_before)
+                .count();
         let height = (rows.max(1) as f64 * 40.0).min(360.0);
-        self.view.portal_list(id!(list)).apply_over(cx, live! { height: (height) });
+        self.view
+            .portal_list(id!(list))
+            .apply_over(cx, live! { height: (height) });
         self.request = request;
         self.rebuild();
         self.view.redraw(cx);
@@ -250,7 +270,10 @@ impl WaSelect {
             _ => false,
         });
         if self.highlighted.is_none() && !needle.is_empty() {
-            self.highlighted = self.rows.iter().position(|row| matches!(row, Row::Option(i) if self.request.options[*i].enabled));
+            self.highlighted = self
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::Option(i) if self.request.options[*i].enabled));
         }
     }
 
@@ -267,17 +290,23 @@ impl WaSelect {
         if enabled.is_empty() {
             return;
         }
-        let current = self.highlighted.and_then(|row| enabled.iter().position(|r| *r == row));
+        let current = self
+            .highlighted
+            .and_then(|row| enabled.iter().position(|r| *r == row));
         let next = match current {
             None if delta < 0 => enabled.len() - 1,
             None => 0,
-            Some(position) => ((position as isize + delta).rem_euclid(enabled.len() as isize)) as usize,
+            Some(position) => {
+                ((position as isize + delta).rem_euclid(enabled.len() as isize)) as usize
+            }
         };
         self.highlighted = Some(enabled[next]);
     }
 
     fn pick(&mut self, cx: &mut Cx, scope: &mut Scope, row: usize) {
-        let Some(Row::Option(index)) = self.rows.get(row) else { return };
+        let Some(Row::Option(index)) = self.rows.get(row) else {
+            return;
+        };
         let option = &self.request.options[*index];
         if !option.enabled {
             return;
@@ -286,7 +315,11 @@ impl WaSelect {
         let token = std::mem::take(&mut self.token);
         self.open = false;
         self.view.wa_modal(id!(modal)).close(cx);
-        cx.widget_action(self.widget_uid(), &scope.path, WaSelectAction::Picked { token, value });
+        cx.widget_action(
+            self.widget_uid(),
+            &scope.path,
+            WaSelectAction::Picked { token, value },
+        );
     }
 
     fn dismiss(&mut self, cx: &mut Cx, scope: &mut Scope) {
@@ -296,13 +329,22 @@ impl WaSelect {
         self.open = false;
         self.view.wa_modal(id!(modal)).close(cx);
         let token = std::mem::take(&mut self.token);
-        cx.widget_action(self.widget_uid(), &scope.path, WaSelectAction::Dismissed { token });
+        cx.widget_action(
+            self.widget_uid(),
+            &scope.path,
+            WaSelectAction::Dismissed { token },
+        );
     }
 }
 
 impl Widget for WaSelect {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        if !self.open && !matches!(event, Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)) {
+        if !self.open
+            && !matches!(
+                event,
+                Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)
+            )
+        {
             return;
         }
         self.view.handle_event(cx, event, scope);
@@ -318,7 +360,9 @@ impl Widget for WaSelect {
         if !modal.accepts_input() {
             return;
         }
-        let Event::Actions(actions) = event else { return };
+        let Event::Actions(actions) = event else {
+            return;
+        };
         let search = self.view.wa_input(id!(search));
         if let Some(query) = search.changed(actions) {
             self.query = query;
@@ -338,7 +382,9 @@ impl Widget for WaSelect {
                 _ => {}
             }
         }
-        if search.returned(actions).is_some() && let Some(row) = self.highlighted {
+        if search.returned(actions).is_some()
+            && let Some(row) = self.highlighted
+        {
             self.pick(cx, scope, row);
             return;
         }
@@ -362,13 +408,19 @@ impl Widget for WaSelect {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.view.widget(id!(sheet.header.title)).set_text(cx, &self.request.title);
+        self.view
+            .widget(id!(sheet.header.title))
+            .set_text(cx, &self.request.title);
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             let list_ref = item.as_portal_list();
-            let Some(mut list) = list_ref.borrow_mut() else { continue };
+            let Some(mut list) = list_ref.borrow_mut() else {
+                continue;
+            };
             list.set_item_range(cx, 0, self.rows.len());
             while let Some(row) = list.next_visible_item(cx) {
-                let Some(entry) = self.rows.get(row) else { continue };
+                let Some(entry) = self.rows.get(row) else {
+                    continue;
+                };
                 match entry {
                     Row::Separator => {
                         let widget = list.item(cx, row, live_id!(Separator));
@@ -388,7 +440,14 @@ impl Widget for WaSelect {
                         let option = &self.request.options[*index];
                         let widget = list.item(cx, row, live_id!(Row));
                         let highlighted = self.highlighted == Some(row);
-                        widget.as_surface().set_role(cx, if highlighted { SurfaceRole::Surface1 } else { SurfaceRole::Transparent });
+                        widget.as_surface().set_role(
+                            cx,
+                            if highlighted {
+                                SurfaceRole::Surface1
+                            } else {
+                                SurfaceRole::Transparent
+                            },
+                        );
                         let label = widget.plabel(id!(body.label));
                         label.set_text(cx, &option.label);
                         let p = crate::theme::current_palette();
@@ -400,8 +459,16 @@ impl Widget for WaSelect {
                             p.foreground
                         };
                         label.set_color(cx, Some(color));
-                        super::kit::set_optional(cx, &widget.widget(id!(body.description)), &option.description);
-                        super::kit::set_optional(cx, &widget.widget(id!(trailing)), &option.trailing);
+                        super::kit::set_optional(
+                            cx,
+                            &widget.widget(id!(body.description)),
+                            &option.description,
+                        );
+                        super::kit::set_optional(
+                            cx,
+                            &widget.widget(id!(trailing)),
+                            &option.trailing,
+                        );
                         let lead = widget.widget(id!(lead));
                         let dot = widget.widget(id!(dot));
                         let icon = widget.widget(id!(icon));
@@ -423,7 +490,8 @@ impl Widget for WaSelect {
                                 super::kit::set_project_icon(cx, &icon, name, key);
                             }
                         }
-                        let selected = option.checked || self.request.selected.as_deref() == Some(option.value.as_str());
+                        let selected = option.checked
+                            || self.request.selected.as_deref() == Some(option.value.as_str());
                         widget.widget(id!(check)).set_visible(cx, selected);
                         widget.draw_all(cx, scope);
                     }
@@ -435,7 +503,10 @@ impl Widget for WaSelect {
             if self.open
                 && self.request.searchable
                 && self.view.wa_modal(id!(modal)).accepts_input()
-                && scope.data.get::<crate::common::UiContext>().is_some_and(|ui| !ui.compact)
+                && scope
+                    .data
+                    .get::<crate::common::UiContext>()
+                    .is_some_and(|ui| !ui.compact)
             {
                 self.view.wa_input(id!(search)).set_key_focus(cx);
             }
@@ -447,7 +518,9 @@ impl Widget for WaSelect {
 impl WaSelectRef {
     /// Opens the picker for `request`; `token` comes back with the answer.
     pub fn open(&self, cx: &mut Cx, token: &str, request: SelectRequest) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.token = token.to_owned();
         inner.query.clear();
         let search = inner.view.wa_input(id!(search));
@@ -462,7 +535,9 @@ impl WaSelectRef {
     /// Refresh asynchronous options without reopening a dismissed picker, clearing
     /// its search, stealing focus, or updating a different picker's token.
     pub fn refresh(&self, cx: &mut Cx, token: &str, request: impl FnOnce() -> SelectRequest) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.open && inner.token == token {
             inner.apply_request(cx, request());
         }
@@ -473,7 +548,9 @@ impl WaSelectRef {
     }
 
     pub fn close(&self, cx: &mut Cx) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.open {
             inner.open = false;
             inner.token.clear();

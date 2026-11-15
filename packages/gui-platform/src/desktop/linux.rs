@@ -2,16 +2,16 @@
 //! paseo_desktop_integrations plugin, flutter_local_notifications Linux and
 //! tray_manager). D-Bus runs on a dedicated runtime that lives for the process.
 
-use super::{deliver, notification_clicked, Activation, DesktopNotification, NativeSignal};
+use super::{Activation, DesktopNotification, NativeSignal, deliver, notification_clicked};
 use crate::{
+    Bootstrap,
     action::*,
     platform::{Completion, Shared},
-    Bootstrap,
 };
 use futures_util::StreamExt as _;
 use std::{
     collections::HashMap,
-    ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void, CString, OsString},
+    ffi::{CString, OsString, c_char, c_int, c_long, c_uint, c_ulong, c_void},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
@@ -67,7 +67,11 @@ struct SessionsInterface;
 impl SessionsInterface {
     /// GApplication-style command line forwarding from a later launch.
     async fn command_line(&self, argv: Vec<String>, cwd: String) -> bool {
-        deliver(NativeSignal::Activation(parse_activation(&argv, Some(Path::new(&cwd)), false)));
+        deliver(NativeSignal::Activation(parse_activation(
+            &argv,
+            Some(Path::new(&cwd)),
+            false,
+        )));
         true
     }
 }
@@ -82,16 +86,31 @@ impl ApplicationInterface {
     async fn open(&self, uris: Vec<String>, _platform_data: HashMap<String, OwnedValue>) {
         for uri in uris {
             let activation = if uri.to_ascii_lowercase().starts_with("paseo:") {
-                Activation { url: Some(uri), ..Default::default() }
-            } else if let Some(path) = url::Url::parse(&uri).ok().and_then(|u| u.to_file_path().ok()).filter(|p| p.is_dir()) {
-                Activation { project_path: Some(path.display().to_string()), ..Default::default() }
+                Activation {
+                    url: Some(uri),
+                    ..Default::default()
+                }
+            } else if let Some(path) = url::Url::parse(&uri)
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+                .filter(|p| p.is_dir())
+            {
+                Activation {
+                    project_path: Some(path.display().to_string()),
+                    ..Default::default()
+                }
             } else {
                 continue;
             };
             deliver(NativeSignal::Activation(activation));
         }
     }
-    async fn activate_action(&self, action_name: String, _parameter: Vec<OwnedValue>, _platform_data: HashMap<String, OwnedValue>) {
+    async fn activate_action(
+        &self,
+        action_name: String,
+        _parameter: Vec<OwnedValue>,
+        _platform_data: HashMap<String, OwnedValue>,
+    ) {
         if action_name == "quit" {
             deliver(NativeSignal::QuitRequestedByOs);
         }
@@ -105,7 +124,11 @@ pub(crate) fn parse_activation(argv: &[String], cwd: Option<&Path>, initial: boo
     while index < argv.len() {
         let arg = &argv[index];
         if arg.to_ascii_lowercase().starts_with("paseo:") {
-            return Activation { url: Some(arg.clone()), project_path: None, initial };
+            return Activation {
+                url: Some(arg.clone()),
+                project_path: None,
+                initial,
+            };
         }
         let candidate = if arg == "--open-project" || arg == "--paseo-project" {
             index += 1;
@@ -120,14 +143,26 @@ pub(crate) fn parse_activation(argv: &[String], cwd: Option<&Path>, initial: boo
             arg.clone()
         };
         let path = Path::new(&candidate);
-        let absolute = if path.is_absolute() { path.to_path_buf() } else { cwd.map(|c| c.join(path)).unwrap_or_else(|| path.to_path_buf()) };
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.map(|c| c.join(path))
+                .unwrap_or_else(|| path.to_path_buf())
+        };
         if absolute.is_dir() {
             let canonical = std::fs::canonicalize(&absolute).unwrap_or(absolute);
-            return Activation { url: None, project_path: Some(canonical.display().to_string()), initial };
+            return Activation {
+                url: None,
+                project_path: Some(canonical.display().to_string()),
+                initial,
+            };
         }
         index += 1;
     }
-    Activation { initial, ..Default::default() }
+    Activation {
+        initial,
+        ..Default::default()
+    }
 }
 
 pub(crate) fn bootstrap(argv: &[String]) -> Bootstrap {
@@ -140,26 +175,42 @@ pub(crate) fn bootstrap(argv: &[String]) -> Bootstrap {
             Err(_) => return Bootstrap::Primary,
         };
         let server = connection.object_server();
-        if server.at(OBJECT_PATH, SessionsInterface).await.is_err() || server.at(OBJECT_PATH, ApplicationInterface).await.is_err() {
+        if server.at(OBJECT_PATH, SessionsInterface).await.is_err()
+            || server.at(OBJECT_PATH, ApplicationInterface).await.is_err()
+        {
             return Bootstrap::Primary;
         }
         let reply = connection
             .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
             .await;
         match reply {
-            Ok(zbus::fdo::RequestNameReply::PrimaryOwner | zbus::fdo::RequestNameReply::AlreadyOwner) | Err(_) => Bootstrap::Primary,
+            Ok(
+                zbus::fdo::RequestNameReply::PrimaryOwner
+                | zbus::fdo::RequestNameReply::AlreadyOwner,
+            )
+            | Err(_) => Bootstrap::Primary,
             Ok(_) => {
-                let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 let forwarded = tokio::time::timeout(
                     Duration::from_secs(30),
-                    connection.call_method(Some(BUS_NAME), OBJECT_PATH, Some("sh.paseo.Sessions1"), "CommandLine", &(argv, cwd)),
+                    connection.call_method(
+                        Some(BUS_NAME),
+                        OBJECT_PATH,
+                        Some("sh.paseo.Sessions1"),
+                        "CommandLine",
+                        &(argv, cwd),
+                    ),
                 )
                 .await;
                 let accepted = match &forwarded {
                     Ok(Ok(reply)) => reply.body().deserialize::<bool>().unwrap_or(false),
                     _ => false,
                 };
-                Bootstrap::Forwarded { exit_code: if accepted { 0 } else { 1 } }
+                Bootstrap::Forwarded {
+                    exit_code: if accepted { 0 } else { 1 },
+                }
             }
         }
     })
@@ -199,9 +250,14 @@ pub(crate) fn start_lifecycle(shared: &Arc<Shared>) {
 
 async fn start_gnome_session() -> Result<(), PlatformError> {
     let connection = session().await?;
-    let manager = zbus::Proxy::new(&connection, "org.gnome.SessionManager", "/org/gnome/SessionManager", "org.gnome.SessionManager")
-        .await
-        .map_err(dbus_error)?;
+    let manager = zbus::Proxy::new(
+        &connection,
+        "org.gnome.SessionManager",
+        "/org/gnome/SessionManager",
+        "org.gnome.SessionManager",
+    )
+    .await
+    .map_err(dbus_error)?;
     let startup_id = std::env::var("DESKTOP_AUTOSTART_ID").unwrap_or_default();
     let client: zbus::zvariant::OwnedObjectPath = tokio::time::timeout(
         Duration::from_secs(2),
@@ -210,23 +266,40 @@ async fn start_gnome_session() -> Result<(), PlatformError> {
     .await
     .map_err(|_| PlatformError::native("GNOME SessionManager did not answer."))?
     .map_err(dbus_error)?;
-    let private = zbus::Proxy::new(&connection, "org.gnome.SessionManager", client.clone(), "org.gnome.SessionManager.ClientPrivate")
-        .await
-        .map_err(dbus_error)?;
+    let private = zbus::Proxy::new(
+        &connection,
+        "org.gnome.SessionManager",
+        client.clone(),
+        "org.gnome.SessionManager.ClientPrivate",
+    )
+    .await
+    .map_err(dbus_error)?;
     let mut signals = private.receive_all_signals().await.map_err(dbus_error)?;
     tokio::spawn(async move {
         while let Some(message) = signals.next().await {
             let header = message.header();
-            let Some(member) = header.member().map(|m| m.as_str().to_owned()) else { continue };
+            let Some(member) = header.member().map(|m| m.as_str().to_owned()) else {
+                continue;
+            };
             match member.as_str() {
                 "CancelEndSession" => deliver(NativeSignal::SessionEndingCancelled),
                 "Stop" => deliver(NativeSignal::SessionEnded),
                 "QueryEndSession" | "EndSession" => {
-                    deliver(if member == "QueryEndSession" { NativeSignal::SessionEnding } else { NativeSignal::SessionEnded });
+                    deliver(if member == "QueryEndSession" {
+                        NativeSignal::SessionEnding
+                    } else {
+                        NativeSignal::SessionEnded
+                    });
                     // Never veto the OS; teardown is best effort within its deadline.
-                    let response = tokio::time::timeout(Duration::from_secs(2), private.call_method("EndSessionResponse", &(true, ""))).await;
+                    let response = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        private.call_method("EndSessionResponse", &(true, "")),
+                    )
+                    .await;
                     if !matches!(response, Ok(Ok(_))) {
-                        deliver(NativeSignal::LifecycleError("GNOME SessionManager rejected the end-session response.".into()));
+                        deliver(NativeSignal::LifecycleError(
+                            "GNOME SessionManager rejected the end-session response.".into(),
+                        ));
                     }
                 }
                 _ => {}
@@ -238,7 +311,7 @@ async fn start_gnome_session() -> Result<(), PlatformError> {
 
 /// XSMP fallback through dlopen'd libSM/libICE (no build-time headers).
 mod xsmp {
-    use super::{deliver, NativeSignal};
+    use super::{NativeSignal, deliver};
     use std::ffi::{c_char, c_int, c_ulong, c_void};
 
     type SmcConn = *mut c_void;
@@ -259,9 +332,17 @@ mod xsmp {
         shutdown_cancelled: Callback<Simple>,
     }
 
-    static SAVE_DONE: std::sync::OnceLock<unsafe extern "C" fn(SmcConn, c_int)> = std::sync::OnceLock::new();
+    static SAVE_DONE: std::sync::OnceLock<unsafe extern "C" fn(SmcConn, c_int)> =
+        std::sync::OnceLock::new();
 
-    unsafe extern "C" fn save_yourself(connection: SmcConn, _: *mut c_void, _: c_int, shutdown: c_int, _: c_int, _: c_int) {
+    unsafe extern "C" fn save_yourself(
+        connection: SmcConn,
+        _: *mut c_void,
+        _: c_int,
+        shutdown: c_int,
+        _: c_int,
+        _: c_int,
+    ) {
         if shutdown != 0 {
             deliver(NativeSignal::SessionEnding);
         }
@@ -285,22 +366,51 @@ mod xsmp {
         let ice = unsafe { libloading::Library::new("libICE.so.6") }.map_err(|e| e.to_string())?;
         unsafe {
             let open: libloading::Symbol<
-                unsafe extern "C" fn(*const c_char, *mut c_void, c_int, c_int, c_ulong, *mut SmcCallbacks, *const c_char, *mut *mut c_char, c_int, *mut c_char) -> SmcConn,
+                unsafe extern "C" fn(
+                    *const c_char,
+                    *mut c_void,
+                    c_int,
+                    c_int,
+                    c_ulong,
+                    *mut SmcCallbacks,
+                    *const c_char,
+                    *mut *mut c_char,
+                    c_int,
+                    *mut c_char,
+                ) -> SmcConn,
             > = sm.get(b"SmcOpenConnection\0").map_err(|e| e.to_string())?;
-            let get_ice: libloading::Symbol<unsafe extern "C" fn(SmcConn) -> IceConn> =
-                sm.get(b"SmcGetIceConnection\0").map_err(|e| e.to_string())?;
-            let done: libloading::Symbol<unsafe extern "C" fn(SmcConn, c_int)> =
-                sm.get(b"SmcSaveYourselfDone\0").map_err(|e| e.to_string())?;
-            let fd: libloading::Symbol<unsafe extern "C" fn(IceConn) -> c_int> =
-                ice.get(b"IceConnectionNumber\0").map_err(|e| e.to_string())?;
-            let process: libloading::Symbol<unsafe extern "C" fn(IceConn, *mut c_void, *mut c_int) -> c_int> =
-                ice.get(b"IceProcessMessages\0").map_err(|e| e.to_string())?;
+            let get_ice: libloading::Symbol<unsafe extern "C" fn(SmcConn) -> IceConn> = sm
+                .get(b"SmcGetIceConnection\0")
+                .map_err(|e| e.to_string())?;
+            let done: libloading::Symbol<unsafe extern "C" fn(SmcConn, c_int)> = sm
+                .get(b"SmcSaveYourselfDone\0")
+                .map_err(|e| e.to_string())?;
+            let fd: libloading::Symbol<unsafe extern "C" fn(IceConn) -> c_int> = ice
+                .get(b"IceConnectionNumber\0")
+                .map_err(|e| e.to_string())?;
+            let process: libloading::Symbol<
+                unsafe extern "C" fn(IceConn, *mut c_void, *mut c_int) -> c_int,
+            > = ice
+                .get(b"IceProcessMessages\0")
+                .map_err(|e| e.to_string())?;
             let _ = SAVE_DONE.set(*done);
             let mut callbacks = SmcCallbacks {
-                save_yourself: Callback { callback: save_yourself, client_data: std::ptr::null_mut() },
-                die: Callback { callback: die, client_data: std::ptr::null_mut() },
-                save_complete: Callback { callback: save_complete, client_data: std::ptr::null_mut() },
-                shutdown_cancelled: Callback { callback: cancelled, client_data: std::ptr::null_mut() },
+                save_yourself: Callback {
+                    callback: save_yourself,
+                    client_data: std::ptr::null_mut(),
+                },
+                die: Callback {
+                    callback: die,
+                    client_data: std::ptr::null_mut(),
+                },
+                save_complete: Callback {
+                    callback: save_complete,
+                    client_data: std::ptr::null_mut(),
+                },
+                shutdown_cancelled: Callback {
+                    callback: cancelled,
+                    client_data: std::ptr::null_mut(),
+                },
             };
             let mut client_id: *mut c_char = std::ptr::null_mut();
             let mut error = [0 as c_char; 256];
@@ -322,7 +432,9 @@ mod xsmp {
                 libc::free(client_id.cast());
             }
             if connection.is_null() {
-                return Err(std::ffi::CStr::from_ptr(error.as_ptr()).to_string_lossy().into_owned());
+                return Err(std::ffi::CStr::from_ptr(error.as_ptr())
+                    .to_string_lossy()
+                    .into_owned());
             }
             let ice_connection = get_ice(connection);
             let descriptor = fd(ice_connection);
@@ -336,14 +448,21 @@ mod xsmp {
                     let _libraries = (sm, ice);
                     let ice_connection = ice_addr as IceConn;
                     loop {
-                        let mut poll = libc::pollfd { fd: descriptor, events: libc::POLLIN, revents: 0 };
+                        let mut poll = libc::pollfd {
+                            fd: descriptor,
+                            events: libc::POLLIN,
+                            revents: 0,
+                        };
                         if libc::poll(&mut poll, 1, -1) < 0 {
                             continue;
                         }
                         if poll.revents & (libc::POLLERR | libc::POLLHUP) != 0
-                            || process(ice_connection, std::ptr::null_mut(), std::ptr::null_mut()) != 0
+                            || process(ice_connection, std::ptr::null_mut(), std::ptr::null_mut())
+                                != 0
                         {
-                            deliver(NativeSignal::LifecycleError("The XSMP session manager disconnected".into()));
+                            deliver(NativeSignal::LifecycleError(
+                                "The XSMP session manager disconnected".into(),
+                            ));
                             break;
                         }
                     }
@@ -365,12 +484,25 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
     // flutter_local_notifications delivers Linux actions through its live D-Bus
     // callback; there is no cold-launch notification query.
     BUS.spawn(async {
-        let Ok(connection) = session().await else { return };
-        let Ok(proxy) = zbus::Proxy::new(&connection, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications").await else {
+        let Ok(connection) = session().await else {
             return;
         };
-        let Ok(mut actions) = proxy.receive_signal("ActionInvoked").await else { return };
-        let Ok(mut closed) = proxy.receive_signal("NotificationClosed").await else { return };
+        let Ok(proxy) = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )
+        .await
+        else {
+            return;
+        };
+        let Ok(mut actions) = proxy.receive_signal("ActionInvoked").await else {
+            return;
+        };
+        let Ok(mut closed) = proxy.receive_signal("NotificationClosed").await else {
+            return;
+        };
         tokio::spawn(async move {
             while let Some(message) = closed.next().await {
                 if let Ok((server_id, _reason)) = message.body().deserialize::<(u32, u32)>() {
@@ -379,8 +511,15 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
             }
         });
         while let Some(message) = actions.next().await {
-            let Ok((server_id, action)) = message.body().deserialize::<(u32, String)>() else { continue };
-            let found = SHOWN.lock().unwrap().iter().find(|(id, _, _)| *id == server_id).cloned();
+            let Ok((server_id, action)) = message.body().deserialize::<(u32, String)>() else {
+                continue;
+            };
+            let found = SHOWN
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(id, _, _)| *id == server_id)
+                .cloned();
             if let Some((_, id, payload)) = found {
                 notification_clicked(&payload, Some(id.into()), Some(action));
             }
@@ -389,18 +528,31 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
     Ok(())
 }
 
-pub(crate) async fn show_notification(notification: &DesktopNotification) -> Result<(), PlatformError> {
+pub(crate) async fn show_notification(
+    notification: &DesktopNotification,
+) -> Result<(), PlatformError> {
     let title = notification.title.clone();
     let body = notification.body.clone().unwrap_or_default();
     let sound = notification.sound;
     let id = notification.id;
     let payload = notification.payload.clone();
-    let replaces = SHOWN.lock().unwrap().iter().find(|(_, own, _)| *own == id).map(|(server, _, _)| *server).unwrap_or(0);
+    let replaces = SHOWN
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, own, _)| *own == id)
+        .map(|(server, _, _)| *server)
+        .unwrap_or(0);
     BUS.spawn(async move {
         let connection = session().await?;
-        let proxy = zbus::Proxy::new(&connection, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications")
-            .await
-            .map_err(dbus_error)?;
+        let proxy = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )
+        .await
+        .map_err(dbus_error)?;
         let mut hints: HashMap<&str, ZValue<'_>> = HashMap::new();
         hints.insert("desktop-entry", ZValue::from(DESKTOP_ENTRY));
         if sound {
@@ -411,7 +563,16 @@ pub(crate) async fn show_notification(notification: &DesktopNotification) -> Res
         let server_id: u32 = proxy
             .call(
                 "Notify",
-                &("Passession", replaces, DESKTOP_ENTRY, title.as_str(), body.as_str(), vec!["default", "Open Passession"], hints, -1i32),
+                &(
+                    "Passession",
+                    replaces,
+                    DESKTOP_ENTRY,
+                    title.as_str(),
+                    body.as_str(),
+                    vec!["default", "Open Passession"],
+                    hints,
+                    -1i32,
+                ),
             )
             .await
             .map_err(dbus_error)?;
@@ -484,17 +645,52 @@ struct X11 {
     default_root: unsafe extern "C" fn(*mut c_void) -> c_ulong,
     default_screen: unsafe extern "C" fn(*mut c_void) -> c_int,
     intern_atom: unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_ulong,
-    get_window_property: unsafe extern "C" fn(*mut c_void, c_ulong, c_ulong, c_long, c_long, c_int, c_ulong, *mut c_ulong, *mut c_int, *mut c_ulong, *mut c_ulong, *mut *mut u8) -> c_int,
+    get_window_property: unsafe extern "C" fn(
+        *mut c_void,
+        c_ulong,
+        c_ulong,
+        c_long,
+        c_long,
+        c_int,
+        c_ulong,
+        *mut c_ulong,
+        *mut c_int,
+        *mut c_ulong,
+        *mut c_ulong,
+        *mut *mut u8,
+    ) -> c_int,
     free: unsafe extern "C" fn(*mut c_void) -> c_int,
     withdraw: unsafe extern "C" fn(*mut c_void, c_ulong, c_int) -> c_int,
     map_raised: unsafe extern "C" fn(*mut c_void, c_ulong) -> c_int,
     move_window: unsafe extern "C" fn(*mut c_void, c_ulong, c_int, c_int) -> c_int,
-    send_event: unsafe extern "C" fn(*mut c_void, c_ulong, c_int, c_long, *mut XClientMessageEvent) -> c_int,
-    get_normal_hints: unsafe extern "C" fn(*mut c_void, c_ulong, *mut XSizeHints, *mut c_long) -> c_int,
+    send_event: unsafe extern "C" fn(
+        *mut c_void,
+        c_ulong,
+        c_int,
+        c_long,
+        *mut XClientMessageEvent,
+    ) -> c_int,
+    get_normal_hints:
+        unsafe extern "C" fn(*mut c_void, c_ulong, *mut XSizeHints, *mut c_long) -> c_int,
     set_normal_hints: unsafe extern "C" fn(*mut c_void, c_ulong, *mut XSizeHints),
-    translate_coordinates: unsafe extern "C" fn(*mut c_void, c_ulong, c_ulong, c_int, c_int, *mut c_int, *mut c_int, *mut c_ulong) -> c_int,
+    translate_coordinates: unsafe extern "C" fn(
+        *mut c_void,
+        c_ulong,
+        c_ulong,
+        c_int,
+        c_int,
+        *mut c_int,
+        *mut c_int,
+        *mut c_ulong,
+    ) -> c_int,
     flush: unsafe extern "C" fn(*mut c_void) -> c_int,
-    query_extension: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_int, *mut c_int, *mut c_int) -> c_int,
+    query_extension: unsafe extern "C" fn(
+        *mut c_void,
+        *const c_char,
+        *mut c_int,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int,
 }
 
 #[repr(C)]
@@ -565,11 +761,13 @@ impl X11 {
 
 static X11_LIB: LazyLock<Result<X11, String>> = LazyLock::new(X11::load);
 /// libXss `XScreenSaverQueryInfo(display, drawable, info)`.
-type QueryScreenSaverInfo = unsafe extern "C" fn(*mut c_void, c_ulong, *mut ScreenSaverInfo) -> c_int;
+type QueryScreenSaverInfo =
+    unsafe extern "C" fn(*mut c_void, c_ulong, *mut ScreenSaverInfo) -> c_int;
 static XSS: LazyLock<Result<(libloading::Library, QueryScreenSaverInfo), String>> =
     LazyLock::new(|| unsafe {
-        let library = libloading::Library::new("libXss.so.1")
-            .map_err(|_| "System idle time requires the optional libXss.so.1 runtime library".to_owned())?;
+        let library = libloading::Library::new("libXss.so.1").map_err(|_| {
+            "System idle time requires the optional libXss.so.1 runtime library".to_owned()
+        })?;
         let query = *library
             .get::<QueryScreenSaverInfo>(b"XScreenSaverQueryInfo\0")
             .map_err(|_| "libXss does not export XScreenSaverQueryInfo".to_owned())?;
@@ -584,10 +782,15 @@ struct Display<'a> {
 
 impl<'a> Display<'a> {
     fn open() -> Result<Self, PlatformError> {
-        let x = X11_LIB.as_ref().map_err(|e| PlatformError::new("idle_unavailable", e.clone()))?;
+        let x = X11_LIB
+            .as_ref()
+            .map_err(|e| PlatformError::new("idle_unavailable", e.clone()))?;
         let raw = unsafe { (x.open_display)(std::ptr::null()) };
         if raw.is_null() {
-            return Err(PlatformError::new("display_unavailable", "Cannot open the X11 display."));
+            return Err(PlatformError::new(
+                "display_unavailable",
+                "Cannot open the X11 display.",
+            ));
         }
         Ok(Self { x, raw })
     }
@@ -609,14 +812,38 @@ pub(crate) fn idle_milliseconds() -> Result<u64, PlatformError> {
     let display = Display::open()?;
     let name = CString::new("MIT-SCREEN-SAVER").unwrap();
     let (mut opcode, mut event, mut error) = (0, 0, 0);
-    if unsafe { (display.x.query_extension)(display.raw, name.as_ptr(), &mut opcode, &mut event, &mut error) } == 0 {
-        return Err(PlatformError::new("idle_unavailable", "The XScreenSaver extension is unavailable"));
+    if unsafe {
+        (display.x.query_extension)(
+            display.raw,
+            name.as_ptr(),
+            &mut opcode,
+            &mut event,
+            &mut error,
+        )
+    } == 0
+    {
+        return Err(PlatformError::new(
+            "idle_unavailable",
+            "The XScreenSaver extension is unavailable",
+        ));
     }
-    let (_, query) = XSS.as_ref().map_err(|e| PlatformError::new("idle_unavailable", e.clone()))?;
-    let mut info = ScreenSaverInfo { window: 0, state: 0, kind: 0, til_or_since: 0, idle: 0, event_mask: 0 };
+    let (_, query) = XSS
+        .as_ref()
+        .map_err(|e| PlatformError::new("idle_unavailable", e.clone()))?;
+    let mut info = ScreenSaverInfo {
+        window: 0,
+        state: 0,
+        kind: 0,
+        til_or_since: 0,
+        idle: 0,
+        event_mask: 0,
+    };
     let root = unsafe { (display.x.default_root)(display.raw) };
     if unsafe { query(display.raw, root, &mut info) } == 0 {
-        return Err(PlatformError::new("idle_failed", "XScreenSaverQueryInfo failed"));
+        return Err(PlatformError::new(
+            "idle_failed",
+            "XScreenSaverQueryInfo failed",
+        ));
     }
     Ok(info.idle)
 }
@@ -634,7 +861,11 @@ fn wm_class() -> String {
     std::env::args_os()
         .next()
         .as_ref()
-        .and_then(|arg| Path::new(arg).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .and_then(|arg| {
+            Path::new(arg)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
         .unwrap_or_else(|| "Makepad".into())
 }
 
@@ -643,16 +874,35 @@ impl NativeWindows {
         Self::default()
     }
 
-    fn property(display: &Display, window: c_ulong, name: &str, kind: c_ulong) -> Option<(Vec<u8>, c_int, c_ulong)> {
+    fn property(
+        display: &Display,
+        window: c_ulong,
+        name: &str,
+        kind: c_ulong,
+    ) -> Option<(Vec<u8>, c_int, c_ulong)> {
         let atom_name = CString::new(name).ok()?;
         let atom = unsafe { (display.x.intern_atom)(display.raw, atom_name.as_ptr(), 1) };
         if atom == 0 {
             return None;
         }
-        let (mut actual_type, mut format, mut items, mut after) = (0 as c_ulong, 0 as c_int, 0 as c_ulong, 0 as c_ulong);
+        let (mut actual_type, mut format, mut items, mut after) =
+            (0 as c_ulong, 0 as c_int, 0 as c_ulong, 0 as c_ulong);
         let mut data: *mut u8 = std::ptr::null_mut();
         let status = unsafe {
-            (display.x.get_window_property)(display.raw, window, atom, 0, 65536, 0, kind, &mut actual_type, &mut format, &mut items, &mut after, &mut data)
+            (display.x.get_window_property)(
+                display.raw,
+                window,
+                atom,
+                0,
+                65536,
+                0,
+                kind,
+                &mut actual_type,
+                &mut format,
+                &mut items,
+                &mut after,
+                &mut data,
+            )
         };
         if status != 0 || data.is_null() {
             return None;
@@ -672,7 +922,10 @@ impl NativeWindows {
         let root = unsafe { (display.x.default_root)(display.raw) };
         const XA_WINDOW: c_ulong = 33;
         const XA_STRING: c_ulong = 31;
-        let Some((bytes, 32, items)) = Self::property(display, root, "_NET_CLIENT_LIST", XA_WINDOW) else { return Vec::new() };
+        let Some((bytes, 32, items)) = Self::property(display, root, "_NET_CLIENT_LIST", XA_WINDOW)
+        else {
+            return Vec::new();
+        };
         const WORD: usize = std::mem::size_of::<c_long>();
         let windows: Vec<c_ulong> = (0..items as usize)
             .map(|i| {
@@ -685,9 +938,14 @@ impl NativeWindows {
         windows
             .into_iter()
             .filter(|window| {
-                Self::property(display, *window, "WM_CLASS", XA_STRING).is_some_and(|(bytes, _, _)| {
-                    bytes.split(|b| *b == 0).nth(1).is_some_and(|c| c == class.as_bytes())
-                })
+                Self::property(display, *window, "WM_CLASS", XA_STRING).is_some_and(
+                    |(bytes, _, _)| {
+                        bytes
+                            .split(|b| *b == 0)
+                            .nth(1)
+                            .is_some_and(|c| c == class.as_bytes())
+                    },
+                )
             })
             .collect()
     }
@@ -698,7 +956,17 @@ impl NativeWindows {
         let (mut supplied, mut child) = (0, 0);
         unsafe {
             (display.x.get_normal_hints)(display.raw, window, &mut hints, &mut supplied);
-            if (display.x.translate_coordinates)(display.raw, window, root, 0, 0, &mut hints.x, &mut hints.y, &mut child) != 0 {
+            if (display.x.translate_coordinates)(
+                display.raw,
+                window,
+                root,
+                0,
+                0,
+                &mut hints.x,
+                &mut hints.y,
+                &mut child,
+            ) != 0
+            {
                 // Withdrawing removes the WM's placement record. On remap, keep
                 // the client origin instead of letting it place a "new" window.
                 hints.flags |= (1 << 0) | (1 << 9); // USPosition | PWinGravity
@@ -713,7 +981,8 @@ impl NativeWindows {
         let mut supplied = 0;
         unsafe {
             if (display.x.get_normal_hints)(display.raw, window, &mut hints, &mut supplied) != 0
-                && hints.flags & (1 << 0) != 0 && hints.flags & (1 << 9) != 0
+                && hints.flags & (1 << 0) != 0
+                && hints.flags & (1 << 9) != 0
                 && hints.win_gravity == 10
             {
                 // Withdrawal reparents the client at the old frame origin.
@@ -790,13 +1059,19 @@ impl ksni::Tray for TrayModel {
                 width: width as i32,
                 height: height as i32,
                 // ARGB32, network byte order.
-                data: rgba.chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect(),
+                data: rgba
+                    .chunks_exact(4)
+                    .flat_map(|p| [p[3], p[0], p[1], p[2]])
+                    .collect(),
             }],
             Err(_) => Vec::new(),
         }
     }
     fn tool_tip(&self) -> ksni::ToolTip {
-        ksni::ToolTip { title: "Passession".into(), ..Default::default() }
+        ksni::ToolTip {
+            title: "Passession".into(),
+            ..Default::default()
+        }
     }
     fn activate(&mut self, _x: i32, _y: i32) {
         deliver(NativeSignal::TrayOpen);
@@ -840,13 +1115,22 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
                 let owner = shared.clone();
                 shared.on_main(move |_, state| {
                     if state.desktop.tray.is_none() && !owner.desktop.quitting() {
-                        state.desktop.tray = Some(Tray { handle: Some(handle) });
-                        owner.desktop.tray_created.store(true, std::sync::atomic::Ordering::SeqCst);
+                        state.desktop.tray = Some(Tray {
+                            handle: Some(handle),
+                        });
+                        owner
+                            .desktop
+                            .tray_created
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 })
             }
-            Ok(Err(error)) => deliver(NativeSignal::TrayFailed(format!("Unable to create the system tray icon: {error}"))),
-            Err(_) => deliver(NativeSignal::TrayFailed("The system tray service did not respond.".into())),
+            Ok(Err(error)) => deliver(NativeSignal::TrayFailed(format!(
+                "Unable to create the system tray icon: {error}"
+            ))),
+            Err(_) => deliver(NativeSignal::TrayFailed(
+                "The system tray service did not respond.".into(),
+            )),
         }
     });
 }
@@ -867,13 +1151,25 @@ impl Drop for Tray {
 /// A watcher without a registered panel host is not a usable tray.
 pub(crate) async fn tray_host_available() -> bool {
     BUS.spawn(async {
-        let Ok(connection) = session().await else { return false };
-        let Ok(proxy) = zbus::Proxy::new(&connection, "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "org.kde.StatusNotifierWatcher").await
+        let Ok(connection) = session().await else {
+            return false;
+        };
+        let Ok(proxy) = zbus::Proxy::new(
+            &connection,
+            "org.kde.StatusNotifierWatcher",
+            "/StatusNotifierWatcher",
+            "org.kde.StatusNotifierWatcher",
+        )
+        .await
         else {
             return false;
         };
         matches!(
-            tokio::time::timeout(Duration::from_millis(1500), proxy.get_property::<bool>("IsStatusNotifierHostRegistered")).await,
+            tokio::time::timeout(
+                Duration::from_millis(1500),
+                proxy.get_property::<bool>("IsStatusNotifierHostRegistered")
+            )
+            .await,
             Ok(Ok(true))
         )
     })
@@ -900,7 +1196,9 @@ pub(crate) fn reveal(workspace: &Path, file: Option<&Path>) -> Result<(), Platfo
     let Some(file) = file else {
         return external_command("xdg-open", vec![workspace.as_os_str().to_owned()]);
     };
-    let uri = url::Url::from_file_path(file).map_err(|_| PlatformError::invalid("Not an absolute path."))?.to_string();
+    let uri = url::Url::from_file_path(file)
+        .map_err(|_| PlatformError::invalid("Not an absolute path."))?
+        .to_string();
     bus_wait(async move {
         let connection = session().await?;
         connection
@@ -919,20 +1217,34 @@ pub(crate) fn reveal(workspace: &Path, file: Option<&Path>) -> Result<(), Platfo
 
 /// Runs `future` on the D-Bus runtime and blocks the calling (worker) thread
 /// for its result; safe from inside another runtime's blocking pool.
-fn bus_wait<T: Send + 'static>(future: impl Future<Output = Result<T, PlatformError>> + Send + 'static) -> Result<T, PlatformError> {
+fn bus_wait<T: Send + 'static>(
+    future: impl Future<Output = Result<T, PlatformError>> + Send + 'static,
+) -> Result<T, PlatformError> {
     let (tx, rx) = std::sync::mpsc::channel();
     BUS.spawn(async move {
         let _ = tx.send(future.await);
     });
-    rx.recv().map_err(|_| PlatformError::native("The D-Bus worker stopped."))?
+    rx.recv()
+        .map_err(|_| PlatformError::native("The D-Bus worker stopped."))?
 }
 
 /// A mail composer with the downloaded attachment (original xdg-email path).
-pub(crate) fn share_file(shared: &Arc<Shared>, path: PathBuf, _mime_type: String, _name: String, done: Completion) {
+pub(crate) fn share_file(
+    shared: &Arc<Shared>,
+    path: PathBuf,
+    _mime_type: String,
+    _name: String,
+    done: Completion,
+) {
     shared.complete_blocking(done, move || {
         external_command("xdg-email", vec!["--attach".into(), path.into_os_string()])
             .map(|()| PlatformValue::None)
-            .map_err(|e| PlatformError::native(format!("Could not open a mail composer with the downloaded attachment: {}", e.message)))
+            .map_err(|e| {
+                PlatformError::native(format!(
+                    "Could not open a mail composer with the downloaded attachment: {}",
+                    e.message
+                ))
+            })
     });
 }
 
@@ -955,7 +1267,12 @@ pub(crate) fn os_version() -> String {
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
     let pretty = std::fs::read_to_string("/etc/os-release")
         .ok()
-        .and_then(|text| text.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=").map(|v| v.trim_matches('"').to_owned())));
+        .and_then(|text| {
+            text.lines().find_map(|l| {
+                l.strip_prefix("PRETTY_NAME=")
+                    .map(|v| v.trim_matches('"').to_owned())
+            })
+        });
     match pretty {
         Some(pretty) => format!("{pretty} {}", release.trim()),
         None => release.trim().to_owned(),
@@ -990,7 +1307,8 @@ pub(crate) fn system_prefers_dark() -> bool {
     match portal {
         Ok(dark) => dark,
         // No portal: the GTK theme name is the remaining desktop signal.
-        Err(_) => std::env::var("GTK_THEME").is_ok_and(|theme| theme.to_ascii_lowercase().contains("dark")),
+        Err(_) => std::env::var("GTK_THEME")
+            .is_ok_and(|theme| theme.to_ascii_lowercase().contains("dark")),
     }
 }
 
@@ -1008,7 +1326,11 @@ fn _assert_types(_: c_uint) {}
 
 /// One XDG portal `Settings.Read` value, unwrapped from its variant nesting
 /// (`v(v(x))` on older portals, `v(x)` on newer ones) and converted by `extract`.
-fn portal_setting<T: Send + 'static>(namespace: &'static str, key: &'static str, extract: fn(ZValue<'_>) -> Option<T>) -> Option<T> {
+fn portal_setting<T: Send + 'static>(
+    namespace: &'static str,
+    key: &'static str,
+    extract: fn(ZValue<'_>) -> Option<T>,
+) -> Option<T> {
     bus_wait(async move {
         let connection = session().await?;
         let reply = tokio::time::timeout(
@@ -1038,10 +1360,14 @@ fn portal_setting<T: Send + 'static>(namespace: &'static str, key: &'static str,
 /// GNOME `org.gnome.desktop.interface text-scaling-factor` through the portal.
 /// KDE has no separate factor (users change the font size), so it stays 1.
 pub(crate) fn system_text_scale() -> crate::appearance::TextScale {
-    portal_setting("org.gnome.desktop.interface", "text-scaling-factor", |value| match value {
-        ZValue::F64(factor) => Some(factor),
-        _ => None,
-    })
+    portal_setting(
+        "org.gnome.desktop.interface",
+        "text-scaling-factor",
+        |value| match value {
+            ZValue::F64(factor) => Some(factor),
+            _ => None,
+        },
+    )
     .map(crate::appearance::TextScale::from_factor)
     .unwrap_or_default()
 }
@@ -1055,14 +1381,20 @@ fn os_ui_family() -> Option<String> {
             _ => None,
         }
     }
-    let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| desktop.split(':').any(|part| part.eq_ignore_ascii_case("KDE")));
+    let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+        desktop
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("KDE"))
+    });
     if kde {
         portal_setting("org.kde.kdeglobals.General", "font", string)
             .as_deref()
             .and_then(crate::fonts::qt_family)
             .or_else(kdeglobals_font)
     } else {
-        portal_setting("org.gnome.desktop.interface", "font-name", string).as_deref().and_then(crate::fonts::pango_family)
+        portal_setting("org.gnome.desktop.interface", "font-name", string)
+            .as_deref()
+            .and_then(crate::fonts::pango_family)
     }
 }
 
@@ -1075,9 +1407,7 @@ fn kdeglobals_font() -> Option<String> {
     for line in text.lines().map(str::trim) {
         if line.starts_with('[') {
             in_general = line == "[General]";
-        } else if in_general
-            && let Some(value) = line.strip_prefix("font=")
-        {
+        } else if in_general && let Some(value) = line.strip_prefix("font=") {
             return crate::fonts::qt_family(value);
         }
     }
@@ -1086,9 +1416,12 @@ fn kdeglobals_font() -> Option<String> {
 
 /// fontconfig (dlopened `libfontconfig.so.1`) font discovery.
 pub(crate) mod fonts {
-    use crate::fonts::{bcp47, finish_face, resolve, Backend, Family, FileCache, FontFace, FontRequest, Role, SystemFonts, HANGUL_PROBE, LATIN_PROBE};
+    use crate::fonts::{
+        Backend, Family, FileCache, FontFace, FontRequest, LATIN_PROBE, Role, SystemFonts, bcp47,
+        finish_face, resolve, resolve_fallbacks,
+    };
     use std::{
-        ffi::{c_char, c_int, c_void, CStr, CString},
+        ffi::{CStr, CString, c_char, c_int, c_void},
         sync::{Arc, LazyLock},
     };
 
@@ -1100,8 +1433,6 @@ pub(crate) mod fonts {
     const FC_WEIGHT_DEMIBOLD: c_int = 180;
     const FC_SLANT_ROMAN: c_int = 0;
     const FC_SLANT_ITALIC: c_int = 100;
-    /// Bounds the files read while scanning a sorted Hangul candidate list.
-    const MAX_HANGUL_CANDIDATES: usize = 64;
 
     #[repr(C)]
     struct FcFontSet {
@@ -1118,12 +1449,19 @@ pub(crate) mod fonts {
         config_substitute: unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> FcBool,
         default_substitute: unsafe extern "C" fn(*mut c_void),
         font_match: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_int) -> *mut c_void,
-        font_sort: unsafe extern "C" fn(*mut c_void, *mut c_void, FcBool, *mut *mut c_void, *mut c_int) -> *mut FcFontSet,
+        font_sort: unsafe extern "C" fn(
+            *mut c_void,
+            *mut c_void,
+            FcBool,
+            *mut *mut c_void,
+            *mut c_int,
+        ) -> *mut FcFontSet,
         font_set_destroy: unsafe extern "C" fn(*mut FcFontSet),
         get_string: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut *mut u8) -> c_int,
         get_integer: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_int) -> c_int,
         get_double: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut f64) -> c_int,
-        get_charset: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut *mut c_void) -> c_int,
+        get_charset:
+            unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut *mut c_void) -> c_int,
         charset_has_char: unsafe extern "C" fn(*mut c_void, u32) -> FcBool,
         /// fontconfig ≥ 2.12.92; older libraries report no axis values.
         weight_to_open_type: Option<unsafe extern "C" fn(f64) -> f64>,
@@ -1133,7 +1471,8 @@ pub(crate) mod fonts {
     impl Fc {
         fn load() -> Result<Self, String> {
             unsafe {
-                let library = libloading::Library::new("libfontconfig.so.1").map_err(|e| e.to_string())?;
+                let library =
+                    libloading::Library::new("libfontconfig.so.1").map_err(|e| e.to_string())?;
                 macro_rules! symbol {
                     ($name:literal) => {
                         *library.get($name).map_err(|e| e.to_string())?
@@ -1154,7 +1493,10 @@ pub(crate) mod fonts {
                     get_double: symbol!(b"FcPatternGetDouble\0"),
                     get_charset: symbol!(b"FcPatternGetCharSet\0"),
                     charset_has_char: symbol!(b"FcCharSetHasChar\0"),
-                    weight_to_open_type: library.get(b"FcWeightToOpenTypeDouble\0").ok().map(|symbol| *symbol),
+                    weight_to_open_type: library
+                        .get(b"FcWeightToOpenTypeDouble\0")
+                        .ok()
+                        .map(|symbol| *symbol),
                     _library: library,
                 })
             }
@@ -1177,7 +1519,18 @@ pub(crate) mod fonts {
 
     /// CSS generics fontconfig resolves by alias; any matched family is accepted.
     fn is_generic(name: &str) -> bool {
-        ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "emoji", "math"].iter().any(|g| g.eq_ignore_ascii_case(name))
+        [
+            "serif",
+            "sans-serif",
+            "monospace",
+            "cursive",
+            "fantasy",
+            "system-ui",
+            "emoji",
+            "math",
+        ]
+        .iter()
+        .any(|g| g.eq_ignore_ascii_case(name))
     }
 
     /// A family name marking a Korean regional face (`Noto Sans CJK KR`, `Source Han Sans K`).
@@ -1203,8 +1556,13 @@ pub(crate) mod fonts {
 
     fn string_at(fc: &Fc, pattern: *mut c_void, object: &CStr, n: c_int) -> Option<String> {
         let mut value: *mut u8 = std::ptr::null_mut();
-        let found = unsafe { (fc.get_string)(pattern, object.as_ptr(), n, &mut value) } == FC_RESULT_MATCH;
-        (found && !value.is_null()).then(|| unsafe { CStr::from_ptr(value.cast()) }.to_string_lossy().into_owned())
+        let found =
+            unsafe { (fc.get_string)(pattern, object.as_ptr(), n, &mut value) } == FC_RESULT_MATCH;
+        (found && !value.is_null()).then(|| {
+            unsafe { CStr::from_ptr(value.cast()) }
+                .to_string_lossy()
+                .into_owned()
+        })
     }
 
     struct Fontconfig<'a> {
@@ -1224,8 +1582,16 @@ pub(crate) mod fonts {
     impl<'a> Fontconfig<'a> {
         fn pattern(&self, family: Option<&str>, role: Role, lang: &str) -> Option<Pattern<'a>> {
             let mut name = family.map(escape).unwrap_or_default();
-            let weight = if role.weight() >= 600 { FC_WEIGHT_DEMIBOLD } else { FC_WEIGHT_REGULAR };
-            let slant = if role.italic() { FC_SLANT_ITALIC } else { FC_SLANT_ROMAN };
+            let weight = if role.weight() >= 600 {
+                FC_WEIGHT_DEMIBOLD
+            } else {
+                FC_WEIGHT_REGULAR
+            };
+            let slant = if role.italic() {
+                FC_SLANT_ITALIC
+            } else {
+                FC_SLANT_ROMAN
+            };
             name.push_str(&format!(":weight={weight}:slant={slant}"));
             if !lang.is_empty() {
                 name.push_str(&format!(":lang={}", escape(lang)));
@@ -1253,18 +1619,29 @@ pub(crate) mod fonts {
             if let Some(to_open_type) = fc.weight_to_open_type {
                 let mut weight = 0.0f64;
                 // Variable-font default patterns carry a weight range, which GetDouble rejects.
-                if unsafe { (fc.get_double)(pattern, c"weight".as_ptr(), 0, &mut weight) } == FC_RESULT_MATCH {
+                if unsafe { (fc.get_double)(pattern, c"weight".as_ptr(), 0, &mut weight) }
+                    == FC_RESULT_MATCH
+                {
                     variations.push((*b"wght", unsafe { to_open_type(weight) } as f32));
                 }
             }
             let mut width = 0.0f64;
-            if unsafe { (fc.get_double)(pattern, c"width".as_ptr(), 0, &mut width) } == FC_RESULT_MATCH {
+            if unsafe { (fc.get_double)(pattern, c"width".as_ptr(), 0, &mut width) }
+                == FC_RESULT_MATCH
+            {
                 variations.push((*b"wdth", width as f32));
             }
             let data: Arc<Vec<u8>> = self.files.read(&file)?;
             // The upper 16 bits select a named instance; its coordinates are the weight/width above.
             let face_index = (index as u32) & 0xffff;
-            finish_face(data, face_index, &variations, role, probe, format!("{file}#{face_index}"))
+            finish_face(
+                data,
+                face_index,
+                &variations,
+                role,
+                probe,
+                format!("{file}#{face_index}"),
+            )
         }
 
         fn matched(&mut self, family: &str, role: Role, exact: bool) -> Option<(FontFace, String)> {
@@ -1281,11 +1658,19 @@ pub(crate) mod fonts {
                 return None;
             }
             let face = self.load(found.1, role, LATIN_PROBE)?;
-            Some((face, names.into_iter().next().unwrap_or_else(|| family.to_owned())))
+            Some((
+                face,
+                names
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| family.to_owned()),
+            ))
         }
 
         fn os_family(&mut self) -> Option<String> {
-            self.os_family.get_or_insert_with(super::os_ui_family).clone()
+            self.os_family
+                .get_or_insert_with(super::os_ui_family)
+                .clone()
         }
     }
 
@@ -1305,11 +1690,19 @@ pub(crate) mod fonts {
             }
         }
 
-        fn hangul(&mut self, ui_family: Option<&str>, role: Role) -> Option<FontFace> {
-            let pattern = self.pattern(Some(ui_family.unwrap_or("sans-serif")), role, "ko")?;
+        fn fallback(
+            &mut self,
+            ui_family: Option<&str>,
+            role: Role,
+            probe: char,
+        ) -> Option<FontFace> {
+            let language = if probe == '한' { "ko" } else { &self.lang };
+            let pattern = self.pattern(Some(ui_family.unwrap_or("sans-serif")), role, language)?;
             let mut result: c_int = 0;
             // Untrimmed, so every face of a CJK collection stays in the list.
-            let set = unsafe { (self.fc.font_sort)(self.config, pattern.1, 0, std::ptr::null_mut(), &mut result) };
+            let set = unsafe {
+                (self.fc.font_sort)(self.config, pattern.1, 0, std::ptr::null_mut(), &mut result)
+            };
             if set.is_null() {
                 return None;
             }
@@ -1326,43 +1719,69 @@ pub(crate) mod fonts {
                 .into_iter()
                 .filter(|font| {
                     let mut charset: *mut c_void = std::ptr::null_mut();
-                    let has_charset = unsafe { (fc.get_charset)(*font, c"charset".as_ptr(), 0, &mut charset) } == FC_RESULT_MATCH;
-                    has_charset && !charset.is_null() && unsafe { (fc.charset_has_char)(charset, HANGUL_PROBE as u32) } != 0
+                    let has_charset =
+                        unsafe { (fc.get_charset)(*font, c"charset".as_ptr(), 0, &mut charset) }
+                            == FC_RESULT_MATCH;
+                    has_charset
+                        && !charset.is_null()
+                        && unsafe { (fc.charset_has_char)(charset, probe as u32) } != 0
                 })
-                .take(MAX_HANGUL_CANDIDATES)
                 .collect();
             // Every face of a CJK collection (Noto Sans CJK JP/KR/SC/…) claims `ko`,
             // and distro preferences often rank JP first; within the chosen file,
             // take its Korean regional face so Han characters use Korean forms.
-            let korean_sibling = covering.first().and_then(|first| {
-                let file = string_at(fc, *first, c"file", 0)?;
-                covering.iter().copied().find(|font| {
-                    string_at(fc, *font, c"file", 0).as_deref() == Some(file.as_str())
-                        && (0..).map_while(|n| string_at(fc, *font, c"family", n)).any(|family| is_korean_family(&family))
-                })
-            });
+            let korean_sibling = covering
+                .first()
+                .filter(|_| probe == '한')
+                .and_then(|first| {
+                    let file = string_at(fc, *first, c"file", 0)?;
+                    covering.iter().copied().find(|font| {
+                        string_at(fc, *font, c"file", 0).as_deref() == Some(file.as_str())
+                            && (0..)
+                                .map_while(|n| string_at(fc, *font, c"family", n))
+                                .any(|family| is_korean_family(&family))
+                    })
+                });
             let face = korean_sibling
                 .into_iter()
                 .chain(covering.iter().copied())
-                .find_map(|font| self.load(font, role, HANGUL_PROBE));
+                .find_map(|font| self.load(font, role, probe));
             unsafe { (self.fc.font_set_destroy)(set) };
             face
         }
     }
 
     /// fontconfig resolution: the desktop's font family (portal / kdeglobals),
-    /// else `system-ui`; Hangul from `<ui family>:lang=ko` sorted by fontconfig
-    /// and filtered by U+D55C coverage; mono by name or `monospace`.
+    /// else `system-ui`; missing glyphs filtered by fontconfig charset coverage.
     /// Without libfontconfig nothing resolves and the bundled chain stays.
-    pub(crate) fn system_fonts(request: &FontRequest) -> SystemFonts {
-        let Ok(fc) = &*FC else { return SystemFonts::default() };
+    fn backend(request: &FontRequest) -> Option<Fontconfig<'static>> {
+        let Ok(fc) = &*FC else { return None };
         let config = unsafe { (fc.init)() };
         if config.is_null() {
-            return SystemFonts::default();
+            return None;
         }
-        let lang = bcp47(&request.locale);
-        let mut backend = Fontconfig { fc, config, files: FileCache::default(), lang, os_family: None };
-        resolve(&mut backend, request)
+        Some(Fontconfig {
+            fc,
+            config,
+            files: FileCache::default(),
+            lang: bcp47(&request.locale),
+            os_family: None,
+        })
+    }
+
+    pub(crate) fn system_fonts(request: &FontRequest) -> SystemFonts {
+        backend(request)
+            .map(|mut backend| resolve(&mut backend, request))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn fallback_fonts(
+        request: &FontRequest,
+        probes: &[(Role, char)],
+    ) -> Vec<Option<FontFace>> {
+        backend(request)
+            .map(|mut backend| resolve_fallbacks(&mut backend, request, probes))
+            .unwrap_or_else(|| vec![None; probes.len()])
     }
 
     #[cfg(test)]
@@ -1390,25 +1809,44 @@ pub(crate) mod fonts {
                 eprintln!("skipped: libfontconfig.so.1 is not installed");
                 return;
             }
-            let fonts = crate::appearance::system_fonts(&FontRequest::from_css("", "monospace", "ko_KR.UTF-8"));
+            let fonts = crate::appearance::system_fonts(&FontRequest::from_css(
+                "",
+                "monospace",
+                "ko_KR.UTF-8",
+            ));
             let regular = fonts.ui.regular.as_ref().expect("a UI regular face");
-            eprintln!("ui {:?}: {} {:?}", fonts.ui_family_name, regular.source, regular.variations);
+            eprintln!(
+                "ui {:?}: {} {:?}",
+                fonts.ui_family_name, regular.source, regular.variations
+            );
             assert!(fonts.ui.semibold.is_some());
             // An explicit refresh must read the OS/files again, not reuse a
             // process-lifetime request cache after the desktop font changes.
-            let again = crate::appearance::system_fonts(&FontRequest::from_css("", "monospace", "ko_KR.UTF-8"));
+            let again = crate::appearance::system_fonts(&FontRequest::from_css(
+                "",
+                "monospace",
+                "ko_KR.UTF-8",
+            ));
             assert!(!Arc::ptr_eq(&again.ui.regular.unwrap().data, &regular.data));
             let Some(hangul) = fonts.hangul.regular.as_ref() else {
                 eprintln!("skipped Hangul: no font covering U+D55C is installed");
                 return;
             };
             eprintln!("hangul: {} {:?}", hangul.source, hangul.variations);
-            let parsed = makepad_widgets::makepad_draw::text::font_face::FontFace::from_data_and_index(hangul.data.clone(), hangul.index).unwrap();
-            assert!(parsed.as_ttf_parser_face().glyph_index(HANGUL_PROBE).is_some());
+            let parsed =
+                makepad_widgets::makepad_draw::text::font_face::FontFace::from_data_and_index(
+                    hangul.data.clone(),
+                    hangul.index,
+                )
+                .unwrap();
+            assert!(parsed.as_ttf_parser_face().glyph_index('한').is_some());
             if let Some(semibold) = &fonts.ui.semibold
                 && let Some((_, wght)) = semibold.variations.iter().find(|(tag, _)| tag == b"wght")
             {
-                assert!(*wght > 400.0, "semibold variable face uses a heavier wght, got {wght}");
+                assert!(
+                    *wght > 400.0,
+                    "semibold variable face uses a heavier wght, got {wght}"
+                );
             }
         }
 
@@ -1418,7 +1856,11 @@ pub(crate) mod fonts {
                 eprintln!("skipped: libfontconfig.so.1 is not installed");
                 return;
             }
-            let fonts = crate::appearance::system_fonts(&FontRequest::from_css("'No Such Family 7f3a'", "'No Such Mono 7f3a'", "en_US"));
+            let fonts = crate::appearance::system_fonts(&FontRequest::from_css(
+                "'No Such Family 7f3a'",
+                "'No Such Mono 7f3a'",
+                "en_US",
+            ));
             assert!(fonts.ui.regular.is_none());
             assert!(fonts.mono.is_none());
         }

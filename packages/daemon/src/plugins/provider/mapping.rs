@@ -163,13 +163,12 @@ pub(super) fn session_config(
 }
 
 pub(super) fn prompt_input(prompt: Value, commands: &[Value], steer: bool) -> Result<Value> {
-    if !steer
-        && let Some(text) = prompt.as_str().and_then(|text| text.strip_prefix('/')) {
-            let (name, arguments) = text.split_once(' ').unwrap_or((text, ""));
-            if commands.iter().any(|command| command["name"] == name) {
-                return Ok(json!({"type":"command","name":name,"arguments":arguments}));
-            }
+    if !steer && let Some(text) = prompt.as_str().and_then(|text| text.strip_prefix('/')) {
+        let (name, arguments) = text.split_once(' ').unwrap_or((text, ""));
+        if commands.iter().any(|command| command["name"] == name) {
+            return Ok(json!({"type":"command","name":name,"arguments":arguments}));
         }
+    }
     let mut content = match prompt {
         Value::String(text) => json!([{"type":"text","text":text}]),
         Value::Array(parts) => Value::Array(parts),
@@ -269,15 +268,16 @@ pub(super) fn timeline_item(
     let id = item["id"].as_str()?.to_owned();
     let kind = item["type"].as_str()?;
     if let Some(token) = item.get("revertToken")
-        && let Some(tokens) = tokens.as_mut() {
-            tokens.insert(id.clone(), token.clone());
-            if matches!(kind, "user_message" | "assistant_message") {
-                tokens.insert(
-                    item["messageId"].as_str().unwrap_or(&id).to_owned(),
-                    token.clone(),
-                );
-            }
+        && let Some(tokens) = tokens.as_mut()
+    {
+        tokens.insert(id.clone(), token.clone());
+        if matches!(kind, "user_message" | "assistant_message") {
+            tokens.insert(
+                item["messageId"].as_str().unwrap_or(&id).to_owned(),
+                token.clone(),
+            );
         }
+    }
     let previous = snapshots.insert(id.clone(), item.clone());
     let mut result = match kind {
         "assistant_message" | "reasoning" => {

@@ -41,13 +41,22 @@ fn persist(s: &mut Settings, env: &mut Env, id: &str, combo: Option<String>) {
 }
 
 fn binding(s: &Settings, id: &str) -> Option<Binding> {
-    s.shortcuts.bindings.as_ref()?.iter().find(|b| b.id == id).cloned()
+    s.shortcuts
+        .bindings
+        .as_ref()?
+        .iter()
+        .find(|b| b.id == id)
+        .cloned()
 }
 
 /// Panel hook: a key press while a row captures.
 pub fn on_key(s: &mut Settings, code: KeyCode, modifiers: KeyModifiers) -> bool {
-    let Some(id) = s.shortcuts.capturing.clone() else { return false };
-    let Some(binding) = binding(s, &id) else { return false };
+    let Some(id) = s.shortcuts.capturing.clone() else {
+        return false;
+    };
+    let Some(binding) = binding(s, &id) else {
+        return false;
+    };
     match shortcuts::capture_key(&binding, code, modifiers) {
         CaptureKey::Ignore => {}
         CaptureKey::RemoveLast => {
@@ -89,12 +98,27 @@ pub fn draw_shortcuts(ui: &mut Ui, s: &Settings, v: &View) {
         let trailing = (first && !overrides.is_empty()).then(|| {
             let reset = handler(|s, env| {
                 cancel_capture(s);
-                s.save_pref(env, "keyboardShortcuts", Some(Value::Object(Default::default())));
+                s.save_pref(
+                    env,
+                    "keyboardShortcuts",
+                    Some(Value::Object(Default::default())),
+                );
             });
-            button("shortcuts.resetAll", t("settings.shortcuts.actions.resetAll"), Some(reset)).variant(Variant::Ghost).size(BSize::Sm).ctl()
+            button(
+                "shortcuts.resetAll",
+                t("settings.shortcuts.actions.resetAll"),
+                Some(reset),
+            )
+            .variant(Variant::Ghost)
+            .size(BSize::Sm)
+            .ctl()
         });
         first = false;
-        ui.section_title(&t(&format!("settings.shortcuts.sections.{key}")), None, trailing);
+        ui.section_title(
+            &t(&format!("settings.shortcuts.sections.{key}")),
+            None,
+            trailing,
+        );
         ui.card_begin();
         for binding in rows {
             ui.card_row_separator();
@@ -105,18 +129,47 @@ pub fn draw_shortcuts(ui: &mut Ui, s: &Settings, v: &View) {
             let complete = shortcuts::capture_complete(binding, &s.shortcuts.steps);
             let keys: Ctl = if capturing {
                 if s.shortcuts.steps.is_empty() {
-                    Ctl::Label { text: t("settings.shortcuts.capturePrompt"), color: pal.muted, size: 14.0, font: Font::Regular, max_w: 220.0 }
+                    Ctl::Label {
+                        text: t("settings.shortcuts.capturePrompt"),
+                        color: pal.muted,
+                        size: 14.0,
+                        font: Font::Regular,
+                        max_w: 220.0,
+                    }
                 } else {
-                    Ctl::Keys(s.shortcuts.steps.iter().map(|step| shortcuts::format_step(step)).collect())
+                    Ctl::Keys(
+                        s.shortcuts
+                            .steps
+                            .iter()
+                            .map(|step| shortcuts::format_step(step))
+                            .collect(),
+                    )
                 }
             } else if combo.is_empty() {
-                Ctl::Label { text: t("settings.shortcuts.unassigned"), color: pal.muted, size: 14.0, font: Font::Regular, max_w: 220.0 }
+                Ctl::Label {
+                    text: t("settings.shortcuts.unassigned"),
+                    color: pal.muted,
+                    size: 14.0,
+                    font: Font::Regular,
+                    max_w: 220.0,
+                }
             } else {
-                Ctl::Keys(shortcuts::combo_steps(&combo).iter().map(|step| shortcuts::format_step(step)).collect())
+                Ctl::Keys(
+                    shortcuts::combo_steps(&combo)
+                        .iter()
+                        .map(|step| shortcuts::format_step(step))
+                        .collect(),
+                )
             };
             let mut key_col = vec![keys];
             if capturing && !s.shortcuts.steps.is_empty() && !complete {
-                key_col.push(Ctl::Label { text: t("settings.shortcuts.captureIndexPrompt"), color: pal.muted, size: 14.0, font: Font::Regular, max_w: 220.0 });
+                key_col.push(Ctl::Label {
+                    text: t("settings.shortcuts.captureIndexPrompt"),
+                    color: pal.muted,
+                    size: 14.0,
+                    font: Font::Regular,
+                    max_w: 220.0,
+                });
             }
             let mut actions: Vec<Ctl> = Vec::new();
             let id = binding.id.clone();
@@ -130,36 +183,83 @@ pub fn draw_shortcuts(ui: &mut Ui, s: &Settings, v: &View) {
                             persist(s, env, &save_id, Some(combo));
                         })
                     });
-                    actions.push(button(format!("shortcut.{id}.done"), t("settings.shortcuts.actions.done"), done).variant(Variant::Ghost).ctl());
+                    actions.push(
+                        button(
+                            format!("shortcut.{id}.done"),
+                            t("settings.shortcuts.actions.done"),
+                            done,
+                        )
+                        .variant(Variant::Ghost)
+                        .ctl(),
+                    );
                 }
-                actions.push(button(format!("shortcut.{id}.cancel"), t("settings.shortcuts.actions.cancel"), Some(handler(|s, _| cancel_capture(s)))).variant(Variant::Ghost).ctl());
+                actions.push(
+                    button(
+                        format!("shortcut.{id}.cancel"),
+                        t("settings.shortcuts.actions.cancel"),
+                        Some(handler(|s, _| cancel_capture(s))),
+                    )
+                    .variant(Variant::Ghost)
+                    .ctl(),
+                );
             } else {
                 let has_default = !binding.combo.is_empty();
                 let label = name.clone();
                 let empty_combo = combo.is_empty();
                 let menu = handler(move |s, _| {
                     let bind_id = id.clone();
-                    let mut items = vec![item(
-                        t(if empty_combo { "settings.shortcuts.actions.bind" } else { "settings.shortcuts.actions.rebind" }),
-                        handler(move |s, _| {
-                            s.shortcuts.capturing = Some(bind_id.clone());
-                            s.shortcuts.steps.clear();
-                            s.shortcuts.want_focus = true;
-                        }),
-                    )
-                    .lead(Lead::Icon(Icon::Pencil, None))];
+                    let mut items = vec![
+                        item(
+                            t(if empty_combo {
+                                "settings.shortcuts.actions.bind"
+                            } else {
+                                "settings.shortcuts.actions.rebind"
+                            }),
+                            handler(move |s, _| {
+                                s.shortcuts.capturing = Some(bind_id.clone());
+                                s.shortcuts.steps.clear();
+                                s.shortcuts.want_focus = true;
+                            }),
+                        )
+                        .lead(Lead::Icon(Icon::Pencil, None)),
+                    ];
                     if !empty_combo {
                         let clear_id = id.clone();
-                        items.push(item(t("settings.shortcuts.actions.clear"), handler(move |s, env| persist(s, env, &clear_id, Some(String::new())))).lead(Lead::Icon(Icon::X, None)));
+                        items.push(
+                            item(
+                                t("settings.shortcuts.actions.clear"),
+                                handler(move |s, env| {
+                                    persist(s, env, &clear_id, Some(String::new()))
+                                }),
+                            )
+                            .lead(Lead::Icon(Icon::X, None)),
+                        );
                     }
                     if has_override && has_default {
                         let reset_id = id.clone();
-                        items.push(item(t("settings.shortcuts.actions.reset"), handler(move |s, env| persist(s, env, &reset_id, None))).lead(Lead::Icon(Icon::Undo, None)));
+                        items.push(
+                            item(
+                                t("settings.shortcuts.actions.reset"),
+                                handler(move |s, env| persist(s, env, &reset_id, None)),
+                            )
+                            .lead(Lead::Icon(Icon::Undo, None)),
+                        );
                     }
-                    let menu = Menu::new(s, ta("settings.shortcuts.actions.menu", &[("name", &label)]), items);
+                    let menu = Menu::new(
+                        s,
+                        ta("settings.shortcuts.actions.menu", &[("name", &label)]),
+                        items,
+                    );
                     s.open_menu(menu);
                 });
-                actions.push(Ctl::IconButton { key: format!("shortcut.{}.menu", binding.id), icon: Icon::MoreHorizontal, act: Some(menu), destructive: false, size: 32.0, tip: None });
+                actions.push(Ctl::IconButton {
+                    key: format!("shortcut.{}.menu", binding.id),
+                    icon: Icon::MoreHorizontal,
+                    act: Some(menu),
+                    destructive: false,
+                    size: 32.0,
+                    tip: None,
+                });
             }
             // Row: label | keys (end-aligned) | actions, 12px padding.
             let key_ctl = Ctl::Col(key_col, 2.0, true);
@@ -171,12 +271,30 @@ pub fn draw_shortcuts(ui: &mut Ui, s: &Settings, v: &View) {
             let h = label_size.y.max(key_size.y).max(action_size.y) + 24.0;
             let (x, y, w) = (ui.x, ui.y, ui.w);
             if capturing {
-                ui.rect(Rect { pos: dvec2(x, y), size: dvec2(w, h) }, pal.surface2, None, 0.0);
+                ui.rect(
+                    Rect {
+                        pos: dvec2(x, y),
+                        size: dvec2(w, h),
+                    },
+                    pal.surface2,
+                    None,
+                    0.0,
+                );
             }
-            ui.text(Font::Regular, 14.0, pal.foreground, dvec2(x + 12.0, y + (h - label_size.y) / 2.0), Some(label_w), &name);
+            ui.text(
+                Font::Regular,
+                14.0,
+                pal.foreground,
+                dvec2(x + 12.0, y + (h - label_size.y) / 2.0),
+                Some(label_w),
+                &name,
+            );
             let ax = x + w - 12.0 - action_size.x;
             ui.draw_ctl(action_ctl, dvec2(ax, y + (h - action_size.y) / 2.0));
-            ui.draw_ctl(key_ctl, dvec2(ax - 8.0 - key_size.x, y + (h - key_size.y) / 2.0));
+            ui.draw_ctl(
+                key_ctl,
+                dvec2(ax - 8.0 - key_size.x, y + (h - key_size.y) / 2.0),
+            );
             ui.y += h;
         }
         ui.card_end();

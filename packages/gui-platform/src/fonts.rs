@@ -1,5 +1,5 @@
-//! OS font discovery: resolves the OS UI font, the OS Hangul font and a user
-//! family list to validated sfnt bytes the Makepad text engine can load.
+//! OS font discovery: resolves UI/monospace preferences and missing glyphs to
+//! validated sfnt bytes the Makepad text engine can load off the UI thread.
 //!
 //! Backends: fontconfig + XDG portal (Linux), DirectWrite (Windows), CoreText
 //! (macOS, iOS) and `AFontMatcher` / `fonts.xml` (Android). Every face returned
@@ -7,10 +7,7 @@
 //! and maps the role's probe character, so defining it can never panic.
 
 use makepad_widgets::makepad_draw::text::font_face::FontFace as ParsedFace;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 /// What to resolve. Families are unquoted, in CSS order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -24,7 +21,11 @@ pub struct FontRequest {
 impl FontRequest {
     /// Builds a request from the CSS-like preference values (empty = default).
     pub fn from_css(ui: &str, mono: &str, locale: &str) -> Self {
-        Self { ui_families: parse_family_list(ui), mono_families: parse_family_list(mono), locale: locale.to_owned() }
+        Self {
+            ui_families: parse_family_list(ui),
+            mono_families: parse_family_list(mono),
+            locale: locale.to_owned(),
+        }
     }
 }
 
@@ -59,7 +60,10 @@ pub struct SystemFonts {
 /// Blocking (fontconfig/DirectWrite/CoreText/AFontMatcher); call off the UI thread.
 /// Each call reads current OS settings; the GUI deduplicates unchanged requests.
 pub fn system_fonts(request: &FontRequest) -> SystemFonts {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend::system_fonts(request))).unwrap_or_default()
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        backend::system_fonts(request)
+    }))
+    .unwrap_or_default()
 }
 
 /// Splits a CSS `font-family` list: `'Pretendard', system-ui, "Noto Sans"`.
@@ -70,7 +74,11 @@ pub fn parse_family_list(css: &str) -> Vec<String> {
     let mut quote: Option<char> = None;
     let mut quoted = false;
     let mut flush = |current: &mut String, quoted: &mut bool| {
-        let name = if *quoted { current.trim().to_owned() } else { current.split_whitespace().collect::<Vec<_>>().join(" ") };
+        let name = if *quoted {
+            current.trim().to_owned()
+        } else {
+            current.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
         if !name.is_empty() {
             families.push(name);
         }
@@ -95,7 +103,7 @@ pub fn parse_family_list(css: &str) -> Vec<String> {
 
 /// A requested role: weight and slant. Semibold is the app's "bold".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Role {
+pub enum Role {
     Regular,
     Semibold,
     Italic,
@@ -116,8 +124,6 @@ impl Role {
     }
 }
 
-/// Hangul probe: 한.
-pub(crate) const HANGUL_PROBE: char = '\u{D55C}';
 /// Latin probe for UI and mono faces.
 pub(crate) const LATIN_PROBE: char = 'A';
 
@@ -134,7 +140,13 @@ pub(crate) enum Family<'a> {
 
 impl<'a> Family<'a> {
     pub(crate) fn classify(name: &'a str) -> Self {
-        const UI: [&str; 5] = ["system-ui", "sans-serif", "-apple-system", "blinkmacsystemfont", "ui-sans-serif"];
+        const UI: [&str; 5] = [
+            "system-ui",
+            "sans-serif",
+            "-apple-system",
+            "blinkmacsystemfont",
+            "ui-sans-serif",
+        ];
         const MONO: [&str; 2] = ["monospace", "ui-monospace"];
         let lower = name.to_ascii_lowercase();
         if UI.contains(&lower.as_str()) {
@@ -152,20 +164,26 @@ pub(crate) trait Backend {
     /// The face for `family` at `role`, with the family name the OS reports.
     /// `None` when the family is not installed (no substitution).
     fn face(&mut self, family: Family<'_>, role: Role) -> Option<(FontFace, String)>;
-    /// The OS Hangul face for `role`, preferring one that pairs with `ui_family`.
-    fn hangul(&mut self, ui_family: Option<&str>, role: Role) -> Option<FontFace>;
+    /// An OS fallback covering `probe` at `role`, paired with `ui_family`.
+    fn fallback(&mut self, ui_family: Option<&str>, role: Role, probe: char) -> Option<FontFace>;
 }
 
 /// The shared resolution order: the first UI family that resolves (empty list =
-/// the OS UI font), the OS Hangul font, and the first mono family that resolves
-/// (empty list = none, so the bundled code font stays).
+/// the OS UI font), the OS Hangul font, and the first mono family that resolves.
+/// Other missing glyphs are discovered lazily through `fallback_fonts`.
 pub(crate) fn resolve(backend: &mut dyn Backend, request: &FontRequest) -> SystemFonts {
     let mut fonts = SystemFonts::default();
     let system_ui = ["system-ui".to_owned()];
-    let ui_families: &[String] = if request.ui_families.is_empty() { &system_ui } else { &request.ui_families };
+    let ui_families: &[String] = if request.ui_families.is_empty() {
+        &system_ui
+    } else {
+        &request.ui_families
+    };
     for name in ui_families {
         let family = Family::classify(name);
-        let Some((regular, family_name)) = backend.face(family, Role::Regular) else { continue };
+        let Some((regular, family_name)) = backend.face(family, Role::Regular) else {
+            continue;
+        };
         fonts.ui.regular = Some(regular);
         fonts.ui.semibold = backend.face(family, Role::Semibold).map(|(face, _)| face);
         fonts.ui.italic = backend.face(family, Role::Italic).map(|(face, _)| face);
@@ -175,10 +193,10 @@ pub(crate) fn resolve(backend: &mut dyn Backend, request: &FontRequest) -> Syste
     }
     let ui_family = fonts.ui_family_name.clone();
     fonts.hangul = RoleSet {
-        regular: backend.hangul(ui_family.as_deref(), Role::Regular),
-        semibold: backend.hangul(ui_family.as_deref(), Role::Semibold),
-        italic: backend.hangul(ui_family.as_deref(), Role::Italic),
-        bold_italic: backend.hangul(ui_family.as_deref(), Role::BoldItalic),
+        regular: backend.fallback(ui_family.as_deref(), Role::Regular, '한'),
+        semibold: backend.fallback(ui_family.as_deref(), Role::Semibold, '한'),
+        italic: backend.fallback(ui_family.as_deref(), Role::Italic, '한'),
+        bold_italic: backend.fallback(ui_family.as_deref(), Role::BoldItalic, '한'),
     };
     for name in &request.mono_families {
         if let Some((face, family_name)) = backend.face(Family::classify(name), Role::Regular) {
@@ -188,6 +206,43 @@ pub(crate) fn resolve(backend: &mut dyn Backend, request: &FontRequest) -> Syste
         }
     }
     fonts
+}
+
+/// Resolves only requested missing glyphs. Call on a worker, never during draw.
+/// Results retain input order; `None` means no eligible installed face resolved.
+pub fn fallback_fonts(request: &FontRequest, probes: &[(Role, char)]) -> Vec<Option<FontFace>> {
+    backend::fallback_fonts(request, probes)
+}
+
+pub(crate) fn resolve_fallbacks(
+    backend: &mut dyn Backend,
+    request: &FontRequest,
+    probes: &[(Role, char)],
+) -> Vec<Option<FontFace>> {
+    let family = request.ui_families.first().map(String::as_str);
+    let mut loaded: Vec<(Role, FontFace, ParsedFace)> = Vec::new();
+    probes
+        .iter()
+        .map(|&(role, probe)| {
+            if let Some((_, face, _)) = loaded.iter().find(|(style, _, parsed)| {
+                *style == role
+                    && parsed
+                        .as_ttf_parser_face()
+                        .glyph_index(probe)
+                        .is_some_and(|glyph| glyph.0 != 0)
+            }) {
+                return Some(face.clone());
+            }
+            let face = backend.fallback(family, role, probe)?;
+            let parsed = ParsedFace::from_data_index_and_variations(
+                face.data.clone(),
+                face.index,
+                &face.variations,
+            )?;
+            loaded.push((role, face.clone(), parsed));
+            Some(face)
+        })
+        .collect()
 }
 
 /// Validates a face and completes its variation coordinates.
@@ -217,34 +272,71 @@ pub(crate) fn finish_face(
     let mut variations = Vec::new();
     for axis in face.variation_axes() {
         let tag = axis.tag.0.to_be_bytes();
-        let wanted = supplied.iter().find(|(supplied_tag, value)| *supplied_tag == tag && value.is_finite()).map(|(_, value)| *value);
+        let wanted = supplied
+            .iter()
+            .find(|(supplied_tag, value)| *supplied_tag == tag && value.is_finite())
+            .map(|(_, value)| *value);
         let value = match (wanted, &tag) {
             (Some(value), _) => value,
             (None, b"wght") => f32::from(role.weight()),
             (None, b"ital") if role.italic() => 1.0,
             _ => continue,
         };
-        let (low, high) = (axis.min_value.min(axis.max_value), axis.max_value.max(axis.min_value));
+        let (low, high) = (
+            axis.min_value.min(axis.max_value),
+            axis.max_value.max(axis.min_value),
+        );
         variations.push((tag, value.clamp(low, high)));
     }
-    Some(FontFace { data, index, variations, source })
+    Some(FontFace {
+        data,
+        index,
+        variations,
+        source,
+    })
 }
 
-/// Reads font files once per resolution; roles sharing a file share its bytes.
+/// Shares file bytes within one resolution, with a bounded working-set cache.
 #[derive(Default)]
-#[cfg_attr(not(any(target_os = "linux", windows, target_os = "android")), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", windows, target_os = "android")),
+    allow(dead_code)
+)]
 pub(crate) struct FileCache(HashMap<String, Option<Arc<Vec<u8>>>>);
 
-#[cfg_attr(not(any(target_os = "linux", windows, target_os = "android")), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", windows, target_os = "android")),
+    allow(dead_code)
+)]
 impl FileCache {
     pub(crate) fn read(&mut self, path: &str) -> Option<Arc<Vec<u8>>> {
-        self.0.entry(path.to_owned()).or_insert_with(|| std::fs::read(path).ok().map(Arc::new)).clone()
+        if let Some(data) = self.0.get(path) {
+            return data.clone();
+        }
+        let data = std::fs::read(path).ok().map(Arc::new);
+        let bytes: usize = self.0.values().flatten().map(|data| data.len()).sum();
+        if self.0.len() >= 128
+            || bytes.saturating_add(data.as_ref().map_or(0, |data| data.len())) > 64 * 1024 * 1024
+        {
+            self.0.clear();
+        }
+        if data
+            .as_ref()
+            .is_some_and(|data| data.len() > 64 * 1024 * 1024)
+        {
+            return data;
+        }
+        self.0.insert(path.to_owned(), data.clone());
+        data
     }
 }
 
 /// Rebuilds an sfnt from its tables (CoreText exposes tables, not files).
 /// Tables are written in tag order, 4-byte aligned, with checksums.
-#[cfg_attr(not(any(target_os = "macos", target_os = "ios", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "ios", test)),
+    allow(dead_code)
+)]
 pub(crate) fn build_sfnt(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     fn checksum(bytes: &[u8]) -> u32 {
         bytes.chunks(4).fold(0u32, |sum, chunk| {
@@ -256,12 +348,29 @@ pub(crate) fn build_sfnt(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     let mut sorted: Vec<&([u8; 4], Vec<u8>)> = tables.iter().collect();
     sorted.sort_by_key(|(tag, _)| *tag);
     let count = sorted.len() as u16;
-    let version: u32 = if sorted.iter().any(|(tag, _)| tag == b"CFF " || tag == b"CFF2") { 0x4F54_544F } else { 0x0001_0000 };
-    let entry_selector = if count == 0 { 0 } else { 15 - count.leading_zeros() as u16 };
-    let search_range = if count == 0 { 0 } else { (1u16 << entry_selector).wrapping_mul(16) };
+    let version: u32 = if sorted
+        .iter()
+        .any(|(tag, _)| tag == b"CFF " || tag == b"CFF2")
+    {
+        0x4F54_544F
+    } else {
+        0x0001_0000
+    };
+    let entry_selector = if count == 0 {
+        0
+    } else {
+        15 - count.leading_zeros() as u16
+    };
+    let search_range = if count == 0 {
+        0
+    } else {
+        (1u16 << entry_selector).wrapping_mul(16)
+    };
     let range_shift = count.wrapping_mul(16).wrapping_sub(search_range);
     let directory = 12 + 16 * sorted.len();
-    let mut out = Vec::with_capacity(directory + sorted.iter().map(|(_, data)| data.len() + 3).sum::<usize>());
+    let mut out = Vec::with_capacity(
+        directory + sorted.iter().map(|(_, data)| data.len() + 3).sum::<usize>(),
+    );
     out.extend_from_slice(&version.to_be_bytes());
     for value in [count, search_range, entry_selector, range_shift] {
         out.extend_from_slice(&value.to_be_bytes());
@@ -298,21 +407,60 @@ pub(crate) fn build_sfnt(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
 #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 pub(crate) fn pango_family(description: &str) -> Option<String> {
     const STYLE_WORDS: [&str; 30] = [
-        "normal", "roman", "oblique", "italic", "small-caps", "thin", "ultra-light", "extra-light", "light", "semi-light",
-        "demi-light", "book", "regular", "medium", "semi-bold", "demi-bold", "bold", "ultra-bold", "extra-bold", "heavy",
-        "black", "ultra-heavy", "extra-heavy", "ultra-condensed", "extra-condensed", "condensed", "semi-condensed",
-        "semi-expanded", "expanded", "extra-expanded",
+        "normal",
+        "roman",
+        "oblique",
+        "italic",
+        "small-caps",
+        "thin",
+        "ultra-light",
+        "extra-light",
+        "light",
+        "semi-light",
+        "demi-light",
+        "book",
+        "regular",
+        "medium",
+        "semi-bold",
+        "demi-bold",
+        "bold",
+        "ultra-bold",
+        "extra-bold",
+        "heavy",
+        "black",
+        "ultra-heavy",
+        "extra-heavy",
+        "ultra-condensed",
+        "extra-condensed",
+        "condensed",
+        "semi-condensed",
+        "semi-expanded",
+        "expanded",
+        "extra-expanded",
     ];
     // Families may be listed before the style: "Cantarell,Noto Sans 11".
     let mut words: Vec<&str> = description.split_whitespace().collect();
-    if words.last().is_some_and(|size| size.trim_end_matches("px").parse::<f64>().is_ok()) {
+    if words
+        .last()
+        .is_some_and(|size| size.trim_end_matches("px").parse::<f64>().is_ok())
+    {
         words.pop();
     }
-    while words.len() > 1 && words.last().is_some_and(|word| STYLE_WORDS.contains(&word.to_ascii_lowercase().as_str())) {
+    while words.len() > 1
+        && words
+            .last()
+            .is_some_and(|word| STYLE_WORDS.contains(&word.to_ascii_lowercase().as_str()))
+    {
         words.pop();
     }
     let joined = words.join(" ");
-    let family = joined.split(',').next().unwrap_or("").trim().trim_matches(['"', '\'']).trim();
+    let family = joined
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(['"', '\''])
+        .trim();
     (!family.is_empty()).then(|| family.to_owned())
 }
 
@@ -324,21 +472,34 @@ pub(crate) fn qt_family(description: &str) -> Option<String> {
 }
 
 /// `ko_KR.UTF-8` → `ko-KR`; empty stays empty.
-#[cfg_attr(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        test
+    )),
+    allow(dead_code)
+)]
 pub(crate) fn bcp47(locale: &str) -> String {
     let base = locale.split(['.', '@']).next().unwrap_or("");
-    let base = if base == "C" || base == "POSIX" { "" } else { base };
+    let base = if base == "C" || base == "POSIX" {
+        ""
+    } else {
+        base
+    };
     base.replace('_', "-")
 }
 
+#[cfg(target_os = "android")]
+use crate::android::native::fonts as backend;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use crate::apple_fonts as backend;
 #[cfg(target_os = "linux")]
 use crate::desktop::linux::fonts as backend;
 #[cfg(windows)]
 use crate::desktop::windows::fonts as backend;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use crate::apple_fonts as backend;
-#[cfg(target_os = "android")]
-use crate::android::native::fonts as backend;
 
 #[cfg(test)]
 mod tests {
@@ -347,8 +508,16 @@ mod tests {
     #[test]
     fn css_family_list_unquotes_and_orders() {
         assert_eq!(
-            parse_family_list(r#"'Pretendard',  system-ui , "Noto  Sans KR", Apple   SD Gothic Neo,,sans-serif"#),
-            ["Pretendard", "system-ui", "Noto  Sans KR", "Apple SD Gothic Neo", "sans-serif"]
+            parse_family_list(
+                r#"'Pretendard',  system-ui , "Noto  Sans KR", Apple   SD Gothic Neo,,sans-serif"#
+            ),
+            [
+                "Pretendard",
+                "system-ui",
+                "Noto  Sans KR",
+                "Apple SD Gothic Neo",
+                "sans-serif"
+            ]
         );
         assert_eq!(parse_family_list("  "), Vec::<String>::new());
         assert_eq!(parse_family_list("'A, B', C"), ["A, B", "C"]);
@@ -369,14 +538,29 @@ mod tests {
 
     #[test]
     fn pango_and_qt_descriptions_yield_family() {
-        assert_eq!(pango_family("Ubuntu Sans 11").as_deref(), Some("Ubuntu Sans"));
-        assert_eq!(pango_family("Cantarell Bold Italic 10.5").as_deref(), Some("Cantarell"));
-        assert_eq!(pango_family("Noto Sans CJK KR Medium 12").as_deref(), Some("Noto Sans CJK KR"));
+        assert_eq!(
+            pango_family("Ubuntu Sans 11").as_deref(),
+            Some("Ubuntu Sans")
+        );
+        assert_eq!(
+            pango_family("Cantarell Bold Italic 10.5").as_deref(),
+            Some("Cantarell")
+        );
+        assert_eq!(
+            pango_family("Noto Sans CJK KR Medium 12").as_deref(),
+            Some("Noto Sans CJK KR")
+        );
         assert_eq!(pango_family("Inter,Noto Sans 11").as_deref(), Some("Inter"));
         assert_eq!(pango_family("Bold"), Some("Bold".into()));
         assert_eq!(pango_family("  "), None);
-        assert_eq!(qt_family("Noto Sans,10,-1,5,50,0,0,0,0,0").as_deref(), Some("Noto Sans"));
-        assert_eq!(qt_family("Inter,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1,Regular").as_deref(), Some("Inter"));
+        assert_eq!(
+            qt_family("Noto Sans,10,-1,5,50,0,0,0,0,0").as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(
+            qt_family("Inter,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1,Regular").as_deref(),
+            Some("Inter")
+        );
         assert_eq!(qt_family(""), None);
     }
 
@@ -390,12 +574,44 @@ mod tests {
 
     #[test]
     fn validation_rejects_non_sfnt_bytes() {
-        let garbage = Arc::new(b"not a font, just some bytes that are long enough to look like a header".to_vec());
-        assert!(finish_face(garbage, 0, &[], Role::Regular, LATIN_PROBE, "garbage".into()).is_none());
-        assert!(finish_face(Arc::new(Vec::new()), 0, &[], Role::Regular, LATIN_PROBE, "empty".into()).is_none());
+        let garbage = Arc::new(
+            b"not a font, just some bytes that are long enough to look like a header".to_vec(),
+        );
+        assert!(
+            finish_face(
+                garbage,
+                0,
+                &[],
+                Role::Regular,
+                LATIN_PROBE,
+                "garbage".into()
+            )
+            .is_none()
+        );
+        assert!(
+            finish_face(
+                Arc::new(Vec::new()),
+                0,
+                &[],
+                Role::Regular,
+                LATIN_PROBE,
+                "empty".into()
+            )
+            .is_none()
+        );
         // A syntactically valid sfnt with no tables has no outlines and no cmap.
         let empty_sfnt = Arc::new(build_sfnt(&[]));
-        assert!(finish_face(empty_sfnt, 0, &[], Role::Regular, LATIN_PROBE, "empty sfnt".into()).is_none());
+        assert!(
+            finish_face(
+                empty_sfnt,
+                0,
+                &[],
+                Role::Regular,
+                LATIN_PROBE,
+                "empty sfnt".into()
+            )
+            .is_none()
+        );
     }
 
     /// Splits an sfnt into its tables (test-only reader for `build_sfnt`).
@@ -437,7 +653,14 @@ mod tests {
             let recorded = u32::from_be_bytes(rebuilt[at..at + 4].try_into().unwrap());
             assert_eq!(recorded, checksum(&data), "{tag:?}");
         }
-        let face = finish_face(Arc::new(rebuilt), 0, &[(*b"wght", 700.0)], Role::Regular, LATIN_PROBE, "rebuilt".into());
+        let face = finish_face(
+            Arc::new(rebuilt),
+            0,
+            &[(*b"wght", 700.0)],
+            Role::Regular,
+            LATIN_PROBE,
+            "rebuilt".into(),
+        );
         let face = face.expect("rebuilt sfnt validates");
         assert!(face.variations.is_empty(), "static font has no axes");
     }

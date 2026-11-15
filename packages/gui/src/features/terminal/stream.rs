@@ -8,7 +8,7 @@
 //! last one, and output is written as it arrives (the owner coalesces publishing).
 
 use paseo_gui_core::{CoreEvent, CoreHandle};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::screen::Screen;
 use super::snapshot::render_terminal_snapshot;
@@ -45,7 +45,12 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub fn new(host_id: &str, terminal_id: &str, scrollback: usize, text: &'static StreamText) -> Result<Self, String> {
+    pub fn new(
+        host_id: &str,
+        terminal_id: &str,
+        scrollback: usize,
+        text: &'static StreamText,
+    ) -> Result<Self, String> {
         Ok(Self {
             host_id: host_id.to_owned(),
             terminal_id: terminal_id.to_owned(),
@@ -66,7 +71,11 @@ impl Stream {
 
     /// `ExecutionLogSession.connected`: frames are flowing.
     pub fn live(&self, host_connected: bool) -> bool {
-        host_connected && self.slot.is_some() && !self.attaching && !self.exited && self.error.is_none()
+        host_connected
+            && self.slot.is_some()
+            && !self.attaching
+            && !self.exited
+            && self.error.is_none()
     }
 
     pub fn line_count(&self) -> usize {
@@ -109,7 +118,12 @@ impl Stream {
     }
 
     pub fn attach(&mut self, core: &CoreHandle, host_connected: bool) {
-        if !self.visible || self.exited || self.attaching || self.observation.is_some() || !host_connected {
+        if !self.visible
+            || self.exited
+            || self.attaching
+            || self.observation.is_some()
+            || !host_connected
+        {
             return;
         }
         self.attaching = true;
@@ -210,7 +224,11 @@ impl Stream {
             }
             ObsEvent::RestoreFailed(error) => {
                 self.slot = None;
-                let message = if error.is_empty() { (self.text.restore_failed)() } else { error };
+                let message = if error.is_empty() {
+                    (self.text.restore_failed)()
+                } else {
+                    error
+                };
                 self.fail(message);
                 true
             }
@@ -232,7 +250,11 @@ impl Stream {
         if str_of(body, "terminalId") != self.terminal_id {
             return false;
         }
-        if let (Some(own), Some(other)) = (&self.subscription_id, body.get("subscriptionId").and_then(Value::as_str)) && own != other {
+        if let (Some(own), Some(other)) = (
+            &self.subscription_id,
+            body.get("subscriptionId").and_then(Value::as_str),
+        ) && own != other
+        {
             return false;
         }
         match body.get("error").filter(|e| !e.is_null()) {
@@ -264,7 +286,10 @@ impl Stream {
             return;
         }
         self.slot = Some(slot as u8);
-        self.subscription_id = body.get("subscriptionId").and_then(Value::as_str).map(str::to_owned);
+        self.subscription_id = body
+            .get("subscriptionId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         self.attaching = false;
         self.error = None;
         self.attached = true;
@@ -286,7 +311,11 @@ impl Stream {
             // Snapshot: a JSON cell grid with authoritative dimensions.
             "snapshot" => match frame.get("snapshot") {
                 Some(state) if state.is_object() => {
-                    let size = |key| u16::try_from(int_of(state, key).clamp(0, i64::from(u16::MAX))).ok().filter(|v| *v > 0);
+                    let size = |key| {
+                        u16::try_from(int_of(state, key).clamp(0, i64::from(u16::MAX)))
+                            .ok()
+                            .filter(|v| *v > 0)
+                    };
                     let size = size("rows").zip(size("cols"));
                     let text = render_terminal_snapshot(state);
                     let title = str_of(state, "title").to_owned();
@@ -342,7 +371,9 @@ impl Stream {
         if data.is_empty() || self.exited || !self.visible {
             return;
         }
-        let Some(subscription) = self.subscription_id.as_deref() else { return };
+        let Some(subscription) = self.subscription_id.as_deref() else {
+            return;
+        };
         core.terminal_input(&self.host_id, subscription, data);
     }
 
@@ -373,7 +404,11 @@ fn value_message(value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Object(_) => {
             let message = str_of(value, "message");
-            if message.is_empty() { str_of(value, "code").to_owned() } else { message.to_owned() }
+            if message.is_empty() {
+                str_of(value, "code").to_owned()
+            } else {
+                message.to_owned()
+            }
         }
         other => other.to_string(),
     }
@@ -402,12 +437,16 @@ mod tests {
         stream.receive(ObsEvent::Event(json!({"type": "terminal_stream_exit", "payload": {"terminalId": "t", "error": "gone"}})));
         assert!(!stream.exited);
         assert_eq!(stream.error.as_deref(), Some("gone"));
-        stream.receive(ObsEvent::Event(json!({"type": "terminal_stream_exit", "payload": {"terminalId": "t", "exitCode": 2}})));
+        stream.receive(ObsEvent::Event(
+            json!({"type": "terminal_stream_exit", "payload": {"terminalId": "t", "exitCode": 2}}),
+        ));
         assert!(stream.exited);
         assert_eq!(stream.exit_code, Some(2));
         // Older daemons send no code.
         let mut stream = self::stream();
-        stream.receive(ObsEvent::Event(json!({"type": "terminal_stream_exit", "payload": {"terminalId": "t"}})));
+        stream.receive(ObsEvent::Event(
+            json!({"type": "terminal_stream_exit", "payload": {"terminalId": "t"}}),
+        ));
         assert!(stream.exited);
         assert_eq!(stream.exit_code, None);
     }
@@ -444,19 +483,32 @@ mod tests {
     fn batched_final_output_precedes_stream_exit() {
         use paseo_gui_core::{CoreConfig, GuiCore};
         use std::sync::Arc;
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("paseo-terminal-order-{}-{unique}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "paseo-terminal-order-{}-{unique}",
+            std::process::id()
+        ));
         let core = GuiCore::start(
-            CoreConfig { state_dir: dir.join("state"), daemon_home: Some(dir.join("daemon")), default_endpoint: None },
+            CoreConfig {
+                state_dir: dir.join("state"),
+                daemon_home: Some(dir.join("daemon")),
+                default_endpoint: None,
+                tailnet_key_store: None,
+            },
             Arc::new(|| {}),
-        ).unwrap();
+        )
+        .unwrap();
         let handle = core.handle();
         let mut stream = stream();
         stream.attach(&handle, true);
         let request_id = stream.observation.as_ref().unwrap().id.clone();
         let events = [
             CoreEvent::Response {
-                host_id: "h".into(), request_id: request_id.clone(),
+                host_id: "h".into(),
+                request_id: request_id.clone(),
                 result: Ok(json!({"terminalId":"t","slot":3,"subscriptionId":"sub"})),
             },
             CoreEvent::HostEvent {

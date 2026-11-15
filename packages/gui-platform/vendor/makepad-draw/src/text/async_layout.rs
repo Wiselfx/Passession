@@ -72,6 +72,7 @@ pub(super) struct FontCatalog {
     pub revision: u64,
     pub fonts: HashMap<FontId, FontDefinition>,
     pub families: HashMap<FontFamilyId, FontFamilyDefinition>,
+    pub fallback_requests: Option<Arc<super::fallback::FallbackRequests>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,6 +189,7 @@ fn apply_catalog_families(
     applied: &mut HashMap<FontFamilyId, FontFamilyDefinition>,
     catalog: &FontCatalog,
 ) {
+    layouter.set_fallback_requests(catalog.fallback_requests.clone());
     for (&id, definition) in &catalog.families {
         match applied.get(&id) {
             Some(current) if current == definition => continue,
@@ -523,6 +525,35 @@ mod tests {
         }
         let selection = Selection { anchor: Cursor { index: 0, prefer_next_row: true }, cursor: Cursor { index: expected.text.len(), prefer_next_row: false } };
         assert_eq!(expected.selection_rects_in_lpxs_clipped(selection, 30.0, 100.0), actual.selection_rects_in_lpxs_clipped(selection, 30.0, 100.0));
+    }
+
+    #[test]
+    fn worker_catalog_shares_missing_glyph_queue_and_refreshes_negative_epoch() {
+        use super::super::fallback::{FallbackRequests, MissingGlyph};
+        let family = FontFamilyId::from(902);
+        let requests = Arc::new(FallbackRequests::new(vec![family]));
+        let mut catalog = FontCatalog::default();
+        catalog.fallback_requests = Some(requests.clone());
+        let worker_catalog = catalog.clone();
+        std::thread::spawn(move || {
+            let (mut worker, style) = fixture();
+            apply_catalog_families(&mut worker, &mut HashMap::new(), &worker_catalog);
+            let text: Substr = "𐐀".into();
+            worker.layout_shared(text.clone(), &[Span { style, len: text.len() }], LayoutOptions::default());
+        }).join().unwrap();
+        let missing = MissingGlyph { family, character: '𐐀' };
+        assert_eq!(requests.drain().0, vec![missing]);
+        let (mut ui, style) = fixture();
+        apply_catalog_families(&mut ui, &mut HashMap::new(), &catalog);
+        let text: Substr = "𐐀".into();
+        let spans = [Span { style, len: text.len() }];
+        ui.layout_shared(text.clone(), &spans, LayoutOptions::default());
+        assert!(requests.drain().0.is_empty(), "UI and worker deduplicate the same miss");
+        let refreshed = Arc::new(FallbackRequests::new(vec![family]));
+        catalog.fallback_requests = Some(refreshed.clone());
+        apply_catalog_families(&mut ui, &mut HashMap::new(), &catalog);
+        ui.layout_shared(text, &spans, LayoutOptions::default());
+        assert_eq!(refreshed.drain().0, vec![missing]);
     }
 
     #[test]

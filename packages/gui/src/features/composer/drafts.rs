@@ -10,7 +10,7 @@
 
 use super::attachments::wire_attachment;
 use super::json::*;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const DRAFTS_STORAGE_KEY: &str = "paseo.chat.drafts.v1";
@@ -68,7 +68,10 @@ pub fn receipt_can_retry(receipt: &Value) -> bool {
 /// begun, even an omitted behavior must be replayed unchanged.
 pub fn queued_message_for_delivery(message: &Value, active_turn_behavior: &str) -> Value {
     let attempted = get(message, "deliveryAttempted") == &Value::Bool(true)
-        || matches!(s(get(message, "state")), "sending" | "unacknowledged" | "rejected");
+        || matches!(
+            s(get(message, "state")),
+            "sending" | "unacknowledged" | "rejected"
+        );
     let mut out = obj(message);
     if !attempted {
         out.insert("activeTurnBehavior".into(), json!(active_turn_behavior));
@@ -89,7 +92,12 @@ pub fn agent_message_fields(agent_id: &str, message: &Value) -> Value {
     }
     out.insert(
         "attachments".into(),
-        Value::Array(maps(get(message, "attachments")).iter().map(wire_attachment).collect()),
+        Value::Array(
+            maps(get(message, "attachments"))
+                .iter()
+                .map(wire_attachment)
+                .collect(),
+        ),
     );
     Value::Object(out)
 }
@@ -131,7 +139,8 @@ impl DraftStore {
         self.drafts
             .iter()
             .filter(|(key, draft)| {
-                delivery_server(key).as_deref() == Some(server_id) && get(draft, "draft") != &Value::Bool(true)
+                delivery_server(key).as_deref() == Some(server_id)
+                    && get(draft, "draft") != &Value::Bool(true)
             })
             .map(|(key, _)| key.clone())
             .collect()
@@ -207,11 +216,15 @@ impl DraftStore {
 
     /// `draft(key)`: the draft, created with defaults when absent.
     pub fn draft(&mut self, key: &str) -> &Value {
-        self.drafts.entry(key.to_owned()).or_insert_with(default_draft)
+        self.drafts
+            .entry(key.to_owned())
+            .or_insert_with(default_draft)
     }
 
     fn draft_mut(&mut self, key: &str) -> &mut Value {
-        self.drafts.entry(key.to_owned()).or_insert_with(default_draft)
+        self.drafts
+            .entry(key.to_owned())
+            .or_insert_with(default_draft)
     }
 
     /// Read-only view; None when the draft was never touched.
@@ -225,7 +238,9 @@ impl DraftStore {
 
     pub fn update(&mut self, key: &str, fields: Value) {
         self.dirty_drafts.insert(key.to_owned());
-        let editor = ["text", "attachments", "images"].iter().any(|f| fields.get(*f).is_some());
+        let editor = ["text", "attachments", "images"]
+            .iter()
+            .any(|f| fields.get(*f).is_some());
         let delivery = ["queue", "pending", "receipts", "dismissedMessageIds"]
             .iter()
             .any(|f| fields.get(*f).is_some());
@@ -242,7 +257,13 @@ impl DraftStore {
         self.save(Some(key), delivery);
     }
 
-    pub fn add_attachments(&mut self, server_id: &str, workspace_id: &str, attachments: Vec<Value>, intent_id: Option<&str>) {
+    pub fn add_attachments(
+        &mut self,
+        server_id: &str,
+        workspace_id: &str,
+        attachments: Vec<Value>,
+        intent_id: Option<&str>,
+    ) {
         if let Some(intent) = intent_id {
             if self.intents.iter().any(|i| i == intent) {
                 return;
@@ -260,7 +281,12 @@ impl DraftStore {
         self.save(None, false);
     }
 
-    pub fn add_draft_attachments(&mut self, key: &str, attachments: Vec<Value>, intent_id: Option<&str>) {
+    pub fn add_draft_attachments(
+        &mut self,
+        key: &str,
+        attachments: Vec<Value>,
+        intent_id: Option<&str>,
+    ) {
         if let Some(intent) = intent_id {
             if self.intents.iter().any(|i| i == intent) {
                 return;
@@ -305,9 +331,11 @@ impl DraftStore {
     }
 
     pub fn is_dismissed(&self, key: &str, id: &str) -> bool {
-        self.drafts
-            .get(key)
-            .is_some_and(|draft| list_ref(get(draft, "dismissedMessageIds")).iter().any(|v| v.as_str() == Some(id)))
+        self.drafts.get(key).is_some_and(|draft| {
+            list_ref(get(draft, "dismissedMessageIds"))
+                .iter()
+                .any(|v| v.as_str() == Some(id))
+        })
     }
 
     pub fn acknowledge(&mut self, key: &str, submitted: &Value) {
@@ -322,7 +350,9 @@ impl DraftStore {
         }
         // Equality of content is not ownership: identical retyping is a new edit.
         let submitted_generation = get(submitted, "editorGeneration");
-        if !submitted_generation.is_null() && get(current, "editorGeneration") == submitted_generation {
+        if !submitted_generation.is_null()
+            && get(current, "editorGeneration") == submitted_generation
+        {
             let generation = get(current, "editorGeneration").as_i64().unwrap_or(0) + 1;
             set(current, "text", json!(""));
             set(current, "attachments", json!([]));
@@ -370,8 +400,11 @@ impl DraftStore {
     pub fn apply_receipt(&mut self, key: &str, receipt: &Value) -> bool {
         let identity = key_identity(key);
         let id = owned(get(receipt, "messageId"));
-        let Some(revision) = get(receipt, "revision").as_i64() else { return false };
-        if id.is_empty() || identity.get(2).map(String::as_str) != get(receipt, "agentId").as_str() {
+        let Some(revision) = get(receipt, "revision").as_i64() else {
+            return false;
+        };
+        if id.is_empty() || identity.get(2).map(String::as_str) != get(receipt, "agentId").as_str()
+        {
             return false;
         }
         let dismissed_locally = self.is_dismissed(key, &id);
@@ -416,7 +449,10 @@ impl DraftStore {
                 .into_iter()
                 .map(|item| {
                     if s(get(&item, "messageId")) == id {
-                        merged(&item, &json!({"state": "rejected", "error": get(receipt, "error").clone()}))
+                        merged(
+                            &item,
+                            &json!({"state": "rejected", "error": get(receipt, "error").clone()}),
+                        )
                     } else {
                         item
                     }
@@ -467,7 +503,9 @@ impl DraftStore {
     pub fn edit_queued_message(&mut self, key: &str, original: &Value, text: &str) -> bool {
         let current = self.draft(key).clone();
         let mut queue = maps(get(&current, "queue"));
-        let index = queue.iter().position(|item| get(item, "messageId") == get(original, "messageId"));
+        let index = queue
+            .iter()
+            .position(|item| get(item, "messageId") == get(original, "messageId"));
         if let Some(index) = index {
             let state = s(get(&queue[index], "state"));
             if matches!(state, "queued" | "blocked" | "rejected") && same(&queue[index], original) {
@@ -528,7 +566,11 @@ impl DraftStore {
             return None;
         }
         self.saved_revision = self.revision;
-        let drafts: Map<String, Value> = self.drafts.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let drafts: Map<String, Value> = self
+            .drafts
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let inbox: Map<String, Value> = self
             .inbox
             .iter()

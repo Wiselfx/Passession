@@ -216,9 +216,10 @@ impl AgentManager {
         cell.cancel.cancel();
         let session = cell.data.lock().await.session.take();
         if let Some(session) = session
-            && let Err(error) = session.close().await {
-                tracing::warn!(agent_id=id,%error,"Failed to close unregistered provider session");
-            }
+            && let Err(error) = session.close().await
+        {
+            tracing::warn!(agent_id=id,%error,"Failed to close unregistered provider session");
+        }
         self.agents.write().await.remove(id);
         if let Ok(app) = self.app() {
             app.mcp.revoke_agent(id).await;
@@ -410,7 +411,10 @@ impl AgentManager {
         env.insert("PASEO_AGENT_CWD".into(), required(&config, "cwd")?.into());
         let workspace = record.get("workspaceId").cloned();
         let record_labels = record.get("labels").cloned().unwrap_or(json!({}));
-        let record_owner = record.get("owner").filter(|owner| !owner.is_null()).cloned();
+        let record_owner = record
+            .get("owner")
+            .filter(|owner| !owner.is_null())
+            .cloned();
         let config_internal = config["internal"] == true;
         let (cell, receiver) = self.make_cell(id, record, false).await?;
         *cell.task.lock().await = Some(self.start_events(id, &cell, receiver));
@@ -560,9 +564,10 @@ impl AgentManager {
     }
     pub(super) async fn ensure_loaded(&self, id: &str) -> Result<Arc<AgentCell>> {
         if let Ok(cell) = self.cell(id).await
-            && cell.data.lock().await.serves_runtime() {
-                return Ok(cell);
-            }
+            && cell.data.lock().await.serves_runtime()
+        {
+            return Ok(cell);
+        }
         self.resume(id, json!({}), false).await?;
         self.cell(id).await
     }
@@ -608,7 +613,9 @@ impl AgentManager {
         let id_owned = id.to_owned();
         let store = self.subagent_store.clone();
         let snapshot = cell.data.lock().await.snapshot.clone();
-        let root = (snapshot["internal"] != true).then(|| self.app().map(|app| app.home.join("agent-subagents"))).transpose()?;
+        let root = (snapshot["internal"] != true)
+            .then(|| self.app().map(|app| app.home.join("agent-subagents")))
+            .transpose()?;
         let (epoch, subagent_outputs) = tokio::task::spawn_blocking(move || {
             let mut current = timeline
                 .lock()
@@ -642,7 +649,8 @@ impl AgentManager {
         })
         .await??;
         for output in subagent_outputs {
-            self.publish_subagent_output(id, cell, &snapshot, output).await?;
+            self.publish_subagent_output(id, cell, &snapshot, output)
+                .await?;
         }
         let mut snapshot = cell.data.lock().await.snapshot.clone();
         snapshot["historySync"] = json!({
@@ -661,7 +669,9 @@ impl AgentManager {
             }
             let _ = self.events.send(event);
         } else if allow_removal {
-            bail!("Provider rewind completed, but its history snapshot could not be safely reconciled; previous canonical history was preserved");
+            bail!(
+                "Provider rewind completed, but its history snapshot could not be safely reconciled; previous canonical history was preserved"
+            );
         }
         Ok(())
     }
@@ -696,12 +706,7 @@ impl AgentManager {
         })
         .await?
     }
-    async fn reconcile_timeline_message(
-        &self,
-        id: &str,
-        cell: &Arc<AgentCell>,
-        event: Value,
-    ) {
+    async fn reconcile_timeline_message(&self, id: &str, cell: &Arc<AgentCell>, event: Value) {
         let snapshot = cell.data.lock().await.snapshot.clone();
         let timeline = cell.timeline.clone();
         let events = self.events.clone();
@@ -718,9 +723,12 @@ impl AgentManager {
                 bail!("Reconciliation provider does not match the current agent");
             }
             let destination = destination?;
-            let mut timeline = timeline.lock().map_err(|_| anyhow!("Timeline lock poisoned"))?;
+            let mut timeline = timeline
+                .lock()
+                .map_err(|_| anyhow!("Timeline lock poisoned"))?;
             if let Some(epoch) = timeline.reconcile_message(
-                &event, destination.as_deref().map(|path| (path, agent_id.as_str())),
+                &event,
+                destination.as_deref().map(|path| (path, agent_id.as_str())),
             )? {
                 // Keep publication with the admitted synchronous commit. Dropping
                 // its async waiter must not leave observers on the obsolete epoch.
@@ -729,7 +737,8 @@ impl AgentManager {
                 }));
             }
             Ok(())
-        }).await;
+        })
+        .await;
         let failure = match result {
             Ok(Ok(())) => return,
             Ok(Err(error)) => error,
@@ -782,7 +791,8 @@ impl AgentManager {
             return Ok(());
         }
         if event["type"] == "provider_subagent" {
-            self.apply_subagent_event(id, cell, &event, !from_history).await?;
+            self.apply_subagent_event(id, cell, &event, !from_history)
+                .await?;
             return Ok(());
         }
         let (mut snapshot, ready, owner_ended) = {
@@ -792,8 +802,12 @@ impl AgentManager {
         let previous_lifecycle = snapshot["lifecycle"].as_str().map(str::to_owned);
         let kind = required(&event, "type")?.to_owned();
         let session_ended = !from_history && kind == "turn_failed" && event["sessionEnded"] == true;
-        if owner_ended && (matches!(kind.as_str(), "turn_started" | "turn_completed" | "turn_canceled")
-            || (kind == "turn_failed" && snapshot["lifecycle"] == "closed")) {
+        if owner_ended
+            && (matches!(
+                kind.as_str(),
+                "turn_started" | "turn_completed" | "turn_canceled"
+            ) || (kind == "turn_failed" && snapshot["lifecycle"] == "closed"))
+        {
             return Ok(());
         }
         if session_ended {
@@ -831,7 +845,8 @@ impl AgentManager {
         } else {
             false
         };
-        if stale && !session_ended
+        if stale
+            && !session_ended
             && matches!(
                 kind.as_str(),
                 "turn_started" | "turn_completed" | "turn_failed" | "turn_canceled"
@@ -858,8 +873,8 @@ impl AgentManager {
             "turn_started" => {
                 // agent-manager.ts onStreamTurnStarted: the manager already published the
                 // accepted foreground start, so the provider's duplicate is suppressed.
-                let foreground = turn.is_some()
-                    && text(&snapshot, "activeForegroundTurnId") == turn.as_deref();
+                let foreground =
+                    turn.is_some() && text(&snapshot, "activeForegroundTurnId") == turn.as_deref();
                 if !from_history && !stale && !foreground {
                     snapshot["lifecycle"] = json!("running");
                     snapshot["activeTurnId"] = json!(turn);
@@ -883,12 +898,13 @@ impl AgentManager {
                             cell.owner_ended.cancel();
                         }
                         if let Some(turn) = &turn
-                            && !data.finalized.contains(turn) {
-                                data.finalized.push_back(turn.clone());
-                                while data.finalized.len() > 4096 {
-                                    data.finalized.pop_front();
-                                }
+                            && !data.finalized.contains(turn)
+                        {
+                            data.finalized.push_back(turn.clone());
+                            while data.finalized.len() > 4096 {
+                                data.finalized.pop_front();
                             }
+                        }
                         data.pending_replacement
                     };
                     // finalizeForegroundTurn: a replacing prompt holds the agent busy unless the
@@ -1033,7 +1049,10 @@ impl AgentManager {
                 }
             }
             "attention_required" => {
-                if event.get("timestamp").is_none_or(|value| !value.is_string()) {
+                if event
+                    .get("timestamp")
+                    .is_none_or(|value| !value.is_string())
+                {
                     event["timestamp"] = json!(now());
                 }
             }
@@ -1043,51 +1062,49 @@ impl AgentManager {
                     let mut options = event.clone();
                     if item["type"] == "user_message"
                         && let Some(message_id) = text(&item, "clientMessageId").map(str::to_owned)
-                        {
-                            let exists = cell
-                                .timeline
-                                .lock()
-                                .map_err(|_| anyhow!("Timeline lock poisoned"))?
-                                .submitted_user_message(&message_id)
-                                .is_some();
-                            if exists {
-                                if let Some(provider_id) =
-                                    text(&item, "messageId").map(str::to_owned)
-                                {
-                                    let timeline = cell.timeline.clone();
-                                    let path = self.timeline_path(id)?;
-                                    let agent_id = id.to_owned();
-                                    let internal = snapshot["internal"] == true;
-                                    tokio::task::spawn_blocking(move || {
-                                        let mut timeline = timeline
-                                            .lock()
-                                            .map_err(|_| anyhow!("Timeline lock poisoned"))?;
-                                        if internal {
-                                            timeline.enrich_submitted_user_message(
+                    {
+                        let exists = cell
+                            .timeline
+                            .lock()
+                            .map_err(|_| anyhow!("Timeline lock poisoned"))?
+                            .submitted_user_message(&message_id)
+                            .is_some();
+                        if exists {
+                            if let Some(provider_id) = text(&item, "messageId").map(str::to_owned) {
+                                let timeline = cell.timeline.clone();
+                                let path = self.timeline_path(id)?;
+                                let agent_id = id.to_owned();
+                                let internal = snapshot["internal"] == true;
+                                tokio::task::spawn_blocking(move || {
+                                    let mut timeline = timeline
+                                        .lock()
+                                        .map_err(|_| anyhow!("Timeline lock poisoned"))?;
+                                    if internal {
+                                        timeline.enrich_submitted_user_message(
+                                            &message_id,
+                                            &provider_id,
+                                        );
+                                        Ok::<_, anyhow::Error>(())
+                                    } else {
+                                        timeline
+                                            .enrich_submitted_persisted(
+                                                &path,
+                                                &agent_id,
                                                 &message_id,
                                                 &provider_id,
-                                            );
-                                            Ok::<_, anyhow::Error>(())
-                                        } else {
-                                            timeline
-                                                .enrich_submitted_persisted(
-                                                    &path,
-                                                    &agent_id,
-                                                    &message_id,
-                                                    &provider_id,
-                                                )
-                                                .map(|_| ())
-                                        }
-                                    })
-                                    .await??;
-                                }
-                                continue;
+                                            )
+                                            .map(|_| ())
+                                    }
+                                })
+                                .await??;
                             }
-                            if let Some(provider_id) = item.get("messageId") {
-                                options["providerMessageId"] = provider_id.clone();
-                            }
-                            item["messageId"] = json!(message_id);
+                            continue;
                         }
+                        if let Some(provider_id) = item.get("messageId") {
+                            options["providerMessageId"] = provider_id.clone();
+                        }
+                        item["messageId"] = json!(message_id);
+                    }
                     let row = self
                         .append_to_cell(id, cell, item.clone(), &options)
                         .await?;
@@ -1149,31 +1166,49 @@ impl AgentManager {
     ) -> Result<()> {
         let snapshot = cell.data.lock().await.snapshot.clone();
         let store = self.subagent_store.clone();
-        let root = (snapshot["internal"] != true).then(|| self.app().map(|app| app.home.join("agent-subagents"))).transpose()?;
+        let root = (snapshot["internal"] != true)
+            .then(|| self.app().map(|app| app.home.join("agent-subagents")))
+            .transpose()?;
         let parent = id.to_owned();
         let event = event.clone();
         let output = tokio::task::spawn_blocking(move || {
-            let mut store = store.lock().map_err(|_| anyhow!("Subagent lock poisoned"))?;
+            let mut store = store
+                .lock()
+                .map_err(|_| anyhow!("Subagent lock poisoned"))?;
             let provider = required(&event, "provider")?;
             match root {
-                Some(root) => store.apply_persisted_event(&root, &parent, provider, &event["event"], live),
+                Some(root) => {
+                    store.apply_persisted_event(&root, &parent, provider, &event["event"], live)
+                }
                 None => store.apply(&parent, provider, &event["event"]),
             }
-        }).await??;
-        self.publish_subagent_output(id, cell, &snapshot, output).await
+        })
+        .await??;
+        self.publish_subagent_output(id, cell, &snapshot, output)
+            .await
     }
     async fn publish_subagent_output(
-        &self, id: &str, cell: &Arc<AgentCell>, snapshot: &Value, output: Value,
+        &self,
+        id: &str,
+        cell: &Arc<AgentCell>,
+        snapshot: &Value,
+        output: Value,
     ) -> Result<()> {
         if cell.data.lock().await.ready {
-            self.emit_subagent_output(id, snapshot["internal"] == true, output).await?;
+            self.emit_subagent_output(id, snapshot["internal"] == true, output)
+                .await?;
         }
         Ok(())
     }
     /// Publishes one stored child change. Lazy child-body reads use this
     /// without a parent runtime; descriptors leave without their `source` and
     /// with the child's current native-refresh state.
-    pub(super) async fn emit_subagent_output(&self, id: &str, internal: bool, mut output: Value) -> Result<()> {
+    pub(super) async fn emit_subagent_output(
+        &self,
+        id: &str,
+        internal: bool,
+        mut output: Value,
+    ) -> Result<()> {
         // A dropped event (it targeted a deleted child) publishes nothing.
         if output.is_null() {
             return Ok(());
@@ -1197,9 +1232,7 @@ impl AgentManager {
             };
             self.app()?
                 .transport
-                .publish_event(
-                    json!({"type":"agent.provider_subagents.update","payload":payload}),
-                )
+                .publish_event(json!({"type":"agent.provider_subagents.update","payload":payload}))
                 .await?;
         }
         Ok(())
@@ -1288,16 +1321,25 @@ impl AgentManager {
         let store = self.subagent_store.clone();
         let parent = id.to_owned();
         let internal = cell.data.lock().await.snapshot["internal"] == true;
-        let root = (!internal).then(|| self.app().map(|app| app.home.join("agent-subagents"))).transpose()?;
+        let root = (!internal)
+            .then(|| self.app().map(|app| app.home.join("agent-subagents")))
+            .transpose()?;
         let listed = tokio::task::spawn_blocking(move || {
-            let mut store = store.lock().map_err(|_| anyhow!("Subagent lock poisoned"))?;
+            let mut store = store
+                .lock()
+                .map_err(|_| anyhow!("Subagent lock poisoned"))?;
             match root {
                 Some(root) => store.list_persisted(&root, &parent),
                 None => Ok((store.list(&parent), Vec::new())),
             }
-        }).await?;
+        })
+        .await?;
         let (children, unreadable) = match listed {
-            Err(error) if error.downcast_ref::<timeline::SubagentStorageUnavailable>().is_some() => {
+            Err(error)
+                if error
+                    .downcast_ref::<timeline::SubagentStorageUnavailable>()
+                    .is_some() =>
+            {
                 tracing::warn!(agent_id = id, %error, "Running subagents not marked canceled: storage unavailable");
                 (Vec::new(), Vec::new())
             }
@@ -1318,9 +1360,13 @@ impl AgentManager {
                 let store = self.subagent_store.clone();
                 let parent = id.to_owned();
                 tokio::task::spawn_blocking(move || {
-                    store.lock().map_err(|_| anyhow!("Subagent lock poisoned"))?.release_parent(&parent);
+                    store
+                        .lock()
+                        .map_err(|_| anyhow!("Subagent lock poisoned"))?
+                        .release_parent(&parent);
                     Ok::<_, anyhow::Error>(())
-                }).await??;
+                })
+                .await??;
             }
         }
         let mut snapshot = cell.data.lock().await.snapshot.clone();
@@ -1336,7 +1382,8 @@ impl AgentManager {
         snapshot["pendingPermissions"] = json!([]);
         snapshot["_live"] = json!(false);
         // Releasing an idle/history-only view is not user or provider activity.
-        self.commit_snapshot(cell, snapshot.clone(), interrupted).await?;
+        self.commit_snapshot(cell, snapshot.clone(), interrupted)
+            .await?;
         if snapshot["internal"] != true {
             let _ = self
                 .app()?
@@ -1445,7 +1492,6 @@ fn hook_stream(snapshot: &Value, event: &Value) -> Option<(&'static str, Value)>
     })
 }
 
-
 /// agent-manager.ts SYSTEM_ERROR_PREFIX.
 const SYSTEM_ERROR_PREFIX: &str = "[System Error]";
 
@@ -1518,20 +1564,27 @@ pub(super) mod tests {
         // or a model. The filesystem consumer distinguishes the selected HOME
         // from the daemon's inherited HOME without reading any user files.
         app.providers.catalogs.shutdown().await;
-        app.providers.apply_config(
-            &json!({"providerOverrides":{"pi":{"env":{
-                "HOME":private_home.to_str().unwrap(),
-                "PASEO_AGENT_ID":"configured-id"
-            }}}}),
-            &json!({}),
-        ).await.unwrap();
+        app.providers
+            .apply_config(
+                &json!({"providerOverrides":{"pi":{"env":{
+                    "HOME":private_home.to_str().unwrap(),
+                    "PASEO_AGENT_ID":"configured-id"
+                }}}}),
+                &json!({}),
+            )
+            .await
+            .unwrap();
         for internal in [false, true] {
             let id = "00000000-0000-4000-8000-000000000045";
-            let context = app.agents.history_context(
-                id,
-                &json!({"provider":"pi","internal":internal,"cwd":root.path()}),
-                None,
-            ).await.unwrap();
+            let context = app
+                .agents
+                .history_context(
+                    id,
+                    &json!({"provider":"pi","internal":internal,"cwd":root.path()}),
+                    None,
+                )
+                .await
+                .unwrap();
             let env = context.env;
             assert_eq!(Path::new(&env["HOME"]), private_home.as_path());
             assert_eq!(
@@ -1558,7 +1611,8 @@ pub(super) mod tests {
             "config":{},"updatedAt":now(),"requiresAttention":false
         });
         let (cell, receiver) = manager.make_cell(id, snapshot, true).await.unwrap();
-        let session = crate::providers::development::DevelopmentProvider::new("mock").unwrap()
+        let session = crate::providers::development::DevelopmentProvider::new("mock")
+            .unwrap()
             .create_session(
                 config,
                 LaunchContext {
@@ -1574,7 +1628,9 @@ pub(super) mod tests {
                 },
                 json!({}),
                 cell.sink.clone(),
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
         {
             let mut data = cell.data.lock().await;
             data.session = Some(session);
@@ -1593,30 +1649,56 @@ pub(super) mod tests {
     #[tokio::test]
     async fn pending_stage_spills_without_overtaking_the_accepted_prompt() {
         let root = tempfile::tempdir().unwrap();
-        let app = AppState::new(root.path().join("home"), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            root.path().join("home"),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
         let id = "00000000-0000-4000-8000-000000000002";
         let cell = staged_cell(&app, id).await;
         // A delayed acknowledgement must neither drop output nor expose it before the prompt.
         for tokens in 0..4100 {
-            cell.sink.emit(json!({
-                "type":"usage_updated","provider":"mock","turnId":"live-turn",
-                "usage":{"outputTokens":tokens}
-            })).await.unwrap();
+            cell.sink
+                .emit(json!({
+                    "type":"usage_updated","provider":"mock","turnId":"live-turn",
+                    "usage":{"outputTokens":tokens}
+                }))
+                .await
+                .unwrap();
         }
-        cell.sink.emit(json!({
-            "type":"timeline","provider":"mock","turnId":"next-turn",
-            "item":{"type":"assistant_message","text":"pending response","messageId":"pending"}
-        })).await.unwrap();
-        cell.sink.emit(json!({
-            "type":"timeline","provider":"mock","turnId":"live-turn",
-            "item":{"type":"assistant_message","text":"completed response","messageId":"live"}
-        })).await.unwrap();
-        cell.sink.emit(json!({"type":"turn_completed","provider":"mock","turnId":"live-turn"})).await.unwrap();
+        cell.sink
+            .emit(json!({
+                "type":"timeline","provider":"mock","turnId":"next-turn",
+                "item":{"type":"assistant_message","text":"pending response","messageId":"pending"}
+            }))
+            .await
+            .unwrap();
+        cell.sink
+            .emit(json!({
+                "type":"timeline","provider":"mock","turnId":"live-turn",
+                "item":{"type":"assistant_message","text":"completed response","messageId":"live"}
+            }))
+            .await
+            .unwrap();
+        cell.sink
+            .emit(json!({"type":"turn_completed","provider":"mock","turnId":"live-turn"}))
+            .await
+            .unwrap();
         manager.drain_events(&cell).await.unwrap();
         assert_eq!(cell.data.lock().await.snapshot["lifecycle"], "running");
         assert!(cell.timeline.lock().unwrap().rows().is_empty());
-        manager.record_submitted(id, &cell, &json!("steered prompt"), Some("client"), Some("live-turn"), false).await.unwrap();
+        manager
+            .record_submitted(
+                id,
+                &cell,
+                &json!("steered prompt"),
+                Some("client"),
+                Some("live-turn"),
+                false,
+            )
+            .await
+            .unwrap();
         manager.release_event_stage(&cell).await.unwrap();
         let snapshot = cell.data.lock().await.snapshot.clone();
         assert_eq!(snapshot["lastUsage"]["outputTokens"], 4099);
@@ -1637,7 +1719,11 @@ pub(super) mod tests {
     #[tokio::test]
     async fn pending_stage_failure_ends_running_state_and_allows_close() {
         let root = tempfile::tempdir().unwrap();
-        let app = AppState::new(root.path().join("home"), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            root.path().join("home"),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
         let id = "00000000-0000-4000-8000-000000000003";
         let cell = staged_cell(&app, id).await;
@@ -1652,11 +1738,16 @@ pub(super) mod tests {
         assert!(cell.data.lock().await.session.is_none());
         assert!(cell.owner_ended.is_cancelled());
         assert!(cell.barriers.lock().await.is_empty());
-        assert!(manager.update_snapshot(&cell, |snapshot| {
-            snapshot["lifecycle"] = json!("running");
-            snapshot["activeTurnId"] = json!("late-acceptance");
-            Ok(())
-        }).await.is_err());
+        assert!(
+            manager
+                .update_snapshot(&cell, |snapshot| {
+                    snapshot["lifecycle"] = json!("running");
+                    snapshot["activeTurnId"] = json!("late-acceptance");
+                    Ok(())
+                })
+                .await
+                .is_err()
+        );
         assert_eq!(cell.data.lock().await.snapshot["lifecycle"], "error");
         assert_eq!(cell.data.lock().await.snapshot["activeTurnId"], Value::Null);
         manager.close_cell(id, &cell).await.unwrap();
@@ -1667,9 +1758,16 @@ pub(super) mod tests {
     async fn provider_exit_clears_ownership_preserves_fifo_and_rejects_late_ack() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home.clone()) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home.clone()) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000004";
         let cell = staged_cell(&app, id).await;
         {
@@ -1680,17 +1778,33 @@ pub(super) mod tests {
             data.snapshot["pendingPermissions"] = json!([{"id":"permission"}]);
             data.pending_replacement = true;
         }
-        cell.sink.emit(json!({
-            "type":"timeline","provider":"mock","turnId":"live-turn",
-            "item":{"type":"assistant_message","text":"last output","messageId":"last"}
-        })).await.unwrap();
-        cell.sink.emit(json!({
-            "type":"turn_failed","provider":"mock","turnId":"live-turn",
-            "sessionEnded":true,"error":"Provider process exited"
-        })).await.unwrap();
+        cell.sink
+            .emit(json!({
+                "type":"timeline","provider":"mock","turnId":"live-turn",
+                "item":{"type":"assistant_message","text":"last output","messageId":"last"}
+            }))
+            .await
+            .unwrap();
+        cell.sink
+            .emit(json!({
+                "type":"turn_failed","provider":"mock","turnId":"live-turn",
+                "sessionEnded":true,"error":"Provider process exited"
+            }))
+            .await
+            .unwrap();
         manager.drain_events(&cell).await.unwrap();
         assert!(manager.session(id).await.unwrap().is_some());
-        manager.record_submitted(id, &cell, &json!("submitted prompt"), Some("client"), Some("live-turn"), false).await.unwrap();
+        manager
+            .record_submitted(
+                id,
+                &cell,
+                &json!("submitted prompt"),
+                Some("client"),
+                Some("live-turn"),
+                false,
+            )
+            .await
+            .unwrap();
         manager.release_event_stage(&cell).await.unwrap();
         let snapshot = manager.agent_snapshot(id).await.unwrap().unwrap();
         assert_eq!(snapshot["lifecycle"], "error");
@@ -1710,20 +1824,37 @@ pub(super) mod tests {
             let rows = timeline.rows();
             assert_eq!(rows[0]["item"]["text"], "submitted prompt");
             assert_eq!(rows[1]["item"]["text"], "last output");
-            assert_eq!(rows[2]["item"]["text"], "[System Error] Provider process exited");
+            assert_eq!(
+                rows[2]["item"]["text"],
+                "[System Error] Provider process exited"
+            );
         }
-        assert!(manager.update_snapshot(&cell, |snapshot| {
-            snapshot["lifecycle"] = json!("running");
-            snapshot["activeTurnId"] = json!("late-ack");
-            Ok(())
-        }).await.is_err());
-        cell.sink.emit(json!({"type":"turn_completed","provider":"mock","turnId":"live-turn"})).await.unwrap();
-        cell.sink.emit(json!({"type":"turn_started","provider":"mock","turnId":"late-start"})).await.unwrap();
+        assert!(
+            manager
+                .update_snapshot(&cell, |snapshot| {
+                    snapshot["lifecycle"] = json!("running");
+                    snapshot["activeTurnId"] = json!("late-ack");
+                    Ok(())
+                })
+                .await
+                .is_err()
+        );
+        cell.sink
+            .emit(json!({"type":"turn_completed","provider":"mock","turnId":"live-turn"}))
+            .await
+            .unwrap();
+        cell.sink
+            .emit(json!({"type":"turn_started","provider":"mock","turnId":"late-start"}))
+            .await
+            .unwrap();
         manager.drain_events(&cell).await.unwrap();
         let stored = AgentStorage::new(home).get(id).await.unwrap().unwrap();
         assert_eq!(stored["lastStatus"], "error");
         assert_eq!(stored["lastTurnOutcome"], "turn_failed");
-        assert_eq!(manager.agent_snapshot(id).await.unwrap().unwrap()["lifecycle"], "error");
+        assert_eq!(
+            manager.agent_snapshot(id).await.unwrap().unwrap()["lifecycle"],
+            "error"
+        );
         manager.close_cell(id, &cell).await.unwrap();
         assert!(manager.cell(id).await.is_err());
     }
@@ -1731,7 +1862,11 @@ pub(super) mod tests {
     #[tokio::test]
     async fn unexpected_event_consumer_end_settles_active_owner() {
         let root = tempfile::tempdir().unwrap();
-        let app = AppState::new(root.path().join("home"), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            root.path().join("home"),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
         let id = "00000000-0000-4000-8000-000000000005";
         let cell = staged_cell(&app, id).await;
@@ -1750,7 +1885,11 @@ pub(super) mod tests {
     #[tokio::test]
     async fn close_without_terminal_event_records_cancellation() {
         let root = tempfile::tempdir().unwrap();
-        let app = AppState::new(root.path().join("home"), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            root.path().join("home"),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
         let id = "00000000-0000-4000-8000-000000000006";
         let cell = staged_cell(&app, id).await;
@@ -1831,9 +1970,17 @@ pub(super) mod tests {
             .await;
         let id = "00000000-0000-4000-8000-000000000001";
         let mut partial = Timeline::new();
-        partial.append(json!({"type":"notification","level":"info","message":"previous startup"}), &json!({}));
-        partial.append(json!({"type":"user_message","text":"recent question","messageId":"user-recent"}), &json!({}));
-        partial.persist(&manager.timeline_path(id).unwrap(), id).unwrap();
+        partial.append(
+            json!({"type":"notification","level":"info","message":"previous startup"}),
+            &json!({}),
+        );
+        partial.append(
+            json!({"type":"user_message","text":"recent question","messageId":"user-recent"}),
+            &json!({}),
+        );
+        partial
+            .persist(&manager.timeline_path(id).unwrap(), id)
+            .unwrap();
         let old_epoch = partial.epoch().to_owned();
         let persistence = json!({
             "provider":"omp","sessionId":"native-session","nativeHandle":original,
@@ -1918,23 +2065,38 @@ pub(super) mod tests {
         assert_eq!(tail["entries"][0]["item"]["messageId"], "user-live");
         assert_eq!(tail["entries"][1]["item"]["messageId"], "answer-live");
 
-        let stale = timeline_request(manager, id, json!({
-            "direction":"after","limit":2,"cursor":{"epoch":old_epoch,"seq":2}
-        })).await;
+        let stale = timeline_request(
+            manager,
+            id,
+            json!({
+                "direction":"after","limit":2,"cursor":{"epoch":old_epoch,"seq":2}
+            }),
+        )
+        .await;
         assert_eq!(stale["reset"], true);
         assert_eq!(stale["entries"], tail["entries"]);
-        let before = timeline_request(manager, id, json!({
-            "direction":"before","limit":2,"cursor":tail["startCursor"]
-        })).await;
+        let before = timeline_request(
+            manager,
+            id,
+            json!({
+                "direction":"before","limit":2,"cursor":tail["startCursor"]
+            }),
+        )
+        .await;
         assert_eq!(before["entries"][0]["item"]["messageId"], "answer-recent");
         assert_eq!(before["entries"][1]["item"]["type"], "notification");
 
         let mut cursor = json!({"epoch":tail["epoch"],"seq":0});
         let mut entries = Vec::new();
         loop {
-            let page = timeline_request(manager, id, json!({
-                "direction":"after","limit":2,"cursor":cursor
-            })).await;
+            let page = timeline_request(
+                manager,
+                id,
+                json!({
+                    "direction":"after","limit":2,"cursor":cursor
+                }),
+            )
+            .await;
             entries.extend(page["entries"].as_array().unwrap().iter().cloned());
             if page["hasNewer"] != true {
                 break;
@@ -1943,24 +2105,58 @@ pub(super) mod tests {
             assert_ne!(next, cursor);
             cursor = next;
         }
-        assert_eq!(entries.iter().filter(|row| row["item"]["type"] == "notification"
-            && row["item"]["message"] == "previous startup").count(), 1);
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|row| row["item"]["type"] == "notification"
+                    && row["item"]["message"] == "previous startup")
+                .count(),
+            1
+        );
         assert_eq!(entries[0]["item"]["messageId"], "user-old");
         assert_eq!(entries[0]["timestamp"], "2026-10-24T00:00:01.000Z");
         assert_eq!(entries[1]["item"]["messageId"], "answer-old");
-        let message_ids: Vec<_> = entries.iter()
-            .filter_map(|row| row["item"]["messageId"].as_str()).collect();
-        assert_eq!(message_ids, ["user-old", "answer-old", "user-recent", "answer-recent", "user-live", "answer-live"]);
-        assert!(entries.windows(2).all(|rows| rows[0]["seqEnd"].as_i64() < rows[1]["seqStart"].as_i64()));
+        let message_ids: Vec<_> = entries
+            .iter()
+            .filter_map(|row| row["item"]["messageId"].as_str())
+            .collect();
+        assert_eq!(
+            message_ids,
+            [
+                "user-old",
+                "answer-old",
+                "user-recent",
+                "answer-recent",
+                "user-live",
+                "answer-live"
+            ]
+        );
+        assert!(
+            entries
+                .windows(2)
+                .all(|rows| rows[0]["seqEnd"].as_i64() < rows[1]["seqStart"].as_i64())
+        );
         manager.hydrate_history(id, &cell, false).await.unwrap();
         let unchanged = timeline_request(manager, id, json!({"direction":"tail","limit":2})).await;
         assert_eq!(unchanged["epoch"], tail["epoch"]);
         assert_eq!(unchanged["window"], tail["window"]);
         let recovered = Timeline::load(&manager.timeline_path(id).unwrap(), id).unwrap();
-        assert_eq!(recovered.items(), entries.iter().map(|row| row["item"].clone()).collect::<Vec<_>>());
+        assert_eq!(
+            recovered.items(),
+            entries
+                .iter()
+                .map(|row| row["item"].clone())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(recovered.epoch(), tail["epoch"].as_str().unwrap());
-        assert_eq!(recovered.fetch(&json!({"limit":0}))["window"], tail["window"]);
-        assert_eq!(tokio::fs::read(&original).await.unwrap(), original_bytes.as_bytes());
+        assert_eq!(
+            recovered.fetch(&json!({"limit":0}))["window"],
+            tail["window"]
+        );
+        assert_eq!(
+            tokio::fs::read(&original).await.unwrap(),
+            original_bytes.as_bytes()
+        );
         session.close().await.unwrap();
         cell.cancel.cancel();
         cell.task.lock().await.take().unwrap().await.unwrap();
@@ -1977,9 +2173,16 @@ pub(super) mod tests {
             json!({"type":"message","id":"answer","parentId":"question","timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"old answer"}]}}),
         ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
         tokio::fs::write(&transcript, &lines).await.unwrap();
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home.clone()) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home.clone()) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000044";
         let persistence = json!({"provider":"omp","sessionId":"native-history","nativeHandle":transcript,"metadata":{"cwd":root.path()}});
         let original = json!({
@@ -1989,27 +2192,58 @@ pub(super) mod tests {
             "lastActivityAt":"2026-01-01T00:00:02.000Z","archivedAt":"2026-01-03T00:00:00.000Z",
             "_historyOnly":true
         });
-        manager.storage().unwrap().upsert(original.clone()).await.unwrap();
+        manager
+            .storage()
+            .unwrap()
+            .upsert(original.clone())
+            .await
+            .unwrap();
         let provider = JsonlProvider::new(ProviderSpec {
-            id:"omp".into(),family:"omp".into(),command:Vec::new(),env:BTreeMap::new(),
-            options:json!({}),defaults:json!({}),runtime_settings:json!({}),configured_models:Vec::new(),
+            id: "omp".into(),
+            family: "omp".into(),
+            command: Vec::new(),
+            env: BTreeMap::new(),
+            options: json!({}),
+            defaults: json!({}),
+            runtime_settings: json!({}),
+            configured_models: Vec::new(),
         });
-        let (cell, receiver) = manager.make_cell(id, original.clone(), false).await.unwrap();
+        let (cell, receiver) = manager
+            .make_cell(id, original.clone(), false)
+            .await
+            .unwrap();
         *cell.task.lock().await = Some(manager.start_events(id, &cell, receiver));
-        let session = provider.resume_session(
-            persistence.clone(),json!({"cwd":root.path()}),
-            LaunchContext {
-                agent_id:id.into(),home:home.clone(),executable:app.executable.clone(),
-                env:BTreeMap::new(),mcp_servers:json!({}),tool_catalog:json!([]),
-                tool_manifest:json!([]),tool_executor:None,cancel:cell.cancel.child_token(),
-            },
-            json!({"purpose":"history"}),cell.sink.clone(),
-        ).await.unwrap();
-        let restored = manager.register_session(id, &cell, session, Some(persistence), true).await.unwrap();
+        let session = provider
+            .resume_session(
+                persistence.clone(),
+                json!({"cwd":root.path()}),
+                LaunchContext {
+                    agent_id: id.into(),
+                    home: home.clone(),
+                    executable: app.executable.clone(),
+                    env: BTreeMap::new(),
+                    mcp_servers: json!({}),
+                    tool_catalog: json!([]),
+                    tool_manifest: json!([]),
+                    tool_executor: None,
+                    cancel: cell.cancel.child_token(),
+                },
+                json!({"purpose":"history"}),
+                cell.sink.clone(),
+            )
+            .await
+            .unwrap();
+        let restored = manager
+            .register_session(id, &cell, session, Some(persistence), true)
+            .await
+            .unwrap();
         assert_eq!(restored["updatedAt"], original["updatedAt"]);
         assert_eq!(restored["lastActivityAt"], original["lastActivityAt"]);
         manager.hydrate_history(id, &cell, true).await.unwrap();
-        assert_eq!(cell.timeline.lock().unwrap().rows()[1]["item"]["text"], "old answer");
+        assert_eq!(
+            cell.timeline.lock().unwrap().rows()[1]["item"]["text"],
+            "old answer"
+        );
         let refreshed = manager.agent_snapshot(id).await.unwrap().unwrap();
         assert_eq!(refreshed["updatedAt"], original["updatedAt"]);
         assert_eq!(refreshed["lastActivityAt"], original["lastActivityAt"]);

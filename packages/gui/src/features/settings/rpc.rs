@@ -24,17 +24,28 @@ pub struct ReqError {
 
 impl ReqError {
     pub fn msg(message: impl Into<String>) -> Self {
-        Self { code: String::new(), message: message.into(), outcome_unknown: false }
+        Self {
+            code: String::new(),
+            message: message.into(),
+            outcome_unknown: false,
+        }
     }
 
     pub fn from_core(error: &CoreError) -> Self {
-        Self { code: error.code.clone(), message: error.message.clone(), outcome_unknown: error.outcome_unknown }
+        Self {
+            code: error.code.clone(),
+            message: error.message.clone(),
+            outcome_unknown: error.outcome_unknown,
+        }
     }
 
     /// Flutter `_isReconnectFailure` / `isDaemonUpdateReconnectFailure`.
     pub fn is_reconnect(&self) -> bool {
         self.outcome_unknown
-            || matches!(self.code.as_str(), "DAEMON_CONNECTION_LOST" | "DAEMON_REQUEST_TIMEOUT" | "DAEMON_NOT_CONNECTED")
+            || matches!(
+                self.code.as_str(),
+                "DAEMON_CONNECTION_LOST" | "DAEMON_REQUEST_TIMEOUT" | "DAEMON_NOT_CONNECTED"
+            )
     }
 
     /// Flutter `errorMessage`.
@@ -59,8 +70,17 @@ pub fn check_response(result: Value) -> Result<Value, ReqError> {
             .unwrap_or_else(|| serde_json::to_string(&result).unwrap_or_default()),
         _ => serde_json::to_string(&result).unwrap_or_default(),
     };
-    let code = result.get("error").and_then(|e| e.get("code")).and_then(Value::as_str).unwrap_or("").to_string();
-    Err(ReqError { code, message, outcome_unknown: false })
+    let code = result
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Err(ReqError {
+        code,
+        message,
+        outcome_unknown: false,
+    })
 }
 
 /// A UI handler: zones, menu items and field submits run one of these.
@@ -96,7 +116,10 @@ impl Env<'_> {
     }
 
     pub fn toast(&mut self, message: impl Into<String>, is_error: bool) {
-        self.ctx.effects.push(UiEffect::Toast { message: message.into(), is_error });
+        self.ctx.effects.push(UiEffect::Toast {
+            message: message.into(),
+            is_error,
+        });
     }
 
     /// Flutter `showError`.
@@ -106,12 +129,17 @@ impl Env<'_> {
     }
 
     pub fn open_url(&mut self, url: &str) {
-        self.ctx.effects.push(UiEffect::OpenExternal { url: url.to_string() });
+        self.ctx.effects.push(UiEffect::OpenExternal {
+            url: url.to_string(),
+        });
     }
 
     /// Clipboard text through the shell (platform `copy_text`), with an optional toast.
     pub fn copy(&mut self, text: &str, toast: Option<String>) {
-        self.ctx.effects.push(UiEffect::CopyText { text: text.to_string(), toast });
+        self.ctx.effects.push(UiEffect::CopyText {
+            text: text.to_string(),
+            toast,
+        });
     }
 
     pub fn navigate(&mut self, route: Route) {

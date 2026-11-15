@@ -46,7 +46,10 @@ pub struct Interaction {
 
 impl Interaction {
     pub fn new(enabled: bool) -> Interaction {
-        Interaction { enabled, ..Interaction::default() }
+        Interaction {
+            enabled,
+            ..Interaction::default()
+        }
     }
 }
 
@@ -54,16 +57,34 @@ impl Interaction {
 /// surfaceSidebar in the explorer.
 pub fn toolbar(cx: &mut Cx2d, kit: &mut Kit, area: Rect, sidebar: bool, p: &Palette) {
     kit.fill(cx, area, if sidebar { p.sidebar } else { p.surface0 }, 0.0);
-    kit.hline(cx, area.pos.x, area.pos.y + area.size.y - 1.0, area.size.x, p.border);
+    kit.hline(
+        cx,
+        area.pos.x,
+        area.pos.y + area.size.y - 1.0,
+        area.size.x,
+        p.border,
+    );
 }
 
 /// Original `ToolbarButton`: highlight while hovered, pressed or selected, 50% when disabled.
-pub fn icon_button(cx: &mut Cx2d, kit: &mut Kit, frame: Rect, icon: &str, state: Interaction, compact: bool, p: &Palette) {
+pub fn icon_button(
+    cx: &mut Cx2d,
+    kit: &mut Kit,
+    frame: Rect,
+    icon: &str,
+    state: Interaction,
+    compact: bool,
+    p: &Palette,
+) {
     let highlighted = state.selected || (state.enabled && (state.hovered || state.pressed));
     if highlighted {
         kit.fill(cx, frame, p.interaction_highlight, 6.0);
     }
-    let color = if state.enabled { p.muted } else { fade(p.muted, 0.5) };
+    let color = if state.enabled {
+        p.muted
+    } else {
+        fade(p.muted, 0.5)
+    };
     kit.icon(cx, frame, icon, toolbar_icon_size(compact), color);
 }
 
@@ -115,9 +136,26 @@ impl ButtonSize {
 }
 
 /// The width a `PaseoButton` needs (12px padding, 8px icon gap).
-pub fn button_width(cx: &mut Cx, kit: &mut Kit, label: &str, icon: Option<&str>, size: ButtonSize, t: &Typography) -> f64 {
-    let text = kit.measure(cx, spec(Font::Regular, size.font(t), Vec4::default()), label).x;
-    let icon = if icon.is_some() { size.icon() + if label.is_empty() { 0.0 } else { 8.0 } } else { 0.0 };
+pub fn button_width(
+    cx: &mut Cx,
+    kit: &mut Kit,
+    label: &str,
+    icon: Option<&str>,
+    size: ButtonSize,
+    t: &Typography,
+) -> f64 {
+    let text = kit
+        .measure(
+            cx,
+            spec(Font::Regular, size.font(t), Vec4::default()),
+            label,
+        )
+        .x;
+    let icon = if icon.is_some() {
+        size.icon() + if label.is_empty() { 0.0 } else { 8.0 }
+    } else {
+        0.0
+    };
     (24.0 + text + icon).ceil()
 }
 
@@ -141,28 +179,68 @@ pub fn button(
         ButtonVariant::Ghost => (
             Vec4::default(),
             Vec4::default(),
-            if state.hovered && state.enabled { p.foreground } else { p.muted },
+            if state.hovered && state.enabled {
+                p.foreground
+            } else {
+                p.muted
+            },
         ),
     };
     let opacity = if state.enabled { 1.0 } else { 0.5 };
     let hover = state.enabled && (state.hovered || state.pressed);
-    let fill = if hover && variant != ButtonVariant::Primary { p.surface2 } else { background };
+    let fill = if hover && variant != ButtonVariant::Primary {
+        p.surface2
+    } else {
+        background
+    };
     if border.w > 0.0 {
-        kit.outline(cx, frame, fade(fill, opacity), fade(border, opacity), 1.0, 12.0);
+        kit.outline(
+            cx,
+            frame,
+            fade(fill, opacity),
+            fade(border, opacity),
+            1.0,
+            12.0,
+        );
     } else {
         kit.fill(cx, frame, fade(fill, opacity), 12.0);
     }
     let fg = fade(foreground, opacity);
     let font = size.font(t);
-    let text_w = if label.is_empty() { 0.0 } else { kit.measure(cx, spec(Font::Regular, font, fg), label).x };
-    let icon_w = if icon.is_some() { size.icon() + if label.is_empty() { 0.0 } else { 8.0 } } else { 0.0 };
+    let text_w = if label.is_empty() {
+        0.0
+    } else {
+        kit.measure(cx, spec(Font::Regular, font, fg), label).x
+    };
+    let icon_w = if icon.is_some() {
+        size.icon() + if label.is_empty() { 0.0 } else { 8.0 }
+    } else {
+        0.0
+    };
     let mut x = frame.pos.x + ((frame.size.x - text_w - icon_w) / 2.0).max(12.0);
     if let Some(icon) = icon {
-        kit.icon(cx, rect(x, frame.pos.y, size.icon(), frame.size.y), icon, size.icon(), fg);
+        kit.icon(
+            cx,
+            rect(x, frame.pos.y, size.icon(), frame.size.y),
+            icon,
+            size.icon(),
+            fg,
+        );
         x += icon_w;
     }
     if !label.is_empty() {
-        kit.text_in(cx, rect(x, frame.pos.y, frame.pos.x + frame.size.x - 12.0 - x, frame.size.y), spec(Font::Regular, font, fg), label, 0.0);
+        kit.text_in(
+            cx,
+            rect(
+                x,
+                frame.pos.y,
+                frame.pos.x + frame.size.x - 12.0 - x,
+                frame.size.y,
+            ),
+            spec(Font::Regular, font, fg),
+            label,
+            0.0,
+        );
     }
 }
 
@@ -203,7 +281,11 @@ pub fn segmented(
             Vec4::default()
         };
         kit.fill(cx, r, fill, 12.0);
-        let color = if index == selected { p.foreground } else { p.muted };
+        let color = if index == selected {
+            p.foreground
+        } else {
+            p.muted
+        };
         kit.text_in(cx, r, spec(Font::Regular, font, color), label, 0.5);
         rects.push(r);
         x += widths[index] + 4.0;
@@ -213,7 +295,14 @@ pub fn segmented(
 
 pub fn segmented_width(cx: &mut Cx, kit: &mut Kit, labels: &[&str], t: &Typography) -> f64 {
     let font = t.ui_size(12.0);
-    labels.iter().map(|label| kit.measure(cx, spec(Font::Regular, font, Vec4::default()), label).x + 16.0).sum::<f64>()
+    labels
+        .iter()
+        .map(|label| {
+            kit.measure(cx, spec(Font::Regular, font, Vec4::default()), label)
+                .x
+                + 16.0
+        })
+        .sum::<f64>()
         + 4.0 * labels.len().saturating_sub(1) as f64
 }
 
@@ -224,7 +313,17 @@ pub fn sidebar_hover(p: &Palette) -> Vec4 {
 
 /// A rotating disclosure chevron (original `TreeChevron`).
 pub fn chevron(cx: &mut Cx2d, kit: &mut Kit, slot: Rect, expanded: bool, p: &Palette) {
-    kit.icon(cx, slot, if expanded { "chevron-down" } else { "chevron-right" }, 16.0, p.muted);
+    kit.icon(
+        cx,
+        slot,
+        if expanded {
+            "chevron-down"
+        } else {
+            "chevron-right"
+        },
+        16.0,
+        p.muted,
+    );
 }
 
 /// A translucent scrim over `area` (dialogs drawn inside a panel).
@@ -234,8 +333,17 @@ pub fn scrim(cx: &mut Cx2d, kit: &mut Kit, area: Rect) {
 
 /// Original md card shadow approximation: a soft dark rect behind a card.
 pub fn card(cx: &mut Cx2d, kit: &mut Kit, frame: Rect, p: &Palette, radius: f64) {
-    let shadow = if p.is_dark { with_alpha(vec4(0.0, 0.0, 0.0, 1.0), 0.2) } else { with_alpha(vec4(0.0, 0.0, 0.0, 1.0), 0.04) };
-    kit.fill(cx, rect(frame.pos.x, frame.pos.y + 4.0, frame.size.x, frame.size.y), shadow, radius);
+    let shadow = if p.is_dark {
+        with_alpha(vec4(0.0, 0.0, 0.0, 1.0), 0.2)
+    } else {
+        with_alpha(vec4(0.0, 0.0, 0.0, 1.0), 0.04)
+    };
+    kit.fill(
+        cx,
+        rect(frame.pos.x, frame.pos.y + 4.0, frame.size.x, frame.size.y),
+        shadow,
+        radius,
+    );
     kit.outline(cx, frame, p.surface1, p.border, 1.0, radius);
 }
 

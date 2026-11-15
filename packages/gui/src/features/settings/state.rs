@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use super::host::Status;
 use super::model::forms::FormSheet;
-use super::pages::{about, daemon, host as host_page, plugins, profiles, providers, shortcuts, system, usage};
+use super::pages::{
+    about, daemon, host as host_page, plugins, profiles, providers, shortcuts, system, usage,
+};
 use super::rpc::{Env, Handler, Later, ReqError, Then, check_response, message};
 use super::ui::overlay::{Confirm, Menu};
 
@@ -85,6 +87,7 @@ pub struct Settings {
     pub notifications: system::NotificationsState,
     pub diagnostics: system::DiagnosticsState,
     pub about: about::AboutState,
+    pub tailnet: super::pages::tailnet::TailnetState,
     pub shortcuts: shortcuts::ShortcutsState,
 }
 
@@ -111,6 +114,37 @@ impl Settings {
         self.pending.insert(id, Box::new(then));
     }
 
+    /// Local process-wide tailnet operation; never sent to a daemon.
+    pub fn tailnet_request(
+        &mut self,
+        env: &mut Env,
+        message: Value,
+        then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
+    ) {
+        let id = env.ctx.core.tailnet_request(message);
+        self.pending.insert(
+            format!("raw:{id}"),
+            Box::new(move |s, env, result| {
+                let result = result.and_then(|message| {
+                    let payload = message
+                        .get("payload")
+                        .ok_or_else(|| ReqError::msg(super::i18n::t("tailnet.invalidResponse")))?;
+                    if payload.get("success").and_then(Value::as_bool) != Some(true) {
+                        return Err(ReqError::msg(
+                            payload
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .map(String::from)
+                                .unwrap_or_else(|| super::i18n::t("tailnet.requestFailed")),
+                        ));
+                    }
+                    Ok(payload.clone())
+                });
+                then(s, env, result);
+            }),
+        );
+    }
+
     /// [`request`] with an explicit deadline (`None` = no deadline). Flutter
     /// used 30 s for durable update status/submit and 10 min for the legacy
     /// `daemon.update.request`.
@@ -125,12 +159,21 @@ impl Settings {
         timeout: Option<std::time::Duration>,
         then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
     ) {
-        let id = env.ctx.core.request_with_timeout(host, message(kind, fields), response, timeout);
+        let id = env
+            .ctx
+            .core
+            .request_with_timeout(host, message(kind, fields), response, timeout);
         self.pending.insert(id, Box::new(then));
     }
 
     /// `save_state_flushed`: `then` runs once `value` is durable (or failed to be).
-    pub fn save_flushed(&mut self, env: &mut Env, key: &str, value: Value, then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static) {
+    pub fn save_flushed(
+        &mut self,
+        env: &mut Env,
+        key: &str,
+        value: Value,
+        then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
+    ) {
         let id = env.ctx.core.save_state_flushed(key, value);
         self.pending.insert(format!("raw:{id}"), Box::new(then));
     }
@@ -149,7 +192,10 @@ impl Settings {
         timeout: Option<std::time::Duration>,
         then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
     ) {
-        let id = env.ctx.core.request_with_timeout(host, message_value, response, timeout);
+        let id = env
+            .ctx
+            .core
+            .request_with_timeout(host, message_value, response, timeout);
         self.pending.insert(format!("raw:{id}"), Box::new(then));
     }
 
@@ -176,7 +222,11 @@ impl Settings {
         self.bridge_pending.insert(token, Box::new(then));
     }
 
-    pub fn bridge_job(&mut self, token: u64, then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static) {
+    pub fn bridge_job(
+        &mut self,
+        token: u64,
+        then: impl FnOnce(&mut Settings, &mut Env, Result<Value, ReqError>) + 'static,
+    ) {
         self.bridge_pending.insert(token, Box::new(then));
     }
 
@@ -186,7 +236,12 @@ impl Settings {
         }
     }
 
-    pub fn after(&mut self, env: &mut Env, seconds: f64, later: impl FnOnce(&mut Settings, &mut Env) + 'static) {
+    pub fn after(
+        &mut self,
+        env: &mut Env,
+        seconds: f64,
+        later: impl FnOnce(&mut Settings, &mut Env) + 'static,
+    ) {
         let timer = env.cx.start_timeout(seconds);
         self.timers.push((timer, Box::new(later)));
     }
@@ -230,13 +285,19 @@ impl Settings {
 
     /// Drops pending writes the core state now reflects.
     pub fn settle_prefs(&mut self, state_prefs: &Value) {
-        self.prefs_pending.retain(|key, value| state_prefs.get(key) != value.as_ref());
+        self.prefs_pending
+            .retain(|key, value| state_prefs.get(key) != value.as_ref());
     }
 
     /// Writes one preference key (`None` removes it). The shell merges it into
     /// the whole preferences object, keeping every other key (ui-api §12).
     pub fn save_pref(&mut self, env: &mut Env, key: &str, value: Option<Value>) {
-        env.ctx.effects.push(crate::common::UiEffect::SetPreference { key: key.to_string(), value: value.clone().unwrap_or(Value::Null) });
+        env.ctx
+            .effects
+            .push(crate::common::UiEffect::SetPreference {
+                key: key.to_string(),
+                value: value.clone().unwrap_or(Value::Null),
+            });
         self.prefs_pending.insert(key.to_string(), value);
     }
 
@@ -244,20 +305,36 @@ impl Settings {
 
     pub fn open_sheet(&mut self, kind: SheetKind, max_w: f64) -> u64 {
         let id = self.next_id();
-        self.sheets.push(Sheet { id, max_w, scroll: 0.0, kind });
+        self.sheets.push(Sheet {
+            id,
+            max_w,
+            scroll: 0.0,
+            kind,
+        });
         id
     }
 
     /// Opens a sheet whose state already carries its id.
     pub fn push_sheet(&mut self, id: u64, kind: SheetKind, max_w: f64) {
-        self.sheets.push(Sheet { id, max_w, scroll: 0.0, kind });
+        self.sheets.push(Sheet {
+            id,
+            max_w,
+            scroll: 0.0,
+            kind,
+        });
     }
 
     pub fn close_sheet(&mut self, env: &mut Env, id: u64) {
-        let Some(index) = self.sheets.iter().position(|s| s.id == id) else { return };
+        let Some(index) = self.sheets.iter().position(|s| s.id == id) else {
+            return;
+        };
         let sheet = self.sheets.remove(index);
         env.fields.forget_prefix(env.cx, &format!("sheet.{id}."));
-        if let SheetKind::Confirm(Confirm { on_decline: Some(decline), .. }) = sheet.kind {
+        if let SheetKind::Confirm(Confirm {
+            on_decline: Some(decline),
+            ..
+        }) = sheet.kind
+        {
             decline(self, env);
         }
     }
@@ -269,22 +346,66 @@ impl Settings {
     }
 
     pub fn sheet_mut(&mut self, id: u64) -> Option<&mut SheetKind> {
-        self.sheets.iter_mut().find(|s| s.id == id).map(|s| &mut s.kind)
+        self.sheets
+            .iter_mut()
+            .find(|s| s.id == id)
+            .map(|s| &mut s.kind)
     }
 
     pub fn report(&mut self, title: String, value: &Value) {
-        self.open_sheet(SheetKind::Report { title, text: super::json::pretty(value) }, 760.0);
+        self.open_sheet(
+            SheetKind::Report {
+                title,
+                text: super::json::pretty(value),
+            },
+            760.0,
+        );
     }
 
     /// Flutter `confirmAction`. The confirm button names the action.
-    pub fn confirm(&mut self, title: String, message: String, confirm_label: String, destructive: bool, on_confirm: Handler) {
-        self.open_sheet(SheetKind::Confirm(Confirm { title, message, confirm_label, destructive, on_confirm, on_decline: None }), 420.0);
+    pub fn confirm(
+        &mut self,
+        title: String,
+        message: String,
+        confirm_label: String,
+        destructive: bool,
+        on_confirm: Handler,
+    ) {
+        self.open_sheet(
+            SheetKind::Confirm(Confirm {
+                title,
+                message,
+                confirm_label,
+                destructive,
+                on_confirm,
+                on_decline: None,
+            }),
+            420.0,
+        );
     }
 
     /// [`Settings::confirm`] that also runs `on_decline` when the dialog is
     /// dismissed without confirming (original `if (!confirmed) return …`).
-    pub fn confirm_or(&mut self, title: String, message: String, confirm_label: String, destructive: bool, on_confirm: Handler, on_decline: Handler) {
-        self.open_sheet(SheetKind::Confirm(Confirm { title, message, confirm_label, destructive, on_confirm, on_decline: Some(on_decline) }), 420.0);
+    pub fn confirm_or(
+        &mut self,
+        title: String,
+        message: String,
+        confirm_label: String,
+        destructive: bool,
+        on_confirm: Handler,
+        on_decline: Handler,
+    ) {
+        self.open_sheet(
+            SheetKind::Confirm(Confirm {
+                title,
+                message,
+                confirm_label,
+                destructive,
+                on_confirm,
+                on_decline: Some(on_decline),
+            }),
+            420.0,
+        );
     }
 
     /// Finishes a form sheet: closes it, or shows the error under its fields.

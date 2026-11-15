@@ -8,9 +8,9 @@ use super::api::{
     AgentProvider, AgentSession, EventSink, HistoryCoverage, ImportedSession, LaunchContext,
     ProviderSpec, SubagentHistory, SubagentHistoryRequest,
 };
-use paseo_client::process::{self, CommandSpec};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::{self, CommandSpec};
 use serde_json::{Value, json};
 use session::Session;
 use std::{
@@ -108,9 +108,10 @@ impl MuseProvider {
                     && newest.as_ref().is_none_or(|old| {
                         usage["observedAtMs"].as_f64().unwrap_or(0.)
                             > old["observedAtMs"].as_f64().unwrap_or(0.)
-                    }) {
-                        newest = Some(usage);
-                    }
+                    })
+                {
+                    newest = Some(usage);
+                }
             }
             return Ok(newest
                 .map(|usage| json!({"usage":usage}))
@@ -255,12 +256,13 @@ impl AgentProvider for MuseProvider {
             let outcome = request.replay.clone();
             let provider = self.spec.id.clone();
             // A child still recorded as running may grow, so its replay stays guarded.
-            let marker: session::Marker = Box::new(move |mut events: Vec<Value>, read: HistoryCoverage| {
-                let coverage = request.settle(&mut events, read);
-                request
-                    .replay
-                    .marker(&provider, &request.child_id, events, coverage)
-            });
+            let marker: session::Marker =
+                Box::new(move |mut events: Vec<Value>, read: HistoryCoverage| {
+                    let coverage = request.settle(&mut events, read);
+                    request
+                        .replay
+                        .marker(&provider, &request.child_id, events, coverage)
+                });
             session.replay_child(&child, marker, outcome).await?;
             return Ok(SubagentHistory::Published);
         }
@@ -539,11 +541,14 @@ mod tests {
 
     #[tokio::test]
     async fn opened_child_validates_stored_handles_before_launching_muse() {
-        let (result, events) = read(request(json!({"sessionId":"not-a-plugin"}), Value::Null)).await;
+        let (result, events) =
+            read(request(json!({"sessionId":"not-a-plugin"}), Value::Null)).await;
         assert!(result.is_err_and(|error| error.to_string().contains("persistence")));
         assert!(events.is_empty());
         let (result, events) = read(request(parent(), json!({"sessionId":"child-b"}))).await;
-        assert!(result.is_err_and(|error| error.to_string().contains("does not name session child-a")));
+        assert!(
+            result.is_err_and(|error| error.to_string().contains("does not name session child-a"))
+        );
         assert!(events.is_empty());
     }
 

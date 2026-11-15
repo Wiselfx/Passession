@@ -92,7 +92,6 @@ impl GitActionsButton {
         }
         self.redraw(cx);
     }
-
 }
 
 impl Widget for GitActionsButton {
@@ -103,7 +102,9 @@ impl Widget for GitActionsButton {
         with_store(|store| store.begin_event(cx, event, ui));
         self.ensure_bound(cx, ui);
         if let Event::Actions(actions) = event
-            && actions.iter().any(|a| a.downcast_ref::<GitStoreChanged>().is_some())
+            && actions
+                .iter()
+                .any(|a| a.downcast_ref::<GitStoreChanged>().is_some())
         {
             self.redraw(cx);
         }
@@ -114,8 +115,16 @@ impl Widget for GitActionsButton {
             let checkout = self.checkout.clone();
             match result {
                 OverlayResult::Chose(ActionsPurpose::Menu, id) if id == GIT_LOG_ITEM => {
-                    let target = PanelTarget::new("git_log", &checkout.host, &checkout.workspace_id, &checkout.cwd);
-                    ui.push(UiEffect::OpenTab { target, placement: TabPlacement::Main });
+                    let target = PanelTarget::new(
+                        "git_log",
+                        &checkout.host,
+                        &checkout.workspace_id,
+                        &checkout.cwd,
+                    );
+                    ui.push(UiEffect::OpenTab {
+                        target,
+                        placement: TabPlacement::Main,
+                    });
                 }
                 OverlayResult::Chose(ActionsPurpose::Menu, id) => {
                     with_store(|store| {
@@ -128,7 +137,11 @@ impl Widget for GitActionsButton {
             self.redraw(cx);
         }
         let point_part = |abs: DVec2, area: Rect, primary_width: f64| {
-            if abs.x < area.pos.x + primary_width { Part::Primary } else { Part::Caret }
+            if abs.x < area.pos.x + primary_width {
+                Part::Primary
+            } else {
+                Part::Caret
+            }
         };
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
@@ -141,7 +154,12 @@ impl Widget for GitActionsButton {
                     let failure = with_store(|store| {
                         store
                             .last_failure(&self.checkout.host, &self.checkout.cwd)
-                            .map(|f| tr("workspace.git.actions.failure.tooltip", &[("title", f.title.clone()), ("message", f.message.clone())]))
+                            .map(|f| {
+                                tr(
+                                    "workspace.git.actions.failure.tooltip",
+                                    &[("title", f.title.clone()), ("message", f.message.clone())],
+                                )
+                            })
                     });
                     tooltip_at(ui, failure.as_deref(), area, 0.3);
                     self.redraw(cx);
@@ -158,7 +176,10 @@ impl Widget for GitActionsButton {
             Hit::FingerUp(e) => {
                 let pressed = self.pressed.take();
                 let area = self.area.rect(cx);
-                if !e.is_over || (e.device.is_touch() && !e.was_tap()) || pressed != Some(point_part(e.abs, area, self.primary_width)) {
+                if !e.is_over
+                    || (e.device.is_touch() && !e.was_tap())
+                    || pressed != Some(point_part(e.abs, area, self.primary_width))
+                {
                     return;
                 }
                 let checkout = self.checkout.clone();
@@ -175,7 +196,9 @@ impl Widget for GitActionsButton {
                         let entries = with_store(|store| {
                             let actions = checkout.build(ui, store);
                             let (mut entries, direct) = checkout.menu_extras(ui, store, &actions);
-                            for group in [menu_entries(&checkout, store, &actions.secondary), direct] {
+                            for group in
+                                [menu_entries(&checkout, store, &actions.secondary), direct]
+                            {
                                 if !group.is_empty() && !entries.is_empty() {
                                     entries.push(MenuEntry::Separator);
                                 }
@@ -186,7 +209,10 @@ impl Widget for GitActionsButton {
                                 if !entries.is_empty() {
                                     entries.push(MenuEntry::Separator);
                                 }
-                                entries.push(MenuEntry::Item(MenuItem::new(GIT_LOG_ITEM, t("workspace.git.log.open")).icon("git-graph")));
+                                entries.push(MenuEntry::Item(
+                                    MenuItem::new(GIT_LOG_ITEM, t("workspace.git.log.open"))
+                                        .icon("git-graph"),
+                                ));
                             }
                             entries
                         });
@@ -228,15 +254,29 @@ impl Widget for GitActionsButton {
             let primary = actions.primary.clone()?;
             let failed = store.last_failure(&checkout.host, &checkout.cwd).is_some();
             let (failure, direct) = checkout.menu_extras(ui, store, &actions);
-            let has_secondary = log || !failure.is_empty() || !direct.is_empty() || !menu_entries(&checkout, store, &actions.secondary).is_empty();
-            Some((checkout.label(store, &primary), primary, has_secondary, failed))
+            let has_secondary = log
+                || !failure.is_empty()
+                || !direct.is_empty()
+                || !menu_entries(&checkout, store, &actions.secondary).is_empty();
+            Some((
+                checkout.label(store, &primary),
+                primary,
+                has_secondary,
+                failed,
+            ))
         });
         // Nothing outside a git checkout or without a primary action.
         let Some((label, primary, has_secondary, failed)) = built else {
             // A zero-size absolute rect keeps a redrawable area (no layout spacing):
             // with `Area::Empty` the store's change notification could never redraw it.
             let origin = cx.turtle().pos();
-            cx.walk_turtle_with_area(&mut self.area, Walk::abs_rect(Rect { pos: origin, size: DVec2::default() }));
+            cx.walk_turtle_with_area(
+                &mut self.area,
+                Walk::abs_rect(Rect {
+                    pos: origin,
+                    size: DVec2::default(),
+                }),
+            );
             return DrawStep::done();
         };
         let colors = palette();
@@ -247,7 +287,8 @@ impl Widget for GitActionsButton {
         let content = if pending {
             14.0
         } else {
-            16.0 + if compact { 8.0 } else { 4.0 } + self.paint.measure(cx, Font::Regular, size, &label).x
+            16.0 + if compact { 8.0 } else { 4.0 }
+                + self.paint.measure(cx, Font::Regular, size, &label).x
         };
         let primary_width = content + 2.0 * if compact { 12.0 } else { 8.0 };
         let width = primary_width + if has_secondary { height } else { 0.0 };
@@ -255,32 +296,66 @@ impl Widget for GitActionsButton {
         let frame = cx.walk_turtle_with_area(&mut self.area, Walk::fixed(width, height));
         let primary_rect = rect(frame.pos.x, frame.pos.y, primary_width, height);
         if self.hovered == Some(Part::Primary) && !primary.disabled {
-            self.paint.rounded(cx, primary_rect, colors.surface2, 6.0, None);
+            self.paint
+                .rounded(cx, primary_rect, colors.surface2, 6.0, None);
         }
         let alpha = if primary.disabled { 0.6 } else { 1.0 };
         let center_y = frame.pos.y + height / 2.0;
         if pending {
             self.phase = cx.seconds_since_app_start();
-            self.paint.spinner(cx, dvec2(primary_rect.pos.x + primary_width / 2.0, center_y), 14.0, colors.foreground, self.phase);
+            self.paint.spinner(
+                cx,
+                dvec2(primary_rect.pos.x + primary_width / 2.0, center_y),
+                14.0,
+                colors.foreground,
+                self.phase,
+            );
             self.next_frame = cx.new_next_frame();
         } else {
             let mut x = primary_rect.pos.x + if compact { 12.0 } else { 8.0 };
             // The last action failed: an alert in place of the action's icon until a success.
-            let (icon, icon_color) = if failed { ("circle-alert", colors.danger) } else { (Checkout::icon(&primary), with_alpha(colors.muted, alpha)) };
-            self.paint.icon(cx, icon, 16.0, icon_color, dvec2(x + 8.0, center_y));
+            let (icon, icon_color) = if failed {
+                ("circle-alert", colors.danger)
+            } else {
+                (Checkout::icon(&primary), with_alpha(colors.muted, alpha))
+            };
+            self.paint
+                .icon(cx, icon, 16.0, icon_color, dvec2(x + 8.0, center_y));
             x += 16.0 + if compact { 8.0 } else { 4.0 };
-            self.paint.text_centered(cx, Font::Regular, size, with_alpha(colors.foreground, alpha), x, frame.pos.y, height, &label, primary_width);
+            self.paint.text_centered(
+                cx,
+                Font::Regular,
+                size,
+                with_alpha(colors.foreground, alpha),
+                x,
+                frame.pos.y,
+                height,
+                &label,
+                primary_width,
+            );
         }
-        let border = if failed { with_alpha(colors.danger, 0.7) } else { colors.border_accent };
+        let border = if failed {
+            with_alpha(colors.danger, 0.7)
+        } else {
+            colors.border_accent
+        };
         if has_secondary {
             let caret = rect(frame.pos.x + primary_width, frame.pos.y, height, height);
             if self.hovered == Some(Part::Caret) || self.overlay.is_open() {
                 self.paint.fill(cx, caret, colors.surface2);
             }
-            self.paint.fill(cx, rect(caret.pos.x, caret.pos.y, 1.0, height), border);
-            self.paint.icon(cx, "chevron-down", 16.0, colors.muted, caret.center());
+            self.paint
+                .fill(cx, rect(caret.pos.x, caret.pos.y, 1.0, height), border);
+            self.paint
+                .icon(cx, "chevron-down", 16.0, colors.muted, caret.center());
         }
-        self.paint.rounded(cx, frame, vec4(0.0, 0.0, 0.0, 0.0), 6.0, Some((border, 1.0)));
+        self.paint.rounded(
+            cx,
+            frame,
+            vec4(0.0, 0.0, 0.0, 0.0),
+            6.0,
+            Some((border, 1.0)),
+        );
         DrawStep::done()
     }
 }
@@ -288,7 +363,9 @@ impl Widget for GitActionsButton {
 impl GitActionsButtonRef {
     /// Binds the button to a checkout; a no-op while the identity is unchanged.
     pub fn set_workspace(&self, cx: &mut Cx, host_id: &str, workspace_id: &str, cwd: &str) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         let next = Checkout {
             host: host_id.to_owned(),
             workspace_id: workspace_id.to_owned(),
@@ -404,7 +481,8 @@ impl OpenInButton {
             && platform.capabilities().desktop_host
         {
             if !self.local_resolved && self.local_request.is_none() {
-                self.local_request = Some(platform.desktop_invoke("desktop_daemon_status", json!({})));
+                self.local_request =
+                    Some(platform.desktop_invoke("desktop_daemon_status", json!({})));
             } else if self.local_server_id.as_deref() == Some(self.host.as_str())
                 && self.editors.is_empty()
                 && self.editors_request.is_none()
@@ -421,7 +499,11 @@ impl OpenInButton {
         if let Some(rest) = path.strip_prefix(&format!("{root}/")) {
             return Some(rest.to_owned());
         }
-        if path.starts_with('/') { None } else { Some(path.to_owned()) }
+        if path.starts_with('/') {
+            None
+        } else {
+            Some(path.to_owned())
+        }
     }
 
     /// Original `planWorkspaceOpenTargets`.
@@ -432,7 +514,11 @@ impl OpenInButton {
                 targets.push(OpenTarget {
                     id: editor.id.clone(),
                     label: editor.label.clone(),
-                    icon: if editor.kind == "file-manager" { "folder" } else { "code-xml" },
+                    icon: if editor.kind == "file-manager" {
+                        "folder"
+                    } else {
+                        "code-xml"
+                    },
                     svg: None,
                     kind: OpenKind::Editor,
                 });
@@ -472,9 +558,18 @@ impl OpenInButton {
         Some(match self.relative_file() {
             Some(file) => tr(
                 "workspace.git.openInEditor.openFileIn",
-                &[("fileName", file.rsplit('/').next().unwrap_or(&file).to_owned()), ("target", primary.label)],
+                &[
+                    (
+                        "fileName",
+                        file.rsplit('/').next().unwrap_or(&file).to_owned(),
+                    ),
+                    ("target", primary.label),
+                ],
             ),
-            None => tr("workspace.git.openInEditor.openIn", &[("target", primary.label)]),
+            None => tr(
+                "workspace.git.openInEditor.openIn",
+                &[("target", primary.label)],
+            ),
         })
     }
 
@@ -493,22 +588,27 @@ impl OpenInButton {
             OpenKind::Editor => {
                 let Some(platform) = platform() else { return };
                 let root = self.cwd.trim_end_matches('/').to_owned();
-                let file = self.relative_file().map(|relative| std::path::PathBuf::from(format!("{root}/{relative}")));
+                let file = self
+                    .relative_file()
+                    .map(|relative| std::path::PathBuf::from(format!("{root}/{relative}")));
                 self.opening = true;
-                self.open_request = Some(platform.open_editor(paseo_gui_platform::OpenEditorRequest {
-                    editor_id: target.id.clone(),
-                    workspace_path: std::path::PathBuf::from(&self.cwd),
-                    file_path: file,
-                    line: None,
-                    column: None,
-                }));
+                self.open_request =
+                    Some(platform.open_editor(paseo_gui_platform::OpenEditorRequest {
+                        editor_id: target.id.clone(),
+                        workspace_path: std::path::PathBuf::from(&self.cwd),
+                        file_path: file,
+                        line: None,
+                        column: None,
+                    }));
                 self.redraw(cx);
             }
         }
     }
 
     fn on_platform(&mut self, cx: &mut Cx, ui: &mut UiContext, action: &PlatformAction) {
-        let PlatformAction::Completed { request, result } = action else { return };
+        let PlatformAction::Completed { request, result } = action else {
+            return;
+        };
         if Some(*request) == self.local_request {
             self.local_request = None;
             if let Ok(PlatformValue::Json(status)) = result {
@@ -582,7 +682,13 @@ impl Widget for OpenInButton {
             self.redraw(cx);
         }
         let size = 28.0;
-        let part = |abs: DVec2, area: Rect| if abs.x < area.pos.x + size { Part::Primary } else { Part::Caret };
+        let part = |abs: DVec2, area: Rect| {
+            if abs.x < area.pos.x + size {
+                Part::Primary
+            } else {
+                Part::Caret
+            }
+        };
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
                 let hovered = part(e.abs, self.area.rect(cx));
@@ -590,9 +696,16 @@ impl Widget for OpenInButton {
                     self.hovered = Some(hovered);
                     cx.set_cursor(MouseCursor::Hand);
                     // Original Tooltip on the primary half: "Open in <target>" / "Open <file> in <target>".
-                    let tip = (hovered == Part::Primary).then(|| self.primary_tooltip(ui)).flatten();
+                    let tip = (hovered == Part::Primary)
+                        .then(|| self.primary_tooltip(ui))
+                        .flatten();
                     let area = self.area.rect(cx);
-                    tooltip_at(ui, tip.as_deref(), rect(area.pos.x, area.pos.y, size, area.size.y), 0.5);
+                    tooltip_at(
+                        ui,
+                        tip.as_deref(),
+                        rect(area.pos.x, area.pos.y, size, area.size.y),
+                        0.5,
+                    );
                     self.redraw(cx);
                 }
             }
@@ -609,20 +722,26 @@ impl Widget for OpenInButton {
             Hit::FingerUp(e) => {
                 let area = self.area.rect(cx);
                 let pressed = self.pressed.take();
-                if !e.is_over || (e.device.is_touch() && !e.was_tap()) || pressed != Some(part(e.abs, area)) {
+                if !e.is_over
+                    || (e.device.is_touch() && !e.was_tap())
+                    || pressed != Some(part(e.abs, area))
+                {
                     return;
                 }
                 let targets = self.targets();
-                let Some(primary) = self.primary(ui, &targets) else { return };
+                let Some(primary) = self.primary(ui, &targets) else {
+                    return;
+                };
                 match pressed {
                     Some(Part::Primary) if !self.opening => self.run(cx, ui, &primary),
                     Some(Part::Caret) if targets.len() > 1 => {
                         let entries = targets
                             .iter()
                             .map(|target| {
-                                let mut item = MenuItem::new(target.id.clone(), target.label.clone())
-                                    .icon(target.icon)
-                                    .selected(target.id == primary.id);
+                                let mut item =
+                                    MenuItem::new(target.id.clone(), target.label.clone())
+                                        .icon(target.icon)
+                                        .selected(target.id == primary.id);
                                 if let Some(svg) = &target.svg {
                                     item = item.svg(svg.clone());
                                 }
@@ -657,7 +776,13 @@ impl Widget for OpenInButton {
         let targets = self.targets();
         let Some(primary) = self.primary(ui, &targets) else {
             let origin = cx.turtle().pos();
-            cx.walk_turtle_with_area(&mut self.area, Walk::abs_rect(Rect { pos: origin, size: DVec2::default() }));
+            cx.walk_turtle_with_area(
+                &mut self.area,
+                Walk::abs_rect(Rect {
+                    pos: origin,
+                    size: DVec2::default(),
+                }),
+            );
             return DrawStep::done();
         };
         let colors = palette();
@@ -670,25 +795,48 @@ impl Widget for OpenInButton {
         }
         if self.opening {
             self.phase = cx.seconds_since_app_start();
-            self.paint.spinner(cx, primary_rect.center(), 14.0, colors.foreground, self.phase);
+            self.paint.spinner(
+                cx,
+                primary_rect.center(),
+                14.0,
+                colors.foreground,
+                self.phase,
+            );
             self.next_frame = cx.new_next_frame();
         } else if let Some(path) = primary.svg.as_deref().and_then(icon_path) {
             self.brand_icon.svg_path = ArcStringMut::Arc(path);
             self.brand_icon.color = colors.muted;
-            let icon = rect(primary_rect.center().x - 8.0, primary_rect.center().y - 8.0, 16.0, 16.0);
+            let icon = rect(
+                primary_rect.center().x - 8.0,
+                primary_rect.center().y - 8.0,
+                16.0,
+                16.0,
+            );
             self.brand_icon.draw_walk(cx, Walk::abs_rect(icon));
         } else {
-            self.paint.icon(cx, primary.icon, 16.0, colors.muted, primary_rect.center());
+            self.paint
+                .icon(cx, primary.icon, 16.0, colors.muted, primary_rect.center());
         }
         if targets.len() > 1 {
             let caret = rect(frame.pos.x + size, frame.pos.y, size, size);
             if self.hovered == Some(Part::Caret) || self.overlay.is_open() {
                 self.paint.fill(cx, caret, colors.surface2);
             }
-            self.paint.fill(cx, rect(caret.pos.x, caret.pos.y, 1.0, size), colors.border_accent);
-            self.paint.icon(cx, "chevron-down", 16.0, colors.muted, caret.center());
+            self.paint.fill(
+                cx,
+                rect(caret.pos.x, caret.pos.y, 1.0, size),
+                colors.border_accent,
+            );
+            self.paint
+                .icon(cx, "chevron-down", 16.0, colors.muted, caret.center());
         }
-        self.paint.rounded(cx, frame, vec4(0.0, 0.0, 0.0, 0.0), 6.0, Some((colors.border_accent, 1.0)));
+        self.paint.rounded(
+            cx,
+            frame,
+            vec4(0.0, 0.0, 0.0, 0.0),
+            6.0,
+            Some((colors.border_accent, 1.0)),
+        );
         DrawStep::done()
     }
 }
@@ -696,7 +844,9 @@ impl Widget for OpenInButton {
 impl OpenInButtonRef {
     /// Binds to a checkout and the focused file tab's path; a no-op while unchanged.
     pub fn set_workspace(&self, cx: &mut Cx, host_id: &str, cwd: &str, active_file: Option<&str>) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         let file = active_file.map(str::to_owned);
         if inner.host != host_id || inner.cwd != cwd {
             inner.host = host_id.to_owned();

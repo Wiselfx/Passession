@@ -413,7 +413,11 @@ async fn configured_script_exit_tracks_process_and_retains_logs() {
         )
         .await
         .unwrap();
-        let launched = app.terminals.script_start(&workspace_id, "build").await.unwrap();
+        let launched = app
+            .terminals
+            .script_start(&workspace_id, "build")
+            .await
+            .unwrap();
         let terminal_id = launched["terminalId"].as_str().unwrap();
         let terminal = app.terminals.get(terminal_id).await.unwrap();
         if let Some(previous) = previous_terminal.take() {
@@ -434,7 +438,12 @@ async fn configured_script_exit_tracks_process_and_retains_logs() {
         let running = app.terminals.script_list(&workspace_id).await.unwrap();
         assert_eq!(running[0]["lifecycle"], "running");
         assert!(running[0]["exitCode"].is_null());
-        assert!(app.terminals.script_start(&workspace_id, "build").await.is_err());
+        assert!(
+            app.terminals
+                .script_start(&workspace_id, "build")
+                .await
+                .is_err()
+        );
         tokio::fs::write(cwd.join(format!("release-{expected_code}")), b"")
             .await
             .unwrap();
@@ -452,18 +461,36 @@ async fn configured_script_exit_tracks_process_and_retains_logs() {
         assert_eq!(stopped["exitCode"], expected_code);
         assert_eq!(stopped["terminalId"], terminal_id);
         assert_eq!(terminal.wait().await.unwrap(), expected_code);
-        assert!(app.terminals.list(Some(&workspace_id), None).await.is_empty());
+        assert!(
+            app.terminals
+                .list(Some(&workspace_id), None)
+                .await
+                .is_empty()
+        );
         let retained = app.terminals.get(terminal_id).await.unwrap();
         let (lines, _) = retained.capture(None, None, true).await.unwrap();
         for line in 1..=240 {
-            assert!(lines.iter().any(|text| text.trim() == format!("script-log-{line}")));
+            assert!(
+                lines
+                    .iter()
+                    .any(|text| text.trim() == format!("script-log-{line}"))
+            );
         }
-        assert!(lines.iter().any(|line| line.trim() == format!("FINAL-{expected_code}")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim() == format!("FINAL-{expected_code}"))
+        );
         subscribe_to_finished_script(&app.terminals, terminal_id).await;
         previous_terminal = Some(terminal_id.to_owned());
     }
     app.terminals.kill_workspace(&workspace_id).await.unwrap();
-    assert!(app.terminals.get(&previous_terminal.unwrap()).await.is_err());
+    assert!(
+        app.terminals
+            .get(&previous_terminal.unwrap())
+            .await
+            .is_err()
+    );
     app.terminals.shutdown().await.unwrap();
 }
 
@@ -478,7 +505,11 @@ async fn configured_service_exit_and_stop_release_routes_but_retain_logs() {
     }))
     .await;
     for stop_requested in [false, true] {
-        let launched = app.terminals.script_start(&workspace_id, "web").await.unwrap();
+        let launched = app
+            .terminals
+            .script_start(&workspace_id, "web")
+            .await
+            .unwrap();
         let terminal_id = launched["terminalId"].as_str().unwrap();
         let hostname = launched["hostname"].as_str().unwrap();
         let terminal = app.terminals.get(terminal_id).await.unwrap();
@@ -497,7 +528,10 @@ async fn configured_service_exit_and_stop_release_routes_but_retain_logs() {
         .await
         .unwrap();
         if stop_requested {
-            app.terminals.script_stop(&workspace_id, "web").await.unwrap();
+            app.terminals
+                .script_stop(&workspace_id, "web")
+                .await
+                .unwrap();
         } else {
             tokio::fs::write(root.path().join("workspace/release"), b"")
                 .await

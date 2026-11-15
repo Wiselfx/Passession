@@ -47,6 +47,14 @@ fn build_input() -> Result<PathBuf> {
         "GUI build metadata points outside its desktop output directory"
     );
     build::assert_architecture(&input.join(gui::desktop_executable(platform()?)))?;
+    crate::tailnet::require_packaged(
+        &input.join(gui::desktop_executable(platform()?)),
+        platform()?,
+    )?;
+    crate::app_updater::require_packaged(
+        &input.join(gui::desktop_executable(platform()?)),
+        platform()?,
+    )?;
     build::validate_runtime(
         &input.join(gui::desktop_runtime(platform()?)),
         "desktop-bundled",
@@ -73,7 +81,10 @@ fn debian_depends(payload: &Path) -> Result<String> {
         let entry = entry?;
         if entry.file_type().is_file() {
             let mut magic = [0; 4];
-            if fs::File::open(entry.path())?.read(&mut magic)? == 4 && magic == *b"\x7fELF" {
+            if fs::File::open(entry.path())?.read(&mut magic)? == 4
+                && magic == *b"\x7fELF"
+                && libraries::has_dynamic_segment(entry.path())?
+            {
                 elves.push(entry.into_path());
             }
         }
@@ -84,7 +95,10 @@ fn debian_depends(payload: &Path) -> Result<String> {
         .current_dir(work.path())
         .args(["-O", "--ignore-missing-info"])
         // Bundled daemon libraries resolve through their own RPATH.
-        .arg(format!("-l{}", payload.join("opt/paseo-sessions/runtime/lib").display()));
+        .arg(format!(
+            "-l{}",
+            payload.join("opt/paseo-sessions/runtime/lib").display()
+        ));
     for elf in &elves {
         shlibdeps.arg(format!("-e{}", elf.display()));
     }
@@ -97,7 +111,10 @@ fn debian_depends(payload: &Path) -> Result<String> {
         !depends.trim().is_empty(),
         "dpkg-shlibdeps reported empty dependencies"
     );
-    let mut fields: Vec<String> = depends.split(',').map(|field| field.trim().to_owned()).collect();
+    let mut fields: Vec<String> = depends
+        .split(',')
+        .map(|field| field.trim().to_owned())
+        .collect();
     for package in ["libegl1", "libx11-6", "xdg-utils"] {
         let listed = fields
             .iter()
@@ -121,6 +138,15 @@ pub fn desktop(args: &[String]) -> Result<()> {
         "Usage: cargo xtask package-desktop [linux|macos|windows] (native host required)"
     );
     let input = build_input()?;
+    desktop_input(&input, false, None)
+}
+
+/// Package already finalized component objects without modifying signed/hashed images.
+pub(crate) fn desktop_input(
+    input: &Path,
+    components: bool,
+    bootstrap: Option<&Path>,
+) -> Result<()> {
     fs::create_dir_all(release()?)?;
     let stage = tempfile::Builder::new()
         .prefix("paseo-gui-package-")
@@ -129,9 +155,17 @@ pub fn desktop(args: &[String]) -> Result<()> {
     match platform()? {
         "linux" => {
             let appdir = stage.path().join("Passession.AppDir");
-            copy_tree(&input, &appdir.join("usr/lib/paseo-sessions"))?;
-            libraries::appimage(&appdir)?;
-            build::refresh_runtime_hash(&appdir.join("usr/lib/paseo-sessions/runtime"))?;
+            copy_tree(input, &appdir.join("usr/lib/paseo-sessions"))?;
+            if let Some(archives) = bootstrap {
+                copy_tree(
+                    archives,
+                    &appdir.join("usr/lib/paseo-sessions/component-bootstrap"),
+                )?;
+            }
+            if !components {
+                libraries::appimage(&appdir)?;
+                build::refresh_runtime_hash(&appdir.join("usr/lib/paseo-sessions/runtime"))?;
+            }
             text(
                 &appdir.join("AppRun"),
                 "#!/bin/sh\nset -eu\nHERE=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\nexport PATH=\"$HERE/usr/bin:$PATH\"\nexport LD_LIBRARY_PATH=\"$HERE/usr/lib/paseo-dependencies${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"\nif [ \"${1-}\" = \"--paseo-cli\" ]; then\n  shift\n  exec \"$HERE/usr/lib/paseo-sessions/runtime/paseo\" \"$@\"\nfi\nexec \"$HERE/usr/lib/paseo-sessions/paseo_sessions\" \"$@\"\n",
@@ -177,7 +211,7 @@ pub fn desktop(args: &[String]) -> Result<()> {
             )?;
             artifacts.push(image);
             let deb = stage.path().join("deb");
-            copy_tree(&input, &deb.join("opt/paseo-sessions"))?;
+            copy_tree(input, &deb.join("opt/paseo-sessions"))?;
             text(
                 &deb.join("usr/bin/paseo-sessions"),
                 "#!/bin/sh\nexec /opt/paseo-sessions/paseo_sessions \"$@\"\n",
@@ -223,16 +257,20 @@ pub fn desktop(args: &[String]) -> Result<()> {
         }
         "windows" => {
             let payload = stage.path().join("windows");
-            copy_tree(&input, &payload)?;
-            signing::windows_runtime(&payload, false)?;
-            signing::sign_windows(
-                &[
-                    payload.join(gui::desktop_executable("windows")),
-                    payload.join("runtime/paseo.exe"),
-                ],
-                stage.path(),
-            )?;
-            build::refresh_runtime_hash(&payload.join("runtime"))?;
+            copy_tree(input, &payload)?;
+            if !components {
+                signing::windows_runtime(&payload, false)?;
+                signing::sign_windows(
+                    &[
+                        payload.join(gui::desktop_executable("windows")),
+                        payload.join(crate::tailnet::library_name("windows")?),
+                        payload.join(crate::app_updater::executable_name("windows")),
+                        payload.join("runtime/paseo.exe"),
+                    ],
+                    stage.path(),
+                )?;
+                build::refresh_runtime_hash(&payload.join("runtime"))?;
+            }
             let (manifest, include) = signing::nsis_inventory(&payload, stage.path())?;
             let nsis = env::var_os("MAKENSIS")
                 .map(PathBuf::from)
@@ -272,9 +310,15 @@ pub fn desktop(args: &[String]) -> Result<()> {
             artifacts.push(installer);
         }
         "macos" => {
-            let bundle = stage.path().join(gui::MACOS_BUNDLE);
-            // ditto retains bundle/framework symlinks and macOS metadata.
-            run(command("ditto")?.arg(&input).arg(&bundle))?;
+            let bundle = if components {
+                input.join(gui::MACOS_BUNDLE)
+            } else {
+                stage.path().join(gui::MACOS_BUNDLE)
+            };
+            // Finalized component images must not be re-signed or relocated.
+            if !components {
+                run(command("ditto")?.arg(input).arg(&bundle))?;
+            }
             let plist = bundle.join("Contents/Info.plist");
             let identifier = capture(
                 command("/usr/libexec/PlistBuddy")?
@@ -285,19 +329,25 @@ pub fn desktop(args: &[String]) -> Result<()> {
                 identifier == gui::DESKTOP_APP_ID,
                 "Unexpected macOS bundle ID: {identifier}"
             );
-            run(command("/usr/libexec/PlistBuddy")?
-                .arg("-c")
-                .arg(format!("Set :CFBundleShortVersionString {}", version()?))
-                .arg(&plist))?;
-            run(command("/usr/libexec/PlistBuddy")?
-                .args(["-c", "Set :LSMinimumSystemVersion 13.0"])
-                .arg(&plist))?;
-            signing::sign_mac(&bundle, stage.path(), true)?;
+            if !components {
+                run(command("/usr/libexec/PlistBuddy")?
+                    .arg("-c")
+                    .arg(format!("Set :CFBundleShortVersionString {}", version()?))
+                    .arg(&plist))?;
+                run(command("/usr/libexec/PlistBuddy")?
+                    .args(["-c", "Set :LSMinimumSystemVersion 13.0"])
+                    .arg(&plist))?;
+                signing::sign_mac(&bundle, stage.path(), true)?;
+            }
             let output = release()?.join(format!("{}.zip", artifact_stem(platform()?, arch()?)?));
-            run(command("ditto")?
-                .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
-                .arg(&bundle)
-                .arg(&output))?;
+            if components {
+                archive(input, &output, true)?;
+            } else {
+                run(command("ditto")?
+                    .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
+                    .arg(&bundle)
+                    .arg(&output))?;
+            }
             artifacts.push(output);
         }
         other => bail!("Unsupported desktop platform: {other}"),
@@ -343,7 +393,7 @@ fn sha512(path: &Path) -> Result<String> {
 
 /// The updater only accepts regular files and directories. Do not allow archive
 /// writer defaults to turn links, devices or inherited hardlinks into payloads.
-fn archive(runtime: &Path, output: &Path, zip: bool) -> Result<()> {
+pub(crate) fn archive(runtime: &Path, output: &Path, zip: bool) -> Result<()> {
     let mut members = Vec::new();
     for entry in WalkDir::new(runtime)
         .follow_links(false)
@@ -378,6 +428,12 @@ fn archive(runtime: &Path, output: &Path, zip: bool) -> Result<()> {
                 .context("Non-UTF-8 archive member")?
                 .replace('\\', "/");
             let metadata = fs::metadata(member)?;
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o777
+            };
+            #[cfg(not(unix))]
             let mode = if metadata.is_dir() { 0o755 } else { 0o644 };
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)

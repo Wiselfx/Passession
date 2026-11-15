@@ -45,7 +45,10 @@ pub struct CreationPanel {
 impl Widget for CreationPanel {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         let composer = self.view.composer_panel(id!(composer));
-        if let Some(paths) = self.file_drop.handle_event(cx, event, composer.accepts_file_drop()) {
+        if let Some(paths) = self
+            .file_drop
+            .handle_event(cx, event, composer.accepts_file_drop())
+        {
             composer.drop_files(cx, paths);
         }
         self.view.handle_event(cx, event, scope);
@@ -56,11 +59,27 @@ impl Widget for CreationPanel {
         let rect = cx.turtle().rect();
         let composer = self.view.widget(id!(composer));
         // The pane is the composer dock's stationary viewport.
-        composer.as_composer_panel().set_viewport_height(rect.size.y);
+        composer
+            .as_composer_panel()
+            .set_viewport_height(rect.size.y);
         let bottom = rect.pos.y + rect.size.y;
-        let dock = Walk { abs_pos: Some(dvec2(rect.pos.x, bottom - self.composer_h)), margin: Margin::default(), width: Size::Fixed(rect.size.x), height: Size::Fit };
+        let dock = Walk {
+            abs_pos: Some(dvec2(rect.pos.x, bottom - self.composer_h)),
+            margin: Margin::default(),
+            width: Size::Fixed(rect.size.x),
+            height: Size::Fit,
+        };
         cx.begin_turtle(dock, Layout::flow_down());
-        let _ = composer.draw_walk(cx, scope, Walk { abs_pos: None, margin: Margin::default(), width: Size::Fill, height: Size::Fit });
+        let _ = composer.draw_walk(
+            cx,
+            scope,
+            Walk {
+                abs_pos: None,
+                margin: Margin::default(),
+                width: Size::Fill,
+                height: Size::Fit,
+            },
+        );
         let range = cx.get_turtle_align_range();
         let drawn = cx.end_turtle().size.y;
         if drawn.is_finite() && (drawn - self.composer_h).abs() > 0.5 {
@@ -80,7 +99,10 @@ impl Widget for CreationPanel {
 impl CreationPanelRef {
     pub fn set_target(&self, cx: &mut Cx, target: ComposerTarget) {
         if let Some(inner) = self.borrow() {
-            inner.view.composer_panel(id!(composer)).set_target(cx, target);
+            inner
+                .view
+                .composer_panel(id!(composer))
+                .set_target(cx, target);
         }
     }
 }

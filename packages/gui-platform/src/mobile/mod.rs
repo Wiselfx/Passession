@@ -12,7 +12,7 @@ use crate::{
 };
 use makepad_widgets::{Cx, Event};
 use paseo_gui_core::CoreEvent;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
@@ -120,7 +120,9 @@ impl MobileShared {
     }
 
     fn report(&self, message: impl Into<String>) {
-        post_event(PlatformEvent::HostError { message: message.into() });
+        post_event(PlatformEvent::HostError {
+            message: message.into(),
+        });
     }
 }
 
@@ -131,7 +133,12 @@ pub(crate) fn start(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState
     request_notifications(shared, true, None);
 }
 
-pub(crate) fn handle_event(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState, event: &Event) {
+pub(crate) fn handle_event(
+    cx: &mut Cx,
+    shared: &Arc<Shared>,
+    state: &mut PlatformState,
+    event: &Event,
+) {
     let signals = std::mem::take(&mut *SIGNALS.lock().unwrap());
     for signal in signals {
         match signal {
@@ -155,7 +162,14 @@ pub(crate) fn handle_event(cx: &mut Cx, shared: &Arc<Shared>, state: &mut Platfo
 
 /// Original `_receiveTap` + `_navigateNotification`.
 fn receive_tap(shared: &Arc<Shared>, id: String, data: Map<String, Value>) {
-    if id.is_empty() || !shared.mobile.handled_notifications.lock().unwrap().insert(id) {
+    if id.is_empty()
+        || !shared
+            .mobile
+            .handled_notifications
+            .lock()
+            .unwrap()
+            .insert(id)
+    {
         return;
     }
     if let Some(route) = PlatformRoute::from_notification_data(&data) {
@@ -167,7 +181,10 @@ fn receive_tap(shared: &Arc<Shared>, id: String, data: Map<String, Value>) {
 /// Tracks connected hosts and their revocation capability, then registers.
 pub(crate) fn observe_core_event(shared: &Arc<Shared>, event: &CoreEvent) {
     match event {
-        CoreEvent::Connected { host_id, server_info } => {
+        CoreEvent::Connected {
+            host_id,
+            server_info,
+        } => {
             let revocation = server_info
                 .get("features")
                 .and_then(|f| f.get("pushTokenRevocation"))
@@ -194,7 +211,9 @@ pub(crate) fn observe_core_event(shared: &Arc<Shared>, event: &CoreEvent) {
 fn sync_hosts(shared: &Arc<Shared>) {
     let (token, targets) = {
         let mut push = shared.mobile.push.lock().unwrap();
-        let Some(token) = push.token.clone() else { return };
+        let Some(token) = push.token.clone() else {
+            return;
+        };
         let targets: Vec<String> = push
             .connected
             .keys()
@@ -211,10 +230,21 @@ fn sync_hosts(shared: &Arc<Shared>) {
         let task_shared = shared.clone();
         let token = token.clone();
         shared.spawn_blocking(move || {
-            let saved = task_shared.mobile.prefs.set_string(&format!("{TOKEN_PREFIX}{host}"), &token);
+            let saved = task_shared
+                .mobile
+                .prefs
+                .set_string(&format!("{TOKEN_PREFIX}{host}"), &token);
             if let Err(error) = saved {
-                task_shared.mobile.push.lock().unwrap().registered.remove(&host);
-                task_shared.mobile.report(format!("Could not save the Expo token for later host revocation: {error}"));
+                task_shared
+                    .mobile
+                    .push
+                    .lock()
+                    .unwrap()
+                    .registered
+                    .remove(&host);
+                task_shared.mobile.report(format!(
+                    "Could not save the Expo token for later host revocation: {error}"
+                ));
                 return;
             }
             let still_current = {
@@ -222,7 +252,10 @@ fn sync_hosts(shared: &Arc<Shared>) {
                 push.connected.contains_key(&host) && push.token.as_deref() == Some(token.as_str())
             };
             if still_current {
-                task_shared.core.notify(&host, json!({"type": "register_push_token", "token": token}));
+                task_shared.core.notify(
+                    &host,
+                    json!({"type": "register_push_token", "token": token}),
+                );
             }
         });
     }
@@ -240,13 +273,27 @@ pub(crate) fn revoke_host(shared: &Arc<Shared>, host_id: String, done: Completio
 
 async fn revoke(shared: &Arc<Shared>, host_id: &str) {
     let key = format!("{TOKEN_PREFIX}{host_id}");
-    let Some(token) = shared.mobile.prefs.get_string(&key) else { return };
-    let revocable = shared.mobile.push.lock().unwrap().connected.get(host_id).copied().unwrap_or(false);
+    let Some(token) = shared.mobile.prefs.get_string(&key) else {
+        return;
+    };
+    let revocable = shared
+        .mobile
+        .push
+        .lock()
+        .unwrap()
+        .connected
+        .get(host_id)
+        .copied()
+        .unwrap_or(false);
     if revocable {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let message = json!({"token": token});
         shared.core.operation(host_id, move |client| async move {
-            let result = tokio::time::timeout(Duration::from_secs(2), client.unregister_push_token(message)).await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                client.unregister_push_token(message),
+            )
+            .await;
             let _ = tx.send(());
             match result {
                 Ok(Ok(_)) => Ok(Value::Null),
@@ -258,7 +305,13 @@ async fn revoke(shared: &Arc<Shared>, host_id: &str) {
     }
     let prefs_shared = shared.clone();
     let _ = tokio::task::spawn_blocking(move || prefs_shared.mobile.prefs.remove(&key)).await;
-    shared.mobile.push.lock().unwrap().registered.remove(host_id);
+    shared
+        .mobile
+        .push
+        .lock()
+        .unwrap()
+        .registered
+        .remove(host_id);
 }
 
 fn saved_token_hosts(shared: &Shared) -> Vec<(String, String)> {
@@ -273,7 +326,11 @@ fn saved_token_hosts(shared: &Shared) -> Vec<(String, String)> {
 
 /// Original `requestNotifications`: permission, device token, Expo exchange,
 /// retirement of previous subscriptions, registration on connected hosts.
-pub(crate) fn request_notifications(shared: &Arc<Shared>, request_permission: bool, done: Option<Completion>) {
+pub(crate) fn request_notifications(
+    shared: &Arc<Shared>,
+    request_permission: bool,
+    done: Option<Completion>,
+) {
     {
         let mut push = shared.mobile.push.lock().unwrap();
         if push.busy {
@@ -304,7 +361,10 @@ pub(crate) fn request_notifications(shared: &Arc<Shared>, request_permission: bo
     });
 }
 
-async fn request_inner(shared: &Arc<Shared>, request_permission: bool) -> Result<PlatformValue, PlatformError> {
+async fn request_inner(
+    shared: &Arc<Shared>,
+    request_permission: bool,
+) -> Result<PlatformValue, PlatformError> {
     if shared.mobile.push.lock().unwrap().unavailable {
         return Ok(PlatformValue::None);
     }
@@ -333,7 +393,10 @@ async fn request_inner(shared: &Arc<Shared>, request_permission: bool) -> Result
     }
     let (changed, has_token) = {
         let push = shared.mobile.push.lock().unwrap();
-        (push.device_token.as_deref() != Some(device_token.as_str()), push.token.is_some())
+        (
+            push.device_token.as_deref() != Some(device_token.as_str()),
+            push.token.is_some(),
+        )
     };
     if changed || !has_token {
         let next = expo::issue(shared, &device_token).await?;
@@ -353,7 +416,9 @@ async fn request_inner(shared: &Arc<Shared>, request_permission: bool) -> Result
     let stored = shared.mobile.prefs.get_string(BACKGROUND_ERROR);
     if stored.is_some() {
         let prefs_shared = shared.clone();
-        let _ = tokio::task::spawn_blocking(move || prefs_shared.mobile.prefs.remove(BACKGROUND_ERROR)).await;
+        let _ =
+            tokio::task::spawn_blocking(move || prefs_shared.mobile.prefs.remove(BACKGROUND_ERROR))
+                .await;
     }
     if let Some(error) = background.or(stored) {
         shared.mobile.report(error);

@@ -34,10 +34,20 @@ impl FileVersion {
         match json.get("status").and_then(Value::as_str) {
             Some("ready") => FileVersion::Ready {
                 size: json.get("size").and_then(Value::as_u64).unwrap_or(0),
-                modified_at: json.get("modifiedAt").and_then(Value::as_str).unwrap_or("").to_owned(),
-                revision: json.get("revision").and_then(Value::as_str).map(str::to_owned),
+                modified_at: json
+                    .get("modifiedAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                revision: json
+                    .get("revision")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 kind: json.get("kind").and_then(Value::as_str).map(str::to_owned),
-                mime_type: json.get("mimeType").and_then(Value::as_str).map(str::to_owned),
+                mime_type: json
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             },
             Some("missing") => FileVersion::Missing,
             _ => FileVersion::Error(
@@ -64,9 +74,12 @@ impl FileVersion {
     /// Original `versionKey`.
     pub fn key(&self) -> String {
         match self {
-            FileVersion::Ready { size, modified_at, revision, .. } => {
-                version_key(*size, modified_at, revision.as_deref())
-            }
+            FileVersion::Ready {
+                size,
+                modified_at,
+                revision,
+                ..
+            } => version_key(*size, modified_at, revision.as_deref()),
             FileVersion::Missing => "missing".to_owned(),
             FileVersion::Error(error) => format!("error:{error}"),
         }
@@ -95,7 +108,12 @@ impl FileVersion {
 
     fn base(&self) -> Option<BaseVersion> {
         match self {
-            FileVersion::Ready { size, modified_at, revision, .. } => Some(BaseVersion {
+            FileVersion::Ready {
+                size,
+                modified_at,
+                revision,
+                ..
+            } => Some(BaseVersion {
                 size: *size,
                 modified_at: modified_at.clone(),
                 revision: revision.clone(),
@@ -106,7 +124,12 @@ impl FileVersion {
 
     pub fn classified(&self, kind: &str, mime_type: &str) -> FileVersion {
         match self {
-            FileVersion::Ready { size, modified_at, revision, .. } => FileVersion::Ready {
+            FileVersion::Ready {
+                size,
+                modified_at,
+                revision,
+                ..
+            } => FileVersion::Ready {
                 size: *size,
                 modified_at: modified_at.clone(),
                 revision: revision.clone(),
@@ -225,7 +248,11 @@ pub enum HandleCmd {
     /// Read the file to confirm a deletion (outside the job queue).
     ConfirmRead,
     /// One `fs.file.write.request` attempt.
-    Write { job: u64, content: String, expected: BaseVersion },
+    Write {
+        job: u64,
+        content: String,
+        expected: BaseVersion,
+    },
 }
 
 /// A write failure (original `PluginFileConflictError` / `PluginFileDeletedError`).
@@ -336,7 +363,9 @@ impl FileHandle {
         self.generation += 1;
         self.observing = Some(self.generation);
         self.observed_kind = None;
-        self.cmds.push(HandleCmd::Observe { generation: self.generation });
+        self.cmds.push(HandleCmd::Observe {
+            generation: self.generation,
+        });
     }
 
     /// Observes again after a failure.
@@ -404,7 +433,11 @@ impl FileHandle {
             if self.base.is_none() {
                 self.base = observation.base();
                 if let Some(base) = &self.base {
-                    self.seen.insert(version_key(base.size, &base.modified_at, base.revision.as_deref()));
+                    self.seen.insert(version_key(
+                        base.size,
+                        &base.modified_at,
+                        base.revision.as_deref(),
+                    ));
                 }
             }
             self.set_snapshot(Snapshot::Ready(observation.clone()));
@@ -493,23 +526,36 @@ impl FileHandle {
     /// fails with `Conflict` (`force` writes anyway) or `Deleted`. A byte order mark read from
     /// the file is written back.
     pub fn write_text(&mut self, text: String, force: bool, purpose: Purpose) {
-        let content = if self.has_bom { format!("\u{feff}{text}") } else { text };
+        let content = if self.has_bom {
+            format!("\u{feff}{text}")
+        } else {
+            text
+        };
         self.enqueue(JobKind::Write { content, force }, purpose);
     }
 
     fn enqueue(&mut self, kind: JobKind, purpose: Purpose) {
         if self.disposed {
-            self.outcomes.push(Outcome { purpose, result: closed_result(&kind) });
+            self.outcomes.push(Outcome {
+                purpose,
+                result: closed_result(&kind),
+            });
             return;
         }
         self.next_job += 1;
-        self.queue.push_back(Job { id: self.next_job, kind, purpose });
+        self.queue.push_back(Job {
+            id: self.next_job,
+            kind,
+            purpose,
+        });
         self.pump();
     }
 
     fn pump(&mut self) {
         while self.running.is_none() && !self.disposed {
-            let Some(job) = self.queue.front() else { return };
+            let Some(job) = self.queue.front() else {
+                return;
+            };
             if matches!(job.kind, JobKind::Write { .. }) && !self.holds.is_empty() {
                 return;
             }
@@ -540,7 +586,10 @@ impl FileHandle {
                         }
                         None => {
                             let purpose = job.purpose;
-                            self.finish_write(purpose, JobResult::WriteFailed(WriteError::Conflict));
+                            self.finish_write(
+                                purpose,
+                                JobResult::WriteFailed(WriteError::Conflict),
+                            );
                         }
                     }
                 }
@@ -558,7 +607,11 @@ impl FileHandle {
             _ if self.disposed => closed_result(&running.job.kind),
             Err(error) => JobResult::ReadFailed(error),
             Ok(contents) => {
-                self.adopt(contents.size, &contents.modified_at, contents.revision.as_deref());
+                self.adopt(
+                    contents.size,
+                    &contents.modified_at,
+                    contents.revision.as_deref(),
+                );
                 match running.job.kind {
                     JobKind::ReadText => {
                         let bytes = contents.bytes.as_slice();
@@ -570,7 +623,10 @@ impl FileHandle {
                 }
             }
         };
-        self.outcomes.push(Outcome { purpose, result: outcome });
+        self.outcomes.push(Outcome {
+            purpose,
+            result: outcome,
+        });
         self.pump();
     }
 
@@ -591,20 +647,30 @@ impl FileHandle {
                 Some("written") => {
                     self.adopt(
                         result.get("size").and_then(Value::as_u64).unwrap_or(0),
-                        result.get("modifiedAt").and_then(Value::as_str).unwrap_or(""),
+                        result
+                            .get("modifiedAt")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
                         result.get("revision").and_then(Value::as_str),
                     );
                     JobResult::Written
                 }
                 Some("conflict") => {
-                    let disk = FileVersion::from_json(result.get("version").unwrap_or(&Value::Null));
-                    if force && running.attempt == 0
-                        && let Some(expected) = disk.base() {
-                            running.attempt = 1;
-                            self.cmds.push(HandleCmd::Write { job, content, expected });
-                            self.running = Some(running);
-                            return;
-                        }
+                    let disk =
+                        FileVersion::from_json(result.get("version").unwrap_or(&Value::Null));
+                    if force
+                        && running.attempt == 0
+                        && let Some(expected) = disk.base()
+                    {
+                        running.attempt = 1;
+                        self.cmds.push(HandleCmd::Write {
+                            job,
+                            content,
+                            expected,
+                        });
+                        self.running = Some(running);
+                        return;
+                    }
                     if disk.is_missing() {
                         JobResult::WriteFailed(WriteError::Deleted)
                     } else {
@@ -629,9 +695,10 @@ impl FileHandle {
         self.outcomes.push(Outcome { purpose, result });
         // Observations that arrived during the write may be its own version.
         if let Some(latest) = self.latest.clone()
-            && !self.disposed {
-                self.notify_change(&latest);
-            }
+            && !self.disposed
+        {
+            self.notify_change(&latest);
+        }
     }
 
     /// Records a version this handle read or wrote, so its observation does not notify.
@@ -645,17 +712,18 @@ impl FileHandle {
         self.seen.insert(key.clone());
         self.base = Some(base);
         if let Some(stat) = &self.stat
-            && stat.key() != key {
-                let next = FileVersion::Ready {
-                    size,
-                    modified_at: modified_at.to_owned(),
-                    revision: revision.map(str::to_owned),
-                    kind: stat.kind().map(str::to_owned),
-                    mime_type: stat.mime_type().map(str::to_owned),
-                };
-                self.stat = Some(next.clone());
-                self.set_snapshot(Snapshot::Ready(next));
-            }
+            && stat.key() != key
+        {
+            let next = FileVersion::Ready {
+                size,
+                modified_at: modified_at.to_owned(),
+                revision: revision.map(str::to_owned),
+                kind: stat.kind().map(str::to_owned),
+                mime_type: stat.mime_type().map(str::to_owned),
+            };
+            self.stat = Some(next.clone());
+            self.set_snapshot(Snapshot::Ready(next));
+        }
     }
 
     fn set_snapshot(&mut self, next: Snapshot) {
@@ -687,7 +755,10 @@ impl FileHandle {
         self.disposed = true;
         self.holds.clear();
         while let Some(job) = self.queue.pop_front() {
-            self.outcomes.push(Outcome { purpose: job.purpose, result: closed_result(&job.kind) });
+            self.outcomes.push(Outcome {
+                purpose: job.purpose,
+                result: closed_result(&job.kind),
+            });
         }
     }
 }
@@ -756,7 +827,11 @@ mod tests {
                     HandleCmd::StopObserve { .. } => {}
                     HandleCmd::Read { job } => handle.on_read(job, disk.contents()),
                     HandleCmd::ConfirmRead => handle.on_confirm_read(disk.contents().ok()),
-                    HandleCmd::Write { job, content, expected } => {
+                    HandleCmd::Write {
+                        job,
+                        content,
+                        expected,
+                    } => {
                         disk.writes += 1;
                         let result = if !disk.exists {
                             json!({"status": "conflict", "version": {"status": "missing"}})
@@ -775,7 +850,12 @@ mod tests {
     }
 
     fn disk(text: &str) -> Disk {
-        Disk { text: text.as_bytes().to_vec(), revision: "r1".into(), exists: true, writes: 0 }
+        Disk {
+            text: text.as_bytes().to_vec(),
+            revision: "r1".into(),
+            exists: true,
+            writes: 0,
+        }
     }
 
     #[test]
@@ -807,7 +887,11 @@ mod tests {
         disk.revision = "r9".into();
         handle.on_observation(generation, disk.version());
         handle.on_observation(generation, disk.version());
-        let changed = handle.events.iter().filter(|e| **e == HandleEvent::Changed).count();
+        let changed = handle
+            .events
+            .iter()
+            .filter(|e| **e == HandleEvent::Changed)
+            .count();
         assert_eq!(changed, 1);
     }
 
@@ -839,7 +923,10 @@ mod tests {
         handle.outcomes.clear();
         handle.write_text("mine".into(), false, Purpose::ModelWrite(1));
         run(&mut handle, &mut disk);
-        assert!(matches!(handle.outcomes[0].result, JobResult::WriteFailed(WriteError::Conflict)));
+        assert!(matches!(
+            handle.outcomes[0].result,
+            JobResult::WriteFailed(WriteError::Conflict)
+        ));
         handle.write_text("mine".into(), true, Purpose::ModelWrite(2));
         run(&mut handle, &mut disk);
         assert_eq!(disk.text, b"mine");
@@ -879,7 +966,10 @@ mod tests {
         handle.write_text("three".into(), false, Purpose::ModelWrite(2));
         handle.dispose();
         run(&mut handle, &mut disk);
-        assert!(matches!(handle.outcomes[0].result, JobResult::WriteFailed(WriteError::Closed)));
+        assert!(matches!(
+            handle.outcomes[0].result,
+            JobResult::WriteFailed(WriteError::Closed)
+        ));
         assert_eq!(disk.writes, 1);
     }
 }

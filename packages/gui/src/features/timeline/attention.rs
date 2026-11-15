@@ -23,7 +23,9 @@ pub struct State {
 
 /// utils/agent-attention.ts shouldClearAgentAttention.
 pub fn should_clear(state: &State, trigger: Trigger, deferred_focus_entry: bool) -> bool {
-    let Some(id) = state.agent_id.as_deref() else { return false };
+    let Some(id) = state.agent_id.as_deref() else {
+        return false;
+    };
     if id.trim().is_empty() || !state.connected || !state.requires_attention {
         return false;
     }
@@ -81,12 +83,17 @@ impl AttentionClear {
             self.deferred_focus_entry = false;
         }
         let actively_viewed = self.state.screen_focused && self.state.app_visible;
-        if !self.prev_requires_attention && self.state.requires_attention && self.prev_actively_viewed && actively_viewed {
+        if !self.prev_requires_attention
+            && self.state.requires_attention
+            && self.prev_actively_viewed
+            && actively_viewed
+        {
             self.deferred_focus_entry = true;
         }
         self.prev_requires_attention = self.state.requires_attention;
         self.prev_actively_viewed = actively_viewed;
-        let entered = !self.prev_screen_focused && self.state.screen_focused && self.state.app_visible;
+        let entered =
+            !self.prev_screen_focused && self.state.screen_focused && self.state.app_visible;
         let resumed = !self.prev_app_visible && self.state.app_visible && self.state.screen_focused;
         self.prev_screen_focused = self.state.screen_focused;
         self.prev_app_visible = self.state.app_visible;

@@ -9,7 +9,9 @@ pub mod timezone;
 
 use makepad_widgets::*;
 
-pub use panel::{SchedulesPanel, SchedulesPanelRef, SchedulesPanelWidgetExt, SchedulesPanelWidgetRefExt};
+pub use panel::{
+    SchedulesPanel, SchedulesPanelRef, SchedulesPanelWidgetExt, SchedulesPanelWidgetRefExt,
+};
 
 /// Registers the submodule DSL; the shell calls it before the macro-generated
 /// `live_design`, which defines the `SchedulesPanel` root.

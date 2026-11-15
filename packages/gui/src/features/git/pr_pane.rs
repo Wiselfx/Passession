@@ -4,7 +4,10 @@
 
 use super::host;
 use super::json::{flag_or, object, text};
-use super::pull_request::{Check, Entry, TimelineFetchInputs, is_unsupported_timeline_error, pull_request_number, timeline_retry_delay};
+use super::pull_request::{
+    Check, Entry, TimelineFetchInputs, is_unsupported_timeline_error, pull_request_number,
+    timeline_retry_delay,
+};
 use super::store::{GitStore, pr_status};
 use super::wire::{self, Failure};
 use crate::common::UiContext;
@@ -88,7 +91,13 @@ impl PrPane {
         format!("{}\u{0}{}\u{0}{number}", self.host, self.cwd)
     }
 
-    pub fn set_visible(&mut self, cx: &mut Cx, ui: &UiContext, store: &mut GitStore, visible: bool) {
+    pub fn set_visible(
+        &mut self,
+        cx: &mut Cx,
+        ui: &UiContext,
+        store: &mut GitStore,
+        visible: bool,
+    ) {
         if self.visible == visible {
             return;
         }
@@ -107,13 +116,16 @@ impl PrPane {
     /// Original `_sync` + `_syncPipeline`.
     pub fn sync(&mut self, cx: &mut Cx, ui: &UiContext, store: &mut GitStore) {
         let state = store.checkout(&self.host, &self.cwd);
-        let payload = state.and_then(|s| s.pr_payload.clone()).unwrap_or(Value::Null);
+        let payload = state
+            .and_then(|s| s.pr_payload.clone())
+            .unwrap_or(Value::Null);
         let status = pr_status(state).clone();
         let pr_revision = state.map(|s| s.pr_revision).unwrap_or(0);
         let number = pull_request_number(&status);
         let owner = text(&status, "repoOwner").to_owned();
         let name = text(&status, "repoName").to_owned();
-        let unsupported = number.is_some_and(|n| store.timeline_unsupported(&self.unsupported_key(n)));
+        let unsupported =
+            number.is_some_and(|n| store.timeline_unsupported(&self.unsupported_key(n)));
         let fetch = TimelineFetchInputs {
             connected: self.connected,
             timeline_enabled: self.visible,
@@ -139,7 +151,9 @@ impl PrPane {
                 }
             }
             Some(timeline_key) => {
-                if Some(&timeline_key) != self.timeline_key.as_ref() || Some(pr_revision) != self.timeline_revision {
+                if Some(&timeline_key) != self.timeline_key.as_ref()
+                    || Some(pr_revision) != self.timeline_revision
+                {
                     self.timeline_key = Some(timeline_key);
                     self.timeline_revision = Some(pr_revision);
                     self.timeline_generation += 1;
@@ -186,7 +200,11 @@ impl PrPane {
         let facts = object(status, "forgeSpecific");
         let section = self.gitlab_pipeline_section(ui, facts);
         let identity = if section {
-            format!("{}:{}", pull_request_number(status).unwrap_or_default(), facts["pipelineId"])
+            format!(
+                "{}:{}",
+                pull_request_number(status).unwrap_or_default(),
+                facts["pipelineId"]
+            )
         } else {
             String::new()
         };
@@ -208,7 +226,8 @@ impl PrPane {
             && !self.cwd.is_empty()
             && host::supports(ui, &self.host, "forgeCheckDetails");
         let live = fetch
-            && super::policy::GITLAB_ACTIVE_PIPELINE_STATUSES.contains(&text(facts, "pipelineStatus"));
+            && super::policy::GITLAB_ACTIVE_PIPELINE_STATUSES
+                .contains(&text(facts, "pipelineStatus"));
         if !fetch && (self.pipeline_fetching || self.pipeline_poll.is_some()) {
             // An interrupted fetch, or a live pipeline's polled jobs, load again
             // once the query is enabled.
@@ -255,7 +274,13 @@ impl PrPane {
     }
 
     /// Applies this pane's share of an event and re-syncs with the store.
-    pub fn process(&mut self, cx: &mut Cx, event: &Event, ui: &UiContext, store: &mut GitStore) -> bool {
+    pub fn process(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &UiContext,
+        store: &mut GitStore,
+    ) -> bool {
         let connected = host::connected(ui, &self.host);
         if connected != self.connected {
             self.connected = connected;
@@ -267,11 +292,22 @@ impl PrPane {
             }
         }
         for core_event in &ui.events {
-            if let CoreEvent::Response { request_id, result, .. } = core_event {
-                if self.timeline_request.as_ref().is_some_and(|(id, _)| id == request_id) {
+            if let CoreEvent::Response {
+                request_id, result, ..
+            } = core_event
+            {
+                if self
+                    .timeline_request
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == request_id)
+                {
                     let (_, query) = self.timeline_request.take().unwrap();
                     self.on_timeline(cx, store, query, result);
-                } else if self.pipeline_request.as_ref().is_some_and(|(id, _)| id == request_id) {
+                } else if self
+                    .pipeline_request
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == request_id)
+                {
                     let (_, generation) = self.pipeline_request.take().unwrap();
                     self.on_pipeline(generation, result);
                 }
@@ -320,7 +356,8 @@ impl PrPane {
                 self.timeline_fetching = false;
             }
             Err(Failure { code, .. }) => {
-                let unsupported = is_unsupported_timeline_error(&code, "pull_request_timeline_request");
+                let unsupported =
+                    is_unsupported_timeline_error(&code, "pull_request_timeline_request");
                 if unsupported {
                     store.mark_timeline_unsupported(self.unsupported_key(query.number));
                 }
@@ -341,7 +378,8 @@ impl PrPane {
         let outcome = wire::checkout_result(result).and_then(|payload| {
             if payload.get("success") == Some(&Value::Bool(false)) {
                 Err(Failure::message(
-                    wire::payload_error(&payload).unwrap_or_else(|| super::text::t("panels.pullRequest.pipelineJobsFailed")),
+                    wire::payload_error(&payload)
+                        .unwrap_or_else(|| super::text::t("panels.pullRequest.pipelineJobsFailed")),
                 ))
             } else {
                 Ok(payload)
@@ -376,13 +414,19 @@ impl PrPane {
     }
 
     fn entry_key(number: Option<i64>, id: &str) -> String {
-        format!("{}:{id}", number.map(|n| n.to_string()).unwrap_or_else(|| "null".into()))
+        format!(
+            "{}:{id}",
+            number
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "null".into())
+        )
     }
 
     /// Original activity-state.ts: an explicit toggle wins over the default.
     pub fn is_collapsed(&self, number: Option<i64>, id: &str, collapsed_by_default: bool) -> bool {
         let key = Self::entry_key(number, id);
-        self.collapsed_keys.contains(&key) || (collapsed_by_default && !self.expanded_keys.contains(&key))
+        self.collapsed_keys.contains(&key)
+            || (collapsed_by_default && !self.expanded_keys.contains(&key))
     }
 
     pub fn entry_collapsed(&self, number: Option<i64>, entry: &Entry) -> bool {

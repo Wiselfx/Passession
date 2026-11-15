@@ -10,7 +10,9 @@ use crate::common::paint::{Font, rect};
 use crate::common::{json as j, tr, tr_args};
 use crate::shell::commands::{self, HostPurpose};
 use crate::shell::hosts::{self, Host};
-use crate::shell::sheets::{ConfirmSheet, Field, FieldEvent, Sheet, SheetFlow, SheetOps, SheetStyle, host_dialog};
+use crate::shell::sheets::{
+    ConfirmSheet, Field, FieldEvent, Sheet, SheetFlow, SheetOps, SheetStyle, host_dialog,
+};
 use crate::shell::ui::{Ui, Variant};
 use crate::shell::{PaseoShell, sidebar};
 use crate::theme::{ControlSize, with_alpha};
@@ -18,10 +20,15 @@ use crate::theme::{ControlSize, with_alpha};
 /// Original `formatHostConnectionLabel`: "TCP (endpoint)", "Relay (…)", "Local (path)",
 /// "Remote SSH (host)".
 pub fn connection_label(config: &Value) -> String {
-    match inspect_host_config(config) {
+    let label = match inspect_host_config(config) {
         Ok(info) => {
             let endpoint = match info.port {
-                Some(port) if !(info.scheme == "wss" && port == 443 || info.scheme == "ws" && port == 80) => format!("{}:{port}", info.host),
+                Some(port)
+                    if !(info.scheme == "wss" && port == 443
+                        || info.scheme == "ws" && port == 80) =>
+                {
+                    format!("{}:{port}", info.host)
+                }
                 _ => info.host.clone(),
             };
             if info.is_relay {
@@ -35,14 +42,22 @@ pub fn connection_label(config: &Value) -> String {
             }
         }
         Err(_) => tr("pairing.hosts.invalidEndpoint"),
-    }
+    };
+    let mode = tr(if j::text(config, "networkMode") == "tailnet" {
+        "tailnet.embedded"
+    } else {
+        "tailnet.normal"
+    });
+    format!("{mode} · {label}")
 }
 
 /// Original `formatActiveConnectionLabel`: sockets/pipes read as "Local"; standard web ports
 /// are dropped from the address.
 pub fn active_connection_label(config: &Value) -> String {
     match inspect_host_config(config) {
-        Ok(info) if info.scheme == "unix" || info.scheme == "pipe" => tr("settings.hostPicker.local"),
+        Ok(info) if info.scheme == "unix" || info.scheme == "pipe" => {
+            tr("settings.hostPicker.local")
+        }
         Ok(info) => match info.port {
             Some(port) if port != 443 && port != 80 => format!("{}:{port}", info.host),
             _ => info.host,
@@ -116,8 +131,12 @@ impl ChooserSheet {
                 if query.is_empty() {
                     return true;
                 }
-                let label = hosts::host(&self.state, id).map(|h| h.display_label()).unwrap_or_default().to_lowercase();
-                label.contains(&query) || (self.mode == Mode::Chooser && id.to_lowercase().contains(&query))
+                let label = hosts::host(&self.state, id)
+                    .map(|h| h.display_label())
+                    .unwrap_or_default()
+                    .to_lowercase();
+                label.contains(&query)
+                    || (self.mode == Mode::Chooser && id.to_lowercase().contains(&query))
             })
             .cloned()
             .collect()
@@ -142,7 +161,11 @@ impl Sheet for ChooserSheet {
     }
 
     fn max_width(&self) -> f64 {
-        if self.mode == Mode::Chooser { 640.0 } else { 400.0 }
+        if self.mode == Mode::Chooser {
+            640.0
+        } else {
+            400.0
+        }
     }
 
     fn sync(&mut self, _shell: &PaseoShell, state: &Value) {
@@ -152,16 +175,35 @@ impl Sheet for ChooserSheet {
     /// The compact host picker is the original mobile `Combobox` sheet (60%/90% snap, Material
     /// drag handle); the chooser keeps the adaptive sheet.
     fn style(&self) -> SheetStyle {
-        if self.mode == Mode::Picker { SheetStyle::Draggable { material_handle: true } } else { SheetStyle::Adaptive }
+        if self.mode == Mode::Picker {
+            SheetStyle::Draggable {
+                material_handle: true,
+            }
+        } else {
+            SheetStyle::Adaptive
+        }
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
         // Draggable frame: `x`/`w` are the list's content box; rows span it.
         let draggable = ui.compact && self.mode == Mode::Picker;
-        let (rx, rw) = if draggable { (x, w) } else { (x - 12.0, w + 24.0) };
+        let (rx, rw) = if draggable {
+            (x, w)
+        } else {
+            (x - 12.0, w + 24.0)
+        };
         // `_HostPickerList` shows "Search hosts" only past ten hosts; the chooser always does.
         if self.mode == Mode::Chooser || self.ids.len() > 10 {
             let fh = if ui.compact { 44.0 } else { 32.0 };
@@ -171,12 +213,19 @@ impl Sheet for ChooserSheet {
         let options = self.options();
         if options.is_empty() {
             let spec = ui.spec(Font::Regular, 14.0, p.muted);
-            ui.text(cx, rect(x + 16.0 - 24.0 + 12.0, y + 12.0, w, 20.0), spec, &tr("pairing.hosts.noMatches"));
+            ui.text(
+                cx,
+                rect(x + 16.0 - 24.0 + 12.0, y + 12.0, w, 20.0),
+                spec,
+                &tr("pairing.hosts.noMatches"),
+            );
             y += 44.0;
         }
         let active = self.active.min(options.len().saturating_sub(1));
         for (index, id) in options.iter().enumerate() {
-            let Some(host) = hosts::host(&self.state, id) else { continue };
+            let Some(host) = hosts::host(&self.state, id) else {
+                continue;
+            };
             let row_id = format!("host:{index}");
             match self.mode {
                 Mode::Chooser => {
@@ -191,10 +240,21 @@ impl Sheet for ChooserSheet {
                     let tx = r.pos.x + 16.0 + 18.0 + 12.0;
                     let tw = r.size.x - (tx - r.pos.x) - 16.0 - 14.0 - 12.0;
                     let label_spec = ui.spec(Font::Regular, 14.0, p.foreground);
-                    ui.text(cx, rect(tx, r.pos.y + 10.0, tw, 18.0), label_spec, &host.display_label());
+                    ui.text(
+                        cx,
+                        rect(tx, r.pos.y + 10.0, tw, 18.0),
+                        label_spec,
+                        &host.display_label(),
+                    );
                     let id_spec = ui.spec(Font::Regular, 12.0, p.muted);
                     ui.text(cx, rect(tx, r.pos.y + 30.0, tw, 16.0), id_spec, id);
-                    ui.icon(cx, rect(r.pos.x + r.size.x - 16.0 - 14.0, r.pos.y + 21.0, 14.0, 14.0), "server", 14.0, p.muted);
+                    ui.icon(
+                        cx,
+                        rect(r.pos.x + r.size.x - 16.0 - 14.0, r.pos.y + 21.0, 14.0, 14.0),
+                        "server",
+                        14.0,
+                        p.muted,
+                    );
                     if interactive {
                         ui.hit(r, row_id);
                     }
@@ -218,13 +278,22 @@ impl Sheet for ChooserSheet {
                     let description = active_connection_label(host.config());
                     if !description.is_empty() && available - lw > 24.0 {
                         let spec = ui.spec(Font::Regular, 12.0, p.muted);
-                        ui.text(cx, rect(tx + lw + 8.0, r.pos.y, available - lw - 8.0, 36.0), spec, &description);
+                        ui.text(
+                            cx,
+                            rect(tx + lw + 8.0, r.pos.y, available - lw - 8.0, 36.0),
+                            spec,
+                            &description,
+                        );
                     }
                     if interactive {
                         ui.hit(r, row_id);
                     }
                     let tip = tr_args("pairing.hosts.openSettings", &[("name", &label)]);
-                    let gear_id = if interactive { format!("gear:{index}") } else { String::new() };
+                    let gear_id = if interactive {
+                        format!("gear:{index}")
+                    } else {
+                        String::new()
+                    };
                     ui.icon_button(cx, gear, &gear_id, "settings", 16.0, 6.0, &tip);
                     y += 36.0;
                 }
@@ -235,9 +304,20 @@ impl Sheet for ChooserSheet {
             if ui.is_hover("add") || ui.is_pressed("add") {
                 ui.fill(cx, r, p.surface1, 0.0);
             }
-            ui.icon(cx, rect(r.pos.x + 12.0, r.pos.y + 10.0, 16.0, 16.0), "plus", 16.0, p.muted);
+            ui.icon(
+                cx,
+                rect(r.pos.x + 12.0, r.pos.y + 10.0, 16.0, 16.0),
+                "plus",
+                16.0,
+                p.muted,
+            );
             let spec = ui.spec(Font::Regular, 14.0, p.foreground);
-            ui.text(cx, rect(r.pos.x + 12.0 + 16.0 + 8.0, r.pos.y, r.size.x - 48.0, 36.0), spec, &tr("settings.addHost"));
+            ui.text(
+                cx,
+                rect(r.pos.x + 12.0 + 16.0 + 8.0, r.pos.y, r.size.x - 48.0, 36.0),
+                spec,
+                &tr("settings.addHost"),
+            );
             if interactive {
                 ui.hit(r, "add");
             }
@@ -252,10 +332,18 @@ impl Sheet for ChooserSheet {
             ops.run(|shell, cx, _| commands::open_host(shell, cx, "add"));
             return SheetFlow::Close;
         }
-        if let Some(host) = id.strip_prefix("gear:").and_then(|i| i.parse::<usize>().ok()).and_then(|i| options.get(i).cloned()) {
+        if let Some(host) = id
+            .strip_prefix("gear:")
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| options.get(i).cloned())
+        {
             return self.choose(format!("settings:{host}"), ops);
         }
-        if let Some(host) = id.strip_prefix("host:").and_then(|i| i.parse::<usize>().ok()).and_then(|i| options.get(i).cloned()) {
+        if let Some(host) = id
+            .strip_prefix("host:")
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| options.get(i).cloned())
+        {
             return self.choose(host, ops);
         }
         SheetFlow::Stay
@@ -277,7 +365,9 @@ impl Sheet for ChooserSheet {
             if count > 0 {
                 match key.key_code {
                     KeyCode::ArrowDown => self.active = (self.active.min(count - 1) + 1) % count,
-                    KeyCode::ArrowUp => self.active = (self.active.min(count - 1) + count - 1) % count,
+                    KeyCode::ArrowUp => {
+                        self.active = (self.active.min(count - 1) + count - 1) % count
+                    }
                     _ => {}
                 }
             }
@@ -290,7 +380,10 @@ impl Sheet for ChooserSheet {
             return SheetFlow::Stay;
         }
         let options = self.options();
-        match options.get(self.active.min(options.len().saturating_sub(1))).cloned() {
+        match options
+            .get(self.active.min(options.len().saturating_sub(1)))
+            .cloned()
+        {
             Some(id) => self.choose(id, ops),
             None => SheetFlow::Stay,
         }
@@ -310,12 +403,23 @@ pub struct ConnectionsSheet {
 
 impl ConnectionsSheet {
     pub fn new(host_id: String) -> Self {
-        Self { host_id, busy: false, error: None, state: std::sync::Arc::new(Value::Null), pending_remove: None }
+        Self {
+            host_id,
+            busy: false,
+            error: None,
+            state: std::sync::Arc::new(Value::Null),
+            pending_remove: None,
+        }
     }
 
     fn connections(&self) -> (Vec<Value>, String) {
         hosts::host(&self.state, &self.host_id)
-            .map(|h| (h.connections().to_vec(), j::text(h.config(), "id").to_string()))
+            .map(|h| {
+                (
+                    h.connections().to_vec(),
+                    j::text(h.config(), "id").to_string(),
+                )
+            })
             .unwrap_or_default()
     }
 }
@@ -329,7 +433,16 @@ impl Sheet for ConnectionsSheet {
         self.state = std::sync::Arc::new(state.clone());
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, _scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        _scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         let p = ui.p;
         let start = y;
         let mut y = y;
@@ -350,7 +463,8 @@ impl Sheet for ConnectionsSheet {
         // One bordered surface1 card, rows divided by hairlines.
         let row_h = 56.0;
         let card = rect(x, y, w, row_h * connections.len().max(1) as f64);
-        ui.painter.outline(cx, card, p.surface1, p.border, 1.0, 12.0);
+        ui.painter
+            .outline(cx, card, p.surface1, p.border, 1.0, 12.0);
         for (index, connection) in connections.iter().enumerate() {
             let r = rect(x, y, w, row_h);
             if index > 0 {
@@ -374,7 +488,12 @@ impl Sheet for ConnectionsSheet {
             };
             let row_id = format!("edit:{index}");
             if enabled && (ui.is_hover(&row_id) || ui.is_pressed(&row_id)) {
-                ui.fill(cx, crate::common::paint::inset(r, 1.0, 1.0), p.surface2, 11.0);
+                ui.fill(
+                    cx,
+                    crate::common::paint::inset(r, 1.0, 1.0),
+                    p.surface2,
+                    11.0,
+                );
             }
             if enabled {
                 ui.hit(r, row_id);
@@ -382,16 +501,35 @@ impl Sheet for ConnectionsSheet {
             let label_spec = ui.spec(Font::Regular, 14.0, p.foreground);
             let tw = (right - (r.pos.x + 16.0)).max(0.0);
             if is_active {
-                ui.text(cx, rect(r.pos.x + 16.0, r.pos.y + 10.0, tw, 20.0), label_spec, &connection_label(connection));
+                ui.text(
+                    cx,
+                    rect(r.pos.x + 16.0, r.pos.y + 10.0, tw, 20.0),
+                    label_spec,
+                    &connection_label(connection),
+                );
                 let spec = ui.spec(Font::Regular, 12.0, p.muted);
-                ui.text(cx, rect(r.pos.x + 16.0, r.pos.y + 30.0, tw, 16.0), spec, &tr("pairing.hosts.active"));
+                ui.text(
+                    cx,
+                    rect(r.pos.x + 16.0, r.pos.y + 30.0, tw, 16.0),
+                    spec,
+                    &tr("pairing.hosts.active"),
+                );
             } else {
-                ui.text(cx, rect(r.pos.x + 16.0, r.pos.y, tw, row_h), label_spec, &connection_label(connection));
+                ui.text(
+                    cx,
+                    rect(r.pos.x + 16.0, r.pos.y, tw, row_h),
+                    label_spec,
+                    &connection_label(connection),
+                );
             }
             // Inner buttons sit on the row's hover fill: a distinct highlight, darker when pressed.
             let button_fill = |ui: &mut Ui, cx: &mut Cx2d, id: &str, r: Rect| {
                 if enabled && (ui.is_hover(id) || ui.is_pressed(id)) {
-                    let fill = if ui.is_pressed(id) { with_alpha(p.foreground, 0.12) } else { p.interaction_highlight };
+                    let fill = if ui.is_pressed(id) {
+                        with_alpha(p.foreground, 0.12)
+                    } else {
+                        p.interaction_highlight
+                    };
                     ui.fill(cx, r, fill, 8.0);
                 }
             };
@@ -425,7 +563,16 @@ impl Sheet for ConnectionsSheet {
         if host.is_some() {
             let label = tr("pairing.connectionMethods.title");
             let bw = ui.button_width(cx, &label, Some("plus"), ControlSize::Sm);
-            ui.button(cx, rect(x, y, bw, 32.0), "add", &label, Some("plus"), Variant::Outline, ControlSize::Sm, enabled);
+            ui.button(
+                cx,
+                rect(x, y, bw, 32.0),
+                "add",
+                &label,
+                Some("plus"),
+                Variant::Outline,
+                ControlSize::Sm,
+                enabled,
+            );
             y += 32.0;
         }
         y - start
@@ -433,9 +580,15 @@ impl Sheet for ConnectionsSheet {
 
     fn click(&mut self, _cx: &mut Cx, id: &str, ops: &mut SheetOps) -> SheetFlow {
         let (connections, _) = self.connections();
-        let at = |prefix: &str| id.strip_prefix(prefix).and_then(|i| i.parse::<usize>().ok()).and_then(|i| connections.get(i).cloned());
+        let at = |prefix: &str| {
+            id.strip_prefix(prefix)
+                .and_then(|i| i.parse::<usize>().ok())
+                .and_then(|i| connections.get(i).cloned())
+        };
         if id == "add" {
-            let Some(host) = hosts::host(&self.state, &self.host_id) else { return SheetFlow::Stay };
+            let Some(host) = hosts::host(&self.state, &self.host_id) else {
+                return SheetFlow::Stay;
+            };
             let seed = json!({
                 "id": uuid::Uuid::new_v4().to_string(),
                 "label": host.label(),
@@ -445,19 +598,33 @@ impl Sheet for ConnectionsSheet {
             });
             ops.run(move |shell, cx, _| host_dialog::open_flow(shell, cx, None, Some(seed), None));
         } else if let Some(connection) = at("edit:") {
-            ops.run(move |shell, cx, _| host_dialog::open_flow(shell, cx, None, Some(connection), None));
+            ops.run(move |shell, cx, _| {
+                host_dialog::open_flow(shell, cx, None, Some(connection), None)
+            });
         } else if let Some(connection) = at("use:") {
             // `updateHost` with that connection makes it active.
             ops.core.connect_host(connection);
         } else if let Some(connection) = at("remove:") {
             // The last connection removes the whole host; say so.
             let (title, message, action) = if connections.len() <= 1 {
-                let label = hosts::host(&self.state, &self.host_id).map(|h| h.display_label()).unwrap_or_default();
-                (tr("settings.host.daemon.remove.title"), tr_args("settings.host.daemon.remove.confirmMessage", &[("name", &label)]), tr("settings.host.daemon.remove.title"))
+                let label = hosts::host(&self.state, &self.host_id)
+                    .map(|h| h.display_label())
+                    .unwrap_or_default();
+                (
+                    tr("settings.host.daemon.remove.title"),
+                    tr_args(
+                        "settings.host.daemon.remove.confirmMessage",
+                        &[("name", &label)],
+                    ),
+                    tr("settings.host.daemon.remove.title"),
+                )
             } else {
                 (
                     tr("settings.host.connections.removeTitle"),
-                    tr_args("settings.host.connections.removeMessage", &[("name", &connection_label(&connection))]),
+                    tr_args(
+                        "settings.host.connections.removeMessage",
+                        &[("name", &connection_label(&connection))],
+                    ),
                     tr("settings.host.connections.removeAction"),
                 )
             };
@@ -468,8 +635,16 @@ impl Sheet for ConnectionsSheet {
         SheetFlow::Stay
     }
 
-    fn on_deliver(&mut self, _cx: &mut Cx, tag: &str, value: &Value, ops: &mut SheetOps) -> SheetFlow {
-        let Some(connection) = self.pending_remove.take() else { return SheetFlow::Stay };
+    fn on_deliver(
+        &mut self,
+        _cx: &mut Cx,
+        tag: &str,
+        value: &Value,
+        ops: &mut SheetOps,
+    ) -> SheetFlow {
+        let Some(connection) = self.pending_remove.take() else {
+            return SheetFlow::Stay;
+        };
         if tag != "remove" || value.as_bool() != Some(true) {
             return SheetFlow::Stay;
         }
@@ -481,7 +656,8 @@ impl Sheet for ConnectionsSheet {
             ops.effect(crate::common::UiEffect::RemoveHost { host_id });
             return SheetFlow::Close;
         }
-        ops.core.remove_connection(&self.host_id, j::text(&connection, "id"));
+        ops.core
+            .remove_connection(&self.host_id, j::text(&connection, "id"));
         SheetFlow::Stay
     }
 }

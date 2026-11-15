@@ -24,7 +24,10 @@ pub fn storage_error(state: &Value) -> Option<String> {
     let storage = state.get("storage")?;
     match storage.get("error") {
         Some(Value::String(error)) => Some(error.clone()),
-        Some(Value::Object(error)) => error.get("message").and_then(Value::as_str).map(str::to_owned),
+        Some(Value::Object(error)) => error
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         _ => None,
     }
 }

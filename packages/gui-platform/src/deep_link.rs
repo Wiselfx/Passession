@@ -26,7 +26,9 @@ pub fn parse_agent_deep_link(link: &str) -> Option<(String, String)> {
         if !valid_escapes(segment) {
             return None;
         }
-        let decoded = percent_encoding::percent_decode_str(segment).decode_utf8().ok()?;
+        let decoded = percent_encoding::percent_decode_str(segment)
+            .decode_utf8()
+            .ok()?;
         let trimmed = decoded.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     };
@@ -65,7 +67,10 @@ pub fn open_project_path_from_argv(argv: &[String]) -> Option<PathBuf> {
         .map(String::as_str)
         .filter(|arg| !arg.starts_with("-psn_") && !arg.starts_with("--no-sandbox"))
         .collect();
-    if let Some(found) = args.iter().find(|arg| !arg.starts_with('-') && directory(arg)) {
+    if let Some(found) = args
+        .iter()
+        .find(|arg| !arg.starts_with('-') && directory(arg))
+    {
         return Some(PathBuf::from(found));
     }
     let index = args

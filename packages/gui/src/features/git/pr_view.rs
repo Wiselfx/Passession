@@ -4,17 +4,18 @@
 //! Markdown painter, each body its own selection region.
 
 use super::chrome::{palette, toolbar_band, toolbar_button, ui as ui_px};
+use super::host;
 use super::json::{array, flag, int, object, text};
 use super::model::{format_age, format_duration, now_ms};
 use super::overlay::{MenuEntry, MenuItem, Overlay, OverlayHost, OverlayKind, OverlayResult};
 use super::paint::{Font, GitPaint, Hits, rect, rgb, with_alpha};
 use super::pr_pane::PrPane;
 use super::pull_request::{
-    AVATAR_FILLS, Check, Entry, Thread, activity_counts, avatar_fill_index, build_timeline, check_groups,
-    check_timing, checks_outcome, classify_check, classify_gitlab_job, map_activity, pr_state, pull_request_checks,
-    pull_request_number, repo_identity, thread_collapsed_by_default, thread_id, thread_path, timeline_items,
+    AVATAR_FILLS, Check, Entry, Thread, activity_counts, avatar_fill_index, build_timeline,
+    check_groups, check_timing, checks_outcome, classify_check, classify_gitlab_job, map_activity,
+    pr_state, pull_request_checks, pull_request_number, repo_identity, thread_collapsed_by_default,
+    thread_id, thread_path, timeline_items,
 };
-use super::host;
 use super::store::{GitStore, pr_status};
 use super::text::{t, tr};
 use super::wire::payload_error;
@@ -27,6 +28,7 @@ use crate::features::timeline::chat_row::hover_key;
 use crate::features::timeline::images::{self, ImageState};
 use crate::features::timeline::markdown::{self as md, MdOpts};
 use crate::features::timeline::paint::{Draw, Look, MOBILE, RowState, now_seconds};
+use crate::features::timeline::scrollbar::BarDrag;
 use makepad_widgets::*;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -49,8 +51,16 @@ enum PrHit {
     Group(Check),
     Launch(String),
     ActivityToggle,
-    Entry { id: String, default_collapsed: bool },
-    Kebab { key: String, body: String, url: String, thread: bool },
+    Entry {
+        id: String,
+        default_collapsed: bool,
+    },
+    Kebab {
+        key: String,
+        body: String,
+        url: String,
+        thread: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -62,6 +72,7 @@ enum PrPurpose {
 pub struct PrView {
     pub target: PanelTarget,
     pub pane: PrPane,
+    core: paseo_gui_core::CoreHandle,
     overlay: OverlayHost<PrPurpose>,
     scroll: f64,
     content: f64,
@@ -86,6 +97,7 @@ pub struct PrView {
     body_pressed: Option<(String, HitTarget)>,
     /// The body whose text is being drag-selected.
     body_selecting: Option<String>,
+    body_bar_drag: Option<(String, BarDrag)>,
     /// The Markdown look of the frame being drawn.
     look: Option<Look>,
     heights: HashMap<String, f64>,
@@ -98,7 +110,9 @@ pub struct PrView {
 /// Original `_launch`: only http(s) URLs open.
 fn launch(ui: &mut UiContext, url: &str) {
     if url.starts_with("https://") || url.starts_with("http://") {
-        ui.push(UiEffect::OpenExternal { url: url.to_owned() });
+        ui.push(UiEffect::OpenExternal {
+            url: url.to_owned(),
+        });
     }
 }
 
@@ -120,7 +134,9 @@ fn check_icon(paint: &mut GitPaint, cx: &mut Cx2d, check: Check, size: f64, cent
         Check::Pending => "circle-dot",
         Check::Ignored => "circle-slash",
         // The GitLab manual gear (original inline SVG).
-        Check::ActionRequired | Check::Manual => return paint.manual_check(cx, size, check_color(check), center),
+        Check::ActionRequired | Check::Manual => {
+            return paint.manual_check(cx, size, check_color(check), center);
+        }
     };
     paint.icon(cx, icon, size, check_color(check), center);
 }
@@ -132,6 +148,7 @@ impl PrView {
         Self {
             target,
             pane,
+            core: ui.core.clone(),
             overlay: OverlayHost::default(),
             scroll: 0.0,
             content: 0.0,
@@ -151,6 +168,7 @@ impl PrView {
             body_hovered: None,
             body_pressed: None,
             body_selecting: None,
+            body_bar_drag: None,
             look: None,
             heights: HashMap::new(),
             spinning: false,
@@ -167,7 +185,8 @@ impl PrView {
     }
 
     fn refreshing(&self, store: &GitStore) -> bool {
-        store.action_status(&self.target.server_id, &self.target.cwd, "refresh") == super::policy::ActionStatus::Pending
+        store.action_status(&self.target.server_id, &self.target.cwd, "refresh")
+            == super::policy::ActionStatus::Pending
     }
 
     /// Original `useCheckoutGitActionsStore.refresh` (also the error state's retry).
@@ -187,20 +206,69 @@ impl PrView {
     }
 
     /// Applies an event to the pane state; returns true when a redraw is due.
-    pub fn process(&mut self, cx: &mut Cx, event: &Event, ui: &UiContext, store: &mut GitStore, visible: bool) -> bool {
+    pub fn process(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &UiContext,
+        store: &mut GitStore,
+        visible: bool,
+    ) -> bool {
         self.pane.set_visible(cx, ui, store, visible);
         self.pane.process(cx, event, ui, store)
     }
 
     /// The body under `abs` among those drawn this frame.
     fn body_at(&self, abs: DVec2) -> Option<String> {
-        self.body_rects.iter().rev().find(|(_, r)| r.contains(abs)).map(|(key, _)| key.clone())
+        self.body_rects
+            .iter()
+            .rev()
+            .find(|(_, r)| r.contains(abs))
+            .map(|(key, _)| key.clone())
+    }
+
+    fn scroll_body(&mut self, position: DVec2, delta: DVec2) -> bool {
+        let Some(key) = self.body_at(position) else {
+            return false;
+        };
+        let Some(body) = self.bodies.get_mut(&key) else {
+            return false;
+        };
+        let relative = position - body.canvas.origin;
+        let mut changed = false;
+        for (vertical, delta) in [(false, delta.x), (true, delta.y)] {
+            if delta == 0.0 {
+                continue;
+            }
+            let (offsets, extents) = if vertical {
+                (&mut body.state.scroll_y, &body.state.extent_y)
+            } else {
+                (&mut body.state.scroll_x, &body.state.extent_x)
+            };
+            for key in body.canvas.scroll_regions_at(relative, vertical) {
+                let maximum = extents.get(key).copied().unwrap_or(0.0);
+                let old = offsets.get(key).copied().unwrap_or(0.0);
+                let next = (old + delta).clamp(0.0, maximum);
+                if next != old {
+                    offsets.insert(key.to_owned(), next);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        changed
     }
 
     /// Pointer input over Markdown bodies (original `PaseoMarkdown` inside a
     /// `SelectionArea`): link taps, code copy glyphs, drag / double / triple
     /// tap selection, copy. Returns `Some(redraw)` when a body took the event.
-    fn body_event(&mut self, cx: &mut Cx, hit: &Hit, area: Area, ui: &mut UiContext) -> Option<bool> {
+    fn body_event(
+        &mut self,
+        cx: &mut Cx,
+        hit: &Hit,
+        area: Area,
+        ui: &mut UiContext,
+    ) -> Option<bool> {
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
                 let key = self.body_at(e.abs);
@@ -227,13 +295,24 @@ impl PrView {
                     None => (None, None),
                 };
                 let hand = hover_hit.is_some() || hover_link.is_some();
-                changed |= body.state.hover_hit != hover_hit || body.state.hover_link != hover_link || !body.state.hovered;
+                changed |= body.state.hover_hit != hover_hit
+                    || body.state.hover_link != hover_link
+                    || !body.state.hovered;
                 body.state.hovered = true;
                 body.state.hover_hit = hover_hit;
                 body.state.hover_link = hover_link;
-                cx.set_cursor(if hand { MouseCursor::Hand } else { MouseCursor::Text });
+                cx.set_cursor(if hand {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Text
+                });
                 // Region hover (kebab reveal) still applies under a body.
-                let region = self.regions.iter().rev().find(|(r, _)| r.contains(e.abs)).map(|(_, id)| id.clone());
+                let region = self
+                    .regions
+                    .iter()
+                    .rev()
+                    .find(|(r, _)| r.contains(e.abs))
+                    .map(|(_, id)| id.clone());
                 changed |= region != self.hovered_region || self.hovered.is_some();
                 if self.hovered.is_some() {
                     tooltip_at(ui, None, Rect::default(), 0.3);
@@ -273,7 +352,11 @@ impl PrView {
                 if let Some(target) = body.canvas.hit_at(rel).cloned() {
                     self.body_pressed = Some((key, target));
                     // Still arm the outer pan when a touch starts on a link/copy.
-                    return if e.device.is_touch() { None } else { Some(changed) };
+                    return if e.device.is_touch() {
+                        None
+                    } else {
+                        Some(changed)
+                    };
                 }
                 // Touch drags scroll; touch selection starts with a long press.
                 if e.device.is_touch() {
@@ -307,7 +390,10 @@ impl PrView {
             Hit::FingerMove(e) => {
                 let key = self.body_selecting.clone()?;
                 let body = self.bodies.get_mut(&key)?;
-                if let (Some(offset), Some((anchor, _))) = (body.canvas.offset_at(e.abs - body.canvas.origin), body.canvas.selection) {
+                if let (Some(offset), Some((anchor, _))) = (
+                    body.canvas.offset_at(e.abs - body.canvas.origin),
+                    body.canvas.selection,
+                ) {
                     body.canvas.selection = Some((anchor, offset));
                 }
                 Some(true)
@@ -315,9 +401,16 @@ impl PrView {
             Hit::FingerUp(e) => {
                 if let Some((key, target)) = self.body_pressed.take() {
                     let body = self.bodies.get_mut(&key)?;
-                    if e.is_over && (!e.device.is_touch() || e.was_tap()) && body.canvas.hit_at(e.abs - body.canvas.origin) == Some(&target) {
+                    if e.is_over
+                        && (!e.device.is_touch() || e.was_tap())
+                        && body.canvas.hit_at(e.abs - body.canvas.origin) == Some(&target)
+                    {
+                        if crate::features::timeline::mermaid::tap(&mut body.state, &target) {
+                            return Some(true);
+                        }
                         match target {
                             HitTarget::Link { href, .. } => launch(ui, &href),
+                            HitTarget::Toggle(key) => body.state.toggle(&key),
                             HitTarget::Copy { key, text } => {
                                 cx.copy_to_clipboard(&text);
                                 body.state.copied.insert(key, now_seconds());
@@ -332,17 +425,29 @@ impl PrView {
                 if e.device.is_touch()
                     && let Some(text) = self.bodies.get(&key).and_then(|b| b.canvas.selected_text())
                 {
-                    ui.push(UiEffect::CopyText { text, toast: Some(t("common.actions.copied")) });
+                    ui.push(UiEffect::CopyText {
+                        text,
+                        toast: Some(t("common.actions.copied")),
+                    });
                 }
                 Some(false)
             }
+            Hit::FingerScroll(e) => self.scroll_body(e.abs, e.scroll).then_some(true),
             Hit::TextCopy(ce) => {
-                let text = self.bodies.values().find_map(|b| b.canvas.selected_text())?;
+                let text = self
+                    .bodies
+                    .values()
+                    .find_map(|b| b.canvas.selected_text())?;
                 *ce.response.borrow_mut() = Some(text);
                 Some(false)
             }
-            Hit::KeyDown(ke) if ke.key_code == KeyCode::KeyA && (ke.modifiers.control || ke.modifiers.logo) => {
-                let body = self.bodies.values_mut().find(|b| b.canvas.selection.is_some())?;
+            Hit::KeyDown(ke)
+                if ke.key_code == KeyCode::KeyA && (ke.modifiers.control || ke.modifiers.logo) =>
+            {
+                let body = self
+                    .bodies
+                    .values_mut()
+                    .find(|b| b.canvas.selection.is_some())?;
                 body.canvas.selection = Some((0, body.canvas.source_len()));
                 Some(true)
             }
@@ -362,7 +467,10 @@ impl PrView {
         match self.overlay.poll() {
             Some(OverlayResult::Chose(PrPurpose::Activity { body, url }, value)) => {
                 if value == "copy" {
-                    ui.push(UiEffect::CopyText { text: body, toast: None });
+                    ui.push(UiEffect::CopyText {
+                        text: body,
+                        toast: None,
+                    });
                 } else {
                     launch(ui, &url);
                 }
@@ -388,29 +496,97 @@ impl PrView {
         let hit = event.hits(cx, area);
         if !area.is_valid(cx) {
             self.touch_scroll.reset();
+            self.body_bar_drag = None;
+        }
+        if matches!(
+            event,
+            Event::Pause | Event::AppLostFocus | Event::TextHandle(_)
+        ) || matches!(event, Event::TouchUpdate(update) if update.cancelled)
+        {
+            self.touch_scroll.reset();
+            self.body_bar_drag = None;
+            for body in self.bodies.values_mut() {
+                body.state.dragging_bar = None;
+            }
+        }
+        if let Hit::FingerDown(e) = &hit
+            && let Some(key) = self.body_at(e.abs)
+            && let Some(body) = self.bodies.get_mut(&key)
+        {
+            let relative = e.abs - body.canvas.origin;
+            if let Some(target) = body.canvas.hit_at(relative)
+                && let Some(drag) = BarDrag::press(target, relative, &mut body.state)
+            {
+                self.body_bar_drag = Some((key, drag));
+                self.body_pressed = None;
+                self.body_selecting = None;
+                self.touch_scroll.reset();
+                return true;
+            }
+        }
+        if let Some((key, drag)) = self.body_bar_drag.clone() {
+            match &hit {
+                Hit::FingerMove(e) => {
+                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) =
+                        (&e.device, event)
+                        && let Some(touch) = update.touches.iter().find(|touch| touch.uid == *uid)
+                    {
+                        touch.handled.set(area);
+                    }
+                    if let Some(body) = self.bodies.get_mut(&key) {
+                        drag.drag_to(e.abs - body.canvas.origin, &mut body.state);
+                    }
+                    return true;
+                }
+                Hit::FingerUp(_) => {
+                    self.body_bar_drag = None;
+                    if let Some(body) = self.bodies.get_mut(&key) {
+                        body.state.dragging_bar = None;
+                    }
+                    return true;
+                }
+                _ => {}
+            }
         }
         let pan = self.touch_scroll.handle_event(cx, event, &hit);
         if let Some(dy) = pan {
             self.pressed = None;
             self.body_pressed = None;
-            return self.scroll_at(self.touch_scroll.origin(), dy, false);
+            let origin = self.touch_scroll.origin();
+            return self.scroll_body(origin, dvec2(0.0, dy)) || self.scroll_at(origin, dy, false);
         }
         if let Some(redraw) = self.body_event(cx, &hit, area, ui) {
             return redraw;
         }
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
-                let (anchor, hovered) = self.hits.find(e.abs).map(|(anchor, hit)| (anchor, Some(hit))).unwrap_or_default();
-                let region = self.regions.iter().rev().find(|(r, _)| r.contains(e.abs)).map(|(_, id)| id.clone());
+                let (anchor, hovered) = self
+                    .hits
+                    .find(e.abs)
+                    .map(|(anchor, hit)| (anchor, Some(hit)))
+                    .unwrap_or_default();
+                let region = self
+                    .regions
+                    .iter()
+                    .rev()
+                    .find(|(r, _)| r.contains(e.abs))
+                    .map(|(_, id)| id.clone());
                 if hovered != self.hovered || region != self.hovered_region {
-                    cx.set_cursor(if hovered.is_some() { MouseCursor::Hand } else { MouseCursor::Default });
+                    cx.set_cursor(if hovered.is_some() {
+                        MouseCursor::Hand
+                    } else {
+                        MouseCursor::Default
+                    });
                     if hovered != self.hovered {
                         // Original refresh Tooltip: "Refreshing…" or "Refresh <forge> state".
                         let tip = (hovered == Some(PrHit::Refresh)).then(|| {
                             if self.refreshing(store) {
                                 t("workspace.git.diff.refreshing")
                             } else {
-                                tr("workspace.git.diff.refreshState", &[("brand", forge_brand(store, &self.target))])
+                                tr(
+                                    "workspace.git.diff.refreshState",
+                                    &[("brand", forge_brand(store, &self.target))],
+                                )
                             }
                         });
                         tooltip_at(ui, tip.as_deref(), anchor, 0.3);
@@ -437,7 +613,9 @@ impl PrView {
                 if !e.is_over || (e.device.is_touch() && !e.was_tap()) {
                     return false;
                 }
-                let Some((anchor, hit)) = self.hits.find(e.abs) else { return false };
+                let Some((anchor, hit)) = self.hits.find(e.abs) else {
+                    return false;
+                };
                 if pressed.as_ref() != Some(&hit) {
                     return false;
                 }
@@ -454,7 +632,9 @@ impl PrView {
         // matching the draw clamp so a wheel at either end reaches the outer scroll.
         let max = (self.checks_content - self.checks_height).max(0.0);
         if self.checks_area.contains(point) && max > 0.0 {
-            let changed = self.touch_scroll.apply_delta(&mut self.checks_scroll, delta, max);
+            let changed = self
+                .touch_scroll
+                .apply_delta(&mut self.checks_scroll, delta, max);
             if changed || !wheel {
                 return changed;
             }
@@ -463,7 +643,14 @@ impl PrView {
         self.touch_scroll.apply_delta(&mut self.scroll, delta, max)
     }
 
-    fn activate(&mut self, cx: &mut Cx, ui: &mut UiContext, store: &mut GitStore, hit: PrHit, anchor: Rect) {
+    fn activate(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        store: &mut GitStore,
+        hit: PrHit,
+        anchor: Rect,
+    ) {
         let status = pr_status(store.checkout(&self.target.server_id, &self.target.cwd)).clone();
         let number = pull_request_number(&status);
         match hit {
@@ -473,11 +660,20 @@ impl PrView {
             PrHit::Group(group) => self.pane.toggle_group(group),
             PrHit::Launch(url) => launch(ui, &url),
             PrHit::ActivityToggle => self.pane.activity_open = !self.pane.activity_open,
-            PrHit::Entry { id, default_collapsed } => self.pane.toggle_entry(number, &id, default_collapsed),
-            PrHit::Kebab { body, url, thread, .. } => {
+            PrHit::Entry {
+                id,
+                default_collapsed,
+            } => self.pane.toggle_entry(number, &id, default_collapsed),
+            PrHit::Kebab {
+                body, url, thread, ..
+            } => {
                 let brand = forge_brand(store, &self.target);
                 let open = MenuEntry::Item(
-                    MenuItem::new("open", tr("workspace.git.pr.actions.openOn", &[("brand", brand)])).icon("external-link"),
+                    MenuItem::new(
+                        "open",
+                        tr("workspace.git.pr.actions.openOn", &[("brand", brand)]),
+                    )
+                    .icon("external-link"),
                 );
                 let (purpose, entries) = if thread {
                     (PrPurpose::Thread { url }, vec![open])
@@ -491,7 +687,13 @@ impl PrView {
                 };
                 self.overlay.open(Overlay {
                     purpose,
-                    kind: OverlayKind::Menu { title: None, anchor, align_end: true, width: Some(200.0), entries },
+                    kind: OverlayKind::Menu {
+                        title: None,
+                        anchor,
+                        align_end: true,
+                        width: Some(200.0),
+                        entries,
+                    },
                 });
                 self.overlay.flush(ui);
             }
@@ -533,7 +735,15 @@ impl Cursor {
 impl PrView {
     /// Original `resolvePullRequestContentState` + pane drawing.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, cx: &mut Cx2d, ui: &UiContext, store: &GitStore, paint: &mut GitPaint, area: Rect, kit: &mut ChatKit) {
+    pub fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &UiContext,
+        store: &GitStore,
+        paint: &mut GitPaint,
+        area: Rect,
+        kit: &mut ChatKit,
+    ) {
         let colors = palette();
         self.hits.clear();
         self.regions.clear();
@@ -543,26 +753,50 @@ impl PrView {
         self.viewport = area;
         paint.fill(cx, area, colors.sidebar);
         let state = store.checkout(&self.target.server_id, &self.target.cwd);
-        let payload = state.and_then(|s| s.pr_payload.clone()).unwrap_or(Value::Null);
+        let payload = state
+            .and_then(|s| s.pr_payload.clone())
+            .unwrap_or(Value::Null);
         let status = pr_status(state).clone();
         let compact = crate::common::is_compact_layout(cx);
         // `PaseoMarkdown` look: runtime palette and typography; block gaps follow
         // the window's compact layout (markdownBlockGap).
-        let syntax = ui.preference("syntaxTheme").and_then(Value::as_str).unwrap_or("one");
+        let syntax = ui
+            .preference("syntaxTheme")
+            .and_then(Value::as_str)
+            .unwrap_or("one");
         self.look = Some(Look {
             palette: crate::theme::current_palette(),
             typo: crate::theme::current_typography(),
             compact,
             mobile: MOBILE,
             list_inset: 12.0,
-            syntax: paseo_highlight::SyntaxThemeId::from_name(syntax).unwrap_or(paseo_highlight::SyntaxThemeId::One),
+            syntax: paseo_highlight::SyntaxThemeId::from_name(syntax)
+                .unwrap_or(paseo_highlight::SyntaxThemeId::One),
         });
         self.body_rects.clear();
         if let Some(number) = pull_request_number(&status) {
-            self.scroll = self.scroll.clamp(0.0, (self.content - area.size.y).max(0.0));
+            self.scroll = self
+                .scroll
+                .clamp(0.0, (self.content - area.size.y).max(0.0));
             paint.begin_clip(cx, area);
-            let mut cursor = Cursor { y: area.pos.y - self.scroll, left: area.pos.x, width: area.size.x, view: area };
-            self.pane_content(cx, ui, store, paint, &mut cursor, &payload, &status, number, kit, compact);
+            let mut cursor = Cursor {
+                y: area.pos.y - self.scroll,
+                left: area.pos.x,
+                width: area.size.x,
+                view: area,
+            };
+            self.pane_content(
+                cx,
+                ui,
+                store,
+                paint,
+                &mut cursor,
+                &payload,
+                &status,
+                number,
+                kit,
+                compact,
+            );
             self.content = cursor.y + self.scroll - area.pos.y;
             paint.end_clip(cx);
         } else if payload.get("error").is_some_and(|e| !e.is_null())
@@ -573,13 +807,47 @@ impl PrView {
             let message = t("workspace.git.diff.failedRefresh");
             let size = ui_px(12.0);
             let center = area.center();
-            let width = paint.measure(cx, Font::Regular, size, &message).x.min(area.size.x - 32.0);
-            paint.text_wrapped(cx, Font::Regular, size, colors.muted, dvec2(center.x - width / 2.0, center.y - 24.0), &message, area.size.x - 32.0);
+            let width = paint
+                .measure(cx, Font::Regular, size, &message)
+                .x
+                .min(area.size.x - 32.0);
+            paint.text_wrapped(
+                cx,
+                Font::Regular,
+                size,
+                colors.muted,
+                dvec2(center.x - width / 2.0, center.y - 24.0),
+                &message,
+                area.size.x - 32.0,
+            );
             let label = t("common.actions.retry");
-            let width = super::chrome::measure_button(cx, paint, &label, true, super::chrome::ButtonSize::Xs, compact);
-            let button = rect(center.x - width / 2.0, center.y, width, super::chrome::button_height(super::chrome::ButtonSize::Xs, compact));
+            let width = super::chrome::measure_button(
+                cx,
+                paint,
+                &label,
+                true,
+                super::chrome::ButtonSize::Xs,
+                compact,
+            );
+            let button = rect(
+                center.x - width / 2.0,
+                center.y,
+                width,
+                super::chrome::button_height(super::chrome::ButtonSize::Xs, compact),
+            );
             let hovered = self.hovered == Some(PrHit::Retry);
-            super::chrome::button(cx, paint, button, &label, Some("rotate-cw"), super::chrome::ButtonVariant::Ghost, super::chrome::ButtonSize::Xs, compact, true, hovered);
+            super::chrome::button(
+                cx,
+                paint,
+                button,
+                &label,
+                Some("rotate-cw"),
+                super::chrome::ButtonVariant::Ghost,
+                super::chrome::ButtonSize::Xs,
+                compact,
+                true,
+                hovered,
+            );
             self.hits.push(button, PrHit::Retry);
         } else if state.is_some_and(|s| s.pr_loading) {
             self.skeleton(cx, paint, area);
@@ -588,10 +856,27 @@ impl PrView {
             let center = area.center();
             let inner = area.size.x - 48.0;
             let size = ui_px(14.0);
-            for (index, (key, color)) in [("panels.pullRequest.emptyTitle", colors.foreground), ("panels.pullRequest.emptyDescription", colors.muted)].into_iter().enumerate() {
+            for (index, (key, color)) in [
+                ("panels.pullRequest.emptyTitle", colors.foreground),
+                ("panels.pullRequest.emptyDescription", colors.muted),
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let copy = t(key);
                 let width = paint.measure(cx, Font::Regular, size, &copy).x.min(inner);
-                paint.text_wrapped(cx, Font::Regular, size, color, dvec2(center.x - width / 2.0, center.y - 20.0 + index as f64 * 28.0), &copy, inner);
+                paint.text_wrapped(
+                    cx,
+                    Font::Regular,
+                    size,
+                    color,
+                    dvec2(
+                        center.x - width / 2.0,
+                        center.y - 20.0 + index as f64 * 28.0,
+                    ),
+                    &copy,
+                    inner,
+                );
             }
         }
     }
@@ -612,19 +897,44 @@ impl PrView {
         let x = area.pos.x;
         let w = area.size.x;
         let mut y = area.pos.y + 16.0;
-        paint.rounded(cx, rect(x + 16.0, y, (w - 32.0) * 0.75, 16.0), fill, 2.0, None);
+        paint.rounded(
+            cx,
+            rect(x + 16.0, y, (w - 32.0) * 0.75, 16.0),
+            fill,
+            2.0,
+            None,
+        );
         y += 24.0;
-        paint.rounded(cx, rect(x + 16.0, y, (w - 32.0) * 0.4, 12.0), fill, 2.0, None);
+        paint.rounded(
+            cx,
+            rect(x + 16.0, y, (w - 32.0) * 0.4, 12.0),
+            fill,
+            2.0,
+            None,
+        );
         y += 28.0;
         toolbar_band(cx, paint, rect(x, y, w, 36.0), true);
         paint.rounded(cx, rect(x + 12.0, y + 6.0, 96.0, 24.0), fill, 8.0, None);
         paint.rounded(cx, rect(x + 116.0, y + 6.0, 96.0, 24.0), fill, 8.0, None);
         y += 36.0 + 8.0;
-        paint.text(cx, Font::Medium, ui_px(12.0), colors.muted, dvec2(x + 12.0, y + 8.0), &t("workspace.git.pr.sections.checks"));
+        paint.text(
+            cx,
+            Font::Medium,
+            ui_px(12.0),
+            colors.muted,
+            dvec2(x + 12.0, y + 8.0),
+            &t("workspace.git.pr.sections.checks"),
+        );
         y += 32.0;
         for _ in 0..3 {
             paint.rounded(cx, rect(x + 12.0, y + 9.0, 14.0, 14.0), fill, 7.0, None);
-            paint.rounded(cx, rect(x + 34.0, y + 10.0, (w - 46.0) * 0.6, 12.0), fill, 2.0, None);
+            paint.rounded(
+                cx,
+                rect(x + 34.0, y + 10.0, (w - 46.0) * 0.6, 12.0),
+                fill,
+                2.0,
+                None,
+            );
             y += 36.0;
         }
         y += 8.0;
@@ -632,12 +942,31 @@ impl PrView {
     }
 
     /// Original `_ActivitySkeleton`: rows of a 20px avatar centred on a 12px + 10px text stack.
-    fn activity_skeleton(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, x: f64, w: f64, mut y: f64) -> f64 {
+    fn activity_skeleton(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        x: f64,
+        w: f64,
+        mut y: f64,
+    ) -> f64 {
         let fill = self.pulse_fill(cx);
         for _ in 0..3 {
             paint.rounded(cx, rect(x + 12.0, y + 3.0, 20.0, 20.0), fill, 10.0, None);
-            paint.rounded(cx, rect(x + 40.0, y, (w - 52.0) * 0.7, 12.0), fill, 2.0, None);
-            paint.rounded(cx, rect(x + 40.0, y + 16.0, (w - 52.0) * 0.45, 10.0), fill, 2.0, None);
+            paint.rounded(
+                cx,
+                rect(x + 40.0, y, (w - 52.0) * 0.7, 12.0),
+                fill,
+                2.0,
+                None,
+            );
+            paint.rounded(
+                cx,
+                rect(x + 40.0, y + 16.0, (w - 52.0) * 0.45, 10.0),
+                fill,
+                2.0,
+                None,
+            );
             y += 26.0 + 12.0;
         }
         // Column spacing sits between rows only.
@@ -671,22 +1000,64 @@ impl PrView {
         let center_y = band.pos.y + (toolbar_h - 1.0) / 2.0;
         let label = t("workspace.git.pr.actions.viewPullRequest");
         let label_size = ui_px(12.0);
-        let view_width = 4.0 + 12.0 + 4.0 + paint.measure(cx, Font::Regular, label_size, &label).x + 4.0;
+        let view_width =
+            4.0 + 12.0 + 4.0 + paint.measure(cx, Font::Regular, label_size, &label).x + 4.0;
         let view_h = 24.0_f64.max(label_size * 1.4);
-        let view = rect(band.pos.x + 12.0, center_y - view_h / 2.0, view_width, view_h);
+        let view = rect(
+            band.pos.x + 12.0,
+            center_y - view_h / 2.0,
+            view_width,
+            view_h,
+        );
         let hovered = self.hovered == Some(PrHit::ViewPr);
-        let fg = if hovered { colors.foreground } else { colors.muted };
-        paint.icon(cx, "external-link", 12.0, fg, dvec2(view.pos.x + 4.0 + 6.0, center_y));
-        paint.text_centered(cx, Font::Regular, label_size, fg, view.pos.x + 20.0, view.pos.y, view_h, &label, view_width);
+        let fg = if hovered {
+            colors.foreground
+        } else {
+            colors.muted
+        };
+        paint.icon(
+            cx,
+            "external-link",
+            12.0,
+            fg,
+            dvec2(view.pos.x + 4.0 + 6.0, center_y),
+        );
+        paint.text_centered(
+            cx,
+            Font::Regular,
+            label_size,
+            fg,
+            view.pos.x + 20.0,
+            view.pos.y,
+            view_h,
+            &label,
+            view_width,
+        );
         self.hits.push_clipped(view, c.view, PrHit::ViewPr);
         if host::supports(ui, &self.target.server_id, "checkoutRefresh") {
             let right = band.pos.x + band.size.x - 12.0;
             if self.refreshing(store) {
-                paint.spinner(cx, dvec2(right - 10.0, center_y), 14.0, colors.muted, cx.seconds_since_app_start());
+                paint.spinner(
+                    cx,
+                    dvec2(right - 10.0, center_y),
+                    14.0,
+                    colors.muted,
+                    cx.seconds_since_app_start(),
+                );
                 self.spinning = true;
             } else {
                 let hovered = self.hovered == Some(PrHit::Refresh);
-                let button = toolbar_button(cx, paint, compact, right, center_y, Some("rotate-cw"), false, true, hovered);
+                let button = toolbar_button(
+                    cx,
+                    paint,
+                    compact,
+                    right,
+                    center_y,
+                    Some("rotate-cw"),
+                    false,
+                    true,
+                    hovered,
+                );
                 self.hits.push_clipped(button, c.view, PrHit::Refresh);
             }
         }
@@ -708,11 +1079,19 @@ impl PrView {
         let entries = build_timeline(&activities);
         let (approvals, changes, comments) = activity_counts(&activities);
         let open = self.pane.activity_open;
-        self.section_header(cx, paint, c, &t("workspace.git.pr.sections.activity"), open, PrHit::ActivityToggle, &[
-            (approvals, Some(Check::Success), colors.success),
-            (changes, Some(Check::Failure), colors.danger),
-            (comments, None, colors.muted),
-        ]);
+        self.section_header(
+            cx,
+            paint,
+            c,
+            &t("workspace.git.pr.sections.activity"),
+            open,
+            PrHit::ActivityToggle,
+            &[
+                (approvals, Some(Check::Success), colors.success),
+                (changes, Some(Check::Failure), colors.danger),
+                (comments, None, colors.muted),
+            ],
+        );
         if open {
             if self.pane.timeline_fetching && self.pane.timeline.is_none() {
                 c.y = self.activity_skeleton(cx, paint, c.left, c.width, c.y);
@@ -729,15 +1108,35 @@ impl PrView {
     }
 
     /// Original `_Header`.
-    fn header(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, c: &mut Cursor, pr: &Value, forge: &str) {
+    fn header(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        c: &mut Cursor,
+        pr: &Value,
+        forge: &str,
+    ) {
         let colors = palette();
         let top = c.y;
         let inner = c.width - 32.0;
         let base = ui_px(14.0);
-        let title = format!("{} {}{}", text(pr, "title"), if forge == "gitlab" { "!" } else { "#" }, int(pr, "number"));
+        let title = format!(
+            "{} {}{}",
+            text(pr, "title"),
+            if forge == "gitlab" { "!" } else { "#" },
+            int(pr, "number")
+        );
         let title_height = paint.measure_wrapped(cx, Font::Regular, base, &title, inner);
         if c.visible(top, title_height + 48.0) {
-            paint.text_wrapped(cx, Font::Regular, base, colors.foreground, dvec2(c.left + 16.0, top + 16.0), &title, inner);
+            paint.text_wrapped(
+                cx,
+                Font::Regular,
+                base,
+                colors.foreground,
+                dvec2(c.left + 16.0, top + 16.0),
+                &title,
+                inner,
+            );
         }
         let row_y = top + 16.0 + title_height + 8.0;
         let state = pr_state(pr);
@@ -753,25 +1152,86 @@ impl PrView {
         let mut x = c.left + 16.0;
         paint.icon(cx, icon, 14.0, color, dvec2(x + 7.0, center_y));
         x += 18.0;
-        x += paint.text_centered(cx, Font::Regular, small, color, x, row_y, row_h, &t(&format!("workspace.git.pr.states.{state}")), inner) + 4.0;
+        x += paint.text_centered(
+            cx,
+            Font::Regular,
+            small,
+            color,
+            x,
+            row_y,
+            row_h,
+            &t(&format!("workspace.git.pr.states.{state}")),
+            inner,
+        ) + 4.0;
         let facts = object(pr, "forgeSpecific");
-        let required = if text(facts, "forge") == "gitlab" { int(facts, "approvalsRequired") } else { 0 };
+        let required = if text(facts, "forge") == "gitlab" {
+            int(facts, "approvalsRequired")
+        } else {
+            0
+        };
         if required > 0 {
             let given = int(facts, "approvalsGiven");
-            paint.icon(cx, "circle-check", 11.0, if given >= required { colors.success } else { colors.muted }, dvec2(x + 6.0, center_y));
+            paint.icon(
+                cx,
+                "circle-check",
+                11.0,
+                if given >= required {
+                    colors.success
+                } else {
+                    colors.muted
+                },
+                dvec2(x + 6.0, center_y),
+            );
             x += 16.0;
-            let copy = tr("workspace.git.pr.approvals", &[("given", given.to_string()), ("required", required.to_string())]);
-            x += paint.text_centered(cx, Font::Regular, small, colors.muted, x, row_y, row_h, &copy, inner) + 4.0;
+            let copy = tr(
+                "workspace.git.pr.approvals",
+                &[
+                    ("given", given.to_string()),
+                    ("required", required.to_string()),
+                ],
+            );
+            x += paint.text_centered(
+                cx,
+                Font::Regular,
+                small,
+                colors.muted,
+                x,
+                row_y,
+                row_h,
+                &copy,
+                inner,
+            ) + 4.0;
         }
         let identity = repo_identity(pr);
         let right = c.left + c.width - 16.0 - 16.0;
         if !identity.is_empty() {
             x += 4.0;
-            x += paint.text_centered(cx, Font::Regular, small, colors.muted, x, row_y, row_h, &identity, (right - x).max(0.0));
+            x += paint.text_centered(
+                cx,
+                Font::Regular,
+                small,
+                colors.muted,
+                x,
+                row_y,
+                row_h,
+                &identity,
+                (right - x).max(0.0),
+            );
         }
-        let region = rect(c.left, top, c.width, 16.0 + title_height + 8.0 + row_h + 16.0);
+        let region = rect(
+            c.left,
+            top,
+            c.width,
+            16.0 + title_height + 8.0 + row_h + 16.0,
+        );
         if self.hovered == Some(PrHit::Header) {
-            paint.icon(cx, "external-link", 12.0, colors.muted, dvec2(x + 4.0 + 6.0, center_y));
+            paint.icon(
+                cx,
+                "external-link",
+                12.0,
+                colors.muted,
+                dvec2(x + 4.0 + 6.0, center_y),
+            );
         }
         self.hits.push_clipped(region, c.view, PrHit::Header);
         c.y = region.pos.y + region.size.y;
@@ -779,13 +1239,42 @@ impl PrView {
 
     /// Original `_Section` header with summary pills.
     #[allow(clippy::too_many_arguments)]
-    fn section_header(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, c: &mut Cursor, title: &str, open: bool, hit: PrHit, summary: &[(usize, Option<Check>, Vec4)]) {
+    fn section_header(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        c: &mut Cursor,
+        title: &str,
+        open: bool,
+        hit: PrHit,
+        summary: &[(usize, Option<Check>, Vec4)],
+    ) {
         let colors = palette();
         let height = 32.0 + (ui_px(12.0) - 12.0).max(0.0) * 1.4;
         let band = rect(c.left, c.y, c.width, height);
         let center_y = band.pos.y + height / 2.0;
-        paint.icon(cx, if open { "chevron-down" } else { "chevron-right" }, 14.0, colors.muted, dvec2(c.left + 12.0 + 7.0, center_y));
-        paint.text_centered(cx, Font::Medium, ui_px(12.0), colors.muted, c.left + 12.0 + 14.0 + 8.0, band.pos.y, height, title, c.width / 2.0);
+        paint.icon(
+            cx,
+            if open {
+                "chevron-down"
+            } else {
+                "chevron-right"
+            },
+            14.0,
+            colors.muted,
+            dvec2(c.left + 12.0 + 7.0, center_y),
+        );
+        paint.text_centered(
+            cx,
+            Font::Medium,
+            ui_px(12.0),
+            colors.muted,
+            c.left + 12.0 + 14.0 + 8.0,
+            band.pos.y,
+            height,
+            title,
+            c.width / 2.0,
+        );
         let mut right = c.left + c.width - 12.0;
         for (count, check, color) in summary.iter().rev() {
             if *count == 0 {
@@ -793,11 +1282,27 @@ impl PrView {
             }
             let label = count.to_string();
             let width = paint.measure(cx, Font::Regular, ui_px(12.0), &label).x;
-            paint.text_centered(cx, Font::Regular, ui_px(12.0), *color, right - width, band.pos.y, height, &label, width + 1.0);
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                ui_px(12.0),
+                *color,
+                right - width,
+                band.pos.y,
+                height,
+                &label,
+                width + 1.0,
+            );
             right -= width + 3.0;
             match check {
                 Some(check) => check_icon(paint, cx, *check, 12.0, dvec2(right - 6.0, center_y)),
-                None => paint.icon(cx, "message-square", 11.0, colors.muted, dvec2(right - 6.0, center_y)),
+                None => paint.icon(
+                    cx,
+                    "message-square",
+                    11.0,
+                    colors.muted,
+                    dvec2(right - 6.0, center_y),
+                ),
             }
             right -= 12.0 + 8.0;
         }
@@ -806,13 +1311,37 @@ impl PrView {
     }
 
     fn empty_text(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, c: &mut Cursor, copy: &str) {
-        let height = paint.text_wrapped(cx, Font::Regular, ui_px(12.0), palette().muted, dvec2(c.left + 12.0, c.y + 8.0), copy, c.width - 24.0);
+        let height = paint.text_wrapped(
+            cx,
+            Font::Regular,
+            ui_px(12.0),
+            palette().muted,
+            dvec2(c.left + 12.0, c.y + 8.0),
+            copy,
+            c.width - 24.0,
+        );
         c.y += height + 16.0;
     }
 
     /// Original `_CheckRow`; returns its height.
     #[allow(clippy::too_many_arguments)]
-    fn check_row(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, x: f64, y: f64, width: f64, height: f64, metrics: RowMetrics, left_pad: f64, icon: Check, name: &str, detail: &str, trailing: Option<String>, url: Option<String>, clip: Rect) {
+    fn check_row(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        metrics: RowMetrics,
+        left_pad: f64,
+        icon: Check,
+        name: &str,
+        detail: &str,
+        trailing: Option<String>,
+        url: Option<String>,
+        clip: Rect,
+    ) {
         let colors = palette();
         let band = rect(x, y, width, height);
         if let Some(url) = &url {
@@ -824,20 +1353,57 @@ impl PrView {
         }
         let small = TextSpec::new(Font::Regular, ui_px(12.0), colors.muted);
         let title = TextSpec::new(Font::Regular, ui_px(14.0), colors.foreground);
-        let trailing_width = trailing.as_deref().map_or(0.0, |text| paint.painter.measure(cx, small, text).x);
+        let trailing_width = trailing
+            .as_deref()
+            .map_or(0.0, |text| paint.painter.measure(cx, small, text).x);
         let indent = (left_pad - 12.0).max(0.0);
-        let slots = metrics.layout(rect(x + indent, y, width - indent, height), 12.0, 14.0, trailing_width, 8.0);
+        let slots = metrics.layout(
+            rect(x + indent, y, width - indent, height),
+            12.0,
+            14.0,
+            trailing_width,
+            8.0,
+        );
         if slots.leading.size.x >= 14.0 {
-            check_icon(paint, cx, icon, 14.0, dvec2(slots.leading.pos.x + 7.0, y + height * 0.5));
+            check_icon(
+                paint,
+                cx,
+                icon,
+                14.0,
+                dvec2(slots.leading.pos.x + 7.0, y + height * 0.5),
+            );
         }
         if let Some(trailing) = trailing {
-            paint.painter.text_in(cx, slots.trailing, small, &trailing, 1.0);
+            paint
+                .painter
+                .text_in(cx, slots.trailing, small, &trailing, 1.0);
         }
-        let name_width = if detail.is_empty() { slots.title.size.x } else { slots.title.size.x * 0.6 };
-        let drawn = paint.painter.text_in(cx, rect(slots.title.pos.x, y, name_width, height), title, name, 0.0);
+        let name_width = if detail.is_empty() {
+            slots.title.size.x
+        } else {
+            slots.title.size.x * 0.6
+        };
+        let drawn = paint.painter.text_in(
+            cx,
+            rect(slots.title.pos.x, y, name_width, height),
+            title,
+            name,
+            0.0,
+        );
         if !detail.is_empty() {
             let detail_left = drawn.pos.x + drawn.size.x + 8.0;
-            paint.painter.text_in(cx, rect(detail_left, y, slots.title.pos.x + slots.title.size.x - detail_left, height), small, detail, 0.0);
+            paint.painter.text_in(
+                cx,
+                rect(
+                    detail_left,
+                    y,
+                    slots.title.pos.x + slots.title.size.x - detail_left,
+                    height,
+                ),
+                small,
+                detail,
+                0.0,
+            );
         }
     }
 
@@ -850,19 +1416,37 @@ impl PrView {
         const COPY: &str = "workspace.git.pr.checksOverview";
         let parts: Vec<String> = groups
             .iter()
-            .map(|(presentation, matching)| tr(&format!("{COPY}.count.{}", presentation.name()), &[("count", matching.len().to_string())]))
+            .map(|(presentation, matching)| {
+                tr(
+                    &format!("{COPY}.count.{}", presentation.name()),
+                    &[("count", matching.len().to_string())],
+                )
+            })
             .collect();
         let headline = t(&format!("{COPY}.headline.{outcome}"));
         let detail = if parts.is_empty() {
             String::new()
         } else {
-            let key = if checks.len() == 1 { format!("{COPY}.detailOne") } else { format!("{COPY}.detailMany") };
+            let key = if checks.len() == 1 {
+                format!("{COPY}.detailOne")
+            } else {
+                format!("{COPY}.detailMany")
+            };
             tr(&key, &[("parts", parts.join(", "))])
         };
         let title_h = 20.0_f64.max(ui_px(14.0) * 1.4);
         let detail_h = 16.0 + (ui_px(12.0) - 12.0).max(0.0) * 1.4;
         let height = 24.0 + title_h + detail_h;
-        let band = rect(c.left, c.y, c.width, if detail.is_empty() { 24.0 + title_h } else { height });
+        let band = rect(
+            c.left,
+            c.y,
+            c.width,
+            if detail.is_empty() {
+                24.0 + title_h
+            } else {
+                height
+            },
+        );
         if self.hovered == Some(PrHit::ChecksToggle) {
             paint.fill(cx, band, colors.sidebar_hover);
         }
@@ -875,9 +1459,17 @@ impl PrView {
             let circumference = 2.0 * std::f32::consts::PI * 8.5;
             let mut offset = 0.0f32;
             for (presentation, matching) in &groups {
-                let color = if *presentation == Check::Ignored { colors.extra_muted } else { check_color(*presentation) };
+                let color = if *presentation == Check::Ignored {
+                    colors.extra_muted
+                } else {
+                    check_color(*presentation)
+                };
                 let share = matching.len() as f32 / total;
-                let dash = if groups.len() == 1 { 1.0 } else { (share - 2.0 / circumference).max(1.5 / circumference) };
+                let dash = if groups.len() == 1 {
+                    1.0
+                } else {
+                    (share - 2.0 / circumference).max(1.5 / circumference)
+                };
                 paint.arc(cx, ring, color, offset, offset + dash, 3.0);
                 offset += share;
             }
@@ -885,19 +1477,61 @@ impl PrView {
         let text_left = c.left + 12.0 + 20.0 + 8.0;
         let text_width = c.width - 12.0 - 20.0 - 8.0 - 8.0 - 14.0 - 12.0;
         if detail.is_empty() {
-            paint.text_centered(cx, Font::Medium, ui_px(14.0), colors.foreground, text_left, band.pos.y, band.size.y, &headline, text_width);
+            paint.text_centered(
+                cx,
+                Font::Medium,
+                ui_px(14.0),
+                colors.foreground,
+                text_left,
+                band.pos.y,
+                band.size.y,
+                &headline,
+                text_width,
+            );
         } else {
-            paint.text_fit(cx, Font::Medium, ui_px(14.0), colors.foreground, dvec2(text_left, band.pos.y + 12.0), &headline, text_width);
-            paint.text_fit(cx, Font::Regular, ui_px(12.0), colors.muted, dvec2(text_left, band.pos.y + 12.0 + title_h), &detail, text_width);
+            paint.text_fit(
+                cx,
+                Font::Medium,
+                ui_px(14.0),
+                colors.foreground,
+                dvec2(text_left, band.pos.y + 12.0),
+                &headline,
+                text_width,
+            );
+            paint.text_fit(
+                cx,
+                Font::Regular,
+                ui_px(12.0),
+                colors.muted,
+                dvec2(text_left, band.pos.y + 12.0 + title_h),
+                &detail,
+                text_width,
+            );
         }
-        paint.icon(cx, if self.pane.checks_open { "chevron-down" } else { "chevron-right" }, 14.0, colors.muted, dvec2(c.left + c.width - 12.0 - 7.0, center_y));
+        paint.icon(
+            cx,
+            if self.pane.checks_open {
+                "chevron-down"
+            } else {
+                "chevron-right"
+            },
+            14.0,
+            colors.muted,
+            dvec2(c.left + c.width - 12.0 - 7.0, center_y),
+        );
         self.hits.push_clipped(band, c.view, PrHit::ChecksToggle);
         c.y += band.size.y;
         if !self.pane.checks_open || groups.is_empty() {
             return;
         }
         // Roughly eight rows; past this the list scrolls in place.
-        let metrics = RowMetrics::measure(&mut paint.painter, cx, TextSpec::new(Font::Regular, ui_px(14.0), colors.foreground), None, 0.0);
+        let metrics = RowMetrics::measure(
+            &mut paint.painter,
+            cx,
+            TextSpec::new(Font::Regular, ui_px(14.0), colors.foreground),
+            None,
+            0.0,
+        );
         let row_h = metrics.height(32.0, 4.0, 14.0);
         let heading_h = paint.measure(cx, Font::Medium, ui_px(12.0), "Ag").y;
         let mut inner = 0.0;
@@ -914,26 +1548,75 @@ impl PrView {
         self.checks_area = clip;
         self.checks_height = list_height;
         self.checks_content = inner;
-        self.checks_scroll = self.checks_scroll.clamp(0.0, (inner - list_height).max(0.0));
+        self.checks_scroll = self
+            .checks_scroll
+            .clamp(0.0, (inner - list_height).max(0.0));
         paint.begin_clip(cx, clip);
         let mut y = c.y - self.checks_scroll;
         let fallback = text(pr, "url").to_owned();
         for (presentation, matching) in &groups {
             let collapsed = self.pane.collapsed_groups.contains(presentation);
             let header = rect(c.left, y, c.width, 8.0 + heading_h + 4.0);
-            let key = format!("{COPY}.{}.{}", if matching.len() == 1 { "groupOne" } else { "groupMany" }, presentation.name());
+            let key = format!(
+                "{COPY}.{}.{}",
+                if matching.len() == 1 {
+                    "groupOne"
+                } else {
+                    "groupMany"
+                },
+                presentation.name()
+            );
             let copy = tr(&key, &[("count", matching.len().to_string())]);
-            let width = paint.text_centered(cx, Font::Medium, ui_px(12.0), colors.muted, c.left + 12.0, y + 8.0, heading_h, &copy, c.width - 40.0);
-            paint.icon(cx, if collapsed { "chevron-right" } else { "chevron-down" }, 12.0, colors.muted, dvec2(c.left + 12.0 + width + 4.0 + 6.0, y + 8.0 + heading_h / 2.0));
-            self.hits.push_clipped(header, clip, PrHit::Group(*presentation));
+            let width = paint.text_centered(
+                cx,
+                Font::Medium,
+                ui_px(12.0),
+                colors.muted,
+                c.left + 12.0,
+                y + 8.0,
+                heading_h,
+                &copy,
+                c.width - 40.0,
+            );
+            paint.icon(
+                cx,
+                if collapsed {
+                    "chevron-right"
+                } else {
+                    "chevron-down"
+                },
+                12.0,
+                colors.muted,
+                dvec2(c.left + 12.0 + width + 4.0 + 6.0, y + 8.0 + heading_h / 2.0),
+            );
+            self.hits
+                .push_clipped(header, clip, PrHit::Group(*presentation));
             y += header.size.y;
             if collapsed {
                 continue;
             }
             for check in matching {
                 if y + row_h >= clip.pos.y && y <= clip.pos.y + clip.size.y {
-                    let url = Some(text(check, "url")).filter(|u| !u.is_empty()).unwrap_or(&fallback).to_owned();
-                    self.check_row(cx, paint, c.left, y, c.width, row_h, metrics, 12.0, classify_check(check), text(check, "name"), text(check, "workflow"), check_timing(check), Some(url), clip);
+                    let url = Some(text(check, "url"))
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or(&fallback)
+                        .to_owned();
+                    self.check_row(
+                        cx,
+                        paint,
+                        c.left,
+                        y,
+                        c.width,
+                        row_h,
+                        metrics,
+                        12.0,
+                        classify_check(check),
+                        text(check, "name"),
+                        text(check, "workflow"),
+                        check_timing(check),
+                        Some(url),
+                        clip,
+                    );
                 }
                 y += row_h;
             }
@@ -943,16 +1626,31 @@ impl PrView {
     }
 
     /// Original `_GitlabPipelineSection`.
-    fn pipeline_section(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, c: &mut Cursor, facts: &Value) {
+    fn pipeline_section(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        c: &mut Cursor,
+        facts: &Value,
+    ) {
         let colors = palette();
-        let metrics = RowMetrics::measure(&mut paint.painter, cx, TextSpec::new(Font::Regular, ui_px(14.0), colors.foreground), None, 0.0);
+        let metrics = RowMetrics::measure(
+            &mut paint.painter,
+            cx,
+            TextSpec::new(Font::Regular, ui_px(14.0), colors.foreground),
+            None,
+            0.0,
+        );
         let row_h = metrics.height(32.0, 4.0, 14.0);
         let job_h = 36.0_f64.max(row_h);
         let heading_h = paint.measure(cx, Font::Medium, ui_px(12.0), "Ag").y;
         let raw_status = text(facts, "pipelineStatus").to_owned();
         let url = text(facts, "pipelineUrl").to_owned();
         let pipeline = self.pane.pipeline.clone();
-        let stages: Vec<Value> = pipeline.as_ref().map(|p| array(p, "stages").to_vec()).unwrap_or_default();
+        let stages: Vec<Value> = pipeline
+            .as_ref()
+            .map(|p| array(p, "stages").to_vec())
+            .unwrap_or_default();
         let mut counts: Vec<(Check, usize)> = Vec::new();
         for job in stages.iter().flat_map(|s| array(s, "jobs").iter()) {
             let presentation = classify_gitlab_job(text(job, "status"), flag(job, "allowFailure"));
@@ -966,14 +1664,38 @@ impl PrView {
         }
         let summary: Vec<(usize, Option<Check>, Vec4)> = Check::COUNTED
             .iter()
-            .map(|p| (counts.iter().find(|(c, _)| c == p).map(|(_, n)| *n).unwrap_or(0), Some(*p), check_color(*p)))
+            .map(|p| {
+                (
+                    counts
+                        .iter()
+                        .find(|(c, _)| c == p)
+                        .map(|(_, n)| *n)
+                        .unwrap_or(0),
+                    Some(*p),
+                    check_color(*p),
+                )
+            })
             .collect();
         let open = self.pane.checks_open;
         let header_top = c.y;
-        self.section_header(cx, paint, c, &t("workspace.git.pr.sections.pipeline"), open, PrHit::ChecksToggle, &summary);
+        self.section_header(
+            cx,
+            paint,
+            c,
+            &t("workspace.git.pr.sections.pipeline"),
+            open,
+            PrHit::ChecksToggle,
+            &summary,
+        );
         if counts.is_empty() {
             let status = classify_gitlab_job(&raw_status, false);
-            check_icon(paint, cx, status, 14.0, dvec2(c.left + c.width - 12.0 - 7.0, header_top + 16.0));
+            check_icon(
+                paint,
+                cx,
+                status,
+                14.0,
+                dvec2(c.left + c.width - 12.0 - 7.0, header_top + 16.0),
+            );
         }
         if !open {
             return;
@@ -981,9 +1703,30 @@ impl PrView {
         let pipeline_name = format!("Pipeline #{}", int(facts, "pipelineId"));
         let launch = Some(url.clone()).filter(|u| !u.is_empty());
         let trailing = None;
-        self.check_row(cx, paint, c.left, c.y, c.width, row_h, metrics, 12.0, classify_gitlab_job(&raw_status, false), &pipeline_name, &raw_status, trailing, launch.clone(), c.view);
+        self.check_row(
+            cx,
+            paint,
+            c.left,
+            c.y,
+            c.width,
+            row_h,
+            metrics,
+            12.0,
+            classify_gitlab_job(&raw_status, false),
+            &pipeline_name,
+            &raw_status,
+            trailing,
+            launch.clone(),
+            c.view,
+        );
         if launch.is_some() {
-            paint.icon(cx, "external-link", 12.0, colors.muted, dvec2(c.left + c.width - 12.0 - 6.0, c.y + row_h / 2.0));
+            paint.icon(
+                cx,
+                "external-link",
+                12.0,
+                colors.muted,
+                dvec2(c.left + c.width - 12.0 - 6.0, c.y + row_h / 2.0),
+            );
         }
         c.y += row_h;
         if self.pane.pipeline_loading {
@@ -991,21 +1734,61 @@ impl PrView {
         } else if pipeline.is_some() && stages.is_empty() {
             self.empty_text(cx, paint, c, &t("workspace.git.pr.empty.noJobs"));
         } else if pipeline.is_none() && self.pane.pipeline_error.is_some() {
-            self.empty_text(cx, paint, c, &t("workspace.git.pr.empty.pipelineJobsLoadFailed"));
+            self.empty_text(
+                cx,
+                paint,
+                c,
+                &t("workspace.git.pr.empty.pipelineJobsLoadFailed"),
+            );
         }
         if !self.pane.pipeline_loading {
             for stage in &stages {
                 let center_y = c.y + 8.0 + heading_h / 2.0;
-                check_icon(paint, cx, classify_gitlab_job(text(stage, "status"), false), 14.0, dvec2(c.left + 12.0 + 7.0, center_y));
-                paint.text_centered(cx, Font::Medium, ui_px(12.0), colors.muted, c.left + 12.0 + 22.0, c.y + 8.0, heading_h, &text(stage, "name").to_uppercase(), c.width - 46.0);
+                check_icon(
+                    paint,
+                    cx,
+                    classify_gitlab_job(text(stage, "status"), false),
+                    14.0,
+                    dvec2(c.left + 12.0 + 7.0, center_y),
+                );
+                paint.text_centered(
+                    cx,
+                    Font::Medium,
+                    ui_px(12.0),
+                    colors.muted,
+                    c.left + 12.0 + 22.0,
+                    c.y + 8.0,
+                    heading_h,
+                    &text(stage, "name").to_uppercase(),
+                    c.width - 46.0,
+                );
                 c.y += 8.0 + heading_h + 4.0;
                 for job in array(stage, "jobs") {
                     let allow = flag(job, "allowFailure");
-                    let detail = if allow { t("workspace.git.pr.empty.allowedToFail") } else { String::new() };
+                    let detail = if allow {
+                        t("workspace.git.pr.empty.allowedToFail")
+                    } else {
+                        String::new()
+                    };
                     let duration = int(job, "durationSeconds");
                     let trailing = (duration > 0).then(|| format_duration(duration));
                     let job_url = Some(text(job, "url").to_owned()).filter(|u| !u.is_empty());
-                    self.check_row(cx, paint, c.left, c.y, c.width, job_h, metrics, 24.0, classify_gitlab_job(text(job, "status"), allow), text(job, "name"), &detail, trailing, job_url, c.view);
+                    self.check_row(
+                        cx,
+                        paint,
+                        c.left,
+                        c.y,
+                        c.width,
+                        job_h,
+                        metrics,
+                        24.0,
+                        classify_gitlab_job(text(job, "status"), allow),
+                        text(job, "name"),
+                        &detail,
+                        trailing,
+                        job_url,
+                        c.view,
+                    );
                     c.y += job_h;
                 }
             }
@@ -1016,14 +1799,21 @@ impl PrView {
     /// Original `_Avatar`: a round `avatarUrl` image (cover) over the author's
     /// identity colour; the white 10px initial only without a URL or when the
     /// image fails. Images load through the shared timeline image cache.
-    fn avatar(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, activity: &Value, size: f64, center: DVec2) {
+    fn avatar(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        activity: &Value,
+        size: f64,
+        center: DVec2,
+    ) {
         let author = text(activity, "author");
         let fill = rgb(AVATAR_FILLS[avatar_fill_index(author)]);
         let circle = rect(center.x - size / 2.0, center.y - size / 2.0, size, size);
         paint.rounded(cx, circle, fill, size / 2.0, None);
         let url = text(activity, "avatarUrl");
         if !url.is_empty() {
-            match images::image(cx, None, &self.target.server_id, None, url, "") {
+            match images::image(cx, Some(&self.core), &self.target.server_id, None, url, "") {
                 ImageState::Ready { texture, .. } => {
                     paint.texture(cx, circle, &texture, size / 2.0);
                     return;
@@ -1032,27 +1822,62 @@ impl PrView {
                     self.images_pending = true;
                     return;
                 }
-                ImageState::Failed => {}
+                ImageState::Failed | ImageState::Error(_) => {}
             }
         }
-        let initial: String = author.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+        let initial: String = author
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default();
         let px = ui_px(10.0);
         let width = paint.measure(cx, Font::Regular, px, &initial).x;
-        paint.text_centered(cx, Font::Regular, px, vec4(1.0, 1.0, 1.0, 1.0), center.x - width / 2.0, center.y - size / 2.0, size, &initial, width + 1.0);
+        paint.text_centered(
+            cx,
+            Font::Regular,
+            px,
+            vec4(1.0, 1.0, 1.0, 1.0),
+            center.x - width / 2.0,
+            center.y - size / 2.0,
+            size,
+            &initial,
+            width + 1.0,
+        );
     }
 
     /// Original `_ActivityHeader` in a row of `height` from `top`.
     #[allow(clippy::too_many_arguments)]
-    fn activity_header(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, activity: &Value, avatar: f64, x: f64, top: f64, width: f64, height: f64, trailing_extra: Option<usize>, kebab: Option<(String, bool)>, clip: Rect) {
+    fn activity_header(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        activity: &Value,
+        avatar: f64,
+        x: f64,
+        top: f64,
+        width: f64,
+        height: f64,
+        trailing_extra: Option<usize>,
+        kebab: Option<(String, bool)>,
+        clip: Rect,
+    ) {
         let colors = palette();
         let center_y = top + height / 2.0;
-        self.avatar(cx, paint, activity, avatar, dvec2(x + avatar / 2.0, center_y));
+        self.avatar(
+            cx,
+            paint,
+            activity,
+            avatar,
+            dvec2(x + avatar / 2.0, center_y),
+        );
         let mut cursor = x + avatar + 8.0;
         let right_edge = x + width;
         // Trailing: kebab, count, age (right to left).
         let mut right = right_edge;
         if let Some((key, thread)) = kebab {
-            let visible = self.hovered_region.as_deref() == Some(key.as_str()) || crate::common::is_compact_layout(cx) || host::is_mobile_platform();
+            let visible = self.hovered_region.as_deref() == Some(key.as_str())
+                || crate::common::is_compact_layout(cx)
+                || host::is_mobile_platform();
             let slot = rect(right - 22.0, center_y - 9.0, 22.0, 18.0);
             if visible {
                 let hit = PrHit::Kebab {
@@ -1065,7 +1890,17 @@ impl PrView {
                 if hovered {
                     paint.rounded(cx, slot, colors.surface2, 4.0, None);
                 }
-                paint.icon(cx, "ellipsis", 14.0, if hovered { colors.foreground } else { colors.muted }, slot.center());
+                paint.icon(
+                    cx,
+                    "ellipsis",
+                    14.0,
+                    if hovered {
+                        colors.foreground
+                    } else {
+                        colors.muted
+                    },
+                    slot.center(),
+                );
                 self.hits.push_clipped(slot, clip, hit);
             }
             right -= 22.0 + 8.0;
@@ -1073,13 +1908,39 @@ impl PrView {
         if let Some(count) = trailing_extra {
             let label = count.to_string();
             let w = paint.measure(cx, Font::Regular, ui_px(12.0), &label).x;
-            paint.text_centered(cx, Font::Regular, ui_px(12.0), colors.muted, right - w, top, height, &label, w + 1.0);
-            paint.icon(cx, "message-square", 11.0, colors.muted, dvec2(right - w - 3.0 - 6.0, center_y));
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                ui_px(12.0),
+                colors.muted,
+                right - w,
+                top,
+                height,
+                &label,
+                w + 1.0,
+            );
+            paint.icon(
+                cx,
+                "message-square",
+                11.0,
+                colors.muted,
+                dvec2(right - w - 3.0 - 6.0, center_y),
+            );
             right -= w + 3.0 + 12.0 + 8.0;
         }
         let age = format_age(int(activity, "createdAt"), now_ms());
         let age_width = paint.measure(cx, Font::Regular, ui_px(12.0), &age).x;
-        paint.text_centered(cx, Font::Regular, ui_px(12.0), colors.muted, right - age_width, top, height, &age, age_width + 1.0);
+        paint.text_centered(
+            cx,
+            Font::Regular,
+            ui_px(12.0),
+            colors.muted,
+            right - age_width,
+            top,
+            height,
+            &age,
+            age_width + 1.0,
+        );
         right -= age_width + 8.0;
         let review = text(activity, "kind") == "review";
         let review_state = text(activity, "reviewState");
@@ -1098,14 +1959,35 @@ impl PrView {
             (true, "changes_requested") => (Some("circle-x"), colors.danger),
             _ => (None, colors.muted),
         };
-        let verb_width = paint.measure(cx, Font::Regular, ui_px(12.0), &verb).x + if verb_icon.is_some() { 16.0 } else { 0.0 };
+        let verb_width = paint.measure(cx, Font::Regular, ui_px(12.0), &verb).x
+            + if verb_icon.is_some() { 16.0 } else { 0.0 };
         let author_width = (right - cursor - 8.0 - verb_width).max(0.0);
-        cursor += paint.text_centered(cx, Font::Regular, ui_px(14.0), colors.foreground, cursor, top, height, text(activity, "author"), author_width) + 8.0;
+        cursor += paint.text_centered(
+            cx,
+            Font::Regular,
+            ui_px(14.0),
+            colors.foreground,
+            cursor,
+            top,
+            height,
+            text(activity, "author"),
+            author_width,
+        ) + 8.0;
         if let Some(icon) = verb_icon {
             paint.icon(cx, icon, 12.0, verb_color, dvec2(cursor + 6.0, center_y));
             cursor += 16.0;
         }
-        paint.text_centered(cx, Font::Regular, ui_px(12.0), verb_color, cursor, top, height, &verb, (right - cursor).max(0.0));
+        paint.text_centered(
+            cx,
+            Font::Regular,
+            ui_px(12.0),
+            verb_color,
+            cursor,
+            top,
+            height,
+            &verb,
+            (right - cursor).max(0.0),
+        );
     }
 
     /// Original `_markdownBody`: `PaseoMarkdown(data: body, compact: true,
@@ -1113,14 +1995,25 @@ impl PrView {
     /// painter (palette colours, selection, link taps, code copy). Returns its
     /// height; offscreen bodies reuse their last height without drawing.
     #[allow(clippy::too_many_arguments)]
-    fn markdown_body(&mut self, cx: &mut Cx2d, kit: &mut ChatKit, key: &str, body: &str, pos: DVec2, width: f64, clip: Rect) -> f64 {
+    fn markdown_body(
+        &mut self,
+        cx: &mut Cx2d,
+        kit: &mut ChatKit,
+        key: &str,
+        body: &str,
+        pos: DVec2,
+        width: f64,
+        clip: Rect,
+    ) -> f64 {
         let cached = self.heights.get(key).copied();
         let estimate = cached.unwrap_or(40.0);
         let visible = pos.y + estimate >= clip.pos.y && pos.y <= clip.pos.y + clip.size.y;
         if !visible && cached.is_some() {
             return estimate;
         }
-        let Some(look) = self.look else { return estimate };
+        let Some(look) = self.look else {
+            return estimate;
+        };
         let width = width.max(1.0);
         let entry = self.bodies.entry(key.to_owned()).or_default();
         entry.canvas.begin(pos);
@@ -1129,7 +2022,7 @@ impl PrView {
             font_size: look.ui(14.0),
             key,
             find: None,
-            core: None,
+            core: Some(&self.core),
             host_id: &self.target.server_id,
             workspace_root: None,
             syntax_theme: look.syntax.as_str(),
@@ -1144,7 +2037,9 @@ impl PrView {
             area: Area::Empty,
             animating: false,
         };
-        let height = md::draw(cx, &mut d, &mut opts, body, pos.x, pos.y, width, false, false);
+        let height = md::draw(
+            cx, &mut d, &mut opts, body, pos.x, pos.y, width, false, false,
+        );
         // Copy-glyph feedback and loading images animate through frames.
         self.spinning |= d.animating;
         // Material's default selection colour: colorScheme.primary at 40%.
@@ -1152,7 +2047,8 @@ impl PrView {
         for r in entry.canvas.selection_rects() {
             kit.rect(cx, r, selection, 0.0);
         }
-        self.body_rects.push((key.to_owned(), rect(pos.x, pos.y, width, height)));
+        self.body_rects
+            .push((key.to_owned(), rect(pos.x, pos.y, width, height)));
         self.images_pending = true;
         self.heights.insert(key.to_owned(), height);
         height
@@ -1163,7 +2059,15 @@ impl PrView {
     }
 
     /// Original `_TimelineEntryCard`.
-    fn entry(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, c: &mut Cursor, entry: &Entry, number: Option<i64>, kit: &mut ChatKit) {
+    fn entry(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        c: &mut Cursor,
+        entry: &Entry,
+        number: Option<i64>,
+        kit: &mut ChatKit,
+    ) {
         let colors = palette();
         let collapsed = self.pane.entry_collapsed(number, entry);
         let id = entry.id();
@@ -1182,7 +2086,19 @@ impl PrView {
                     }
                     self.hits.push_clipped(band, c.view, hit);
                     self.regions.push((band, id.clone()));
-                    self.activity_header(cx, paint, activity, 20.0, x + 12.0, c.y, width - 24.0, header_h, None, Some((id, false)), c.view);
+                    self.activity_header(
+                        cx,
+                        paint,
+                        activity,
+                        20.0,
+                        x + 12.0,
+                        c.y,
+                        width - 24.0,
+                        header_h,
+                        None,
+                        Some((id, false)),
+                        c.view,
+                    );
                     c.y += header_h + 8.0;
                     return;
                 }
@@ -1190,21 +2106,49 @@ impl PrView {
                 let body_height = if collapsed {
                     0.0
                 } else {
-                    self.heights.get(&format!("{id}:body")).copied().unwrap_or(40.0) + 8.0 + 12.0
+                    self.heights
+                        .get(&format!("{id}:body"))
+                        .copied()
+                        .unwrap_or(40.0)
+                        + 8.0
+                        + 12.0
                 };
                 let card = rect(x, top, width, header_h + body_height);
                 Self::card_border(cx, paint, card, 8.0, colors.sidebar);
                 let header = rect(x, top, width, header_h);
-                let hit = PrHit::Entry { id: id.clone(), default_collapsed: entry.collapsed_by_default() };
+                let hit = PrHit::Entry {
+                    id: id.clone(),
+                    default_collapsed: entry.collapsed_by_default(),
+                };
                 if self.hovered.as_ref() == Some(&hit) {
                     paint.rounded(cx, header, colors.sidebar_hover, 8.0, None);
                 }
                 self.hits.push_clipped(header, c.view, hit);
                 self.regions.push((card, id.clone()));
-                self.activity_header(cx, paint, activity, 20.0, x + 12.0, top, width - 24.0, header_h, None, Some((id.clone(), false)), c.view);
+                self.activity_header(
+                    cx,
+                    paint,
+                    activity,
+                    20.0,
+                    x + 12.0,
+                    top,
+                    width - 24.0,
+                    header_h,
+                    None,
+                    Some((id.clone(), false)),
+                    c.view,
+                );
                 let mut y = top + header_h;
                 if !collapsed {
-                    let height = self.markdown_body(cx, kit, &format!("{id}:body"), text(activity, "body"), dvec2(x + 12.0, y + 8.0), width - 24.0, c.view);
+                    let height = self.markdown_body(
+                        cx,
+                        kit,
+                        &format!("{id}:body"),
+                        text(activity, "body"),
+                        dvec2(x + 12.0, y + 8.0),
+                        width - 24.0,
+                        c.view,
+                    );
                     y += 8.0 + height + 12.0;
                 }
                 c.y = y + 12.0;
@@ -1219,22 +2163,49 @@ impl PrView {
             }
             Entry::Review { review, threads } => {
                 let top = c.y;
-                let estimate = self.heights.get(&format!("{id}:card")).copied().unwrap_or(36.0);
+                let estimate = self
+                    .heights
+                    .get(&format!("{id}:card"))
+                    .copied()
+                    .unwrap_or(36.0);
                 let card = rect(x, top, width, estimate);
                 Self::card_border(cx, paint, card, 8.0, colors.sidebar);
                 let header = rect(x, top, width, header_h);
-                let hit = PrHit::Entry { id: id.clone(), default_collapsed: false };
+                let hit = PrHit::Entry {
+                    id: id.clone(),
+                    default_collapsed: false,
+                };
                 if self.hovered.as_ref() == Some(&hit) {
                     paint.rounded(cx, header, colors.sidebar_hover, 8.0, None);
                 }
                 self.hits.push_clipped(header, c.view, hit);
                 self.regions.push((card, id.clone()));
                 let count = collapsed.then_some(threads.len());
-                self.activity_header(cx, paint, review, 20.0, x + 12.0, top, width - 24.0, header_h, count, Some((id.clone(), false)), c.view);
+                self.activity_header(
+                    cx,
+                    paint,
+                    review,
+                    20.0,
+                    x + 12.0,
+                    top,
+                    width - 24.0,
+                    header_h,
+                    count,
+                    Some((id.clone(), false)),
+                    c.view,
+                );
                 let mut y = top + header_h;
                 if !collapsed {
                     if !text(review, "body").trim().is_empty() {
-                        let height = self.markdown_body(cx, kit, &format!("{id}:body"), text(review, "body"), dvec2(x + 12.0, y + 8.0), width - 24.0, c.view);
+                        let height = self.markdown_body(
+                            cx,
+                            kit,
+                            &format!("{id}:body"),
+                            text(review, "body"),
+                            dvec2(x + 12.0, y + 8.0),
+                            width - 24.0,
+                            c.view,
+                        );
                         y += 8.0 + height + 12.0;
                     }
                     if !threads.is_empty() {
@@ -1243,9 +2214,32 @@ impl PrView {
                             let inner_x = x + 12.0;
                             let inner_width = width - 24.0;
                             let thread_top = y;
-                            let estimate = self.markdown_estimate(thread, self.pane.is_collapsed(number, &thread_id(thread), thread_collapsed_by_default(thread)));
-                            Self::card_border(cx, paint, rect(inner_x, thread_top, inner_width, estimate), 6.0, colors.sidebar);
-                            y = self.thread_block(cx, paint, thread, inner_x, thread_top, inner_width, number, c.view, kit) + 8.0;
+                            let estimate = self.markdown_estimate(
+                                thread,
+                                self.pane.is_collapsed(
+                                    number,
+                                    &thread_id(thread),
+                                    thread_collapsed_by_default(thread),
+                                ),
+                            );
+                            Self::card_border(
+                                cx,
+                                paint,
+                                rect(inner_x, thread_top, inner_width, estimate),
+                                6.0,
+                                colors.sidebar,
+                            );
+                            y = self.thread_block(
+                                cx,
+                                paint,
+                                thread,
+                                inner_x,
+                                thread_top,
+                                inner_width,
+                                number,
+                                c.view,
+                                kit,
+                            ) + 8.0;
                         }
                         y += 4.0;
                     }
@@ -1264,23 +2258,54 @@ impl PrView {
 
     /// Original `_ThreadBlock`; returns its bottom.
     #[allow(clippy::too_many_arguments)]
-    fn thread_block(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, thread: &Thread, x: f64, top: f64, width: f64, number: Option<i64>, clip: Rect, kit: &mut ChatKit) -> f64 {
+    fn thread_block(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        thread: &Thread,
+        x: f64,
+        top: f64,
+        width: f64,
+        number: Option<i64>,
+        clip: Rect,
+        kit: &mut ChatKit,
+    ) -> f64 {
         let colors = palette();
         let id = thread_id(thread);
-        let collapsed = self.pane.is_collapsed(number, &id, thread_collapsed_by_default(thread));
+        let collapsed = self
+            .pane
+            .is_collapsed(number, &id, thread_collapsed_by_default(thread));
         let header_h = 36.0_f64.max(ui_px(12.0) * 1.4 + 12.0);
         let header = rect(x + 1.0, top + 1.0, width - 2.0, header_h);
-        let hit = PrHit::Entry { id: id.clone(), default_collapsed: thread_collapsed_by_default(thread) };
+        let hit = PrHit::Entry {
+            id: id.clone(),
+            default_collapsed: thread_collapsed_by_default(thread),
+        };
         let hovered = self.hovered.as_ref() == Some(&hit);
-        paint.fill(cx, header, if hovered { colors.sidebar_hover } else { colors.surface1 });
+        paint.fill(
+            cx,
+            header,
+            if hovered {
+                colors.sidebar_hover
+            } else {
+                colors.surface1
+            },
+        );
         self.hits.push_clipped(header, clip, hit);
         let center_y = header.pos.y + header_h / 2.0;
         let mut right = header.pos.x + header.size.x - 12.0;
         let root = &thread.comments[0];
-        let kebab_visible = self.hovered_region.as_deref() == Some(id.as_str()) || crate::common::is_compact_layout(cx) || host::is_mobile_platform();
+        let kebab_visible = self.hovered_region.as_deref() == Some(id.as_str())
+            || crate::common::is_compact_layout(cx)
+            || host::is_mobile_platform();
         let slot = rect(right - 22.0, center_y - 9.0, 22.0, 18.0);
         if kebab_visible {
-            let kebab = PrHit::Kebab { key: id.clone(), body: String::new(), url: text(root, "url").to_owned(), thread: true };
+            let kebab = PrHit::Kebab {
+                key: id.clone(),
+                body: String::new(),
+                url: text(root, "url").to_owned(),
+                thread: true,
+            };
             if self.hovered.as_ref() == Some(&kebab) {
                 paint.rounded(cx, slot, colors.surface2, 4.0, None);
             }
@@ -1291,8 +2316,24 @@ impl PrView {
         if collapsed {
             let label = thread.comments.len().to_string();
             let w = paint.measure(cx, Font::Regular, ui_px(12.0), &label).x;
-            paint.text_centered(cx, Font::Regular, ui_px(12.0), colors.muted, right - w, header.pos.y, header_h, &label, w + 1.0);
-            paint.icon(cx, "message-square", 11.0, colors.muted, dvec2(right - w - 9.0, center_y));
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                ui_px(12.0),
+                colors.muted,
+                right - w,
+                header.pos.y,
+                header_h,
+                &label,
+                w + 1.0,
+            );
+            paint.icon(
+                cx,
+                "message-square",
+                11.0,
+                colors.muted,
+                dvec2(right - w - 9.0, center_y),
+            );
             right -= w + 3.0 + 12.0 + 8.0;
         }
         let mut cursor = header.pos.x + 12.0;
@@ -1308,17 +2349,43 @@ impl PrView {
         if flag(&thread.location, "isOutdated") {
             badges.push((t("workspace.git.pr.thread.outdated"), colors.muted));
         }
-        let badge_width: f64 = badges.iter().map(|(l, _)| paint.measure(cx, Font::Regular, ui_px(11.0), l).x + 12.0 + 8.0).sum();
-        cursor += paint.text_centered(cx, Font::Mono, ui_px(12.0), colors.foreground, cursor, header.pos.y, header_h, &path_label, (right - cursor - badge_width).max(0.0)) + 8.0;
+        let badge_width: f64 = badges
+            .iter()
+            .map(|(l, _)| paint.measure(cx, Font::Regular, ui_px(11.0), l).x + 12.0 + 8.0)
+            .sum();
+        cursor += paint.text_centered(
+            cx,
+            Font::Mono,
+            ui_px(12.0),
+            colors.foreground,
+            cursor,
+            header.pos.y,
+            header_h,
+            &path_label,
+            (right - cursor - badge_width).max(0.0),
+        ) + 8.0;
         for (label, color) in badges {
             let w = paint.measure(cx, Font::Regular, ui_px(11.0), &label).x + 12.0;
             let pill_h = 18.0 + (ui_px(11.0) - 11.0).max(0.0) * 1.4;
             let pill = rect(cursor, center_y - pill_h / 2.0, w, pill_h);
             paint.rounded(cx, pill, with_alpha(color, 0.15), 9.0, None);
-            paint.text_centered(cx, Font::Regular, ui_px(11.0), color, cursor + 6.0, pill.pos.y, pill.size.y, &label, w);
+            paint.text_centered(
+                cx,
+                Font::Regular,
+                ui_px(11.0),
+                color,
+                cursor + 6.0,
+                pill.pos.y,
+                pill.size.y,
+                &label,
+                w,
+            );
             cursor += w + 8.0;
         }
-        self.regions.push((rect(x, top, width, self.markdown_estimate(thread, collapsed)), id.clone()));
+        self.regions.push((
+            rect(x, top, width, self.markdown_estimate(thread, collapsed)),
+            id.clone(),
+        ));
         let mut y = top + header_h + 1.0;
         if !collapsed {
             y = self.thread_comment(cx, paint, root, x, y, width, true, clip, kit);
@@ -1329,33 +2396,89 @@ impl PrView {
                     let key = format!("{}:reply", text(reply, "id"));
                     let estimate = self.heights.get(&key).copied().unwrap_or(40.0);
                     let box_area = rect(x + 12.0, y, width - 24.0, estimate);
-                    paint.rounded(cx, box_area, colors.surface1, 6.0, Some((colors.border, 1.0)));
-                    let end = self.thread_comment(cx, paint, reply, x + 12.0, y, width - 24.0, false, clip, kit);
+                    paint.rounded(
+                        cx,
+                        box_area,
+                        colors.surface1,
+                        6.0,
+                        Some((colors.border, 1.0)),
+                    );
+                    let end = self.thread_comment(
+                        cx,
+                        paint,
+                        reply,
+                        x + 12.0,
+                        y,
+                        width - 24.0,
+                        false,
+                        clip,
+                        kit,
+                    );
                     self.heights.insert(key, end - y);
                     y = end + 8.0;
                 }
             }
         }
-        self.heights.insert(format!("{id}:block:{collapsed}"), y - top);
+        self.heights
+            .insert(format!("{id}:block:{collapsed}"), y - top);
         y
     }
 
     /// Original `_ThreadComment`; returns its bottom.
     #[allow(clippy::too_many_arguments)]
-    fn thread_comment(&mut self, cx: &mut Cx2d, paint: &mut GitPaint, comment: &Value, x: f64, top: f64, width: f64, top_border: bool, clip: Rect, kit: &mut ChatKit) -> f64 {
+    fn thread_comment(
+        &mut self,
+        cx: &mut Cx2d,
+        paint: &mut GitPaint,
+        comment: &Value,
+        x: f64,
+        top: f64,
+        width: f64,
+        top_border: bool,
+        clip: Rect,
+        kit: &mut ChatKit,
+    ) -> f64 {
         let colors = palette();
         if top_border {
             paint.fill(cx, rect(x, top, width, 1.0), colors.border);
         }
         let id = text(comment, "id").to_owned();
-        let region = rect(x, top, width, self.heights.get(&format!("{id}:comment")).copied().unwrap_or(40.0));
+        let region = rect(
+            x,
+            top,
+            width,
+            self.heights
+                .get(&format!("{id}:comment"))
+                .copied()
+                .unwrap_or(40.0),
+        );
         self.regions.push((region, id.clone()));
         let header_h = 24.0_f64.max(ui_px(14.0) * 1.4);
-        self.activity_header(cx, paint, comment, 16.0, x + 12.0, top + 8.0, width - 24.0, header_h, None, Some((id.clone(), false)), clip);
+        self.activity_header(
+            cx,
+            paint,
+            comment,
+            16.0,
+            x + 12.0,
+            top + 8.0,
+            width - 24.0,
+            header_h,
+            None,
+            Some((id.clone(), false)),
+            clip,
+        );
         let mut y = top + 8.0 + header_h + 4.0;
         if !text(comment, "body").trim().is_empty() {
             y += 8.0;
-            y += self.markdown_body(cx, kit, &format!("{id}:body"), text(comment, "body"), dvec2(x + 12.0, y), width - 24.0, clip);
+            y += self.markdown_body(
+                cx,
+                kit,
+                &format!("{id}:body"),
+                text(comment, "body"),
+                dvec2(x + 12.0, y),
+                width - 24.0,
+                clip,
+            );
         }
         y += 8.0;
         self.heights.insert(format!("{id}:comment"), y - top);

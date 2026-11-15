@@ -448,16 +448,17 @@ fn process(
         }
         State::Open(mut open) => {
             if let Frame::Text(text) = &frame
-                && text.trim_start().starts_with('{') {
-                    let outbound = handle_plaintext(&mut open, text)?;
-                    return Ok((
-                        State::Open(open),
-                        ChannelUpdate {
-                            outbound,
-                            ..Default::default()
-                        },
-                    ));
-                }
+                && text.trim_start().starts_with('{')
+            {
+                let outbound = handle_plaintext(&mut open, text)?;
+                return Ok((
+                    State::Open(open),
+                    ChannelUpdate {
+                        outbound,
+                        ..Default::default()
+                    },
+                ));
+            }
             let received_kind = frame.kind();
             let wire = match frame {
                 Frame::Text(text) => decode_base64(&text, MAX_WIRE_BYTES)?,

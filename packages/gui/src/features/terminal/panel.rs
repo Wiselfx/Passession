@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use makepad_widgets::*;
 use paseo_gui_platform::{PlatformAction, PlatformValue};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::drop::{self, FILE_TOO_LARGE};
 use super::find::{FindCard, FindCommand};
@@ -22,8 +22,8 @@ use crate::common::{PanelTarget, UiContext, UiEffect};
 use crate::features::composer::ops;
 use crate::features::workspace::host;
 use crate::features::workspace::i18n::{t, ta};
-use crate::features::workspace::kit::{ellipsize, WaButtonWidgetExt};
-use crate::features::workspace::rpc::{object_of, str_of, str_or, Pending};
+use crate::features::workspace::kit::{WaButtonWidgetExt, ellipsize};
+use crate::features::workspace::rpc::{Pending, object_of, str_of, str_or};
 
 live_design! {
     use link::theme::*;
@@ -181,9 +181,13 @@ impl TerminalPanel {
     fn open_session(&mut self, cx: &mut Cx, ctx: &UiContext) {
         self.session_opened = true;
         self.init_error = None;
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let output = self.output();
-        let Some(mut view) = output.borrow_mut() else { return };
+        let Some(mut view) = output.borrow_mut() else {
+            return;
+        };
         view.clear_selection(cx);
         view.session = None;
         view.find.clear();
@@ -211,7 +215,9 @@ impl TerminalPanel {
 
     fn handle_core(&mut self, cx: &mut Cx, ctx: &mut UiContext) {
         host::learn(&ctx.events);
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         if !self.session_opened {
             self.open_session(cx, ctx);
         }
@@ -283,12 +289,20 @@ impl TerminalPanel {
 
     /// "New terminal" on the exit row: a fresh shell in the workspace replaces this tab.
     fn create_terminal(&mut self, cx: &mut Cx, ctx: &UiContext) {
-        let (Some(target), Some(cwd)) = (self.target.clone(), self.new_terminal_cwd.clone()) else { return };
+        let (Some(target), Some(cwd)) = (self.target.clone(), self.new_terminal_cwd.clone()) else {
+            return;
+        };
         if !self.create_pending.is_empty() {
             return;
         }
         let fields = json!({ "cwd": cwd, "workspaceId": target.workspace_id });
-        self.create_pending.send(&ctx.core, &target.host_id, "create_terminal_request", fields, cwd);
+        self.create_pending.send(
+            &ctx.core,
+            &target.host_id,
+            "create_terminal_request",
+            fields,
+            cwd,
+        );
         self.view.redraw(cx);
     }
 
@@ -298,20 +312,40 @@ impl TerminalPanel {
             let terminal = match result {
                 Ok(body) => object_of(&body, "terminal").clone(),
                 Err(error) => {
-                    let message = ta("workspace.terminal.createFailed", &[("reason", &error.to_string())]);
-                    ctx.effects.push(UiEffect::Toast { message, is_error: true });
+                    let message = ta(
+                        "workspace.terminal.createFailed",
+                        &[("reason", &error.to_string())],
+                    );
+                    ctx.effects.push(UiEffect::Toast {
+                        message,
+                        is_error: true,
+                    });
                     continue;
                 }
             };
             let terminal_id = str_of(&terminal, "id");
             if terminal_id.is_empty() {
-                let message = ta("workspace.terminal.createFailed", &[("reason", &t("workspace.terminal.unableToSubscribe"))]);
-                ctx.effects.push(UiEffect::Toast { message, is_error: true });
+                let message = ta(
+                    "workspace.terminal.createFailed",
+                    &[("reason", &t("workspace.terminal.unableToSubscribe"))],
+                );
+                ctx.effects.push(UiEffect::Toast {
+                    message,
+                    is_error: true,
+                });
                 continue;
             }
-            let next = PanelTarget::new("terminal", &target.host_id, str_or(&terminal, "workspaceId", &target.workspace_id), str_or(&terminal, "cwd", &cwd))
-                .with_id(terminal_id);
-            ctx.effects.push(UiEffect::ReplaceTab { tab_key: target.tab_key.clone(), target: next });
+            let next = PanelTarget::new(
+                "terminal",
+                &target.host_id,
+                str_or(&terminal, "workspaceId", &target.workspace_id),
+                str_or(&terminal, "cwd", &cwd),
+            )
+            .with_id(terminal_id);
+            ctx.effects.push(UiEffect::ReplaceTab {
+                tab_key: target.tab_key.clone(),
+                target: next,
+            });
         }
     }
 
@@ -319,7 +353,9 @@ impl TerminalPanel {
     /// machine the files' paths are pasted as one input; any other host is sent the bytes
     /// and each host path is pasted as its upload finishes.
     fn drop_files(&mut self, cx: &mut Cx, ctx: &mut UiContext, paths: Vec<PathBuf>) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let output = self.output();
         if host::host(&ctx.state, &target.host_id).is_some_and(|h| h.is_local()) {
             if let Some(mut view) = output.borrow_mut() {
@@ -346,14 +382,25 @@ impl TerminalPanel {
             self.upload_queue.clear();
             return;
         }
-        let (Some(path), Some(target)) = (self.upload_queue.pop_front(), self.target.as_ref()) else { return };
-        self.upload_request = Some(ctx.core.operation(&target.host_id, move |client| drop::upload_dropped_file(client, path)));
+        let (Some(path), Some(target)) = (self.upload_queue.pop_front(), self.target.as_ref())
+        else {
+            return;
+        };
+        self.upload_request = Some(ctx.core.operation(&target.host_id, move |client| {
+            drop::upload_dropped_file(client, path)
+        }));
     }
 
     /// The upload in flight finished: its host path is pasted (`prepareTerminalPath`), a
     /// failure is reported (`reportFilePasteFailure`), and the next file starts.
     fn handle_upload(&mut self, cx: &mut Cx, ctx: &mut UiContext) {
-        let Some(result) = self.upload_request.as_deref().and_then(|id| ctx.response(id)) else { return };
+        let Some(result) = self
+            .upload_request
+            .as_deref()
+            .and_then(|id| ctx.response(id))
+        else {
+            return;
+        };
         let outcome: Result<String, String> = match result.as_ref().map(ops::open_envelope) {
             Ok(Ok(body)) => body
                 .pointer("/files/0/path")
@@ -362,12 +409,20 @@ impl TerminalPanel {
                 .map(str::to_owned)
                 .ok_or_else(|| t("composer.errors.uploadFailed")),
             Ok(Err(error)) => {
-                let message = error.get("message").and_then(Value::as_str).unwrap_or_default();
-                Err(if error.get("code").and_then(Value::as_str) == Some(FILE_TOO_LARGE) {
-                    ta("composer.errors.fileTooLarge", &[("size", "50MB"), ("fileName", message)])
-                } else {
-                    message.to_owned()
-                })
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Err(
+                    if error.get("code").and_then(Value::as_str) == Some(FILE_TOO_LARGE) {
+                        ta(
+                            "composer.errors.fileTooLarge",
+                            &[("size", "50MB"), ("fileName", message)],
+                        )
+                    } else {
+                        message.to_owned()
+                    },
+                )
             }
             Err(error) => Err(error.to_string()),
         };
@@ -377,11 +432,17 @@ impl TerminalPanel {
                 if let Some(mut view) = self.output().borrow_mut() {
                     view.paste(cx, &ctx.core, &drop::prepare_terminal_path(&path));
                 }
-                ctx.effects.push(UiEffect::Toast { message: t("workspace.terminal.fileUploaded"), is_error: false });
+                ctx.effects.push(UiEffect::Toast {
+                    message: t("workspace.terminal.fileUploaded"),
+                    is_error: false,
+                });
             }
             Err(reason) => {
                 let message = ta("workspace.terminal.pasteFileFailed", &[("reason", &reason)]);
-                ctx.effects.push(UiEffect::Toast { message, is_error: true });
+                ctx.effects.push(UiEffect::Toast {
+                    message,
+                    is_error: true,
+                });
             }
         }
         self.upload_next(ctx);
@@ -426,7 +487,11 @@ impl TerminalPanel {
             self.view.redraw(cx);
         }
         for action in actions.iter() {
-            let Some(PlatformAction::Completed { request, result }) = action.downcast_ref::<PlatformAction>() else { continue };
+            let Some(PlatformAction::Completed { request, result }) =
+                action.downcast_ref::<PlatformAction>()
+            else {
+                continue;
+            };
             if self.paste_request != Some(*request) {
                 continue;
             }
@@ -442,7 +507,10 @@ impl TerminalPanel {
             && let Some(text) = output.borrow_mut().map(|mut view| view.copy_text())
             && !text.is_empty()
         {
-            ctx.effects.push(UiEffect::CopyText { text, toast: Some(t("common.states.copied")) });
+            ctx.effects.push(UiEffect::CopyText {
+                text,
+                toast: Some(t("common.states.copied")),
+            });
         }
         if self.view.wa_button(id!(retry)).clicked(actions) {
             if let Some(mut view) = output.borrow_mut() {
@@ -454,11 +522,14 @@ impl TerminalPanel {
             }
             self.view.redraw(cx);
         }
-        if (self.view.wa_button(id!(close_tab)).clicked(actions) || self.view.wa_button(id!(exit_close)).clicked(actions))
+        if (self.view.wa_button(id!(close_tab)).clicked(actions)
+            || self.view.wa_button(id!(exit_close)).clicked(actions))
             && let Some(target) = &self.target
             && !target.tab_key.is_empty()
         {
-            ctx.effects.push(UiEffect::CloseTab { tab_key: target.tab_key.clone() });
+            ctx.effects.push(UiEffect::CloseTab {
+                tab_key: target.tab_key.clone(),
+            });
         }
         if self.view.wa_button(id!(new_terminal)).clicked(actions) {
             self.create_terminal(cx, ctx);
@@ -471,7 +542,9 @@ impl TerminalPanel {
         } else if toggled || output.find_requested(actions) {
             self.open_find(cx);
         }
-        let commands = self.find.handle_actions(cx, &self.view.widget(id!(find_wrap)), actions);
+        let commands = self
+            .find
+            .handle_actions(cx, &self.view.widget(id!(find_wrap)), actions);
         if !commands.is_empty() {
             self.apply_find(cx, commands);
         }
@@ -482,7 +555,12 @@ impl TerminalPanel {
         self.find.open();
         if reopened {
             // Closing cleared the highlights: the kept query searches again.
-            self.apply_find(cx, vec![FindCommand::Search(super::find::SearchMode::Reset { previous: false })]);
+            self.apply_find(
+                cx,
+                vec![FindCommand::Search(super::find::SearchMode::Reset {
+                    previous: false,
+                })],
+            );
         }
         self.view.redraw(cx);
     }
@@ -490,7 +568,9 @@ impl TerminalPanel {
     fn apply_find(&mut self, cx: &mut Cx, commands: Vec<FindCommand>) {
         let output = self.output();
         for command in commands {
-            let Some(mut view) = output.borrow_mut() else { return };
+            let Some(mut view) = output.borrow_mut() else {
+                return;
+            };
             match command {
                 FindCommand::Search(mode) => {
                     view.run_find(cx, &self.find.query, mode);
@@ -516,7 +596,12 @@ impl Widget for TerminalPanel {
             self.handle_core(cx, ctx);
             self.handle_upload(cx, ctx);
             // terminal-pane.tsx: the output of a connected terminal takes dropped files.
-            let drop_ready = !self.hidden && self.connected && self.output().borrow().is_some_and(|view| view.session.is_some());
+            let drop_ready = !self.hidden
+                && self.connected
+                && self
+                    .output()
+                    .borrow()
+                    .is_some_and(|view| view.session.is_some());
             if let Some(paths) = self.file_drop.handle_event(cx, event, drop_ready) {
                 self.drop_files(cx, ctx, paths);
             }
@@ -530,11 +615,20 @@ impl Widget for TerminalPanel {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.compact = scope.data.get_mut::<UiContext>().is_some_and(|ctx| ctx.compact);
+        self.compact = scope
+            .data
+            .get_mut::<UiContext>()
+            .is_some_and(|ctx| ctx.compact);
         let ty = crate::theme::current_typography();
         let toolbar_h = 36.0_f64.max(ty.ui_size(12.0) * 1.4 + 12.0);
-        self.view.view(id!(toolbar)).apply_over(cx, live! { height: (toolbar_h) });
-        let target_title = self.target.as_ref().map(|t| t.title.clone()).unwrap_or_default();
+        self.view
+            .view(id!(toolbar))
+            .apply_over(cx, live! { height: (toolbar_h) });
+        let target_title = self
+            .target
+            .as_ref()
+            .map(|t| t.title.clone())
+            .unwrap_or_default();
         let connected = self.connected;
         struct Facts {
             title: String,
@@ -574,17 +668,28 @@ impl Widget for TerminalPanel {
                 attaching: session.is_some_and(|s| s.attaching && connected),
                 exited: session.is_some_and(|s| s.exited),
                 exit_code: session.and_then(|s| s.exit_code),
-                error: self.init_error.clone().or_else(|| session.and_then(|s| s.error.clone())),
+                error: self
+                    .init_error
+                    .clone()
+                    .or_else(|| session.and_then(|s| s.error.clone())),
                 sticky: view.as_ref().map(|v| v.sticky()).unwrap_or_default(),
                 keyboard: view.as_ref().is_some_and(|v| v.keyboard_requested()),
                 matches: view.as_ref().map(|v| v.find.matches.len()).unwrap_or(0),
                 active: view.as_ref().and_then(|v| v.find.active),
             }
         };
-        self.view.widget(id!(toolbar.info.title)).set_text(cx, &facts.title);
+        self.view
+            .widget(id!(toolbar.info.title))
+            .set_text(cx, &facts.title);
         // `showFileUploading`: a dropped file is on its way to the host.
-        let status = if facts.status.is_empty() && self.upload_request.is_some() { t("workspace.terminal.uploadingFile") } else { facts.status.clone() };
-        self.view.widget(id!(toolbar.info.status)).set_text(cx, &status);
+        let status = if facts.status.is_empty() && self.upload_request.is_some() {
+            t("workspace.terminal.uploadingFile")
+        } else {
+            facts.status.clone()
+        };
+        self.view
+            .widget(id!(toolbar.info.status))
+            .set_text(cx, &status);
         let copy = self.view.wa_button(id!(copy));
         copy.set_enabled(cx, facts.has_session);
         copy.set_tooltip(cx, &t("workspace.terminal.copy"));
@@ -593,24 +698,40 @@ impl Widget for TerminalPanel {
         find.set_selected(cx, self.find.open);
         find.set_tooltip(cx, &t("paneFind.title"));
         let body_width = self.view.widget(id!(body)).area().rect(cx).size.x;
-        self.find.present(cx, &self.view.widget(id!(find_wrap)), body_width, self.compact, facts.matches, facts.active);
+        self.find.present(
+            cx,
+            &self.view.widget(id!(find_wrap)),
+            body_width,
+            self.compact,
+            facts.matches,
+            facts.active,
+        );
         let disconnected = self.view.widget(id!(body.disconnected));
         let show_disconnected = facts.has_session && !connected;
         disconnected.set_visible(cx, show_disconnected);
         if show_disconnected {
-            disconnected.widget(id!(text)).set_text(cx, &t("workspace.terminal.hostDisconnected"));
+            disconnected
+                .widget(id!(text))
+                .set_text(cx, &t("workspace.terminal.hostDisconnected"));
         }
-        self.view.widget(id!(attach)).set_visible(cx, facts.attaching && !show_disconnected);
+        self.view
+            .widget(id!(attach))
+            .set_visible(cx, facts.attaching && !show_disconnected);
         let error_row = self.view.widget(id!(error_row));
         error_row.set_visible(cx, facts.error.is_some());
         if let Some(message) = &facts.error {
-            error_row.widget(id!(text)).set_text(cx, &ellipsize(message, 240));
+            error_row
+                .widget(id!(text))
+                .set_text(cx, &ellipsize(message, 240));
             let retry = self.view.wa_button(id!(retry));
             retry.set_visible(cx, facts.has_session);
             retry.set_text(cx, &t("common.actions.retry"));
             // A failed terminal can always leave its tab.
             let close = self.view.wa_button(id!(close_tab));
-            close.set_visible(cx, self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()));
+            close.set_visible(
+                cx,
+                self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()),
+            );
             close.set_text(cx, &t("common.actions.close"));
         }
         // A normal exit is not a failure: a neutral row offers a new shell or closing the tab.
@@ -619,23 +740,40 @@ impl Widget for TerminalPanel {
         exit_row.set_visible(cx, show_exit);
         if show_exit {
             let message = match facts.exit_code {
-                Some(code) if code != 0 => ta("workspace.terminal.exitedWithCode", &[("code", &code.to_string())]),
+                Some(code) if code != 0 => ta(
+                    "workspace.terminal.exitedWithCode",
+                    &[("code", &code.to_string())],
+                ),
                 _ => t("workspace.terminal.exited"),
             };
             exit_row.widget(id!(text)).set_text(cx, &message);
             let new_terminal = self.view.wa_button(id!(new_terminal));
-            new_terminal.set_visible(cx, self.new_terminal_cwd.is_some() && self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()));
+            new_terminal.set_visible(
+                cx,
+                self.new_terminal_cwd.is_some()
+                    && self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()),
+            );
             new_terminal.set_text(cx, &t("workspace.terminal.newTerminal"));
             new_terminal.set_busy(cx, !self.create_pending.is_empty());
             let close = self.view.wa_button(id!(exit_close));
-            close.set_visible(cx, self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()));
+            close.set_visible(
+                cx,
+                self.target.as_ref().is_some_and(|t| !t.tab_key.is_empty()),
+            );
             close.set_text(cx, &t("common.actions.close"));
         }
         // `shouldShowTerminalVirtualKeyBar`: native (mobile) or compact layouts.
-        let show_keys = facts.has_session && !facts.exited && (cfg!(any(target_os = "android", target_os = "ios")) || self.compact);
+        let show_keys = facts.has_session
+            && !facts.exited
+            && (cfg!(any(target_os = "android", target_os = "ios")) || self.compact);
         self.view.widget(id!(keys)).set_visible(cx, show_keys);
         if show_keys {
-            self.view.wa_terminal_key_bar(id!(keybar)).set_state(cx, facts.sticky, facts.keyboard, self.compact);
+            self.view.wa_terminal_key_bar(id!(keybar)).set_state(
+                cx,
+                facts.sticky,
+                facts.keyboard,
+                self.compact,
+            );
         }
         let step = self.view.draw_walk(cx, scope, walk);
         self.find.take_focus(cx, &self.view.widget(id!(find_wrap)));
@@ -649,12 +787,17 @@ impl Widget for TerminalPanel {
 impl TerminalPanelRef {
     /// Mounts the panel on a daemon terminal (shell tab kind `terminal`).
     pub fn set_target(&self, cx: &mut Cx, target: TerminalTarget) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.target.as_ref() == Some(&target) {
             return;
         }
         // A rename keeps the stream; another terminal starts a new one.
-        let same_terminal = inner.target.as_ref().is_some_and(|t| t.host_id == target.host_id && t.terminal_id == target.terminal_id);
+        let same_terminal = inner
+            .target
+            .as_ref()
+            .is_some_and(|t| t.host_id == target.host_id && t.terminal_id == target.terminal_id);
         inner.target = Some(target);
         if !same_terminal {
             inner.session_opened = false;
@@ -675,7 +818,9 @@ impl TerminalPanelRef {
     /// Hidden tabs release their stream; visible ones attach. Applied on the next dispatch,
     /// which carries the core handle.
     pub fn set_visible_terminal(&self, cx: &mut Cx, visible: bool) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.hidden != visible && inner.session_opened {
             return;
         }
@@ -686,7 +831,9 @@ impl TerminalPanelRef {
 
     /// The focused pane takes keyboard focus and claims the PTY size; others only update it.
     pub fn set_focused_terminal(&self, cx: &mut Cx, focused: bool) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.focused == focused {
             return;
         }

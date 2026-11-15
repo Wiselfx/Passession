@@ -275,17 +275,19 @@ pub fn present(mut response: Value) -> Result<Value> {
             return Err(invalid("model/list.models[].isDefault must be a boolean").into());
         }
         if let Some(effort) = model.get("defaultReasoningEffort")
-            && !effort.is_null() && !is_effort(effort) {
-                return Err(invalid("model/list.models[].defaultReasoningEffort must be a Muse reasoning effort or null").into());
-            }
+            && !effort.is_null()
+            && !is_effort(effort)
+        {
+            return Err(invalid("model/list.models[].defaultReasoningEffort must be a Muse reasoning effort or null").into());
+        }
         if let Some(variants) = model.get("variants")
             && variants != "unknown"
-                && !variants
-                    .as_array()
-                    .is_some_and(|variants| variants.iter().all(is_effort))
-            {
-                return Err(invalid("model/list.models[].variants must be an array of Muse reasoning efforts or unknown").into());
-            }
+            && !variants
+                .as_array()
+                .is_some_and(|variants| variants.iter().all(is_effort))
+        {
+            return Err(invalid("model/list.models[].variants must be an array of Muse reasoning efforts or unknown").into());
+        }
     }
     let mut presented = Vec::with_capacity(models.len());
     let mut default_model = None;
@@ -393,9 +395,9 @@ pub async fn list(connection: &Connection, options: &Value) -> Result<Vec<Value>
                     .unwrap_or_default()
                     .to_lowercase()
                     .contains(query)
-                {
-                    continue;
-                }
+            {
+                continue;
+            }
             let mut session = match session {
                 Value::Object(session) => session,
                 _ => unreachable!("validated session"),

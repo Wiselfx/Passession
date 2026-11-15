@@ -25,14 +25,18 @@ impl Timeline {
     }
 
     fn message_replacement(&self, event: &Value) -> Result<Option<Self>> {
-        let message = event["messageId"].as_str().filter(|id| !id.is_empty())
+        let message = event["messageId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
             .context("Missing OMP stream message identity")?;
         let turn = match event.get("turnId") {
             None | Some(Value::Null) => None,
             Some(Value::String(turn)) if !turn.is_empty() => Some(turn.as_str()),
             _ => bail!("Invalid reconciliation turn identity"),
         };
-        let items = event["items"].as_array().context("Missing authoritative message items")?;
+        let items = event["items"]
+            .as_array()
+            .context("Missing authoritative message items")?;
         for item in items {
             if !matches!(kind(item), "reasoning" | "assistant_message")
                 || !item["text"].is_string()
@@ -46,18 +50,24 @@ impl Timeline {
                 }
             }
         }
-        let mut matches = self.rows.iter().enumerate().filter(|(_, row)| {
-            row["item"]["metadata"][MARKER].as_str() == Some(message)
-        });
+        let mut matches = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row["item"]["metadata"][MARKER].as_str() == Some(message));
         let Some((start, first)) = matches.next() else {
             // Re-delivery of an already removed, empty message is harmless. Never
             // create a new row from a correction that has no existing anchor.
-            if items.is_empty() { return Ok(None); }
+            if items.is_empty() {
+                return Ok(None);
+            }
             bail!("No canonical rows match the OMP stream message");
         };
         let mut end = start + 1;
         for (index, _) in matches {
-            if index != end { bail!("Message rows are interleaved with unrelated history"); }
+            if index != end {
+                bail!("Message rows are interleaved with unrelated history");
+            }
             end += 1;
         }
         let old = &self.rows[start..end];
@@ -69,14 +79,28 @@ impl Timeline {
                 bail!("Message marker does not identify one text run in the requested turn");
             }
         }
-        let first_seq = old.iter().map(|row| super::num(row, "seqStart")).min().unwrap();
-        let last_seq = old.iter().map(|row| super::num(row, "seqEnd")).max().unwrap();
-        if self.rows[..start].iter().chain(&self.rows[end..]).any(|row| {
-            row["sourceSeqRanges"].as_array().is_some_and(|ranges| ranges.iter().any(|range| {
-                super::num(range, "startSeq") <= last_seq
-                    && super::num(range, "endSeq") >= first_seq
-            }))
-        }) {
+        let first_seq = old
+            .iter()
+            .map(|row| super::num(row, "seqStart"))
+            .min()
+            .unwrap();
+        let last_seq = old
+            .iter()
+            .map(|row| super::num(row, "seqEnd"))
+            .max()
+            .unwrap();
+        if self.rows[..start]
+            .iter()
+            .chain(&self.rows[end..])
+            .any(|row| {
+                row["sourceSeqRanges"].as_array().is_some_and(|ranges| {
+                    ranges.iter().any(|range| {
+                        super::num(range, "startSeq") <= last_seq
+                            && super::num(range, "endSeq") >= first_seq
+                    })
+                })
+            })
+        {
             bail!("Message source events are interleaved with unrelated history");
         }
 
@@ -107,7 +131,9 @@ impl Timeline {
         for (row, source) in authoritative.rows.iter_mut().zip(sources) {
             let source = source.map(|index| &old[index]);
             row["timestamp"] = source.unwrap_or(first)["timestamp"].clone();
-            if let Some(turn) = first.get("turnId") { row["turnId"] = turn.clone(); }
+            if let Some(turn) = first.get("turnId") {
+                row["turnId"] = turn.clone();
+            }
             if let Some(source) = source {
                 for field in ["messageId", "clientMessageId"] {
                     if let Some(id) = source["item"].get(field) {
@@ -123,14 +149,21 @@ impl Timeline {
             }
         }
         if old.len() == authoritative.rows.len()
-            && old.iter().zip(&authoritative.rows).all(|(old, new)| old["item"] == new["item"])
+            && old
+                .iter()
+                .zip(&authoritative.rows)
+                .all(|(old, new)| old["item"] == new["item"])
         {
             return Ok(None);
         }
 
         let mut replacement = Self::new();
-        replacement.rows.reserve(self.rows.len() - old.len() + authoritative.rows.len());
-        for row in self.rows[..start].iter().cloned()
+        replacement
+            .rows
+            .reserve(self.rows.len() - old.len() + authoritative.rows.len());
+        for row in self.rows[..start]
+            .iter()
+            .cloned()
             .chain(authoritative.rows)
             .chain(self.rows[end..].iter().cloned())
         {
@@ -149,11 +182,17 @@ impl Timeline {
         row["seqEnd"] = json!(seq);
         row["sourceSeqRanges"] = json!([{"startSeq":seq,"endSeq":seq}]);
         row["collapsed"] = json!([]);
-        if let Some(id) = identity(&row["item"]) { self.identities.insert(id, self.rows.len()); }
+        if let Some(id) = identity(&row["item"]) {
+            self.identities.insert(id, self.rows.len());
+        }
         if kind(&row["item"]) == "user_message"
-            && let Some(id) = row["item"]["clientMessageId"].as_str().filter(|id| !id.is_empty())
+            && let Some(id) = row["item"]["clientMessageId"]
+                .as_str()
+                .filter(|id| !id.is_empty())
         {
-            self.submitted.entry(id.to_owned()).or_insert(self.rows.len());
+            self.submitted
+                .entry(id.to_owned())
+                .or_insert(self.rows.len());
         }
         self.rows.push(row);
         self.min_seq = 1;

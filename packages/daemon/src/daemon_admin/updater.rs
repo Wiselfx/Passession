@@ -4,8 +4,9 @@
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
+use paseo_protocol::components::{ComponentId, ComponentRef, ReleaseInventory, parse_inventory};
 use serde_json::Value;
-use sha2::{Digest, Sha512};
+use sha2::{Digest, Sha256, Sha512};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -26,6 +27,8 @@ const MARKER: &str = "paseo-runtime.json";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
     pub version: String,
+    collection_version: String,
+    component: ComponentRef,
     tag: String,
     source_sha: String,
     platform: String,
@@ -36,6 +39,50 @@ pub struct Release {
     digest: String,
     url: Url,
     manifest_digest: String,
+}
+
+/// The checked manifest binds the entire artifact and its source provenance.
+/// Remote callers supply an identity, never a URL or local path.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseIdentity {
+    pub version: String,
+    pub manifest_sha512: String,
+}
+
+impl ReleaseIdentity {
+    pub fn validate(&self) -> Result<()> {
+        semver::Version::parse(&self.version)?;
+        anyhow::ensure!(
+            self.manifest_sha512.len() == 88 && STANDARD.decode(&self.manifest_sha512)?.len() == 64,
+            "Invalid release manifest SHA512"
+        );
+        Ok(())
+    }
+}
+
+impl Release {
+    pub fn identity(&self) -> ReleaseIdentity {
+        ReleaseIdentity {
+            version: self.collection_version.clone(),
+            manifest_sha512: self.manifest_digest.clone(),
+        }
+    }
+
+    pub fn require_identity(&self, expected: &ReleaseIdentity) -> Result<()> {
+        anyhow::ensure!(
+            self.identity() == *expected,
+            "The official release changed since approval. Check for updates and approve the new release."
+        );
+        Ok(())
+    }
+}
+
+/// Metadata/provenance only: no archive download, staging, or installation.
+pub async fn check_release() -> Result<Release> {
+    tokio::time::timeout(Duration::from_secs(20), async { discover(&http()?).await })
+        .await
+        .context("Official release check timed out")?
 }
 
 pub(crate) fn platform() -> Result<(&'static str, &'static str)> {
@@ -73,7 +120,7 @@ fn repository() -> Result<&'static str> {
 }
 fn channel() -> Result<&'static str> {
     let channel = option_env!("PASEO_RELEASE_CHANNEL").unwrap_or(
-        if env!("CARGO_PKG_VERSION").contains('-') {
+        if crate::VERSION.contains('-') {
             "beta"
         } else {
             "stable"
@@ -86,7 +133,7 @@ fn channel() -> Result<&'static str> {
 }
 fn http() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
-        .user_agent(concat!("paseo-native/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("paseo-native/{}", crate::VERSION))
         .timeout(Duration::from_secs(180))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             let url = attempt.url();
@@ -171,90 +218,234 @@ fn unique_asset<'a>(release: &'a Value, name: &str) -> Result<&'a Value> {
     };
     Ok(asset)
 }
-pub(super) fn validate_manifest(
-    manifest: &Value,
-    release: &Value,
+pub(super) fn validate_component_release(
+    inventory: &ReleaseInventory,
+    published: &Value,
     repository: &str,
     channel: &str,
     platform: &str,
     arch: &str,
     manifest_digest: String,
 ) -> Result<Release> {
-    if manifest["schemaVersion"] != 1
-        || manifest["runtime"] != "rust"
-        || manifest["appId"] != "sh.paseo.daemon"
-        || manifest["channel"] != channel
-        || manifest["platform"] != platform
-        || manifest["arch"] != arch
-    {
-        bail!("Native release identity mismatch")
-    }
-    let version = manifest["version"]
-        .as_str()
-        .context("Missing release version")?;
-    let parsed = semver::Version::parse(version)?;
-    if channel == "stable" && !parsed.pre.is_empty() {
-        bail!("Stable release contains a prerelease version")
-    }
-    let tag = release["tag_name"]
-        .as_str()
-        .context("Missing release tag")?;
-    if tag != format!("v{version}") && tag != version {
-        bail!("Manifest version does not match the published release tag")
-    }
-    let source = manifest["sourceSha"]
-        .as_str()
-        .context("Missing native source provenance")?;
-    if !matches!(source.len(), 40 | 64) || !source.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("Invalid native source provenance")
-    }
-    let artifact = &manifest["artifact"];
-    let format = if platform == "windows" {
-        "zip"
-    } else {
-        "tar.gz"
-    };
-    let name = artifact["name"]
-        .as_str()
-        .context("Missing native artifact name")?;
-    if name != format!("Paseo-Daemon-{version}-{platform}-{arch}.{format}")
-        || artifact["format"] != format
-    {
-        bail!("Wrong native runtime archive name or format")
-    }
-    let size = artifact["size"]
-        .as_u64()
-        .filter(|n| *n > 0 && *n <= MAX_ARCHIVE)
-        .context("Invalid artifact size")?;
-    let digest = artifact["sha512"]
-        .as_str()
-        .context("Missing artifact SHA512")?;
-    if STANDARD.decode(digest)?.len() != 64 {
-        bail!("Invalid artifact SHA512")
-    }
-    let asset = unique_asset(release, name)?;
-    if asset["size"].as_u64() != Some(size) {
-        bail!("Published artifact size mismatch")
-    }
+    paseo_protocol::components::validate_inventory(inventory, repository)?;
+    let tag = published["tag_name"].as_str().context("Missing release tag")?;
+    anyhow::ensure!(
+        inventory.channel == channel
+            && (tag == format!("v{}", inventory.version) || tag == inventory.version)
+            && published["draft"] != true
+            && (channel != "stable" || published["prerelease"] != true),
+        "Component inventory collection identity mismatch"
+    );
+    let target = format!("{platform}-{arch}");
+    let component = inventory.targets.get(&target)
+        .and_then(|target| target.components.get(&ComponentId::Daemon))
+        .context("Collection has no daemon component for this target")?.clone();
+    let format = if platform == "windows" { "zip" } else { "tar.gz" };
+    let origin = paseo_protocol::components::component_artifact_origin(
+        inventory.targets.get(&target).context("Missing daemon target")?, ComponentId::Daemon)?;
+    anyhow::ensure!(origin.package.is_none(), "Standalone daemon cannot activate a signed app container");
+    anyhow::ensure!(
+        component.identity.abi_version == ComponentId::Daemon.initial_abi_version()
+            && component.artifact.format == format
+            && component.executable == executable_name(platform)
+            && component.requires.is_empty()
+            && component.artifact.size <= MAX_ARCHIVE,
+        "Daemon component ABI or runtime layout is unsupported"
+    );
+    let url = Url::parse(&component.artifact.url)?;
+    let name = url.path_segments().and_then(|mut segments| segments.next_back())
+        .context("Component artifact has no name")?;
+    let name = percent_encoding::percent_decode_str(name).decode_utf8()?.into_owned();
+    // Bind origin separately below: a collection may reuse this exact older component.
     Ok(Release {
-        version: version.into(),
-        tag: tag.into(),
-        source_sha: source.to_ascii_lowercase(),
+        version: component.identity.version.clone(),
+        collection_version: inventory.version.clone(),
+        tag: component.artifact.origin_tag.clone(),
+        source_sha: component.identity.source_sha.clone(),
         platform: platform.into(),
         arch: arch.into(),
         format: format.into(),
-        name: name.into(),
-        size,
-        digest: digest.into(),
-        url: asset_url(asset, repository, tag, name)?,
+        name,
+        size: component.artifact.size,
+        digest: component.artifact.sha256.clone(),
+        url,
         manifest_digest,
+        component,
     })
+}
+
+pub(super) fn require_origin_component(
+    release: &Release,
+    origin: &ReleaseInventory,
+    published: &Value,
+    repository: &str,
+) -> Result<()> {
+    paseo_protocol::components::validate_inventory(origin, repository)?;
+    anyhow::ensure!(
+        published["tag_name"] == release.tag
+            && published["draft"] != true
+            && (release.tag == format!("v{}", origin.version) || release.tag == origin.version)
+            && origin.version == release.version
+            && origin.source_sha == release.source_sha
+            && origin.targets.get(&release.component.target)
+                .and_then(|target| target.components.get(&ComponentId::Daemon))
+                == Some(&release.component),
+        "Reused daemon component does not match its original release inventory"
+    );
+    let asset = unique_asset(published, &release.name)?;
+    anyhow::ensure!(trusted_publisher(&asset["uploader"]["login"], repository),
+        "Original daemon artifact publisher is not trusted");
+    anyhow::ensure!(
+        asset["size"].as_u64() == Some(release.size)
+            && asset_url(asset, repository, &release.tag, &release.name)? == release.url,
+        "Original component artifact identity mismatch"
+    );
+    Ok(())
+}
+
+fn trusted_publisher(value: &Value, repository: &str) -> bool {
+    value.as_str().is_some_and(|login| login == "github-actions[bot]"
+        || Some(login) == repository.split('/').next())
+}
+
+pub(super) fn validate_publication(
+    inventory: &ReleaseInventory,
+    published: &Value,
+    asset: &Value,
+    provenance_asset: &Value,
+    provenance: &Value,
+    bytes: &[u8],
+    repository: &str,
+) -> Result<u64> {
+    anyhow::ensure!(
+        trusted_publisher(&published["author"]["login"], repository)
+            && trusted_publisher(&asset["uploader"]["login"], repository)
+            && trusted_publisher(&provenance_asset["uploader"]["login"], repository)
+            && published["target_commitish"] == inventory.source_sha,
+        "Component inventory publisher or release source is not trusted"
+    );
+    anyhow::ensure!(
+        provenance["schemaVersion"] == 2
+            && provenance["workflow"] == ".github/workflows/desktop-release.yml"
+            && provenance["version"] == inventory.version
+            && provenance["sourceSha"] == inventory.source_sha
+            && provenance["channel"] == inventory.channel
+            && provenance["inventory"]["name"] == format!("components-{}.json", inventory.channel)
+            && provenance["inventory"]["size"].as_u64() == Some(bytes.len() as u64)
+            && asset["size"].as_u64() == Some(bytes.len() as u64)
+            && provenance["inventory"]["sha256"] == format!("{:x}", Sha256::digest(bytes)),
+        "Component inventory does not match its release provenance"
+    );
+    provenance["runId"].as_u64()
+        .or_else(|| provenance["runId"].as_str().and_then(|value| value.parse().ok()))
+        .filter(|run| *run > 0).context("Missing component publication run identity")
+}
+
+fn validate_metadata_asset(asset: &Value, bytes: &[u8], repository: &str) -> Result<()> {
+    anyhow::ensure!(trusted_publisher(&asset["uploader"]["login"], repository)
+        && asset["size"].as_u64() == Some(bytes.len() as u64),
+        "Release metadata asset publisher or size changed");
+    if let Some(digest) = asset.get("digest").filter(|digest| !digest.is_null()) {
+        anyhow::ensure!(*digest == format!("sha256:{:x}", Sha256::digest(bytes)),
+            "Release metadata asset digest changed");
+    }
+    Ok(())
+}
+
+pub(super) fn validate_target_proof(
+    inventory: &ReleaseInventory,
+    release: &Release,
+    proof: &Value,
+) -> Result<u64> {
+    let target = inventory.targets.get(&release.component.target).context("Missing component target")?;
+    let source_tag = proof["sourceTag"].as_str().context("Missing target source tag")?;
+    let source_tag = source_tag.strip_prefix("refs/tags/").unwrap_or(source_tag);
+    let source_version = ["desktop-windows-v", "desktop-linux-v", "desktop-macos-v",
+        "desktop-v", "android-v", "app-v", "v"].into_iter()
+        .find_map(|prefix| source_tag.strip_prefix(prefix));
+    anyhow::ensure!(
+        proof["schemaVersion"] == 2
+            && proof["workflow"] == ".github/workflows/desktop-release.yml"
+            && proof["sha"] == inventory.source_sha
+            && source_version == Some(inventory.version.as_str())
+            && proof["version"] == inventory.version
+            && proof["channel"] == inventory.channel
+            && proof["target"] == release.component.target
+            && proof["components"] == serde_json::to_value(&target.components)?
+            && proof["packages"] == serde_json::to_value(&target.packages)?,
+        "Original component target provenance does not match its inventory"
+    );
+    let files = proof["files"].as_array().filter(|files| files.len() <= 256)
+        .context("Invalid target provenance file inventory")?;
+    let mut matching = files.iter().filter(|file| file["name"] == release.name);
+    let file = matching.next().context("Original component archive has no target provenance")?;
+    anyhow::ensure!(matching.next().is_none()
+        && file["size"].as_u64() == Some(release.size)
+        && file["sha256"] == release.digest,
+        "Original component archive provenance changed");
+    proof["runId"].as_u64()
+        .or_else(|| proof["runId"].as_str().and_then(|value| value.parse().ok()))
+        .filter(|run| *run > 0).context("Missing target publication run identity")
+}
+
+async fn verify_publication_run(client: &reqwest::Client, repository: &str, run: u64, require_success: bool) -> Result<()> {
+    let run: Value = serde_json::from_slice(&json_bytes(client,
+        Url::parse(&format!("https://api.github.com/repos/{repository}/actions/runs/{run}"))?).await?)?;
+    anyhow::ensure!(
+        run["path"] == ".github/workflows/desktop-release.yml"
+            && run["event"] == "workflow_dispatch"
+            && run["status"] == "completed"
+            && (!require_success || run["conclusion"] == "success")
+            && run["head_repository"]["full_name"] == repository,
+        "Component publication workflow is not an authenticated release run"
+    );
+    Ok(())
+}
+
+async fn verify_inventory_publication(
+    client: &reqwest::Client,
+    inventory: &ReleaseInventory,
+    published: &Value,
+    bytes: &[u8],
+    repository: &str,
+    original_component: Option<&Release>,
+) -> Result<()> {
+    let tag = published["tag_name"].as_str().context("Missing release tag")?;
+    let name = format!("components-{}.json", inventory.channel);
+    let provenance_name = format!("provenance-components-{}.json", inventory.channel);
+    let asset = unique_asset(published, &name)?;
+    let provenance_asset = unique_asset(published, &provenance_name)?;
+    validate_metadata_asset(asset, bytes, repository)?;
+    let provenance_bytes = json_bytes(client,
+        asset_url(provenance_asset, repository, tag, &provenance_name)?).await?;
+    validate_metadata_asset(provenance_asset, &provenance_bytes, repository)?;
+    let provenance: Value = serde_json::from_slice(&provenance_bytes)?;
+    let run = validate_publication(inventory, published, asset, provenance_asset, &provenance, bytes, repository)?;
+    verify_publication_run(client, repository, run, true).await?;
+    if let Some(component) = original_component {
+        let name = format!("provenance-{}.json", component.component.target);
+        let asset = unique_asset(published, &name)?;
+        let bytes = json_bytes(client, asset_url(asset, repository, tag, &name)?).await?;
+        validate_metadata_asset(asset, &bytes, repository)?;
+        anyhow::ensure!(
+            provenance["targets"][&component.component.target] == format!("{:x}", Sha256::digest(&bytes)),
+            "Original component target provenance digest changed"
+        );
+        let proof: Value = serde_json::from_slice(&bytes)?;
+        let target_run = validate_target_proof(inventory, component, &proof)?;
+        if target_run != run {
+            // Recovery may preserve a successful target from a run whose publish
+            // job failed. The successful publication binds its exact proof digest.
+            verify_publication_run(client, repository, target_run, false).await?;
+        }
+    }
+    verify_source_commit(client, repository, tag, &inventory.source_sha).await
 }
 async fn discover(client: &reqwest::Client) -> Result<Release> {
     let (repository, channel) = (repository()?, channel()?);
     let (platform, arch) = platform()?;
-    let name = format!("daemon-{channel}-{platform}-{arch}.json");
-    let mut newest: Option<Release> = None;
+    let name = format!("components-{channel}.json");
+    let mut newest: Option<(Release, ReleaseInventory, Value, Vec<u8>)> = None;
     for page in 1..=10 {
         let values: Value = serde_json::from_slice(
             &json_bytes(
@@ -285,38 +476,59 @@ async fn discover(client: &reqwest::Client) -> Result<Release> {
             let url = asset_url(asset, repository, tag, &name)?;
             let bytes = json_bytes(client, url).await?;
             let digest = STANDARD.encode(Sha512::digest(&bytes));
-            let manifest: Value = serde_json::from_slice(&bytes)?;
-            let candidate = validate_manifest(
-                &manifest, release, repository, channel, platform, arch, digest,
+            let inventory = parse_inventory(&bytes, repository)?;
+            if !inventory.targets.get(&format!("{platform}-{arch}"))
+                .is_some_and(|target| target.components.contains_key(&ComponentId::Daemon)) {
+                continue;
+            }
+            let candidate = validate_component_release(
+                &inventory, release, repository, channel, platform, arch, digest,
             )?;
-            if newest.as_ref().is_none_or(|old| {
-                semver::Version::parse(&candidate.version).unwrap()
-                    > semver::Version::parse(&old.version).unwrap()
+            if newest.as_ref().is_none_or(|(old, _, _, _)| {
+                semver::Version::parse(&candidate.collection_version).unwrap()
+                    > semver::Version::parse(&old.collection_version).unwrap()
             }) {
-                newest = Some(candidate)
+                newest = Some((candidate, inventory, release.clone(), bytes))
             }
         }
         if values.len() < 100 {
             break;
         }
     }
-    let selected = newest.with_context(|| {
-        format!("No {channel} native release is published for {platform}/{arch} in {repository}")
+    let (selected, inventory, published, bytes) = newest.with_context(|| {
+        format!("No {channel} component inventory is published for {platform}/{arch} in {repository}")
     })?;
-    verify_source_commit(client, repository, &selected).await?;
+    let collection_tag = published["tag_name"].as_str().context("Missing release tag")?;
+    verify_inventory_publication(client, &inventory, &published, &bytes, repository,
+        (selected.tag == collection_tag).then_some(&selected)).await?;
+    if selected.tag == collection_tag {
+        require_origin_component(&selected, &inventory, &published, repository)?;
+    } else {
+        let mut url = Url::parse(&format!("https://api.github.com/repos/{repository}/releases/tags/"))?;
+        url.path_segments_mut().map_err(|_| anyhow::anyhow!("Invalid origin URL"))?
+            .pop_if_empty().push(&selected.tag);
+        let origin_release: Value = serde_json::from_slice(&json_bytes(client, url).await?)?;
+        let asset = unique_asset(&origin_release, &name)?;
+        let bytes = json_bytes(client, asset_url(asset, repository, &selected.tag, &name)?).await?;
+        let origin = parse_inventory(&bytes, repository)?;
+        anyhow::ensure!(origin.channel == channel, "Component origin channel changed");
+        require_origin_component(&selected, &origin, &origin_release, repository)?;
+        verify_inventory_publication(client, &origin, &origin_release, &bytes, repository, Some(&selected)).await?;
+    }
     Ok(selected)
 }
 async fn verify_source_commit(
     client: &reqwest::Client,
     repository: &str,
-    release: &Release,
+    tag: &str,
+    source_sha: &str,
 ) -> Result<()> {
     let mut object: Value = serde_json::from_slice(
         &json_bytes(
             client,
             Url::parse(&format!(
                 "https://api.github.com/repos/{repository}/git/ref/tags/{}",
-                release.tag
+                tag
             ))?,
         )
         .await?,
@@ -330,7 +542,7 @@ async fn verify_source_commit(
         }
         match object["object"]["type"].as_str() {
             Some("commit") => {
-                if !sha.eq_ignore_ascii_case(&release.source_sha) {
+                if !sha.eq_ignore_ascii_case(source_sha) {
                     bail!("Release tag commit does not match native source provenance")
                 }
                 return Ok(());
@@ -414,7 +626,7 @@ pub(crate) fn lease(root: &Path) -> Result<File> {
         .context("Another process is updating this native installation")?;
     Ok(file)
 }
-/// Download one discovered release archive, durably, bound to its manifest size and SHA512.
+/// Download one discovered component archive, bound to its original size and SHA256.
 async fn download(client: &reqwest::Client, release: &Release, archive: &Path) -> Result<()> {
     let mut file = tokio::fs::OpenOptions::new()
         .create_new(true)
@@ -430,7 +642,7 @@ async fn download(client: &reqwest::Client, release: &Release, archive: &Path) -
         bail!("Download content length mismatch")
     }
     let mut stream = response.bytes_stream();
-    let mut hash = Sha512::new();
+    let mut hash = Sha256::new();
     let mut size = 0u64;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
@@ -445,8 +657,8 @@ async fn download(client: &reqwest::Client, release: &Release, archive: &Path) -
     }
     file.sync_all().await?;
     drop(file);
-    if size != release.size || STANDARD.encode(hash.finalize()) != release.digest {
-        bail!("Downloaded update failed SHA512/size verification")
+    if size != release.size || format!("{:x}", hash.finalize()) != release.digest {
+        bail!("Downloaded update failed SHA256/size verification")
     }
     Ok(())
 }
@@ -833,4 +1045,3 @@ async fn validate_local_signature(executable: &Path) -> Result<()> {
     let _ = executable;
     Ok(())
 }
-

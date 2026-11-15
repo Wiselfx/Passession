@@ -143,9 +143,10 @@ impl AutomationService {
                     }
                     Ok(_) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        return Err(
-                            TargetGone(format!("Working directory {cwd} no longer exists")).into(),
-                        );
+                        return Err(TargetGone(format!(
+                            "Working directory {cwd} no longer exists"
+                        ))
+                        .into());
                     }
                     Err(e) => return Err(e.into()),
                 }
@@ -218,7 +219,10 @@ mod tests {
     #[test]
     fn existing_agent_runs_trim_the_reply_without_replaying_old_timeline() {
         let result = json!({"status":"idle","lastMessage":"  done  "});
-        assert_eq!(output(&result, "a", false).unwrap().as_deref(), Some("done"));
+        assert_eq!(
+            output(&result, "a", false).unwrap().as_deref(),
+            Some("done")
+        );
         let blank = json!({"status":"idle","lastMessage":" ","timeline":[{"type":"assistant_message","text":"older"}]});
         assert_eq!(output(&blank, "a", false).unwrap(), None);
     }

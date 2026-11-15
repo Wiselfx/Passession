@@ -111,26 +111,28 @@ impl Permissions {
         let id = string(&event["id"]);
         if family != "omp" {
             if let Some(r) = self.rpiv.as_mut()
-                && matches!(method, "select" | "input") {
-                    if r.answers.is_none() && !r.cancelled {
-                        r.deferred = Some(event.clone());
-                    } else {
-                        self.responses.push(frame(id, rpiv_reply(r, event)));
-                    }
+                && matches!(method, "select" | "input")
+            {
+                if r.answers.is_none() && !r.cancelled {
+                    r.deferred = Some(event.clone());
+                } else {
+                    self.responses.push(frame(id, rpiv_reply(r, event)));
+                }
+                return None;
+            }
+            if method == "input"
+                && let Some((comment, freeform)) = self.pi_pending.as_mut()
+            {
+                if optional(string(&event["placeholder"])) {
+                    self.responses.push(frame(id, json!({"value":comment})));
+                    self.pi_pending = None;
                     return None;
                 }
-            if method == "input"
-                && let Some((comment, freeform)) = self.pi_pending.as_mut() {
-                    if optional(string(&event["placeholder"])) {
-                        self.responses.push(frame(id, json!({"value":comment})));
-                        self.pi_pending = None;
-                        return None;
-                    }
-                    if let Some(value) = freeform.take() {
-                        self.responses.push(frame(id, json!({"value":value})));
-                        return None;
-                    }
+                if let Some(value) = freeform.take() {
+                    self.responses.push(frame(id, json!({"value":value})));
+                    return None;
                 }
+            }
         } else if let Some(p) = self.pending.as_mut() {
             if p.editor && method == "editor" && p.custom.is_some() {
                 let value = p.custom.take().unwrap();
@@ -252,18 +254,19 @@ impl Permissions {
             .as_object()
             .and_then(|m| m.values().find_map(Value::as_str));
         if id.starts_with("rpiv-question:")
-            && let Some(r) = self.rpiv.as_mut() {
-                r.answers = if allow && answers.is_object() {
-                    Some(answers.clone())
-                } else {
-                    None
-                };
-                r.cancelled = !allow || r.answers.is_none();
-                if let Some(dialog) = r.deferred.take() {
-                    return Ok(frame(string(&dialog["id"]), rpiv_reply(r, &dialog)));
-                }
-                return Ok(Value::Null);
+            && let Some(r) = self.rpiv.as_mut()
+        {
+            r.answers = if allow && answers.is_object() {
+                Some(answers.clone())
+            } else {
+                None
+            };
+            r.cancelled = !allow || r.answers.is_none();
+            if let Some(dialog) = r.deferred.take() {
+                return Ok(frame(string(&dialog["id"]), rpiv_reply(r, &dialog)));
             }
+            return Ok(Value::Null);
+        }
         if req["metadata"]["toolApproval"] == "omp_rpc_ui_tool_approval" {
             return Ok(frame(id, json!({"value":if allow{"Approve"}else{"Deny"}})));
         }

@@ -31,7 +31,7 @@ fn is_elf(file: &Path) -> Result<bool> {
     Ok(input.read(&mut header)? == 4 && header == *b"\x7fELF")
 }
 
-fn has_dynamic_segment(file: &Path) -> Result<bool> {
+pub(crate) fn has_dynamic_segment(file: &Path) -> Result<bool> {
     let mut input = fs::File::open(file)?;
     let mut header = [0; 64];
     input.read_exact(&mut header)?;
@@ -252,11 +252,27 @@ pub fn native(runtime: &Path) -> Result<()> {
     )
 }
 
+/// Relocatable app object: dependencies stay with this independently selected app.
+pub fn component_app(root: &Path) -> Result<()> {
+    bundle(
+        root,
+        &root.join("lib"),
+        &root.join("lib/licenses/system"),
+        &LINUX_DLOPENED,
+    )
+}
+
 /// Libraries the desktop client opens with `dlopen` (paseo-gui-platform): X11
 /// idle time and close-to-tray withdraw (`libX11`, `libXss`) and XSMP logout
 /// without a GNOME SessionManager (`libSM`, `libICE`), plus system-font discovery
 /// (`libfontconfig`). The Debian package declares the same set in `package.rs`.
-pub const LINUX_DLOPENED: [&str; 5] = ["libX11.so.6", "libXss.so.1", "libSM.so.6", "libICE.so.6", "libfontconfig.so.1"];
+pub const LINUX_DLOPENED: [&str; 5] = [
+    "libX11.so.6",
+    "libXss.so.1",
+    "libSM.so.6",
+    "libICE.so.6",
+    "libfontconfig.so.1",
+];
 
 /// Host path of a system soname for the build architecture, from the
 /// dynamic linker cache.
@@ -266,10 +282,19 @@ fn system_library(soname: &str) -> Result<PathBuf> {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .output()
-        .or_else(|_| Command::new("/sbin/ldconfig").arg("-p").env("LC_ALL", "C").output())
+        .or_else(|_| {
+            Command::new("/sbin/ldconfig")
+                .arg("-p")
+                .env("LC_ALL", "C")
+                .output()
+        })
         .context("Starting ldconfig -p")?;
     ensure!(output.status.success(), "ldconfig -p failed");
-    let tag = if arch()? == "x64" { "x86-64" } else { "AArch64" };
+    let tag = if arch()? == "x64" {
+        "x86-64"
+    } else {
+        "AArch64"
+    };
     let cache = String::from_utf8_lossy(&output.stdout);
     let path = cache
         .lines()
@@ -279,7 +304,9 @@ fn system_library(soname: &str) -> Result<PathBuf> {
             (name == soname && flags.contains(tag)).then(|| PathBuf::from(path.trim()))
         })
         .next()
-        .with_context(|| format!("Install {soname} on the packaging host; the client loads it at runtime"))?;
+        .with_context(|| {
+            format!("Install {soname} on the packaging host; the client loads it at runtime")
+        })?;
     assert_architecture(&path)?;
     Ok(path)
 }
@@ -325,7 +352,8 @@ mod tests {
         fs::write(&unrelated, "other")?;
         let ownership = format!(
             "other-app: {}\nlibfixture1:amd64: {}\n",
-            unrelated.display(), source.display()
+            unrelated.display(),
+            source.display()
         );
         assert_eq!(system_library_package(&source, &ownership)?, "libfixture1");
         let alias = directory.path().join("usr-merged");
@@ -334,8 +362,17 @@ mod tests {
             system_library_package(&alias.join("libfixture.so.1"), &ownership)?,
             "libfixture1"
         );
-        assert!(system_library_package(&source, &format!("other-app: {}\n", unrelated.display())).is_err());
-        assert!(system_library_package(&source, &format!("{ownership}conflicting: {}\n", source.display())).is_err());
+        assert!(
+            system_library_package(&source, &format!("other-app: {}\n", unrelated.display()))
+                .is_err()
+        );
+        assert!(
+            system_library_package(
+                &source,
+                &format!("{ownership}conflicting: {}\n", source.display())
+            )
+            .is_err()
+        );
         Ok(())
     }
 

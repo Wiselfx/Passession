@@ -1,5 +1,5 @@
-use super::{auth::Credential, normalize};
 use super::super::common::UsageRuntime;
+use super::{auth::Credential, normalize};
 use chrono::Utc;
 use reqwest::{Certificate, Client};
 use serde_json::{Value, json};
@@ -245,7 +245,11 @@ mod tests {
             }
             tx.send(String::from_utf8(bytes).unwrap()).unwrap();
             // A size/status rejection may drop the socket before its body is sent.
-            let _ = write!(socket, "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len());
+            let _ = write!(
+                socket,
+                "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                response.len()
+            );
         });
         (url, rx, handle)
     }
@@ -326,7 +330,15 @@ mod tests {
             "arn:aws:codewhisperer:unsupported:private-account:profile/private-profile".into(),
         );
         assert_eq!(
-            serde_json::to_value(fetch(&super::super::tests::runtime(Path::new("/unused")), test_client(), &credential).await).unwrap()["error"],
+            serde_json::to_value(
+                fetch(
+                    &super::super::tests::runtime(Path::new("/unused")),
+                    test_client(),
+                    &credential
+                )
+                .await
+            )
+            .unwrap()["error"],
             "Kiro usage does not support this account profile region."
         );
     }
@@ -355,10 +367,13 @@ mod tests {
         super::super::tests::store(&path, "github", "2099-01-01T00:00:00Z");
         let before = std::fs::read(&path).unwrap();
         let mut rt = super::super::tests::runtime(dir.path());
-        let accounts = super::super::discover(&rt, &super::super::tests::scoped(&path)).await.unwrap();
+        let accounts = super::super::discover(&rt, &super::super::tests::scoped(&path))
+            .await
+            .unwrap();
         assert_eq!(accounts.len(), 1);
         let (url, received, handle) = fixture(200, payload.to_string());
-        rt.endpoints.insert("https://management.us-east-1.kiro.dev/".into(), url);
+        rt.endpoints
+            .insert("https://management.us-east-1.kiro.dev/".into(), url);
         let report = super::super::fetch(&rt, &accounts[0].input).await.unwrap();
         received.recv_timeout(Duration::from_secs(5)).unwrap();
         handle.join().unwrap();
@@ -376,7 +391,8 @@ mod tests {
         assert_eq!(report["balances"][5]["unit"], "usd");
         assert_eq!(
             report["balances"][3]["resetsAt"],
-            chrono::DateTime::from_timestamp(3_700_000_000, 0).unwrap()
+            chrono::DateTime::from_timestamp(3_700_000_000, 0)
+                .unwrap()
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
         );
         assert!(!report.to_string().contains("private-"));
@@ -387,11 +403,20 @@ mod tests {
     #[tokio::test]
     async fn transport_success_requires_authoritative_supported_quota() {
         for (payload, expected) in [
-            (json!({"usageBreakdownList":[]}), normalize::Failure::NoQuota),
-            (json!({"nextDateReset":4_000_000_000u64,"usageBreakdownList":[
-                {"resourceType":"CREDIT","usageLimit":100}]}), normalize::Failure::InvalidResponse),
-            (json!({"usageBreakdownList":[{"resourceType":"CREDIT",
-                "currentUsage":1,"usageLimit":100}]}), normalize::Failure::UnknownExpiry),
+            (
+                json!({"usageBreakdownList":[]}),
+                normalize::Failure::NoQuota,
+            ),
+            (
+                json!({"nextDateReset":4_000_000_000u64,"usageBreakdownList":[
+                {"resourceType":"CREDIT","usageLimit":100}]}),
+                normalize::Failure::InvalidResponse,
+            ),
+            (
+                json!({"usageBreakdownList":[{"resourceType":"CREDIT",
+                "currentUsage":1,"usageLimit":100}]}),
+                normalize::Failure::UnknownExpiry,
+            ),
         ] {
             let (url, received, handle) = fixture(200, payload.to_string());
             let report = request(test_client(), &credential(), Endpoint::Fixture(&url)).await;
@@ -408,14 +433,21 @@ mod tests {
             "usageBreakdownList":[{
                 "resourceType":"CREDIT","currentUsage":1,"usageLimit":100
             }]
-        }).to_string();
-        payload.extend(std::iter::repeat_n(' ', MAX_RESPONSE_BYTES + 1 - payload.len()));
+        })
+        .to_string();
+        payload.extend(std::iter::repeat_n(
+            ' ',
+            MAX_RESPONSE_BYTES + 1 - payload.len(),
+        ));
         let (url, received, handle) = fixture(200, payload);
         let report = request(test_client(), &credential(), Endpoint::Fixture(&url)).await;
         received.recv_timeout(Duration::from_secs(5)).unwrap();
         // Let Hyper observe the dropped body and close the socket while the
         // fixture finishes writing; joining here blocks this Tokio worker.
-        tokio::task::spawn_blocking(move || handle.join()).await.unwrap().unwrap();
+        tokio::task::spawn_blocking(move || handle.join())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(report, error(normalize::Failure::InvalidResponse.message()));
     }
 

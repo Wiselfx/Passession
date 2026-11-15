@@ -343,54 +343,95 @@ async fn upload_request_registers_ownership_before_buffered_binary_frames() {
     let payload = "한글 첨부 파일\n".as_bytes();
     // Queue the complete transfer before running the reader. Uploads have no
     // intermediate acknowledgement, so these frames must remain ordered.
-    input.send(OutboundFrame::Text(json!({
-        "type":"hello", "clientId":"upload-test", "clientType":"cli",
-        "protocolVersion":1, "capabilities":{"owned_subscriptions":true}
-    }).to_string())).await.unwrap();
-    input.send(OutboundFrame::Text(json!({
-        "type":"session", "message":{
-            "type":"file.upload.request", "requestId":"upload", "fileName":"한글.txt",
-            "mimeType":"text/plain", "size":payload.len(), "modifiedAt":""
-        }
-    }).to_string())).await.unwrap();
+    input
+        .send(OutboundFrame::Text(
+            json!({
+                "type":"hello", "clientId":"upload-test", "clientType":"cli",
+                "protocolVersion":1, "capabilities":{"owned_subscriptions":true}
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    input
+        .send(OutboundFrame::Text(
+            json!({
+                "type":"session", "message":{
+                    "type":"file.upload.request", "requestId":"upload", "fileName":"한글.txt",
+                    "mimeType":"text/plain", "size":payload.len(), "modifiedAt":""
+                }
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
     for frame in [
         FileTransferFrame::Begin {
-            request_id:"upload",
-            metadata:FileBeginMetadata {
-                mime:"text/plain".into(), size:payload.len() as u64,
-                encoding:FileEncoding::Binary, modified_at:String::new(),
-                revision:None, file_name:Some("한글.txt".into()),
+            request_id: "upload",
+            metadata: FileBeginMetadata {
+                mime: "text/plain".into(),
+                size: payload.len() as u64,
+                encoding: FileEncoding::Binary,
+                modified_at: String::new(),
+                revision: None,
+                file_name: Some("한글.txt".into()),
             },
         },
-        FileTransferFrame::Chunk { request_id:"upload", payload },
-        FileTransferFrame::End { request_id:"upload" },
+        FileTransferFrame::Chunk {
+            request_id: "upload",
+            payload,
+        },
+        FileTransferFrame::End {
+            request_id: "upload",
+        },
     ] {
-        input.send(OutboundFrame::Binary(encode_file_transfer_frame(&frame).unwrap().into())).await.unwrap();
+        input
+            .send(OutboundFrame::Binary(
+                encode_file_transfer_frame(&frame).unwrap().into(),
+            ))
+            .await
+            .unwrap();
     }
     let server_app = app.clone();
     let server_cancel = cancel.clone();
     let server = tokio::spawn(async move {
-        server_app.transport.run_channel(inbound, outbound, server_cancel, Some(Admission::owner())).await
+        server_app
+            .transport
+            .run_channel(inbound, outbound, server_cancel, Some(Admission::owner()))
+            .await
     });
     let response = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            match output.recv().await.expect("upload channel closed before its response") {
+            match output
+                .recv()
+                .await
+                .expect("upload channel closed before its response")
+            {
                 OutboundFrame::Text(text) => {
-                    let envelope:Value = serde_json::from_str(&text).unwrap();
+                    let envelope: Value = serde_json::from_str(&text).unwrap();
                     if envelope["message"]["type"] == "file.upload.response" {
                         break envelope["message"]["payload"].clone();
                     }
-                },
-                OutboundFrame::Flush(acknowledge) => { acknowledge.send(Ok(())).unwrap(); },
+                }
+                OutboundFrame::Flush(acknowledge) => {
+                    acknowledge.send(Ok(())).unwrap();
+                }
                 OutboundFrame::Close { code, reason } => panic!("upload closed: {code} {reason}"),
-                _ => {},
+                _ => {}
             }
         }
-    }).await.expect("upload response timed out");
+    })
+    .await
+    .expect("upload response timed out");
     assert_eq!(response["error"], Value::Null);
     assert_eq!(response["file"]["fileName"], "한글.txt");
     assert_eq!(response["file"]["size"], payload.len());
-    assert_eq!(tokio::fs::read(response["file"]["path"].as_str().unwrap()).await.unwrap(), payload);
+    assert_eq!(
+        tokio::fs::read(response["file"]["path"].as_str().unwrap())
+            .await
+            .unwrap(),
+        payload
+    );
     cancel.cancel();
     server.await.unwrap().unwrap();
     app.files.shutdown().await.unwrap();
@@ -739,7 +780,12 @@ async fn update_maintenance_reaches_subscribed_ui_but_never_legacy_or_unsubscrib
     );
     // The host feed a current Flutter client installs through the real request path.
     let feed = ui.for_request(json!({"type":"session.events.set_subscription.request","requestId":"feed","events":["status.server_info","daemon.update.maintenance"],"notifications":true}));
-    assert!(transport.handle(&feed, feed.request().unwrap()).await.unwrap());
+    assert!(
+        transport
+            .handle(&feed, feed.request().unwrap())
+            .await
+            .unwrap()
+    );
     assert_eq!(
         json_frame(&ui_output.recv().await.unwrap())["message"]["type"],
         "session.events.set_subscription.response"
@@ -759,7 +805,10 @@ async fn update_maintenance_reaches_subscribed_ui_but_never_legacy_or_unsubscrib
     assert!(legacy_output.try_recv().is_err());
     let notice = json!({"type":"daemon.update.maintenance","payload":{}});
     for permission in ["workspace.read", "daemon.read", "hub.execute"] {
-        assert!(permissions::allows_outbound(&notice, |p| p == permission), "{permission}");
+        assert!(
+            permissions::allows_outbound(&notice, |p| p == permission),
+            "{permission}"
+        );
     }
     assert!(!permissions::allows_outbound(&notice, |p| p == "tunnel.manage"));
 }

@@ -80,10 +80,9 @@ pub fn set(value: &mut Value, path: &str, replacement: Option<&Value>) {
 }
 
 pub fn supported_patch(mut patch: Value, skills: bool) -> Result<Value> {
-    if !skills
-        && let Some(object) = patch.as_object_mut() {
-            object.remove("skills");
-        }
+    if !skills && let Some(object) = patch.as_object_mut() {
+        object.remove("skills");
+    }
     let patch = super::schema::normalize_patch(patch)?;
     let mut result = json!({});
     for path in [
@@ -105,10 +104,9 @@ pub fn supported_patch(mut patch: Value, skills: bool) -> Result<Value> {
             set(&mut result, path, Some(value));
         }
     }
-    if skills
-        && let Some(value) = get(&patch, "skills.selection") {
-            set(&mut result, "skills.selection", Some(value));
-        }
+    if skills && let Some(value) = get(&patch, "skills.selection") {
+        set(&mut result, "skills.selection", Some(value));
+    }
     Ok(result)
 }
 

@@ -9,7 +9,10 @@ use super::json::*;
 use super::paint::{Draw, Look};
 use crate::common::paint::Painter;
 use crate::common::provider_icon::ProviderIcon;
-use crate::common::widgets::{RowMetrics, STATUS_BUCKET_ORDER, StatusBucket, derive_status_bucket, paint_status_badge, status_dot_color, paint_status_ring};
+use crate::common::widgets::{
+    RowMetrics, STATUS_BUCKET_ORDER, StatusBucket, derive_status_bucket, paint_status_badge,
+    paint_status_ring, status_dot_color,
+};
 use makepad_widgets::*;
 use serde_json::Value;
 
@@ -17,8 +20,12 @@ const PILL_MIN_HEIGHT: f64 = 32.0;
 
 pub fn pill_height(cx: &mut Cx, kit: &mut ChatKit, look: Look) -> f64 {
     // Include fallback-font metrics, not just the Latin font's authored line box.
-    let regular = kit.measure(cx, Font::Regular, look.ui(12.0), 1.3, "Ag한글", None).y;
-    let mono = kit.measure(cx, Font::Mono, look.ui(12.0), 1.3, "Ag한글", None).y;
+    let regular = kit
+        .measure(cx, Font::Regular, look.ui(12.0), 1.3, "Ag한글", None)
+        .y;
+    let mono = kit
+        .measure(cx, Font::Mono, look.ui(12.0), 1.3, "Ag한글", None)
+        .y;
     PILL_MIN_HEIGHT.max(regular.max(mono).ceil() + 16.0)
 }
 
@@ -66,13 +73,21 @@ pub fn row_label(title: Option<&str>) -> Option<String> {
 
 impl SubagentRow {
     pub fn key(&self) -> String {
-        if self.paseo { format!("paseo:{}:{}", self.server_id, self.id) } else { format!("provider:{}", self.id) }
+        if self.paseo {
+            format!("paseo:{}:{}", self.server_id, self.id)
+        } else {
+            format!("provider:{}", self.id)
+        }
     }
 
     /// archive-finished.ts isFinishedSubagent.
     pub fn is_finished(&self) -> bool {
         let s = self.status.as_deref();
-        if self.paseo { matches!(s, Some("idle" | "error")) } else { matches!(s, Some("completed" | "failed" | "canceled")) }
+        if self.paseo {
+            matches!(s, Some("idle" | "error"))
+        } else {
+            matches!(s, Some("completed" | "failed" | "canceled"))
+        }
     }
 
     fn presentation_status(&self) -> Option<&str> {
@@ -80,7 +95,11 @@ impl SubagentRow {
             if self.turn_open {
                 return Some("running");
             }
-            return if self.status.as_deref() == Some("running") { Some("idle") } else { self.status.as_deref() };
+            return if self.status.as_deref() == Some("running") {
+                Some("idle")
+            } else {
+                self.status.as_deref()
+            };
         }
         match self.status.as_deref() {
             Some("running") => Some("running"),
@@ -100,9 +119,19 @@ impl SubagentRow {
     pub fn row_subtitle(&self) -> Option<String> {
         let described = row_label(self.description.as_deref()).is_some();
         if !self.paseo {
-            return row_label(self.subtitle.as_deref()).or_else(|| if described { row_label(self.title.as_deref()) } else { None });
+            return row_label(self.subtitle.as_deref()).or_else(|| {
+                if described {
+                    row_label(self.title.as_deref())
+                } else {
+                    None
+                }
+            });
         }
-        if described { row_label(self.title.as_deref()) } else { None }
+        if described {
+            row_label(self.title.as_deref())
+        } else {
+            None
+        }
     }
 }
 
@@ -112,15 +141,23 @@ impl SubagentRow {
 pub enum DeleteFinished {
     #[default]
     Idle,
-    Deleting { completed: usize, total: usize },
-    Failed { failed: usize, total: usize },
+    Deleting {
+        completed: usize,
+        total: usize,
+    },
+    Failed {
+        failed: usize,
+        total: usize,
+    },
 }
 
 /// panels/agent-facts-line.ts buildAgentFactsLine: model · thinking · mode ·
 /// context usage, each resolved as the composer's controls resolve it, over
 /// the panel's providers snapshot.
 pub fn facts_line(providers: &[Value], agent: &Value) -> Option<String> {
-    use crate::features::composer::controls_model::{format_agent_mode_label, format_thinking_option_label, model_label};
+    use crate::features::composer::controls_model::{
+        format_agent_mode_label, format_thinking_option_label, model_label,
+    };
     let runtime = get(agent, "runtimeInfo");
     let runtime_model = str_of(get(runtime, "model")).trim().to_owned();
     let configured = str_of(get(agent, "model")).trim().to_owned();
@@ -135,23 +172,46 @@ pub fn facts_line(providers: &[Value], agent: &Value) -> Option<String> {
         None if !runtime_model.is_empty() => runtime_model.clone(),
         None => configured.clone(),
     }];
-    let thinking_id = get(runtime, "thinkingOptionId").as_str().or_else(|| get(agent, "thinkingOptionId").as_str()).unwrap_or("").to_owned();
-    let options = model.as_ref().map(|m| list(get(m, "thinkingOptions")).to_vec()).unwrap_or_default();
-    let thinking = options.iter().find(|o| get(o, "id") == thinking_id.as_str()).or_else(|| {
-        if thinking_id.is_empty() { options.iter().find(|o| is_true(get(o, "isDefault"))) } else { None }
-    });
+    let thinking_id = get(runtime, "thinkingOptionId")
+        .as_str()
+        .or_else(|| get(agent, "thinkingOptionId").as_str())
+        .unwrap_or("")
+        .to_owned();
+    let options = model
+        .as_ref()
+        .map(|m| list(get(m, "thinkingOptions")).to_vec())
+        .unwrap_or_default();
+    let thinking = options
+        .iter()
+        .find(|o| get(o, "id") == thinking_id.as_str())
+        .or_else(|| {
+            if thinking_id.is_empty() {
+                options.iter().find(|o| is_true(get(o, "isDefault")))
+            } else {
+                None
+            }
+        });
     match thinking {
-        Some(option) => parts.push(format_thinking_option_label(option, &t("agentControls.thinking.extraHigh"))),
+        Some(option) => parts.push(format_thinking_option_label(
+            option,
+            &t("agentControls.thinking.extraHigh"),
+        )),
         None if !thinking_id.is_empty() => parts.push(thinking_id),
         None => {}
     }
     let modes = list(get(agent, "availableModes"));
-    if let Some(mode) = modes.iter().find(|m| get(m, "id") == get(agent, "currentModeId")).or(modes.first()) {
+    if let Some(mode) = modes
+        .iter()
+        .find(|m| get(m, "id") == get(agent, "currentModeId"))
+        .or(modes.first())
+    {
         parts.push(format_agent_mode_label(mode));
     }
     let usage = get(agent, "lastUsage");
-    if let (Some(used), Some(max)) = (get(usage, "contextWindowUsedTokens").as_f64(), get(usage, "contextWindowMaxTokens").as_f64())
-        && used >= 0.0
+    if let (Some(used), Some(max)) = (
+        get(usage, "contextWindowUsedTokens").as_f64(),
+        get(usage, "contextWindowMaxTokens").as_f64(),
+    ) && used >= 0.0
         && max > 0.0
     {
         let tokens = |v: f64| {
@@ -164,7 +224,11 @@ pub fn facts_line(providers: &[Value], agent: &Value) -> Option<String> {
             }
         };
         let pct = (used / max * 100.0).clamp(0.0, 100.0).round();
-        parts.push(format!("{} / {} tokens ({pct}%)", tokens(used), tokens(max)));
+        parts.push(format!(
+            "{} / {} tokens ({pct}%)",
+            tokens(used),
+            tokens(max)
+        ));
     }
     Some(parts.join(" · "))
 }
@@ -208,35 +272,77 @@ fn subagent_segments(rows: &[SubagentRow]) -> Vec<(Option<StatusBucket>, String)
             StatusBucket::Running => ta("subagents.pillLabelWorking", &[("count", &c)]),
             StatusBucket::Failed => ta("subagents.pillLabelFailed", &[("count", &c)]),
             StatusBucket::NeedsInput => {
-                if count == 1 { t("subagents.pillLabelNeedsInputOne") } else { ta("subagents.pillLabelNeedsInputMany", &[("count", &c)]) }
+                if count == 1 {
+                    t("subagents.pillLabelNeedsInputOne")
+                } else {
+                    ta("subagents.pillLabelNeedsInputMany", &[("count", &c)])
+                }
             }
             _ => ta("subagents.pillLabelReadyToReview", &[("count", &c)]),
         };
         segments.push((Some(bucket), text));
     }
     if segments.is_empty() {
-        let label = if rows.len() == 1 { t("subagents.pillLabelOne") } else { ta("subagents.pillLabelMany", &[("count", &rows.len().to_string())]) };
+        let label = if rows.len() == 1 {
+            t("subagents.pillLabelOne")
+        } else {
+            ta(
+                "subagents.pillLabelMany",
+                &[("count", &rows.len().to_string())],
+            )
+        };
         segments.push((None, label));
     }
     segments
 }
 
 #[allow(clippy::too_many_arguments)]
-fn pill(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, x: f64, y: f64, height: f64, max_w: f64, segments: &[(Option<StatusBucket>, String)], open: bool, id: &str) -> f64 {
+fn pill(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    painter: &mut Painter,
+    x: f64,
+    y: f64,
+    height: f64,
+    max_w: f64,
+    segments: &[(Option<StatusBucket>, String)],
+    open: bool,
+    id: &str,
+) -> f64 {
     let p = d.look.palette;
     let size = d.look.ui(12.0);
     let mut widths = Vec::new();
     let mut total = 24.0;
     for (i, (bucket, text)) in segments.iter().enumerate() {
-        let w = d.kit.measure(cx, Font::Regular, size, 1.3, text, None).x + if bucket.is_some() { 14.0 } else { 0.0 };
+        let w = d.kit.measure(cx, Font::Regular, size, 1.3, text, None).x
+            + if bucket.is_some() { 14.0 } else { 0.0 };
         widths.push(w);
         total += w + if i > 0 { 16.0 } else { 0.0 };
     }
     let w = total.min(max_w);
     let hovered = d.state.hover_hit.as_deref() == Some(id);
     let r = rect_xywh(x, y, w, height);
-    d.kit.bordered(cx, r, if hovered || open { p.surface2 } else { p.surface1 }, height * 0.5, p.border_accent, 1.0);
-    cx.begin_turtle(Walk { abs_pos: Some(r.pos), margin: Margin::default(), width: Size::Fixed(w), height: Size::Fixed(height) }, Layout::default());
+    d.kit.bordered(
+        cx,
+        r,
+        if hovered || open {
+            p.surface2
+        } else {
+            p.surface1
+        },
+        height * 0.5,
+        p.border_accent,
+        1.0,
+    );
+    cx.begin_turtle(
+        Walk {
+            abs_pos: Some(r.pos),
+            margin: Margin::default(),
+            width: Size::Fixed(w),
+            height: Size::Fixed(height),
+        },
+        Layout::default(),
+    );
     let mut sx = x + 12.0;
     for ((bucket, text), sw) in segments.iter().zip(&widths) {
         if let Some(bucket) = bucket {
@@ -245,12 +351,26 @@ fn pill(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, x: f64, y: f64, heig
                 paint_status_ring(painter, cx, center, &p, None);
                 d.animating = true;
             } else if let Some(color) = status_dot_color(&p, *bucket, true) {
-                d.kit.rect(cx, rect_xywh(center.x - 3.0, center.y - 3.0, 6.0, 6.0), color, 3.0);
+                d.kit.rect(
+                    cx,
+                    rect_xywh(center.x - 3.0, center.y - 3.0, 6.0, 6.0),
+                    color,
+                    3.0,
+                );
             }
             sx += 14.0;
         }
         let s = d.kit.measure(cx, Font::Regular, size, 1.3, text, None);
-        d.kit.label_line(cx, Font::Regular, size, 1.3, if open { p.foreground } else { p.muted }, dvec2(sx, y + (height - s.y) * 0.5), text, (x + w - 12.0 - sx).max(8.0));
+        d.kit.label_line(
+            cx,
+            Font::Regular,
+            size,
+            1.3,
+            if open { p.foreground } else { p.muted },
+            dvec2(sx, y + (height - s.y) * 0.5),
+            text,
+            (x + w - 12.0 - sx).max(8.0),
+        );
         sx += sw - if bucket.is_some() { 14.0 } else { 0.0 } + 16.0;
     }
     cx.end_turtle();
@@ -260,40 +380,106 @@ fn pill(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, x: f64, y: f64, heig
 
 /// The track bar resting `pill_clearance` above `bottom`; returns pill rects.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_bar(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, model: &TrackModel, open: Option<TrackPanel>, x: f64, bottom: f64, w: f64, height: f64) -> Vec<(TrackPanel, Rect)> {
+pub fn draw_bar(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    painter: &mut Painter,
+    model: &TrackModel,
+    open: Option<TrackPanel>,
+    x: f64,
+    bottom: f64,
+    w: f64,
+    height: f64,
+) -> Vec<(TrackPanel, Rect)> {
     let outer = (w - 32.0).min(d.look.typo.content_max_width);
     let bx = x + (w - outer) * 0.5;
     let y = bottom - pill_clearance(d.look.compact) - height;
     let mut cursor = bx;
     let mut out = Vec::new();
-    let pills = (!model.tasks.is_empty()) as usize + (!model.rows.is_empty() || model.delete != DeleteFinished::Idle) as usize;
+    let pills = (!model.tasks.is_empty()) as usize
+        + (!model.rows.is_empty() || model.delete != DeleteFinished::Idle) as usize;
     let avail = (outer - 4.0 * pills.saturating_sub(1) as f64).max(80.0);
-    let each = if pills > 0 { avail / pills as f64 } else { avail };
+    let each = if pills > 0 {
+        avail / pills as f64
+    } else {
+        avail
+    };
     if !model.tasks.is_empty() {
-        let completed = model.tasks.iter().filter(|task| is_true(get(task, "completed")) || get(task, "status") == "completed").count();
-        let label = ta("message.todo.tasksProgress", &[("completed", &completed.to_string()), ("total", &model.tasks.len().to_string())]);
-        let pw = pill(cx, d, painter, cursor, y, height, each, &[(None, label)], open == Some(TrackPanel::Tasks), "track:tasks");
+        let completed = model
+            .tasks
+            .iter()
+            .filter(|task| is_true(get(task, "completed")) || get(task, "status") == "completed")
+            .count();
+        let label = ta(
+            "message.todo.tasksProgress",
+            &[
+                ("completed", &completed.to_string()),
+                ("total", &model.tasks.len().to_string()),
+            ],
+        );
+        let pw = pill(
+            cx,
+            d,
+            painter,
+            cursor,
+            y,
+            height,
+            each,
+            &[(None, label)],
+            open == Some(TrackPanel::Tasks),
+            "track:tasks",
+        );
         out.push((TrackPanel::Tasks, rect_xywh(cursor, y, pw, height)));
         cursor += pw + 4.0;
     }
     if !model.rows.is_empty() || model.delete != DeleteFinished::Idle {
         let segments = subagent_segments(model.rows);
-        let pw = pill(cx, d, painter, cursor, y, height, each, &segments, open == Some(TrackPanel::Subagents), "track:subagents");
+        let pw = pill(
+            cx,
+            d,
+            painter,
+            cursor,
+            y,
+            height,
+            each,
+            &segments,
+            open == Some(TrackPanel::Subagents),
+            "track:subagents",
+        );
         out.push((TrackPanel::Subagents, rect_xywh(cursor, y, pw, height)));
     }
     out
 }
 
-
 /// Panel rows (ComposerTrackRow): returns the content height.
 #[allow(clippy::too_many_arguments)]
-fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut DrawIcon, model: &TrackModel, panel: TrackPanel, x: f64, y: f64, w: f64) -> f64 {
+fn panel_rows(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    painter: &mut Painter,
+    icon: &mut DrawIcon,
+    model: &TrackModel,
+    panel: TrackPanel,
+    x: f64,
+    y: f64,
+    w: f64,
+) -> f64 {
     let p = d.look.palette;
     let compact = d.look.compact;
     let base = d.look.ui(14.0);
     let small = d.look.ui(12.0);
-    let row_h = RowMetrics::new(d.kit.measure(cx, Font::Regular, base, 1.4, "Ag한글", None).y, 0.0, 0.0)
-        .height(if compact { 40.0 } else { 32.0 }, if compact { 8.0 } else { 4.0 }, 28.0);
+    let row_h = RowMetrics::new(
+        d.kit
+            .measure(cx, Font::Regular, base, 1.4, "Ag한글", None)
+            .y,
+        0.0,
+        0.0,
+    )
+    .height(
+        if compact { 40.0 } else { 32.0 },
+        if compact { 8.0 } else { 4.0 },
+        28.0,
+    );
     let mut cy = y;
     match panel {
         TrackPanel::Tasks => {
@@ -301,10 +487,26 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
                 let r = rect_xywh(x + 4.0, cy, w - 8.0, row_h);
                 // Wrapped tasks grow their row; single-line rows keep the
                 // shared row height and vertical centering.
-                let text_h = d.measure(|d| super::rows::task_rows(cx, d, std::slice::from_ref(task), 0.0, 0.0, r.size.x - 16.0));
+                let text_h = d.measure(|d| {
+                    super::rows::task_rows(
+                        cx,
+                        d,
+                        std::slice::from_ref(task),
+                        0.0,
+                        0.0,
+                        r.size.x - 16.0,
+                    )
+                });
                 let pad = ((row_h - base * 1.4) * 0.5).max(0.0);
                 let h = row_h.max(text_h + pad * 2.0);
-                super::rows::task_rows(cx, d, std::slice::from_ref(task), r.pos.x + 8.0, cy + (h - text_h) * 0.5, r.size.x - 16.0);
+                super::rows::task_rows(
+                    cx,
+                    d,
+                    std::slice::from_ref(task),
+                    r.pos.x + 8.0,
+                    cy + (h - text_h) * 0.5,
+                    r.size.x - 16.0,
+                );
                 cy += h;
             }
         }
@@ -317,55 +519,116 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
                 if hovered {
                     d.kit.rect(cx, r, p.surface2, 6.0);
                 }
-                d.kit.icon(cx, "trash-2", rect_xywh(r.pos.x + 8.0, cy, 14.0, row_h), 14.0, if hovered { p.foreground } else { p.muted });
+                d.kit.icon(
+                    cx,
+                    "trash-2",
+                    rect_xywh(r.pos.x + 8.0, cy, 14.0, row_h),
+                    14.0,
+                    if hovered { p.foreground } else { p.muted },
+                );
                 let label = t("subagents.deleteFinishedAction");
-                let s = d.kit.label_line(cx, Font::Regular, base, 1.3, p.foreground, dvec2(r.pos.x + 30.0, cy + (row_h - base * 1.3) * 0.5), &label, (r.size.x - 120.0).max(20.0));
+                let s = d.kit.label_line(
+                    cx,
+                    Font::Regular,
+                    base,
+                    1.3,
+                    p.foreground,
+                    dvec2(r.pos.x + 30.0, cy + (row_h - base * 1.3) * 0.5),
+                    &label,
+                    (r.size.x - 120.0).max(20.0),
+                );
                 let trailing = match model.delete {
-                    DeleteFinished::Deleting { completed, total } => Some(format!("{completed}/{total}")),
-                    DeleteFinished::Failed { failed, total } => Some(ta("subagents.deleteFinishedRetry", &[("failed", &failed.to_string()), ("total", &total.to_string())])),
+                    DeleteFinished::Deleting { completed, total } => {
+                        Some(format!("{completed}/{total}"))
+                    }
+                    DeleteFinished::Failed { failed, total } => Some(ta(
+                        "subagents.deleteFinishedRetry",
+                        &[
+                            ("failed", &failed.to_string()),
+                            ("total", &total.to_string()),
+                        ],
+                    )),
                     DeleteFinished::Idle => None,
                 };
                 if let Some(trailing) = trailing {
-                    d.kit.label(cx, Font::Regular, small, 1.3, p.muted, dvec2(r.pos.x + 38.0 + s.x, cy + (row_h - small * 1.3) * 0.5), &trailing, None);
+                    d.kit.label(
+                        cx,
+                        Font::Regular,
+                        small,
+                        1.3,
+                        p.muted,
+                        dvec2(r.pos.x + 38.0 + s.x, cy + (row_h - small * 1.3) * 0.5),
+                        &trailing,
+                        None,
+                    );
                 }
                 if !deleting {
-                    d.canvas.add_hit(r, HitTarget::Chrome("delete-finished".into()));
+                    d.canvas
+                        .add_hit(r, HitTarget::Chrome("delete-finished".into()));
                 }
                 cy += row_h;
                 if !model.rows.is_empty() {
-                    d.kit.rect(cx, rect_xywh(x, cy + 4.0, w, 1.0), p.border_accent, 0.0);
+                    d.kit
+                        .rect(cx, rect_xywh(x, cy + 4.0, w, 1.0), p.border_accent, 0.0);
                     cy += 9.0;
                 }
             }
             for row in model.rows {
                 let key = row.key();
                 let open_id = format!("subagent-open:{key}");
-                let hovered_row = d.state.hover_hit.as_deref().is_some_and(|h| h.ends_with(&key));
-                let actions_w = if row.paseo { if model.can_detach { 64.0 } else { 32.0 } } else { 0.0 };
-                let measurement = RowMetrics::new(0.0, 0.0, 0.0)
-                    .layout(rect_xywh(x + 4.0, cy, w - 8.0, row_h), 8.0, 14.0, actions_w, 8.0);
+                let hovered_row = d
+                    .state
+                    .hover_hit
+                    .as_deref()
+                    .is_some_and(|h| h.ends_with(&key));
+                let actions_w = if row.paseo {
+                    if model.can_detach { 64.0 } else { 32.0 }
+                } else {
+                    0.0
+                };
+                let measurement = RowMetrics::new(0.0, 0.0, 0.0).layout(
+                    rect_xywh(x + 4.0, cy, w - 8.0, row_h),
+                    8.0,
+                    14.0,
+                    actions_w,
+                    8.0,
+                );
                 let text_w = measurement.title.size.x;
                 let label = row.label().unwrap_or_else(|| t("common.states.loading"));
-                let title = d.kit.layout_clamped(cx, Font::Regular, base, 1.4, &label, text_w, 1);
+                let title = d
+                    .kit
+                    .layout_clamped(cx, Font::Regular, base, 1.4, &label, text_w, 1);
                 let facts = if row.paseo {
                     [
-                        (row.server_id != model.host_id).then(|| (model.host_label)(&row.server_id)),
+                        (row.server_id != model.host_id)
+                            .then(|| (model.host_label)(&row.server_id)),
                         facts_line(model.providers, &row.agent),
                     ]
                 } else {
                     [row.row_subtitle(), None]
                 };
                 let facts = facts.each_ref().map(|line| {
-                    line.as_ref().map(|line| d.kit.layout_clamped(cx, Font::Regular, small, 1.4, line, text_w, 1))
+                    line.as_ref().map(|line| {
+                        d.kit
+                            .layout_clamped(cx, Font::Regular, small, 1.4, line, text_w, 1)
+                    })
                 });
                 // Fallback fonts can exceed the requested line-height ratio. Use the
                 // same layouts for measurement and painting, including the dry pass.
                 let metrics = RowMetrics::new(
                     laidout_size(&title).y,
-                    facts.iter().flatten().map(|line| laidout_size(line).y).sum(),
+                    facts
+                        .iter()
+                        .flatten()
+                        .map(|line| laidout_size(line).y)
+                        .sum(),
                     0.0,
                 );
-                let h = metrics.height(if compact { 40.0 } else { 32.0 }, if compact { 8.0 } else { 4.0 }, 28.0);
+                let h = metrics.height(
+                    if compact { 40.0 } else { 32.0 },
+                    if compact { 8.0 } else { 4.0 },
+                    28.0,
+                );
                 let r = rect_xywh(x + 4.0, cy, w - 8.0, h);
                 let slots = metrics.layout(r, 8.0, 14.0, actions_w, 8.0);
                 if hovered_row {
@@ -375,18 +638,43 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
                 let icon_rect = rect_xywh(slots.leading.pos.x, cy + (h - 14.0) * 0.5, 14.0, 14.0);
                 if !d.dry() {
                     let svg = super::composer_bridge::provider_svg(model.providers, &row.provider);
-                    ProviderIcon::paint(painter, icon, cx, icon_rect, &row.provider, svg.as_deref(), p.muted);
-                    if paint_status_badge(painter, cx, icon_rect, Some(row.bucket()), &p, if hovered_row { p.surface2 } else { p.surface1 }) {
+                    ProviderIcon::paint(
+                        painter,
+                        icon,
+                        cx,
+                        icon_rect,
+                        &row.provider,
+                        svg.as_deref(),
+                        p.muted,
+                    );
+                    if paint_status_badge(
+                        painter,
+                        cx,
+                        icon_rect,
+                        Some(row.bucket()),
+                        &p,
+                        if hovered_row { p.surface2 } else { p.surface1 },
+                    ) {
                         d.animating = true;
                     }
                 }
                 let actions_visible = compact || d.look.mobile || hovered_row;
                 let text_x = slots.title.pos.x;
-                cx.begin_turtle(Walk { abs_pos: Some(dvec2(text_x, cy)), margin: Margin::default(), width: Size::Fixed(text_w), height: Size::Fixed(h) }, Layout::default());
-                d.kit.draw_laidout(cx, Font::Regular, p.foreground, slots.title.pos, &title);
+                cx.begin_turtle(
+                    Walk {
+                        abs_pos: Some(dvec2(text_x, cy)),
+                        margin: Margin::default(),
+                        width: Size::Fixed(text_w),
+                        height: Size::Fixed(h),
+                    },
+                    Layout::default(),
+                );
+                d.kit
+                    .draw_laidout(cx, Font::Regular, p.foreground, slots.title.pos, &title);
                 let mut ty = slots.subtitle.pos.y;
                 for line in facts.iter().flatten() {
-                    d.kit.draw_laidout(cx, Font::Regular, p.muted, dvec2(text_x, ty), line);
+                    d.kit
+                        .draw_laidout(cx, Font::Regular, p.muted, dvec2(text_x, ty), line);
                     ty += laidout_size(line).y;
                 }
                 cx.end_turtle();
@@ -398,7 +686,13 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
                     if over {
                         d.kit.rect(cx, archive, p.surface3, 6.0);
                     }
-                    d.kit.icon(cx, "archive", archive, 16.0, if over { p.foreground } else { p.muted });
+                    d.kit.icon(
+                        cx,
+                        "archive",
+                        archive,
+                        16.0,
+                        if over { p.foreground } else { p.muted },
+                    );
                     d.canvas.add_hit(archive, HitTarget::Chrome(archive_id));
                     if model.can_detach {
                         ax -= 32.0;
@@ -408,7 +702,13 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
                         if over {
                             d.kit.rect(cx, detach, p.surface3, 6.0);
                         }
-                        d.kit.icon(cx, "unlink", detach, 16.0, if over { p.foreground } else { p.muted });
+                        d.kit.icon(
+                            cx,
+                            "unlink",
+                            detach,
+                            16.0,
+                            if over { p.foreground } else { p.muted },
+                        );
                         d.canvas.add_hit(detach, HitTarget::Chrome(detach_id));
                     }
                 }
@@ -423,41 +723,115 @@ fn panel_rows(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut Dra
 /// 440 tall) and as a bottom sheet on compact layouts, whose rows end
 /// `bottom_inset` (the system navigation inset inside `area`) above its edge.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_panel(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut DrawIcon, model: &TrackModel, panel: TrackPanel, anchor: Rect, area: Rect, bottom_inset: f64) {
+pub fn draw_panel(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    painter: &mut Painter,
+    icon: &mut DrawIcon,
+    model: &TrackModel,
+    panel: TrackPanel,
+    anchor: Rect,
+    area: Rect,
+    bottom_inset: f64,
+) {
     let p = d.look.palette;
     let title = t(match panel {
         TrackPanel::Tasks => "message.todo.title",
         TrackPanel::Subagents => "subagents.title",
     });
     // Scrim closes the panel.
-    d.canvas.add_hit(area, HitTarget::Chrome("track-close".into()));
+    d.canvas
+        .add_hit(area, HitTarget::Chrome("track-close".into()));
     if d.look.compact {
         d.kit.rect(cx, area, rgba(0x73000000), 0.0);
         let w = area.size.x;
-        let content = d.measure(|d| panel_rows(cx, d, painter, icon, model, panel, area.pos.x, 0.0, w));
+        let content =
+            d.measure(|d| panel_rows(cx, d, painter, icon, model, panel, area.pos.x, 0.0, w));
         let max_h = area.size.y * 0.8;
         let head = 24.0 + 16.0 + d.look.ui(14.0) * 1.3;
         let h = (head + content + 4.0 + bottom_inset).min(max_h);
         let top = area.pos.y + area.size.y - h;
         let sheet = rect_xywh(area.pos.x, top, w, h + 12.0);
-        d.kit.rect_full(cx, sheet, p.surface0, vec4(12.0, 12.0, 0.0, 0.0), p.border, 1.0);
-        d.canvas.add_hit(sheet, HitTarget::Chrome("track-panel".into()));
-        d.kit.rect(cx, rect_xywh(area.pos.x + w * 0.5 - 18.0, top + 10.0, 36.0, 4.0), p.surface2, 2.0);
-        d.kit.label_line(cx, Font::Medium, d.look.ui(14.0), 1.3, p.foreground, dvec2(area.pos.x + 12.0, top + 28.0), &title, w - 24.0);
-        let body = rect_xywh(area.pos.x, top + head, w, (h - head - bottom_inset).max(0.0));
+        d.kit.rect_full(
+            cx,
+            sheet,
+            p.surface0,
+            vec4(12.0, 12.0, 0.0, 0.0),
+            p.border,
+            1.0,
+        );
+        d.canvas
+            .add_hit(sheet, HitTarget::Chrome("track-panel".into()));
+        d.kit.rect(
+            cx,
+            rect_xywh(area.pos.x + w * 0.5 - 18.0, top + 10.0, 36.0, 4.0),
+            p.surface2,
+            2.0,
+        );
+        d.kit.label_line(
+            cx,
+            Font::Medium,
+            d.look.ui(14.0),
+            1.3,
+            p.foreground,
+            dvec2(area.pos.x + 12.0, top + 28.0),
+            &title,
+            w - 24.0,
+        );
+        let body = rect_xywh(
+            area.pos.x,
+            top + head,
+            w,
+            (h - head - bottom_inset).max(0.0),
+        );
         let key = "track-panel:y".to_owned();
         let max_y = (content + 4.0 - body.size.y).max(0.0);
         d.state.extent_y.insert(key.clone(), max_y);
-        let sy = d.state.scroll_y.get(&key).copied().unwrap_or(0.0).clamp(0.0, max_y);
+        let sy = d
+            .state
+            .scroll_y
+            .get(&key)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_y);
         if max_y > 0.0 {
             d.canvas.add_hit(body, HitTarget::ScrollY(key.clone()));
         }
-        cx.begin_turtle(Walk { abs_pos: Some(body.pos), margin: Margin::default(), width: Size::Fixed(body.size.x), height: Size::Fixed(body.size.y.max(1.0)) }, Layout::default());
+        cx.begin_turtle(
+            Walk {
+                abs_pos: Some(body.pos),
+                margin: Margin::default(),
+                width: Size::Fixed(body.size.x),
+                height: Size::Fixed(body.size.y.max(1.0)),
+            },
+            Layout::default(),
+        );
         d.canvas.push_clip(body);
-        panel_rows(cx, d, painter, icon, model, panel, area.pos.x, body.pos.y - sy, w);
+        panel_rows(
+            cx,
+            d,
+            painter,
+            icon,
+            model,
+            panel,
+            area.pos.x,
+            body.pos.y - sy,
+            w,
+        );
         d.canvas.pop_clip();
         cx.end_turtle();
-        super::scrollbar::draw(cx, d, body, None, None, Some(super::scrollbar::Axis { key: &key, offset: sy, max: max_y }));
+        super::scrollbar::draw(
+            cx,
+            d,
+            body,
+            None,
+            None,
+            Some(super::scrollbar::Axis {
+                key: &key,
+                offset: sy,
+                max: max_y,
+            }),
+        );
         return;
     }
     let max_w = (area.size.x - 16.0).clamp(0.0, 620.0);
@@ -474,25 +848,57 @@ pub fn draw_panel(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, icon: &mut
     } else {
         (wanted.min(below), anchor.pos.y + anchor.size.y + 12.0)
     };
-    let x = anchor.pos.x.clamp(area.pos.x + 8.0, (area.pos.x + area.size.x - w - 8.0).max(area.pos.x + 8.0));
+    let x = anchor.pos.x.clamp(
+        area.pos.x + 8.0,
+        (area.pos.x + area.size.x - w - 8.0).max(area.pos.x + 8.0),
+    );
     let r = rect_xywh(x, y, w, h);
-    let shadow = if d.look.dark() { rgba(0x33000000) } else { rgba(0x0a000000) };
+    let shadow = if d.look.dark() {
+        rgba(0x33000000)
+    } else {
+        rgba(0x0a000000)
+    };
     d.kit.rect(cx, r.translate(dvec2(0.0, 4.0)), shadow, 8.0);
     d.kit.bordered(cx, r, p.surface1, 8.0, p.border_accent, 1.0);
     d.canvas.add_hit(r, HitTarget::Chrome("track-panel".into()));
     let key = "track-panel:y".to_owned();
     let max_y = (content + 8.0 - h).max(0.0);
     d.state.extent_y.insert(key.clone(), max_y);
-    let sy = d.state.scroll_y.get(&key).copied().unwrap_or(0.0).clamp(0.0, max_y);
+    let sy = d
+        .state
+        .scroll_y
+        .get(&key)
+        .copied()
+        .unwrap_or(0.0)
+        .clamp(0.0, max_y);
     if max_y > 0.0 {
         d.canvas.add_hit(r, HitTarget::ScrollY(key.clone()));
     }
-    cx.begin_turtle(Walk { abs_pos: Some(r.pos), margin: Margin::default(), width: Size::Fixed(w), height: Size::Fixed(h.max(1.0)) }, Layout::default());
+    cx.begin_turtle(
+        Walk {
+            abs_pos: Some(r.pos),
+            margin: Margin::default(),
+            width: Size::Fixed(w),
+            height: Size::Fixed(h.max(1.0)),
+        },
+        Layout::default(),
+    );
     d.canvas.push_clip(r);
     panel_rows(cx, d, painter, icon, model, panel, x, y + 4.0 - sy, w);
     d.canvas.pop_clip();
     cx.end_turtle();
-    super::scrollbar::draw(cx, d, r, None, None, Some(super::scrollbar::Axis { key: &key, offset: sy, max: max_y }));
+    super::scrollbar::draw(
+        cx,
+        d,
+        r,
+        None,
+        None,
+        Some(super::scrollbar::Axis {
+            key: &key,
+            offset: sy,
+            max: max_y,
+        }),
+    );
 }
 
 #[cfg(test)]
@@ -504,7 +910,13 @@ mod tests {
         for title in [None, Some(""), Some(" \r\n\u{2028} "), Some("New Agent")] {
             assert_eq!(row_label(title), None);
         }
-        assert_eq!(row_label(Some("# Target\npackages/한글")), Some("# Target\npackages/한글".to_owned()));
-        assert_eq!(row_label(Some("  긴 Korean / English title  ")), Some("긴 Korean / English title".to_owned()));
+        assert_eq!(
+            row_label(Some("# Target\npackages/한글")),
+            Some("# Target\npackages/한글".to_owned())
+        );
+        assert_eq!(
+            row_label(Some("  긴 Korean / English title  ")),
+            Some("긴 Korean / English title".to_owned())
+        );
     }
 }

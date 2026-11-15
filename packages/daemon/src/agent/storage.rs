@@ -265,9 +265,10 @@ impl AgentStorage {
         }
         let mut records = records.write().await;
         if let Some(previous) = removed_previous
-            && let Some(paths) = records.paths.get_mut(id) {
-                paths.remove(&previous);
-            }
+            && let Some(paths) = records.paths.get_mut(id)
+        {
+            paths.remove(&previous);
+        }
         records.insert(id.to_owned(), record, path);
         Ok(())
     }
@@ -306,9 +307,10 @@ impl AgentStorage {
             match tokio::fs::remove_file(&path).await {
                 Ok(()) => {
                     if let Some(parent) = path.parent()
-                        && let Err(error) = sync_directory(parent).await {
-                            errors.push(error.to_string());
-                        }
+                        && let Err(error) = sync_directory(parent).await
+                    {
+                        errors.push(error.to_string());
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
                 Err(error) => errors.push(format!("{}: {error}", path.display())),
@@ -474,9 +476,10 @@ fn validate_record(record: &mut Value) -> Result<()> {
         }
     }
     if let Some(owner) = object.get("owner")
-        && execution_key(owner).is_none() {
-            bail!("Invalid daemon agent owner");
-        }
+        && execution_key(owner).is_none()
+    {
+        bail!("Invalid daemon agent owner");
+    }
     if let Some(features) = object.get("features") {
         for feature in features
             .as_array()

@@ -220,16 +220,17 @@ impl RuntimePorts {
             let mut explicit: Vec<f64> = plan.values().copied().collect();
             for service in services {
                 if !plan.contains_key(&service.script_name)
-                    && let Some(port) = service.port {
-                        if explicit.contains(&port) {
-                            bail!(
-                                "Service '{}' has a duplicate port {}",
-                                service.script_name,
-                                js_number_string(port)
-                            );
-                        }
-                        explicit.push(port);
+                    && let Some(port) = service.port
+                {
+                    if explicit.contains(&port) {
+                        bail!(
+                            "Service '{}' has a duplicate port {}",
+                            service.script_name,
+                            js_number_string(port)
+                        );
                     }
+                    explicit.push(port);
+                }
             }
             for service in services {
                 if plan.contains_key(&service.script_name) {
@@ -828,7 +829,6 @@ pub async fn read_worktree_metadata(root: &Path) -> Result<Option<Value>> {
     }
 }
 
-
 pub async fn read_worktree_runtime_port(root: &Path) -> Result<Option<f64>> {
     Ok(read_worktree_metadata(root).await?.and_then(|m| {
         m.get("runtime")
@@ -836,7 +836,6 @@ pub async fn read_worktree_runtime_port(root: &Path) -> Result<Option<f64>> {
             .and_then(Value::as_f64)
     }))
 }
-
 
 pub fn worktree_change_request_hint_for_branch<'a>(
     metadata: Option<&'a Value>,
@@ -865,7 +864,6 @@ pub fn worktree_change_request_hint_for_branch<'a>(
         (head == current_branch).then_some(hint)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1413,5 +1411,4 @@ printf ' 43210\n'"#).await?;
         assert!(state.pending.is_empty());
         Ok(())
     }
-
 }

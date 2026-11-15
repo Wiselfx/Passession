@@ -1,7 +1,9 @@
-use super::integrity::{self, digest512, feed, validate_manifest};
+use super::integrity;
+#[cfg(test)]
+use super::integrity::{feed, validate_manifest};
 use super::*;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
     process::{Command, Stdio},
@@ -112,29 +114,356 @@ fn download_asset(asset: &Value, path: &Path) -> Result<()> {
     ensure!(status.success(), "Release asset download failed");
     Ok(())
 }
-/// Complete every desktop feed in the declared publication inventory before a
-/// draft is visible. Hash downloaded binaries, not just GitHub's reported size.
-fn complete_feeds(release: &Value, ids: &[Identity]) -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    complete_feeds_with(
-        release,
-        ids,
-        |asset| Ok(serde_json::from_slice(&asset_bytes(asset)?)?),
-        |remote, entry| {
-            let path = dir
-                .path()
-                .join(entry["name"].as_str().context("Missing artifact name")?);
-            download_asset(remote, &path)?;
-            ensure!(
-                entry["size"] == fs::metadata(&path)?.len() && entry["sha512"] == digest512(&path)?,
-                "Remote artifact hash mismatch: {}",
-                path.display()
-            );
-            fs::remove_file(path)?;
-            Ok(())
-        },
-    )
+fn trusted_publisher(value: &Value, field: &str) -> Result<()> {
+    let login = value[field]["login"]
+        .as_str()
+        .context("Missing release publisher")?;
+    ensure!(
+        login == "github-actions[bot]" || login == REPOSITORY.split('/').next().unwrap(),
+        "Untrusted release publisher {login}"
+    );
+    Ok(())
 }
+fn trusted_asset_bytes(release: &Value, name: &str) -> Result<Vec<u8>> {
+    let remote = asset(release, name)?;
+    trusted_publisher(remote, "uploader")?;
+    ensure!(
+        remote["size"]
+            .as_u64()
+            .is_some_and(|n| n <= 4 * 1024 * 1024),
+        "Oversized release metadata"
+    );
+    let bytes = asset_bytes(remote)?;
+    ensure!(
+        remote["size"] == bytes.len() as u64,
+        "Release metadata size mismatch"
+    );
+    if let Some(digest) = remote["digest"].as_str() {
+        use sha2::Digest;
+        ensure!(
+            digest == format!("sha256:{}", hex::encode(sha2::Sha256::digest(&bytes))),
+            "Release metadata digest mismatch"
+        );
+    }
+    Ok(bytes)
+}
+fn verify_remote_artifact(
+    release: &Value,
+    reference: &paseo_protocol::components::ArtifactRef,
+) -> Result<()> {
+    let remote = asset(release, integrity::artifact_name(reference)?)?;
+    trusted_publisher(remote, "uploader")?;
+    ensure!(
+        remote["size"] == reference.size && remote["browser_download_url"] == reference.url,
+        "Origin artifact identity mismatch"
+    );
+    if let Some(digest) = remote["digest"].as_str() {
+        ensure!(
+            digest == format!("sha256:{}", reference.sha256),
+            "Origin artifact SHA-256 mismatch"
+        );
+    } else {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("artifact");
+        download_asset(remote, &path)?;
+        ensure!(
+            fs::metadata(&path)?.len() == reference.size
+                && common::sha256_file(&path)? == reference.sha256,
+            "Downloaded origin artifact hash mismatch"
+        );
+    }
+    Ok(())
+}
+fn authenticate_inventory(
+    tag: &str,
+    cache: &mut BTreeMap<String, paseo_protocol::components::ReleaseInventory>,
+    visiting: &mut BTreeSet<String>,
+) -> Result<()> {
+    use paseo_protocol::components;
+    use sha2::Digest;
+    if cache.contains_key(tag) {
+        return Ok(());
+    }
+    ensure!(
+        visiting.len() < 32 && visiting.insert(tag.into()),
+        "Cyclic or excessive component origin chain"
+    );
+    let release = lookup(tag)?.context("Pinned origin release is missing")?;
+    ensure!(
+        release["draft"] == false && release["tag_name"] == tag,
+        "Origin release is not published"
+    );
+    trusted_publisher(&release, "author")?;
+    let version = tag_version(tag)?;
+    let channel = channel(&version);
+    let name = format!("components-{channel}.json");
+    let bytes = trusted_asset_bytes(&release, &name)?;
+    let inventory = components::parse_inventory(&bytes, REPOSITORY)?;
+    ensure!(
+        inventory.version == version.to_string()
+            && release["target_commitish"] == inventory.source_sha,
+        "Collection source does not match origin release"
+    );
+    let provenance: Value = serde_json::from_slice(&trusted_asset_bytes(
+        &release,
+        &format!("provenance-components-{channel}.json"),
+    )?)?;
+    ensure!(
+        provenance["schemaVersion"] == 2
+            && provenance["workflow"] == WORKFLOW
+            && provenance["version"] == inventory.version
+            && provenance["sourceSha"] == inventory.source_sha
+            && provenance["channel"] == inventory.channel,
+        "Invalid collection provenance"
+    );
+    ensure!(
+        provenance["inventory"]["name"] == name
+            && provenance["inventory"]["size"] == bytes.len() as u64
+            && provenance["inventory"]["sha256"] == hex::encode(sha2::Sha256::digest(&bytes)),
+        "Collection inventory hash mismatch"
+    );
+    let run = provenance["runId"]
+        .as_str()
+        .context("Missing collection provenance run")?;
+    ensure!(numeric_id(run), "Invalid collection run");
+    let workflow = api(&format!("repos/{REPOSITORY}/actions/runs/{run}"))?;
+    ensure!(
+        workflow["path"] == WORKFLOW
+            && workflow["event"] == "workflow_dispatch"
+            && workflow["status"] == "completed"
+            && workflow["conclusion"] == "success"
+            && workflow["head_repository"]["full_name"] == REPOSITORY,
+        "Origin was not produced by a successful canonical release workflow"
+    );
+    let mut checked_runs = BTreeSet::from([run.to_owned()]);
+    for (target, hash) in provenance["targets"]
+        .as_object()
+        .context("Missing provenance targets")?
+    {
+        super::target(target)?;
+        let record_bytes = trusted_asset_bytes(&release, &format!("provenance-{target}.json"))?;
+        ensure!(
+            hash.as_str() == Some(hex::encode(sha2::Sha256::digest(&record_bytes)).as_str()),
+            "Target provenance digest mismatch"
+        );
+        let record: Value = serde_json::from_slice(&record_bytes)?;
+        ensure!(
+            record["schemaVersion"] == 2
+                && record["workflow"] == WORKFLOW
+                && record["sha"] == inventory.source_sha
+                && record["version"] == inventory.version
+                && record["target"] == *target,
+            "Target provenance collection mismatch"
+        );
+        let source_tag = record["sourceTag"]
+            .as_str()
+            .context("Missing target source tag")?;
+        ensure!(
+            tag_version(source_tag)?.to_string() == inventory.version
+                && record["channel"] == inventory.channel,
+            "Target source tag/channel mismatch"
+        );
+        let target_run = record["runId"]
+            .as_str()
+            .context("Missing target build run")?;
+        ensure!(numeric_id(target_run), "Invalid target build run");
+        if checked_runs.insert(target_run.into()) {
+            let workflow = api(&format!("repos/{REPOSITORY}/actions/runs/{target_run}"))?;
+            ensure!(
+                workflow["path"] == WORKFLOW
+                    && workflow["event"] == "workflow_dispatch"
+                    && workflow["status"] == "completed"
+                    && workflow["head_repository"]["full_name"] == REPOSITORY,
+                "Recovered target came from a noncanonical workflow"
+            );
+        }
+        let target_inventory = inventory
+            .targets
+            .get(target)
+            .context("Provenance target outside inventory")?;
+        ensure!(
+            record["components"] == serde_json::to_value(&target_inventory.components)?
+                && record["packages"] == serde_json::to_value(&target_inventory.packages)?,
+            "Target provenance component mismatch"
+        );
+    }
+    let mut origins = BTreeSet::new();
+    let mut checked = BTreeSet::new();
+    for (target_id, target) in &inventory.targets {
+        for reference in target
+            .components
+            .values()
+            .map(|c| &c.artifact)
+            .chain(target.packages.iter().map(|p| &p.artifact))
+        {
+            if reference.origin_tag == tag {
+                ensure!(
+                    provenance["targets"].get(target_id).is_some(),
+                    "Current-origin artifact has no authenticated target proof"
+                );
+                if checked.insert(reference.url.clone()) {
+                    verify_remote_artifact(&release, reference)?;
+                }
+            } else {
+                origins.insert(reference.origin_tag.clone());
+            }
+        }
+    }
+    for origin in origins {
+        authenticate_inventory(&origin, cache, visiting)?;
+    }
+    components::validate_inventory_provenance(&inventory, cache, REPOSITORY)?;
+    visiting.remove(tag);
+    cache.insert(tag.into(), inventory);
+    Ok(())
+}
+pub(crate) fn authenticate_reuse(decision: &crate::components::plan::TargetPlan) -> Result<()> {
+    let mut cache = BTreeMap::new();
+    for reference in decision
+        .reuse
+        .values()
+        .map(|c| &c.artifact)
+        .chain(decision.packages.iter().map(|p| &p.artifact))
+    {
+        authenticate_inventory(&reference.origin_tag, &mut cache, &mut BTreeSet::new())?;
+    }
+    for (id, reference) in &decision.reuse {
+        ensure!(
+            cache
+                .get(&reference.artifact.origin_tag)
+                .and_then(|i| i.targets.get(&decision.target))
+                .and_then(|t| t.components.get(id))
+                == Some(reference),
+            "Reused component differs from authenticated origin"
+        );
+    }
+    for package in &decision.packages {
+        ensure!(
+            cache
+                .get(&package.artifact.origin_tag)
+                .and_then(|i| i.targets.get(&decision.target))
+                .is_some_and(|t| t.packages.contains(package)),
+            "Reused package differs from authenticated origin"
+        );
+    }
+    Ok(())
+}
+pub(crate) fn prior_inventory(
+    explicit_tag: Option<&str>,
+) -> Result<(
+    Option<paseo_protocol::components::ReleaseInventory>,
+    BTreeMap<String, String>,
+)> {
+    repository()?;
+    let current = version(&common::version()?)?;
+    let selected = if let Some(tag) = explicit_tag {
+        Some(lookup(tag)?.context("Requested prior release does not exist")?)
+    } else {
+        let pages: Value = serde_json::from_slice(&gh(&[
+            "api",
+            &format!("repos/{REPOSITORY}/releases?per_page=100"),
+            "--paginate",
+            "--slurp",
+        ])?)?;
+        let mut releases = Vec::new();
+        for page in pages.as_array().context("Invalid release pages")? {
+            for candidate in page.as_array().context("Invalid release page")? {
+                let Some(tag) = candidate["tag_name"].as_str() else {
+                    continue;
+                };
+                if let Ok(v) = tag_version(tag)
+                    && candidate["draft"] == false
+                    && v <= current
+                    && channel(&v) == channel(&current)
+                {
+                    releases.push((v, candidate.clone()));
+                }
+            }
+        }
+        releases.sort_by(|a, b| a.0.cmp(&b.0));
+        releases.pop().map(|(_, release)| release)
+    };
+    let Some(selected) = selected else {
+        return Ok((None, BTreeMap::new()));
+    };
+    let name = format!("components-{}.json", channel(&current));
+    // Legacy assets are not component identities. The first inventory-less release
+    // builds all components; malformed new-format inventories fail instead of fallback.
+    if !selected["assets"]
+        .as_array()
+        .context("Missing release assets")?
+        .iter()
+        .any(|asset| asset["name"] == name)
+    {
+        return Ok((None, BTreeMap::new()));
+    }
+    let tag = selected["tag_name"].as_str().context("Missing prior tag")?;
+    let prior_version = tag_version(tag)?;
+    ensure!(
+        prior_version <= current && channel(&prior_version) == channel(&current),
+        "Prior release is outside the collection channel/version"
+    );
+    let mut cache = BTreeMap::new();
+    authenticate_inventory(tag, &mut cache, &mut BTreeSet::new())?;
+    let inventory = cache
+        .remove(tag)
+        .context("Missing authenticated prior inventory")?;
+    let mut hashes = BTreeMap::new();
+    let collection_provenance: Value = serde_json::from_slice(&trusted_asset_bytes(
+        &selected,
+        &format!("provenance-components-{}.json", inventory.channel),
+    )?)?;
+    for (target, target_inventory) in &inventory.targets {
+        let record_name = format!("provenance-{target}.json");
+        let origin = if collection_provenance["targets"].get(target).is_some() {
+            selected.clone()
+        } else if let Some(package) = target_inventory.packages.first() {
+            lookup(&package.artifact.origin_tag)?.context("Missing package origin")?
+        } else {
+            continue;
+        };
+        let provenance: Value =
+            serde_json::from_slice(&trusted_asset_bytes(&origin, &record_name)?)?;
+        let hash = provenance["plan"]["packageInputHash"]
+            .as_str()
+            .context("Missing package fingerprint")?;
+        paseo_protocol::components::validate_sha256(hash)?;
+        hashes.insert(target.clone(), hash.into());
+    }
+    Ok((Some(inventory), hashes))
+}
+pub(crate) fn recovery_plan() -> Result<crate::components::plan::Plan> {
+    repository()?;
+    let run = required("RECOVERY_RUN_ID")?;
+    ensure!(numeric_id(&run), "Exact recovery run required");
+    let info = api(&format!("repos/{REPOSITORY}/actions/runs/{run}"))?;
+    ensure!(
+        info["path"] == WORKFLOW
+            && info["event"] == "workflow_dispatch"
+            && info["status"] == "completed"
+            && info["head_repository"]["full_name"] == REPOSITORY,
+        "Invalid recovery workflow"
+    );
+    let temporary = tempfile::tempdir()?;
+    gh(&[
+        "run",
+        "download",
+        &run,
+        "--repo",
+        REPOSITORY,
+        "--name",
+        "native-component-plan",
+        "--dir",
+        temporary.path().to_str().context("Invalid recovery path")?,
+    ])?;
+    let plan = crate::components::plan::read(&temporary.path().join("component-plan.json"))?;
+    ensure!(
+        plan.source_sha == required("SOURCE_SHA")? && plan.version == common::version()?,
+        "Recovery plan source mismatch"
+    );
+    Ok(plan)
+}
+#[cfg(test)]
 fn complete_feeds_with(
     release: &Value,
     ids: &[Identity],
@@ -160,6 +489,7 @@ fn complete_feeds_with(
     }
     Ok(())
 }
+#[cfg(test)]
 fn upload_ordered(
     dir: &Path,
     binaries: &BTreeSet<String>,
@@ -172,60 +502,159 @@ fn upload_ordered(
     }
     Ok(())
 }
+fn upload_immutable(tag: &str, release: &Value, path: &Path) -> Result<()> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Invalid upload basename")?;
+    let existing: Vec<_> = release["assets"]
+        .as_array()
+        .context("Missing release assets")?
+        .iter()
+        .filter(|a| a["name"] == name)
+        .collect();
+    ensure!(existing.len() <= 1, "Ambiguous immutable asset");
+    if let Some(remote) = existing.first() {
+        let temporary = tempfile::tempdir()?;
+        let downloaded = temporary.path().join("asset");
+        download_asset(remote, &downloaded)?;
+        ensure!(
+            common::sha256_file(path)? == common::sha256_file(&downloaded)?,
+            "Refusing to replace immutable release asset {name}"
+        );
+        return Ok(());
+    }
+    gh(&[
+        "release",
+        "upload",
+        tag,
+        path.to_str().context("Invalid upload path")?,
+        "--repo",
+        REPOSITORY,
+    ])?;
+    Ok(())
+}
+fn upload_metadata(tag: &str, release: &Value, path: &Path) -> Result<()> {
+    ensure!(
+        path.extension()
+            .is_some_and(|extension| extension == "json"),
+        "Only draft metadata may be replaced"
+    );
+    if release["draft"] == true {
+        upload(tag, path)
+    } else {
+        upload_immutable(tag, release, path)
+    }
+}
 pub(super) fn publish() -> Result<()> {
     repository()?;
+    let plan = integrity::component_plan()?;
+    if plan.no_changes {
+        println!("No component or package changes; no release published");
+        return Ok(());
+    }
     let tag = required("RELEASE_TAG")?;
-    let ids = expected()?;
-    let first = &ids[0];
     ensure!(
-        tag == format!("v{}", first.version),
-        "Canonical release tag required"
+        tag == format!("v{}", plan.version)
+            && plan.version == common::version()?
+            && plan.source_sha == required("SOURCE_SHA")?,
+        "Publication collection mismatch"
     );
+    let run = required("GITHUB_RUN_ID")?;
+    ensure!(numeric_id(&run), "Missing publication run identity");
+    let ids = expected()?;
+    let changed: BTreeSet<_> = plan
+        .targets
+        .iter()
+        .filter(|t| t.changed())
+        .map(|t| t.target.as_str())
+        .collect();
     ensure!(
-        common::version()? == first.version,
-        "Workspace/source version mismatch"
+        ids.iter()
+            .map(|id| id.target.as_str())
+            .collect::<BTreeSet<_>>()
+            == changed,
+        "Expected targets do not match changed component plan"
     );
     let dir = directory()?;
-    let amount = hours(&var("ROLLOUT_HOURS", "36"))?;
-    let publication_run = required("GITHUB_RUN_ID")?;
-    ensure!(
-        numeric_id(&publication_run),
-        "Missing exact publication run identity"
-    );
-    let notes = format!(
-        "{}\n\nBuild source: [`{sha}`](https://github.com/{REPOSITORY}/commit/{sha}).\n",
-        metadata::release_notes(&first.version)?,
-        sha = first.sha,
-    );
-    let notes_dir = tempfile::tempdir()?;
-    let notes_path = notes_dir.path().join("notes.txt");
-    fs::write(&notes_path, notes)?;
     let mut binaries = BTreeSet::new();
-    let mut feeds = BTreeSet::new();
-    let mut retained = BTreeSet::new();
-    // Validate every target before the first GitHub mutation.
+    let mut metadata_files = BTreeSet::new();
+    let mut provenance_hashes = BTreeMap::new();
+    // Every immutable input and every reused origin is verified before mutation.
     for id in &ids {
         let record = integrity::verify(&dir, id)?;
-        retained.insert(format!("provenance-{}.json", id.target));
-        for entry in record["files"].as_array().unwrap() {
-            let name = entry["name"].as_str().unwrap().to_owned();
-            if name.starts_with("Paseo-") {
-                binaries.insert(name);
-            } else if name.starts_with(&format!("{CLIENT}-")) || name.starts_with("daemon-") {
-                feeds.insert(name);
+        let provenance_name = format!("provenance-{}.json", id.target);
+        provenance_hashes.insert(
+            id.target.clone(),
+            common::sha256_file(&dir.join(&provenance_name))?,
+        );
+        metadata_files.insert(provenance_name);
+        for entry in record["files"]
+            .as_array()
+            .context("Missing recorded artifacts")?
+        {
+            let name = entry["name"]
+                .as_str()
+                .context("Invalid recorded artifact")?
+                .to_owned();
+            if name.ends_with(".json") {
+                metadata_files.insert(name);
             } else {
-                retained.insert(name);
+                binaries.insert(name);
             }
         }
     }
+    let inventory = integrity::assemble(&dir)?;
+    let mut origins = BTreeMap::new();
+    for target in inventory.targets.values() {
+        for reference in target
+            .components
+            .values()
+            .map(|c| &c.artifact)
+            .chain(target.packages.iter().map(|p| &p.artifact))
+        {
+            if reference.origin_tag != tag {
+                authenticate_inventory(&reference.origin_tag, &mut origins, &mut BTreeSet::new())?;
+            }
+        }
+    }
+    paseo_protocol::components::validate_inventory_provenance(&inventory, &origins, REPOSITORY)?;
+    common::write_json(
+        &dir.join(format!("components-{}.json", plan.channel)),
+        &serde_json::to_value(&inventory)?,
+    )?;
+    let inventory_name = format!("components-{}.json", plan.channel);
+    let provenance_name = format!("provenance-components-{}.json", plan.channel);
+    common::write_json(
+        &dir.join(&provenance_name),
+        &json!({"schemaVersion":2,"workflow":WORKFLOW,"version":plan.version,"sourceSha":plan.source_sha,"channel":plan.channel,"runId":run,
+        "inventory":{"name":inventory_name,"size":fs::metadata(dir.join(&inventory_name))?.len(),"sha256":common::sha256_file(&dir.join(&inventory_name))?},"targets":provenance_hashes}),
+    )?;
+    metadata_files.insert(provenance_name);
+    let notes_directory = tempfile::tempdir()?;
+    let notes_path = notes_directory.path().join("notes.txt");
+    fs::write(
+        &notes_path,
+        format!(
+            "{}\n\nCollection source: [`{sha}`](https://github.com/{REPOSITORY}/commit/{sha}). Component build sources are retained in `{inventory_name}`.\n",
+            metadata::release_notes(&plan.version)?,
+            sha = plan.source_sha
+        ),
+    )?;
     let release = match lookup(&tag)? {
-        Some(release) => release,
+        Some(release) => {
+            ensure!(
+                release["target_commitish"] == plan.source_sha,
+                "Existing collection source mismatch"
+            );
+            release
+        }
         None => {
             ensure!(
                 var("CREATE_RELEASE", "false") == "true",
-                "Platform-only repair requires an existing release"
+                "Platform repair requires an existing release"
             );
-            let created = gh(&[
+            serde_json::from_slice(&gh(&[
                 "api",
                 "--method",
                 "POST",
@@ -233,7 +662,7 @@ pub(super) fn publish() -> Result<()> {
                 "-f",
                 &format!("tag_name={tag}"),
                 "-f",
-                &format!("target_commitish={}", first.sha),
+                &format!("target_commitish={}", plan.source_sha),
                 "-f",
                 &format!("name={tag}"),
                 "-F",
@@ -241,73 +670,73 @@ pub(super) fn publish() -> Result<()> {
                 "-F",
                 "draft=true",
                 "-F",
-                &format!("prerelease={}", !version(&first.version)?.pre.is_empty()),
-            ])?;
-            serde_json::from_slice(&created).context("Invalid created release response")?
+                &format!("prerelease={}", !version(&plan.version)?.pre.is_empty()),
+            ])?)?
         }
     };
     let release_id = release["id"].as_u64().context("Missing release ID")?;
-    let lookup_tag = release["tag_name"]
+    let release_date = release["published_at"]
         .as_str()
-        .context("Missing release tag")?;
-    // Start a new rollout at publication, not the source commit timestamp.
-    // Repairs of a published release retain its original rollout origin.
-    let date = match release["published_at"].as_str() {
-        Some(date) => chrono::DateTime::parse_from_rfc3339(date)?.with_timezone(&chrono::Utc),
-        None => chrono::Utc::now(),
+        .or_else(|| release["created_at"].as_str())
+        .context("Missing release date")?;
+    integrity::manifests_at(&dir, release_date)?;
+    // Never re-upload old component/package binaries. Inventory and feeds are last.
+    for name in &binaries {
+        upload_immutable(&tag, &release, &dir.join(name))?;
     }
-    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    for id in &ids {
-        if target(&id.target)?.desktop {
-            let name = feed(id, CLIENT);
-            let mut manifest = integrity::restamp(common::read_json(&dir.join(&name))?, amount)?;
-            manifest["releaseDate"] = json!(date);
-            let provenance_path = dir.join(format!("provenance-{}.json", id.target));
-            let mut provenance = common::read_json(&provenance_path)?;
-            provenance["buildFiles"] = provenance["files"].clone();
-            provenance["publicationRunId"] = json!(publication_run);
-            common::write_json(&dir.join(&name), &manifest)?;
-            for entry in provenance["files"].as_array_mut().unwrap() {
-                if entry["name"] == name {
-                    entry["size"] = json!(fs::metadata(dir.join(&name))?.len());
-                    entry["sha256"] = json!(common::sha256_file(&dir.join(&name))?);
-                }
+    for name in &metadata_files {
+        upload_metadata(&tag, &release, &dir.join(name))?;
+    }
+    let fresh = api(&format!("repos/{REPOSITORY}/releases/{release_id}"))?;
+    for target in inventory.targets.values() {
+        for reference in target
+            .components
+            .values()
+            .map(|c| &c.artifact)
+            .chain(target.packages.iter().map(|p| &p.artifact))
+        {
+            if reference.origin_tag == tag {
+                verify_remote_artifact(&fresh, reference)?;
             }
-            common::write_json(&provenance_path, &provenance)?;
-            integrity::verify(&dir, id)?;
         }
     }
-    // A failed binary upload cannot advertise an unavailable installer.
-    upload_ordered(&dir, &binaries, &retained, &feeds, |path| {
-        upload(lookup_tag, path)
-    })?;
+    upload_metadata(&tag, &fresh, &dir.join(&inventory_name))?;
+    let mut feeds = BTreeSet::new();
+    for target in inventory
+        .targets
+        .keys()
+        .filter(|id| super::target(id).is_ok_and(|t| t.desktop))
+    {
+        for prefix in [CLIENT, "daemon"] {
+            let name = format!("{prefix}-{}-{target}.json", plan.channel);
+            upload_metadata(&tag, &fresh, &dir.join(&name))?;
+            feeds.insert(name);
+        }
+    }
+    let uploaded = api(&format!("repos/{REPOSITORY}/releases/{release_id}"))?;
+    for name in metadata_files
+        .iter()
+        .chain(&feeds)
+        .chain(std::iter::once(&inventory_name))
+    {
+        let bytes = trusted_asset_bytes(&uploaded, name)?;
+        ensure!(
+            bytes == fs::read(dir.join(name))?,
+            "Uploaded release metadata differs: {name}"
+        );
+    }
     gh(&[
         "api",
         "--method",
         "PATCH",
         &format!("repos/{REPOSITORY}/releases/{release_id}"),
-        "-F",
-        &format!("body=@{}", notes_path.display()),
         "-f",
         &format!("tag_name={tag}"),
+        "-F",
+        "draft=false",
+        "-F",
+        &format!("prerelease={}", !version(&plan.version)?.pre.is_empty()),
     ])?;
-    // Mobile-only releases never publish a desktop draft.
-    if !feeds.is_empty() {
-        let fresh = api(&format!("repos/{REPOSITORY}/releases/{release_id}"))?;
-        complete_feeds(&fresh, &ids)?;
-        gh(&[
-            "api",
-            "--method",
-            "PATCH",
-            &format!("repos/{REPOSITORY}/releases/{release_id}"),
-            "-f",
-            &format!("tag_name={tag}"),
-            "-F",
-            "draft=false",
-            "-F",
-            &format!("prerelease={}", !version(&first.version)?.pre.is_empty()),
-        ])?;
-    }
     Ok(())
 }
 pub(super) fn recovery(args: &[String]) -> Result<()> {
@@ -323,7 +752,10 @@ pub(super) fn recovery(args: &[String]) -> Result<()> {
     );
     let info = api(&format!("repos/{REPOSITORY}/actions/runs/{run}"))?;
     ensure!(
-        info["path"] == WORKFLOW && info["status"] == "completed",
+        info["path"] == WORKFLOW
+            && info["event"] == "workflow_dispatch"
+            && info["status"] == "completed"
+            && info["head_repository"]["full_name"] == REPOSITORY,
         "Recovery requires a completed canonical Native Release run"
     );
     let targets: Vec<String> = serde_json::from_str(&required("RECOVERY_TARGETS")?)?;
@@ -372,7 +804,9 @@ pub(super) fn recovery(args: &[String]) -> Result<()> {
     Ok(())
 }
 fn published_desktop_targets(release: &Value, channel: &str) -> Result<Vec<Target>> {
-    let assets = release["assets"].as_array().context("Missing release assets")?;
+    let assets = release["assets"]
+        .as_array()
+        .context("Missing release assets")?;
     let mut targets = Vec::new();
     for target in TARGETS.iter().copied().filter(|target| target.desktop) {
         let id = target.id();
@@ -381,7 +815,10 @@ fn published_desktop_targets(release: &Value, channel: &str) -> Result<Vec<Targe
             format!("{CLIENT}-{channel}-{id}.json"),
             format!("daemon-{channel}-{id}.json"),
         ];
-        if !assets.iter().any(|asset| names.iter().any(|name| asset["name"] == *name)) {
+        if !assets
+            .iter()
+            .any(|asset| names.iter().any(|name| asset["name"] == *name))
+        {
             continue;
         }
         for name in names {
@@ -389,7 +826,10 @@ fn published_desktop_targets(release: &Value, channel: &str) -> Result<Vec<Targe
         }
         targets.push(target);
     }
-    ensure!(!targets.is_empty(), "Release has no declared desktop targets");
+    ensure!(
+        !targets.is_empty(),
+        "Release has no declared desktop targets"
+    );
     Ok(targets)
 }
 
@@ -400,23 +840,73 @@ pub(super) fn rollout() -> Result<()> {
     ensure!(tag == format!("v{v}"), "Canonical release tag required");
     let amount = hours(&required("NEW_HOURS")?)?;
     let release = lookup(&tag)?.context("Release not found")?;
+    let component_format = release["assets"]
+        .as_array()
+        .context("Missing release assets")?
+        .iter()
+        .any(|a| a["name"] == format!("components-{}.json", channel(&v)));
+    let mut authenticated = BTreeMap::new();
+    if component_format {
+        authenticate_inventory(&tag, &mut authenticated, &mut BTreeSet::new())?;
+    }
+    let targets = if let Some(inventory) = authenticated.get(&tag) {
+        inventory
+            .targets
+            .keys()
+            .filter_map(|id| target(id).ok().filter(|t| t.desktop))
+            .collect()
+    } else {
+        published_desktop_targets(&release, channel(&v))?
+    };
     let dir = tempfile::tempdir()?;
     let mut updates = Vec::new();
     let mut sha = None;
-    for t in published_desktop_targets(&release, channel(&v))? {
+    for t in targets {
         let name = format!("{CLIENT}-{}-{}.json", channel(&v), t.id());
         let manifest: Value = serde_json::from_slice(&asset_bytes(asset(&release, &name)?)?)?;
         ensure!(
-            manifest["version"] == v.to_string()
+            manifest[if component_format {
+                "collectionVersion"
+            } else {
+                "version"
+            }] == v.to_string()
                 && manifest["channel"] == channel(&v)
                 && manifest["platform"] == t.platform
                 && manifest["arch"] == t.arch,
             "Rollout manifest identity mismatch"
         );
-        if let Some(sha) = &sha {
+        if component_format {
+            let inventory = authenticated
+                .get(&tag)
+                .context("Missing authenticated rollout inventory")?;
+            let expected = inventory
+                .targets
+                .get(&t.id())
+                .and_then(|t| {
+                    t.components
+                        .get(&paseo_protocol::components::ComponentId::App)
+                })
+                .context("Missing app cohort")?;
+            ensure!(
+                manifest["schemaVersion"] == 2
+                    && manifest["collectionSourceSha"] == inventory.source_sha
+                    && manifest["component"] == serde_json::to_value(expected)?,
+                "Rollout feed does not reference authenticated component inventory"
+            );
+            let bytes =
+                trusted_asset_bytes(&release, &format!("components-{}.json", inventory.channel))?;
+            use base64::Engine;
+            use sha2::Digest;
+            ensure!(
+                manifest["inventory"]["sha512"]
+                    == base64::engine::general_purpose::STANDARD
+                        .encode(sha2::Sha512::digest(bytes)),
+                "Rollout inventory pin mismatch"
+            );
+        } else if let Some(sha) = &sha {
             ensure!(
                 manifest["sourceSha"] == *sha,
-                "Mixed source SHAs in release"
+                "Mixed legacy source SHAs in release"
             );
         } else {
             sha = Some(manifest["sourceSha"].clone());
@@ -436,7 +926,36 @@ pub(super) fn rollout() -> Result<()> {
 mod tests {
     use super::*;
     use base64::{Engine, engine::general_purpose::STANDARD};
-    fn fixture() -> (Value, Vec<Identity>, std::collections::BTreeMap<String, Value>) {
+    #[test]
+    fn origin_assets_require_exact_url_hash_size_and_publisher() {
+        let reference = paseo_protocol::components::ArtifactRef {
+            url:"https://github.com/emotionbug/Passession/releases/download/v0.13.26/component.tar.gz".into(),
+            sha256:"a".repeat(64),size:42,format:"tar.gz".into(),origin_tag:"v0.13.26".into(),
+        };
+        let release = json!({"assets":[{"name":"component.tar.gz","size":42,"browser_download_url":reference.url,"digest":format!("sha256:{}",reference.sha256),"uploader":{"login":"github-actions[bot]"}}]});
+        verify_remote_artifact(&release, &reference).unwrap();
+        for (key, value) in [
+            ("size", json!(43)),
+            ("digest", json!(format!("sha256:{}", "b".repeat(64)))),
+            (
+                "browser_download_url",
+                json!("https://example.invalid/component.tar.gz"),
+            ),
+            ("uploader", json!({"login":"untrusted"})),
+        ] {
+            let mut corrupt = release.clone();
+            corrupt["assets"][0][key] = value;
+            assert!(
+                verify_remote_artifact(&corrupt, &reference).is_err(),
+                "{key}"
+            );
+        }
+    }
+    fn fixture() -> (
+        Value,
+        Vec<Identity>,
+        std::collections::BTreeMap<String, Value>,
+    ) {
         let template = Identity {
             sha: "a".repeat(40),
             source_tag: "v0.13.1".into(),
@@ -507,7 +1026,7 @@ mod tests {
         missing["assets"]
             .as_array_mut()
             .unwrap()
-            .retain(|a| a["name"] != "flutter-stable-macos-x64.json");
+            .retain(|a| a["name"] != "app-stable-macos-x64.json");
         assert!(
             complete_feeds_with(
                 &missing,
@@ -527,17 +1046,25 @@ mod tests {
             name.contains("linux-x64") || name.contains("windows-x64")
         });
         complete_feeds_with(
-            &release, &ids,
+            &release,
+            &ids,
             |a| Ok(manifests[a["name"].as_str().unwrap()].clone()),
             |_, _| Ok(()),
-        ).unwrap();
-        release["assets"].as_array_mut().unwrap()
+        )
+        .unwrap();
+        release["assets"]
+            .as_array_mut()
+            .unwrap()
             .retain(|asset| asset["name"] != "daemon-stable-windows-x64.json");
-        assert!(complete_feeds_with(
-            &release, &ids,
-            |a| Ok(manifests[a["name"].as_str().unwrap()].clone()),
-            |_, _| Ok(()),
-        ).is_err());
+        assert!(
+            complete_feeds_with(
+                &release,
+                &ids,
+                |a| Ok(manifests[a["name"].as_str().unwrap()].clone()),
+                |_, _| Ok(()),
+            )
+            .is_err()
+        );
     }
     #[test]
     fn remote_binary_integrity_failure_blocks_publication_gate() {
@@ -555,26 +1082,44 @@ mod tests {
     #[test]
     fn partial_rollout_requires_provenance_and_both_feeds_for_each_target() {
         let names = [
-            "provenance-linux-x64.json", "flutter-stable-linux-x64.json",
-            "daemon-stable-linux-x64.json", "provenance-windows-x64.json",
-            "flutter-stable-windows-x64.json", "daemon-stable-windows-x64.json",
+            "provenance-linux-x64.json",
+            "app-stable-linux-x64.json",
+            "daemon-stable-linux-x64.json",
+            "provenance-windows-x64.json",
+            "app-stable-windows-x64.json",
+            "daemon-stable-windows-x64.json",
             "provenance-android-universal.json",
         ];
         let release = json!({"assets":names.map(|name| json!({"name":name}))});
         let targets = published_desktop_targets(&release, "stable").unwrap();
-        assert_eq!(targets.into_iter().map(Target::id).collect::<Vec<_>>(), ["linux-x64", "windows-x64"]);
-        for missing in ["provenance-windows-x64.json", "daemon-stable-linux-x64.json"] {
+        assert_eq!(
+            targets.into_iter().map(Target::id).collect::<Vec<_>>(),
+            ["linux-x64", "windows-x64"]
+        );
+        for missing in [
+            "provenance-windows-x64.json",
+            "daemon-stable-linux-x64.json",
+        ] {
             let mut incomplete = release.clone();
-            incomplete["assets"].as_array_mut().unwrap().retain(|asset| asset["name"] != missing);
+            incomplete["assets"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|asset| asset["name"] != missing);
             assert!(published_desktop_targets(&incomplete, "stable").is_err());
         }
-        assert!(published_desktop_targets(&json!({"assets":[{"name":"provenance-android-universal.json"}]}), "stable").is_err());
+        assert!(
+            published_desktop_targets(
+                &json!({"assets":[{"name":"provenance-android-universal.json"}]}),
+                "stable"
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn failed_upload_never_reaches_feeds() {
         let binaries = BTreeSet::from(["app.zip".into(), "daemon.zip".into()]);
-        let feeds = BTreeSet::from(["flutter.json".into()]);
+        let feeds = BTreeSet::from(["app.json".into()]);
         let retained = BTreeSet::from(["provenance.json".into()]);
         let mut sent = Vec::new();
         assert!(
@@ -596,7 +1141,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             sent,
-            ["app.zip", "daemon.zip", "provenance.json", "flutter.json"]
+            ["app.zip", "daemon.zip", "provenance.json", "app.json"]
         );
     }
 }

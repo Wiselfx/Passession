@@ -371,9 +371,10 @@ impl Terminal {
         }
         let (tx, rx) = oneshot::channel();
         if self.commands.send(Command::Stop(tx)).await.is_ok()
-            && let Ok(result) = rx.await {
-                result?;
-            }
+            && let Ok(result) = rx.await
+        {
+            result?;
+        }
         self.wait().await?;
         Ok(())
     }

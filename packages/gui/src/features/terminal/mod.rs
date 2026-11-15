@@ -17,7 +17,10 @@ pub mod snapshot;
 pub mod stream;
 pub mod view;
 
-pub use panel::{TerminalPanel, TerminalPanelRef, TerminalPanelWidgetExt, TerminalPanelWidgetRefExt, TerminalTarget};
+pub use panel::{
+    TerminalPanel, TerminalPanelRef, TerminalPanelWidgetExt, TerminalPanelWidgetRefExt,
+    TerminalTarget,
+};
 
 /// Registers the grid and the find card before the logs view and the terminal panel that
 /// use them.

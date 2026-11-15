@@ -311,8 +311,7 @@ impl GitService {
                     _ = cancel.cancelled() => bail!("Git mutation cancelled before admission"),
                     guard = entry.mutation.lock() => guard,
                 };
-                let result =
-                    mutations::commit_selected(&cwd, &paths, &text, &env, cancel).await;
+                let result = mutations::commit_selected(&cwd, &paths, &text, &env, cancel).await;
                 if let Some(app) = app.upgrade()
                     && let Err(error) = app.git.notify_mutation(&cwd).await
                 {

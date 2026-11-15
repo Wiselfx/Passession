@@ -12,13 +12,24 @@ use super::rpc::{object_of, str_of};
 use super::setup::WaSetupViewWidgetExt;
 use crate::common::UiContext;
 
-
 /// What a workspace tab shows (shell `panels.rs` `workspace_target`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceTarget {
-    NewTab { host_id: String, workspace_id: Option<String>, cwd: Option<String>, tab_id: String, source: Option<String> },
-    Setup { host_id: String, workspace_id: String },
-    ProjectSettings { host_id: String, project_key: String },
+    NewTab {
+        host_id: String,
+        workspace_id: Option<String>,
+        cwd: Option<String>,
+        tab_id: String,
+        source: Option<String>,
+    },
+    Setup {
+        host_id: String,
+        workspace_id: String,
+    },
+    ProjectSettings {
+        host_id: String,
+        project_key: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -55,7 +66,9 @@ impl WorkspacePanel {
 
     /// Applies the target together with the dispatched tab's cwd, key and data.
     fn apply(&mut self, cx: &mut Cx, ctx: &UiContext) {
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let tab = ctx.target.as_ref();
         let cwd = tab.map(|t| t.cwd.clone()).unwrap_or_default();
         let tab_key = ctx.tab_key.clone().unwrap_or_default();
@@ -66,22 +79,43 @@ impl WorkspacePanel {
         }
         self.applied = Some(applied);
         match target {
-            WorkspaceTarget::Setup { host_id, workspace_id } => {
+            WorkspaceTarget::Setup {
+                host_id,
+                workspace_id,
+            } => {
                 if let Some(mut setup) = self.view.wa_setup_view(id!(setup)).borrow_mut() {
                     setup.set_workspace(cx, &host_id, &workspace_id, &cwd);
                 }
             }
-            WorkspaceTarget::ProjectSettings { host_id, project_key } => {
-                let root = [str_of(&data, "repoRoot"), str_of(object_of(&data, "project"), "projectRootPath"), project_key.as_str(), cwd.as_str()]
-                    .into_iter()
-                    .find(|value| !value.is_empty())
-                    .unwrap_or("")
-                    .to_owned();
-                if let Some(mut project) = self.view.wa_project_settings_view(id!(project)).borrow_mut() {
+            WorkspaceTarget::ProjectSettings {
+                host_id,
+                project_key,
+            } => {
+                let root = [
+                    str_of(&data, "repoRoot"),
+                    str_of(object_of(&data, "project"), "projectRootPath"),
+                    project_key.as_str(),
+                    cwd.as_str(),
+                ]
+                .into_iter()
+                .find(|value| !value.is_empty())
+                .unwrap_or("")
+                .to_owned();
+                if let Some(mut project) = self
+                    .view
+                    .wa_project_settings_view(id!(project))
+                    .borrow_mut()
+                {
                     project.set_project(cx, &host_id, &root, &tab_key);
                 }
             }
-            WorkspaceTarget::NewTab { host_id, workspace_id, cwd: target_cwd, tab_id, source } => {
+            WorkspaceTarget::NewTab {
+                host_id,
+                workspace_id,
+                cwd: target_cwd,
+                tab_id,
+                source,
+            } => {
                 let target = NewTabTarget {
                     host_id,
                     workspace_id: workspace_id.unwrap_or_default(),
@@ -106,7 +140,9 @@ impl Widget for WorkspacePanel {
         }
         let child = self.child();
         if !child.is_empty() {
-            scope.with_id(live_id!(workspace), |scope| child.handle_event(cx, event, scope));
+            scope.with_id(live_id!(workspace), |scope| {
+                child.handle_event(cx, event, scope)
+            });
         }
     }
 
@@ -121,7 +157,9 @@ impl Widget for WorkspacePanel {
 impl WorkspacePanelRef {
     /// Mounts the panel on a workspace tab target.
     pub fn set_target(&self, cx: &mut Cx, target: WorkspaceTarget) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.target.as_ref() == Some(&target) {
             return;
         }
@@ -133,9 +171,18 @@ impl WorkspacePanelRef {
         inner.target = Some(target);
         inner.applied = None;
         let active = inner.active;
-        inner.view.widget(id!(setup)).set_visible(cx, active == Active::Setup);
-        inner.view.widget(id!(project)).set_visible(cx, active == Active::Project);
-        inner.view.widget(id!(new_tab)).set_visible(cx, active == Active::NewTab);
+        inner
+            .view
+            .widget(id!(setup))
+            .set_visible(cx, active == Active::Setup);
+        inner
+            .view
+            .widget(id!(project))
+            .set_visible(cx, active == Active::Project);
+        inner
+            .view
+            .widget(id!(new_tab))
+            .set_visible(cx, active == Active::NewTab);
         inner.view.redraw(cx);
     }
 }

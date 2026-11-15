@@ -6,13 +6,15 @@
 use makepad_widgets::*;
 use serde_json::{Value, json};
 
-use crate::common::overlay::{fit_in_viewport, take_dismissal, MenuEntry, OverlayKind, OverlayRequest, SelectOption, Tip};
+use crate::common::overlay::{
+    MenuEntry, OverlayKind, OverlayRequest, SelectOption, Tip, fit_in_viewport, take_dismissal,
+};
 use crate::common::paint::{Font, HitMap, TextSpec, inset, rect};
 use crate::common::widgets::PTextFieldWidgetRefExt;
 use crate::common::{UiContext, tr};
+use crate::shell::PaseoShell;
 use crate::shell::sheets::{Sheet, SheetFlow, SheetOps, SheetStyle};
 use crate::shell::ui::{Pointer, Press, RowLead, Ui, Variant};
-use crate::shell::PaseoShell;
 use crate::theme::{self, ControlSize, with_alpha};
 
 pub struct OpenMenu {
@@ -57,7 +59,9 @@ pub struct OpenSelect {
 impl OpenSelect {
     /// Indices of the options the query keeps, in order.
     pub fn visible(&self) -> Vec<usize> {
-        (0..self.options.len()).filter(|&i| self.options[i].matches(&self.query)).collect()
+        (0..self.options.len())
+            .filter(|&i| self.options[i].matches(&self.query))
+            .collect()
     }
 }
 
@@ -66,7 +70,15 @@ pub enum Modal {
     Select(OpenSelect),
     /// `ok_focused`: the button Enter activates (←/→/Tab move it). Destructive confirms start
     /// on Cancel.
-    Confirm { id: u64, owner: String, title: String, message: String, confirm_label: String, destructive: bool, ok_focused: bool },
+    Confirm {
+        id: u64,
+        owner: String,
+        title: String,
+        message: String,
+        confirm_label: String,
+        destructive: bool,
+        ok_focused: bool,
+    },
     Prompt {
         id: u64,
         owner: String,
@@ -77,7 +89,14 @@ pub enum Modal {
         focused: bool,
         multiline: bool,
     },
-    Sheet { id: u64, sheet: Box<dyn Sheet>, scroll: f64, content_height: f64, viewport: Rect, motion: SheetMotion },
+    Sheet {
+        id: u64,
+        sheet: Box<dyn Sheet>,
+        scroll: f64,
+        content_height: f64,
+        viewport: Rect,
+        motion: SheetMotion,
+    },
 }
 
 /// Draggable extent snap points (`minChildSize .3`, `snapSizes [.6]`, `maxChildSize .9`).
@@ -115,7 +134,9 @@ impl SheetMotion {
 
     /// Advances the extent animation (ease-out cubic); `true` while still moving.
     fn step(&mut self, now: f64) -> bool {
-        let Some(start) = self.start else { return false };
+        let Some(start) = self.start else {
+            return false;
+        };
         let t = ((now - start) / self.duration).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - t).powi(3);
         self.extent = self.from + (self.to - self.from) * eased;
@@ -128,7 +149,13 @@ impl SheetMotion {
 
     /// The nearest snap point for a released drag.
     fn snap(extent: f64) -> f64 {
-        DRAG_SNAPS.iter().copied().fold(DRAG_SNAPS[0], |best, s| if (s - extent).abs() < (best - extent).abs() { s } else { best })
+        DRAG_SNAPS.iter().copied().fold(DRAG_SNAPS[0], |best, s| {
+            if (s - extent).abs() < (best - extent).abs() {
+                s
+            } else {
+                best
+            }
+        })
     }
 }
 
@@ -199,7 +226,11 @@ impl Overlays {
         });
         if let Some(focus) = restore {
             if focus != self.focus && cx.clear_key_focus_if(self.focus) {
-                let target = if focus.is_valid(cx) { focus } else { Area::Empty };
+                let target = if focus.is_valid(cx) {
+                    focus
+                } else {
+                    Area::Empty
+                };
                 cx.set_key_focus(target);
                 self.focus = target;
             }
@@ -224,7 +255,14 @@ impl Overlays {
         self.touch_scroll.reset();
         self.pointer = Pointer::default();
         let modal = match request.kind {
-            OverlayKind::Menu { title, anchor, entries, width, align_end, sheet } => Modal::Menu(OpenMenu {
+            OverlayKind::Menu {
+                title,
+                anchor,
+                entries,
+                width,
+                align_end,
+                sheet,
+            } => Modal::Menu(OpenMenu {
                 id: request.id,
                 owner: request.owner,
                 title: title.clone(),
@@ -238,26 +276,69 @@ impl Overlays {
                 viewport: Rect::default(),
                 active: None,
             }),
-            OverlayKind::Confirm { title, message, confirm_label, destructive } => {
-                Modal::Confirm { id: request.id, owner: request.owner, title, message, confirm_label, ok_focused: !destructive, destructive }
-            }
-            OverlayKind::Prompt { title, message, initial, placeholder, confirm_label, multiline } => {
+            OverlayKind::Confirm {
+                title,
+                message,
+                confirm_label,
+                destructive,
+            } => Modal::Confirm {
+                id: request.id,
+                owner: request.owner,
+                title,
+                message,
+                confirm_label,
+                ok_focused: !destructive,
+                destructive,
+            },
+            OverlayKind::Prompt {
+                title,
+                message,
+                initial,
+                placeholder,
+                confirm_label,
+                multiline,
+            } => {
                 let field = WidgetRef::new_from_ptr(cx, field_ptr);
                 let text = field.as_ptext_field();
                 field.set_text(cx, &initial);
                 text.set_placeholder(cx, &placeholder);
                 text.set_multiline(cx, multiline);
-                Modal::Prompt { id: request.id, owner: request.owner, title, message, field, confirm_label, focused: false, multiline }
+                Modal::Prompt {
+                    id: request.id,
+                    owner: request.owner,
+                    title,
+                    message,
+                    field,
+                    confirm_label,
+                    focused: false,
+                    multiline,
+                }
             }
-            OverlayKind::Select { title, anchor, options, value, searchable, search_placeholder, empty_text, min_width } => {
+            OverlayKind::Select {
+                title,
+                anchor,
+                options,
+                value,
+                searchable,
+                search_placeholder,
+                empty_text,
+                min_width,
+            } => {
                 let search = searchable.then(|| {
                     let field = WidgetRef::new_from_ptr(cx, field_ptr);
                     let text = field.as_ptext_field();
                     text.set_plain(cx);
-                    text.set_placeholder(cx, &search_placeholder.clone().unwrap_or_else(|| tr("common.actions.search")));
+                    text.set_placeholder(
+                        cx,
+                        &search_placeholder
+                            .clone()
+                            .unwrap_or_else(|| tr("common.actions.search")),
+                    );
                     field
                 });
-                let active = value.as_ref().and_then(|v| options.iter().position(|o| &o.value == v && o.enabled));
+                let active = value
+                    .as_ref()
+                    .and_then(|v| options.iter().position(|o| &o.value == v && o.enabled));
                 Modal::Select(OpenSelect {
                     id: request.id,
                     owner: request.owner,
@@ -287,7 +368,14 @@ impl Overlays {
         self.pointer = Pointer::default();
         self.next_sheet += 1;
         let id = 1_000_000 + self.next_sheet;
-        self.stack.push(Modal::Sheet { id, sheet, scroll: 0.0, content_height: 0.0, viewport: Rect::default(), motion: SheetMotion::default() });
+        self.stack.push(Modal::Sheet {
+            id,
+            sheet,
+            scroll: 0.0,
+            content_height: 0.0,
+            viewport: Rect::default(),
+            motion: SheetMotion::default(),
+        });
         self.tooltip = None;
         self.tooltip_pending = None;
         id
@@ -379,7 +467,15 @@ fn show_toast(overlays: &mut Overlays, cx: &mut Cx, text: String, error: bool) {
     let remaining = toast_duration(&text, error);
     let timer = cx.start_timeout(remaining);
     let started = cx.seconds_since_app_start();
-    overlays.toast = Some(Toast { message: text, error, timer, remaining, started, paused: false, rect: Rect::default() });
+    overlays.toast = Some(Toast {
+        message: text,
+        error,
+        timer,
+        remaining,
+        started,
+        paused: false,
+        rect: Rect::default(),
+    });
     cx.redraw_all();
 }
 
@@ -397,13 +493,18 @@ fn dismiss_toast(overlays: &mut Overlays, cx: &mut Cx) {
 /// Pointer input on the toast: hovering pauses its timer, a click or tap dismisses it. Returns
 /// true when the event was the dismissing press (it must not reach the content below).
 fn toast_input(overlays: &mut Overlays, cx: &mut Cx, event: &Event) -> bool {
-    let Some(toast) = overlays.toast.as_mut() else { return false };
+    let Some(toast) = overlays.toast.as_mut() else {
+        return false;
+    };
     let (inside, press) = match event {
         Event::MouseMove(e) => (toast.rect.contains(e.abs), false),
         Event::MouseLeave(_) => (false, false),
         Event::MouseDown(e) => (toast.rect.contains(e.abs), true),
         Event::TouchUpdate(e) => {
-            let started = e.touches.iter().find(|t| matches!(t.state, makepad_widgets::event::TouchState::Start));
+            let started = e
+                .touches
+                .iter()
+                .find(|t| matches!(t.state, makepad_widgets::event::TouchState::Start));
             match started {
                 Some(touch) => (toast.rect.contains(touch.abs), true),
                 None => return false,
@@ -436,15 +537,21 @@ fn toast_input(overlays: &mut Overlays, cx: &mut Cx, event: &Event) -> bool {
 
 pub fn handle_timers(overlays: &mut Overlays, cx: &mut Cx, event: &Event) {
     if let Event::KeyFocus(focus) = event {
-        let owner = if focus.focus == Area::Empty { focus.prev } else { focus.focus };
+        let owner = if focus.focus == Area::Empty {
+            focus.prev
+        } else {
+            focus.focus
+        };
         if let (Some(owner), Some(overlay)) = (owner.draw_list_id(), overlays.area.draw_list_id())
             && cx.draw_lists[owner].pass_id == cx.draw_lists[overlay].pass_id
         {
             overlays.focus = focus.focus;
         }
     }
-    if matches!(event, Event::TextHandle(_) | Event::Pause | Event::AppLostFocus)
-        || matches!(event, Event::TouchUpdate(update) if update.cancelled)
+    if matches!(
+        event,
+        Event::TextHandle(_) | Event::Pause | Event::AppLostFocus
+    ) || matches!(event, Event::TouchUpdate(update) if update.cancelled)
     {
         overlays.touch_scroll.reset();
         overlays.pointer = Pointer::default();
@@ -471,8 +578,15 @@ pub fn handle_timers(overlays: &mut Overlays, cx: &mut Cx, event: &Event) {
 pub fn hover_tooltip(shell: &mut PaseoShell, cx: &mut Cx, hover: Option<String>, abs: DVec2) {
     let tip = hover.and_then(|id| {
         let text = shell.data.tooltips.get(&id).cloned()?;
-        let anchor = shell.data.hits.rect_of(&id).unwrap_or(Rect { pos: abs, size: DVec2::default() });
-        Some(Tip { text, anchor, wait: 0.5 })
+        let anchor = shell.data.hits.rect_of(&id).unwrap_or(Rect {
+            pos: abs,
+            size: DVec2::default(),
+        });
+        Some(Tip {
+            text,
+            anchor,
+            wait: 0.5,
+        })
     });
     show_tooltip(&mut shell.data.overlays, cx, tip);
 }
@@ -481,7 +595,9 @@ pub fn hover_tooltip(shell: &mut PaseoShell, cx: &mut Cx, hover: Option<String>,
 /// `common::overlay::{tooltip, tooltip_at}`.
 pub fn show_tooltip(overlays: &mut Overlays, cx: &mut Cx, tip: Option<Tip>) {
     let tip = tip.filter(|t| !t.text.is_empty());
-    if overlays.tooltip_pending.is_some() && overlays.tooltip_pending.as_ref().map(|t| &t.text) == tip.as_ref().map(|t| &t.text) {
+    if overlays.tooltip_pending.is_some()
+        && overlays.tooltip_pending.as_ref().map(|t| &t.text) == tip.as_ref().map(|t| &t.text)
+    {
         return;
     }
     cx.stop_timer(overlays.tooltip_timer);
@@ -509,7 +625,14 @@ fn entries_height(entries: &[MenuEntry], compact: bool) -> f64 {
         h += match entry {
             MenuEntry::Separator => 9.0,
             MenuEntry::Label(_) => 12.0 + super::chrome::text_line_height(16.0, 12.0),
-            MenuEntry::Item(item) => menu_row_height(compact) + if item.description.is_some() { super::chrome::text_line_height(16.0, 12.0) } else { 0.0 },
+            MenuEntry::Item(item) => {
+                menu_row_height(compact)
+                    + if item.description.is_some() {
+                        super::chrome::text_line_height(16.0, 12.0)
+                    } else {
+                        0.0
+                    }
+            }
             MenuEntry::Submenu { .. } => menu_row_height(compact),
         };
     }
@@ -542,12 +665,19 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, window: Re
     shell.data.overlays.hits.clear();
     shell.data.overlays.tooltips.clear();
     // Full-window capture area for the overlay layer.
-    shell.data.overlays.area = shell.overlay_painter.capture_box(cx, window, Vec4::default(), Vec4::default(), 0.0, 0.0);
+    shell.data.overlays.area =
+        shell
+            .overlay_painter
+            .capture_box(cx, window, Vec4::default(), Vec4::default(), 0.0, 0.0);
     // Overlay roots allocate their own system-bar padding. Only remove the
     // keyboard's additional coverage here; it may already be consumed natively.
     let insets = crate::shell::platform::safe_insets();
-    let window = rect(window.pos.x, window.pos.y, window.size.x,
-        (window.size.y - (insets.bottom_occlusion() - insets.bottom)).max(0.0));
+    let window = rect(
+        window.pos.x,
+        window.pos.y,
+        window.size.x,
+        (window.size.y - (insets.bottom_occlusion() - insets.bottom)).max(0.0),
+    );
 
     crate::shell::chrome::draw_compact_explorer(shell, cx, scope, window);
 
@@ -560,22 +690,37 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, window: Re
         // Scrim: menus and select popovers are transparent; dialogs and sheets dim the window.
         let scrim = match &shell.data.overlays.stack[index] {
             Modal::Menu(menu) => {
-                if shell.data.compact && menu.sheet { p.scrim } else { Vec4::default() }
+                if shell.data.compact && menu.sheet {
+                    p.scrim
+                } else {
+                    Vec4::default()
+                }
             }
             Modal::Select(_) => {
-                if shell.data.compact { p.scrim } else { Vec4::default() }
+                if shell.data.compact {
+                    p.scrim
+                } else {
+                    Vec4::default()
+                }
             }
             Modal::Sheet { sheet, motion, .. } => match sheet.style() {
                 SheetStyle::FullScreen => Vec4::default(),
                 // `barrierColor: 0x59000000`, fading in with the panel.
-                SheetStyle::FadeBottom => with_alpha(theme::argb(0x59000000), 0.35 * fade_progress(motion, cx.seconds_since_app_start()) as f32),
+                SheetStyle::FadeBottom => with_alpha(
+                    theme::argb(0x59000000),
+                    0.35 * fade_progress(motion, cx.seconds_since_app_start()) as f32,
+                ),
                 _ => argb_scrim(shell.data.compact),
             },
             _ => argb_scrim(shell.data.compact),
         };
         shell.overlay_painter.fill(cx, window, scrim, 0.0);
         if top {
-            shell.data.overlays.hits.push(window, "overlay:backdrop".into());
+            shell
+                .data
+                .overlays
+                .hits
+                .push(window, "overlay:backdrop".into());
         }
         draw_modal(shell, cx, scope, index, window, top);
     }
@@ -586,7 +731,8 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, window: Re
     draw_tooltip(shell, cx, window);
     cx.end_turtle();
     shell.overlay_list.end(cx);
-    shell.data.overlays.locked = shell.data.overlays.is_modal() || (shell.data.compact && shell.data.chrome.explorer_position > 0.0);
+    shell.data.overlays.locked = shell.data.overlays.is_modal()
+        || (shell.data.compact && shell.data.chrome.explorer_position > 0.0);
 }
 
 fn argb_scrim(compact: bool) -> Vec4 {
@@ -598,25 +744,71 @@ fn new_layer(shell: &mut PaseoShell, cx: &mut Cx2d) {
     shell.overlay_icon.draw_vars.set_draw_call_group(group);
 }
 
-fn draw_modal(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, index: usize, window: Rect, top: bool) {
+fn draw_modal(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    scope: &mut Scope,
+    index: usize,
+    window: Rect,
+    top: bool,
+) {
     let compact = shell.data.compact;
-    let mut modal = std::mem::replace(&mut shell.data.overlays.stack[index], Modal::Confirm {
-        id: 0,
-        owner: String::new(),
-        title: String::new(),
-        message: String::new(),
-        confirm_label: String::new(),
-        destructive: false,
-        ok_focused: true,
-    });
+    let mut modal = std::mem::replace(
+        &mut shell.data.overlays.stack[index],
+        Modal::Confirm {
+            id: 0,
+            owner: String::new(),
+            title: String::new(),
+            message: String::new(),
+            confirm_label: String::new(),
+            destructive: false,
+            ok_focused: true,
+        },
+    );
     crate::shell::sheets::set_fields_active(top);
     match &mut modal {
         Modal::Menu(menu) => draw_menu(shell, cx, menu, window, compact, top),
-        Modal::Confirm { title, message, confirm_label, destructive, ok_focused, .. } => {
-            draw_confirm(shell, cx, window, title, message, confirm_label, *destructive, *ok_focused, top);
+        Modal::Confirm {
+            title,
+            message,
+            confirm_label,
+            destructive,
+            ok_focused,
+            ..
+        } => {
+            draw_confirm(
+                shell,
+                cx,
+                window,
+                title,
+                message,
+                confirm_label,
+                *destructive,
+                *ok_focused,
+                top,
+            );
         }
-        Modal::Prompt { title, message, field, confirm_label, focused, multiline, .. } => {
-            draw_prompt(shell, cx, scope, window, title, message.as_deref(), field, confirm_label, *multiline, top);
+        Modal::Prompt {
+            title,
+            message,
+            field,
+            confirm_label,
+            focused,
+            multiline,
+            ..
+        } => {
+            draw_prompt(
+                shell,
+                cx,
+                scope,
+                window,
+                title,
+                message.as_deref(),
+                field,
+                confirm_label,
+                *multiline,
+                top,
+            );
             if top && !*focused {
                 *focused = true;
                 field.as_ptext_field().set_key_focus(cx);
@@ -633,10 +825,32 @@ fn draw_modal(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, index: u
                 }
             }
         }
-        Modal::Sheet { sheet, scroll, content_height, viewport, motion, .. } => {
-            let state = scope.data.get::<UiContext>().map(|ui| ui.state.clone()).unwrap_or_default();
+        Modal::Sheet {
+            sheet,
+            scroll,
+            content_height,
+            viewport,
+            motion,
+            ..
+        } => {
+            let state = scope
+                .data
+                .get::<UiContext>()
+                .map(|ui| ui.state.clone())
+                .unwrap_or_default();
             sheet.sync(shell, &state);
-            draw_sheet(shell, cx, scope, window, sheet.as_mut(), scroll, content_height, viewport, motion, top);
+            draw_sheet(
+                shell,
+                cx,
+                scope,
+                window,
+                sheet.as_mut(),
+                scroll,
+                content_height,
+                viewport,
+                motion,
+                top,
+            );
         }
     }
     crate::shell::sheets::set_fields_active(true);
@@ -646,19 +860,38 @@ fn draw_modal(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, index: u
 fn menu_rect(menu: &OpenMenu, window: Rect, height: f64) -> Rect {
     let width = menu.width.max(0.0).min((window.size.x - 16.0).max(0.0));
     let a = menu.anchor;
-    let x = if menu.align_end { a.pos.x + a.size.x - width } else { a.pos.x };
+    let x = if menu.align_end {
+        a.pos.x + a.size.x - width
+    } else {
+        a.pos.x
+    };
     let below = a.pos.y + a.size.y + 4.0;
     let h = height.max(0.0).min((window.size.y - 16.0).max(0.0));
-    let y = if below + h <= window.pos.y + window.size.y - 8.0 { below } else { a.pos.y - 4.0 - h };
+    let y = if below + h <= window.pos.y + window.size.y - 8.0 {
+        below
+    } else {
+        a.pos.y - 4.0 - h
+    };
     fit_in_viewport(rect(x, y, width, h), window, 8.0)
 }
 
-fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window: Rect, compact: bool, top: bool) {
+fn draw_menu(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    menu: &mut OpenMenu,
+    window: Rect,
+    compact: bool,
+    top: bool,
+) {
     let sheet = compact && menu.sheet;
     let depth = menu.pages.len();
     let (page_title, entries) = menu.pages[depth - 1].clone();
     let header = sheet || depth > 1;
-    let header_h = if header { super::chrome::text_line_height(24.0, 14.0) + if sheet { 16.0 } else { 20.0 } } else { 0.0 };
+    let header_h = if header {
+        super::chrome::text_line_height(24.0, 14.0) + if sheet { 16.0 } else { 20.0 }
+    } else {
+        0.0
+    };
     let content_h = entries_height(&entries, compact);
     let mut ui = overlay_ui(shell);
     let p = ui.p;
@@ -669,16 +902,46 @@ fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window:
         let h = (content_h + header_h + 24.0 + insets.bottom)
             .min(window.size.y * 0.8)
             .min((window.size.y - insets.top).max(0.0));
-        let r = rect(window.pos.x, window.pos.y + window.size.y - h, window.size.x, h);
-        ui.painter.draw_box.paint_bordered(cx, rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 12.0), p.surface0, p.border, 1.0, 12.0);
+        let r = rect(
+            window.pos.x,
+            window.pos.y + window.size.y - h,
+            window.size.x,
+            h,
+        );
+        ui.painter.draw_box.paint_bordered(
+            cx,
+            rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 12.0),
+            p.surface0,
+            p.border,
+            1.0,
+            12.0,
+        );
         ui.sheet_handle(cx, r.pos.x + r.size.x * 0.5, r.pos.y);
-        (r, rect(r.pos.x, r.pos.y + 24.0, r.size.x, (r.size.y - 24.0 - insets.bottom).max(0.0)))
+        (
+            r,
+            rect(
+                r.pos.x,
+                r.pos.y + 24.0,
+                r.size.x,
+                (r.size.y - 24.0 - insets.bottom).max(0.0),
+            ),
+        )
     } else {
         let r = menu_rect(menu, window, content_h + header_h);
         // md shadow then the surface1 popover with a borderAccent rule.
-        let shadow = if p.is_dark { theme::argb(0x33000000) } else { theme::argb(0x0a000000) };
-        ui.fill(cx, rect(r.pos.x - 2.0, r.pos.y + 2.0, r.size.x + 4.0, r.size.y + 6.0), shadow, 10.0);
-        ui.painter.outline(cx, r, p.surface1, p.border_accent, 1.0, 8.0);
+        let shadow = if p.is_dark {
+            theme::argb(0x33000000)
+        } else {
+            theme::argb(0x0a000000)
+        };
+        ui.fill(
+            cx,
+            rect(r.pos.x - 2.0, r.pos.y + 2.0, r.size.x + 4.0, r.size.y + 6.0),
+            shadow,
+            10.0,
+        );
+        ui.painter
+            .outline(cx, r, p.surface1, p.border_accent, 1.0, 8.0);
         (r, r)
     };
     // Compact sheets register their whole painted frame (handle band and bottom inset included)
@@ -688,7 +951,10 @@ fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window:
     }
     let mut y = surface.pos.y;
     if header {
-        let title = page_title.clone().or(menu.title.clone()).unwrap_or_default();
+        let title = page_title
+            .clone()
+            .or(menu.title.clone())
+            .unwrap_or_default();
         let mut x = surface.pos.x + 12.0;
         if depth > 1 {
             let back = rect(x, y + 4.0, 24.0, 24.0);
@@ -699,15 +965,37 @@ fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window:
             x += 32.0;
         }
         let spec = ui.spec(Font::Medium, 14.0, p.foreground);
-        ui.text(cx, rect(x, y + 4.0, surface.size.x - (x - surface.pos.x) - 12.0, header_h - if sheet { 16.0 } else { 20.0 }), spec, &title);
+        ui.text(
+            cx,
+            rect(
+                x,
+                y + 4.0,
+                surface.size.x - (x - surface.pos.x) - 12.0,
+                header_h - if sheet { 16.0 } else { 20.0 },
+            ),
+            spec,
+            &title,
+        );
         y += header_h - 8.0;
     }
     // The header stays fixed while tall menus scroll within their visible, touchable body.
-    let viewport = rect(surface.pos.x, y, surface.size.x, (surface.pos.y + surface.size.y - y).max(0.0));
+    let viewport = rect(
+        surface.pos.x,
+        y,
+        surface.size.x,
+        (surface.pos.y + surface.size.y - y).max(0.0),
+    );
     menu.viewport = viewport;
     menu.max_scroll = (content_h - viewport.size.y).max(0.0);
     menu.scroll = menu.scroll.clamp(0.0, menu.max_scroll);
-    cx.begin_turtle(Walk::abs_rect(viewport), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(viewport),
+        Layout {
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     ui.hits.set_clip(Some(viewport));
     y += 4.0 - menu.scroll;
     let row_h = menu_row_height(compact);
@@ -720,12 +1008,31 @@ fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window:
             }
             MenuEntry::Label(text) => {
                 let spec = ui.spec(Font::Regular, 12.0, p.muted);
-                ui.text(cx, rect(surface.pos.x + 12.0, y + 8.0, surface.size.x - 24.0, small_h), spec, text);
+                ui.text(
+                    cx,
+                    rect(
+                        surface.pos.x + 12.0,
+                        y + 8.0,
+                        surface.size.x - 24.0,
+                        small_h,
+                    ),
+                    spec,
+                    text,
+                );
                 y += small_h + 12.0;
             }
             MenuEntry::Item(item) => {
-                let h = row_h + if item.description.is_some() { small_h } else { 0.0 };
-                let id = if top { format!("menu:item:{i}") } else { String::new() };
+                let h = row_h
+                    + if item.description.is_some() {
+                        small_h
+                    } else {
+                        0.0
+                    };
+                let id = if top {
+                    format!("menu:item:{i}")
+                } else {
+                    String::new()
+                };
                 let lead = match (&item.svg, &item.icon, item.dot) {
                     (_, _, Some(color)) => RowLead::Dot(color),
                     (Some(svg), _, None) => RowLead::Svg(svg),
@@ -747,28 +1054,77 @@ fn draw_menu(shell: &mut PaseoShell, cx: &mut Cx2d, menu: &mut OpenMenu, window:
                 );
                 if let Some(description) = &item.description {
                     let spec = ui.spec(Font::Regular, 12.0, p.muted);
-                    ui.text(cx, rect(surface.pos.x + 36.0, y + row_h - 4.0, surface.size.x - 48.0, small_h), spec, description);
+                    ui.text(
+                        cx,
+                        rect(
+                            surface.pos.x + 36.0,
+                            y + row_h - 4.0,
+                            surface.size.x - 48.0,
+                            small_h,
+                        ),
+                        spec,
+                        description,
+                    );
                     if top && item.enabled {
                         ui.hit(rect(surface.pos.x, y, surface.size.x, h), &id);
                     }
                 }
                 y += h;
             }
-            MenuEntry::Submenu { label, icon, value, indicator, .. } => {
+            MenuEntry::Submenu {
+                label,
+                icon,
+                value,
+                indicator,
+                ..
+            } => {
                 let r = rect(surface.pos.x, y, surface.size.x, row_h);
                 let id = format!("menu:sub:{i}");
                 let lead = icon.as_deref().map_or(RowLead::None, RowLead::Glyph);
-                ui.menu_row(cx, r, &id, label, lead, None, top, false, false, false, top && menu.active == Some(i));
+                ui.menu_row(
+                    cx,
+                    r,
+                    &id,
+                    label,
+                    lead,
+                    None,
+                    top,
+                    false,
+                    false,
+                    false,
+                    top && menu.active == Some(i),
+                );
                 let mut right = r.pos.x + r.size.x - 12.0;
-                ui.icon(cx, rect(right - 14.0, r.pos.y + (r.size.y - 14.0) * 0.5, 14.0, 14.0), "chevron-right", 14.0, p.muted);
+                ui.icon(
+                    cx,
+                    rect(right - 14.0, r.pos.y + (r.size.y - 14.0) * 0.5, 14.0, 14.0),
+                    "chevron-right",
+                    14.0,
+                    p.muted,
+                );
                 right -= 20.0;
                 if *indicator {
-                    ui.dot(cx, dvec2(right - 3.0, r.pos.y + r.size.y * 0.5), 6.0, p.accent_bright);
+                    ui.dot(
+                        cx,
+                        dvec2(right - 3.0, r.pos.y + r.size.y * 0.5),
+                        6.0,
+                        p.accent_bright,
+                    );
                     right -= 12.0;
                 }
                 if let Some(value) = value {
                     let spec = ui.spec(Font::Regular, 14.0, p.muted);
-                    ui.text_right(cx, rect(r.pos.x + r.size.x * 0.5, r.pos.y, right - r.pos.x - r.size.x * 0.5, r.size.y), spec, value);
+                    ui.text_right(
+                        cx,
+                        rect(
+                            r.pos.x + r.size.x * 0.5,
+                            r.pos.y,
+                            right - r.pos.x - r.size.x * 0.5,
+                            r.size.y,
+                        ),
+                        spec,
+                        value,
+                    );
                 }
                 y += row_h;
             }
@@ -800,10 +1156,22 @@ fn select_list_height(select: &OpenSelect, visible: &[usize], sheet: bool) -> f6
 /// Original `showPaseoSelect`: anchored surface0 popover (8px radius, divider border, md
 /// shadow, 400px max) on wide layouts; a surface0 bottom sheet with a drag handle and the
 /// medium title on compact ones. The optional search row filters label and description.
-fn draw_select(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, select: &mut OpenSelect, window: Rect, sheet: bool, top: bool) {
+fn draw_select(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    scope: &mut Scope,
+    select: &mut OpenSelect,
+    window: Rect,
+    sheet: bool,
+    top: bool,
+) {
     let visible = select.visible();
     let line_h = super::chrome::text_line_height(20.0, 14.0);
-    let search_h = if select.search.is_some() { 25.0 + line_h } else { 0.0 };
+    let search_h = if select.search.is_some() {
+        25.0 + line_h
+    } else {
+        0.0
+    };
     let list_h = select_list_height(select, &visible, sheet);
     let field_rect = {
         let mut ui = overlay_ui(shell);
@@ -811,16 +1179,40 @@ fn draw_select(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, select:
         let (surface, mut y) = if sheet {
             let title_h = line_h + 8.0;
             let h = (48.0 + title_h + search_h + list_h).min((window.size.y - 24.0).max(0.0));
-            let r = rect(window.pos.x, window.pos.y + window.size.y - h, window.size.x, h);
-            ui.painter.draw_box.paint(cx, rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 16.0), p.surface0, 16.0);
+            let r = rect(
+                window.pos.x,
+                window.pos.y + window.size.y - h,
+                window.size.x,
+                h,
+            );
+            ui.painter.draw_box.paint(
+                cx,
+                rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 16.0),
+                p.surface0,
+                16.0,
+            );
             // Material 3 drag handle: 32x4 in a 48px band, onSurfaceVariant at 40%.
-            ui.fill(cx, rect(r.pos.x + r.size.x * 0.5 - 16.0, r.pos.y + 22.0, 32.0, 4.0), with_alpha(p.muted, 0.4), 2.0);
+            ui.fill(
+                cx,
+                rect(r.pos.x + r.size.x * 0.5 - 16.0, r.pos.y + 22.0, 32.0, 4.0),
+                with_alpha(p.muted, 0.4),
+                2.0,
+            );
             let spec = ui.spec(Font::Medium, 14.0, p.foreground);
-            ui.text(cx, rect(r.pos.x + 24.0, r.pos.y + 48.0, r.size.x - 48.0, line_h), spec, &select.title);
+            ui.text(
+                cx,
+                rect(r.pos.x + 24.0, r.pos.y + 48.0, r.size.x - 48.0, line_h),
+                spec,
+                &select.title,
+            );
             (r, r.pos.y + 48.0 + title_h)
         } else {
             let a = select.anchor;
-            let width = a.size.x.max(select.min_width).min((window.size.x - 16.0).max(0.0));
+            let width = a
+                .size
+                .x
+                .max(select.min_width)
+                .min((window.size.x - 16.0).max(0.0));
             let bottom = window.pos.y + window.size.y;
             let below = bottom - (a.pos.y + a.size.y) - 8.0;
             let above = a.pos.y - window.pos.y;
@@ -832,11 +1224,25 @@ fn draw_select(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, select:
             };
             let max_h = (if open_up { above - 12.0 } else { below - 4.0 }).clamp(120.0, 400.0);
             let h = (search_h + list_h).min(max_h);
-            let y = if open_up { a.pos.y - 4.0 - h } else { a.pos.y + a.size.y + 4.0 };
+            let y = if open_up {
+                a.pos.y - 4.0 - h
+            } else {
+                a.pos.y + a.size.y + 4.0
+            };
             let r = fit_in_viewport(rect(left, y, width, h), window, 8.0);
             // BoxShadow(0x33000000, offset (0, 4), blur 8), approximated by two soft layers.
-            ui.fill(cx, rect(r.pos.x - 2.0, r.pos.y + 2.0, r.size.x + 4.0, r.size.y + 6.0), theme::argb(0x14000000), 10.0);
-            ui.fill(cx, rect(r.pos.x, r.pos.y + 3.0, r.size.x, r.size.y + 2.0), theme::argb(0x1f000000), 9.0);
+            ui.fill(
+                cx,
+                rect(r.pos.x - 2.0, r.pos.y + 2.0, r.size.x + 4.0, r.size.y + 6.0),
+                theme::argb(0x14000000),
+                10.0,
+            );
+            ui.fill(
+                cx,
+                rect(r.pos.x, r.pos.y + 3.0, r.size.x, r.size.y + 2.0),
+                theme::argb(0x1f000000),
+                9.0,
+            );
             ui.painter.outline(cx, r, p.surface0, p.border, 1.0, 8.0);
             (r, r.pos.y)
         };
@@ -846,42 +1252,135 @@ fn draw_select(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, select:
         let mut field_rect = None;
         if select.search.is_some() {
             let inset_x = if sheet { 4.0 } else { 0.0 };
-            let row = rect(surface.pos.x + inset_x, y, surface.size.x - inset_x * 2.0, search_h);
+            let row = rect(
+                surface.pos.x + inset_x,
+                y,
+                surface.size.x - inset_x * 2.0,
+                search_h,
+            );
             // The popover clips its children to the 8px corners: round the top, square the rest.
             if sheet {
-                ui.fill(cx, rect(row.pos.x, row.pos.y, row.size.x, row.size.y - 1.0), p.surface1, 0.0);
+                ui.fill(
+                    cx,
+                    rect(row.pos.x, row.pos.y, row.size.x, row.size.y - 1.0),
+                    p.surface1,
+                    0.0,
+                );
             } else {
-                let inner = rect(row.pos.x + 1.0, row.pos.y + 1.0, row.size.x - 2.0, row.size.y - 2.0);
-                ui.fill(cx, rect(inner.pos.x, inner.pos.y, inner.size.x, 16.0), p.surface1, 7.0);
-                ui.fill(cx, rect(inner.pos.x, inner.pos.y + 8.0, inner.size.x, inner.size.y - 8.0), p.surface1, 0.0);
+                let inner = rect(
+                    row.pos.x + 1.0,
+                    row.pos.y + 1.0,
+                    row.size.x - 2.0,
+                    row.size.y - 2.0,
+                );
+                ui.fill(
+                    cx,
+                    rect(inner.pos.x, inner.pos.y, inner.size.x, 16.0),
+                    p.surface1,
+                    7.0,
+                );
+                ui.fill(
+                    cx,
+                    rect(
+                        inner.pos.x,
+                        inner.pos.y + 8.0,
+                        inner.size.x,
+                        inner.size.y - 8.0,
+                    ),
+                    p.surface1,
+                    0.0,
+                );
             }
-            ui.painter.hline(cx, row.pos.x, row.pos.y + row.size.y - 1.0, row.size.x, p.border);
-            ui.icon(cx, rect(row.pos.x + 12.0, row.pos.y + (search_h - 1.0 - 16.0) * 0.5, 16.0, 16.0), "search", 16.0, p.muted);
-            field_rect = Some(rect(row.pos.x + 12.0 + 16.0 + 8.0, row.pos.y, row.size.x - 12.0 - 16.0 - 8.0 - 12.0, search_h - 1.0));
+            ui.painter.hline(
+                cx,
+                row.pos.x,
+                row.pos.y + row.size.y - 1.0,
+                row.size.x,
+                p.border,
+            );
+            ui.icon(
+                cx,
+                rect(
+                    row.pos.x + 12.0,
+                    row.pos.y + (search_h - 1.0 - 16.0) * 0.5,
+                    16.0,
+                    16.0,
+                ),
+                "search",
+                16.0,
+                p.muted,
+            );
+            field_rect = Some(rect(
+                row.pos.x + 12.0 + 16.0 + 8.0,
+                row.pos.y,
+                row.size.x - 12.0 - 16.0 - 8.0 - 12.0,
+                search_h - 1.0,
+            ));
             y += search_h;
         }
-        let viewport = rect(surface.pos.x, y, surface.size.x, (surface.pos.y + surface.size.y - y).max(0.0));
+        let viewport = rect(
+            surface.pos.x,
+            y,
+            surface.size.x,
+            (surface.pos.y + surface.size.y - y).max(0.0),
+        );
         select.viewport = viewport;
         select.max_scroll = (list_h - viewport.size.y).max(0.0);
         select.scroll = select.scroll.clamp(0.0, select.max_scroll);
-        cx.begin_turtle(Walk::abs_rect(viewport), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+        cx.begin_turtle(
+            Walk::abs_rect(viewport),
+            Layout {
+                clip_x: true,
+                clip_y: true,
+                ..Layout::default()
+            },
+        );
         let mut ry = viewport.pos.y - select.scroll;
         if visible.is_empty() {
             let spec = ui.spec(Font::Regular, 14.0, p.muted);
-            ui.text(cx, rect(viewport.pos.x + 12.0, ry + 8.0, viewport.size.x - 24.0, line_h), spec, &select.empty_text);
+            ui.text(
+                cx,
+                rect(
+                    viewport.pos.x + 12.0,
+                    ry + 8.0,
+                    viewport.size.x - 24.0,
+                    line_h,
+                ),
+                spec,
+                &select.empty_text,
+            );
         } else {
             ry += 4.0;
             let (mx, mb) = if sheet { (8.0 + 4.0, 4.0) } else { (0.0, 0.0) };
             for &i in &visible {
                 let option = &select.options[i];
                 if option.separator_before && select.query.is_empty() {
-                    ui.painter.hline(cx, viewport.pos.x + mx - if sheet { 4.0 } else { 0.0 }, ry + 4.0, viewport.size.x - (mx - if sheet { 4.0 } else { 0.0 }) * 2.0, p.border);
+                    ui.painter.hline(
+                        cx,
+                        viewport.pos.x + mx - if sheet { 4.0 } else { 0.0 },
+                        ry + 4.0,
+                        viewport.size.x - (mx - if sheet { 4.0 } else { 0.0 }) * 2.0,
+                        p.border,
+                    );
                     ry += 9.0;
                 }
-                let r = rect(viewport.pos.x + mx, ry, viewport.size.x - mx * 2.0, select_row_height());
+                let r = rect(
+                    viewport.pos.x + mx,
+                    ry,
+                    viewport.size.x - mx * 2.0,
+                    select_row_height(),
+                );
                 let id = format!("select:item:{i}");
                 let selected = select.value.as_deref() == Some(option.value.as_str());
-                draw_select_row(&mut ui, cx, r, &id, option, selected, top && select.active == Some(i));
+                draw_select_row(
+                    &mut ui,
+                    cx,
+                    r,
+                    &id,
+                    option,
+                    selected,
+                    top && select.active == Some(i),
+                );
                 if top && option.enabled {
                     let clipped = clip_rect(r, viewport);
                     if clipped.size.y > 0.0 {
@@ -904,7 +1403,15 @@ fn draw_select(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, select:
 /// `_SelectItem`: 12/8 padding, surface1 while hovered or pressed, 16px leading slot, 14px
 /// label with a muted 12px description after it, trailing slot and a muted check when chosen,
 /// 55% opacity when disabled.
-fn draw_select_row(ui: &mut Ui, cx: &mut Cx2d, r: Rect, id: &str, option: &SelectOption, selected: bool, active: bool) {
+fn draw_select_row(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    r: Rect,
+    id: &str,
+    option: &SelectOption,
+    selected: bool,
+    active: bool,
+) {
     let p = ui.p;
     let alpha = if option.enabled { 1.0 } else { 0.55 };
     if option.enabled && (ui.is_hover(id) || ui.is_pressed(id) || active) {
@@ -914,14 +1421,26 @@ fn draw_select_row(ui: &mut Ui, cx: &mut Cx2d, r: Rect, id: &str, option: &Selec
     let mut right = r.pos.x + r.size.x - 12.0;
     let mid = r.pos.y + r.size.y * 0.5;
     if let Some(icon) = &option.icon {
-        ui.icon(cx, rect(x, mid - 8.0, 16.0, 16.0), icon, option.icon_size, with_alpha(p.muted, alpha));
+        ui.icon(
+            cx,
+            rect(x, mid - 8.0, 16.0, 16.0),
+            icon,
+            option.icon_size,
+            with_alpha(p.muted, alpha),
+        );
         x += 16.0 + 8.0;
     } else if let Some(dot) = option.dot {
         ui.dot(cx, dvec2(x + 8.0, mid), 8.0, with_alpha(dot, dot.w * alpha));
         x += 16.0 + 8.0;
     }
     if selected {
-        ui.icon(cx, rect(right - 16.0, mid - 8.0, 16.0, 16.0), "check", 16.0, with_alpha(p.muted, alpha));
+        ui.icon(
+            cx,
+            rect(right - 16.0, mid - 8.0, 16.0, 16.0),
+            "check",
+            16.0,
+            with_alpha(p.muted, alpha),
+        );
         right -= 16.0 + 8.0;
     }
     if let Some(trailing) = &option.trailing {
@@ -933,12 +1452,22 @@ fn draw_select_row(ui: &mut Ui, cx: &mut Cx2d, r: Rect, id: &str, option: &Selec
     let label_spec = ui.spec(Font::Regular, 14.0, with_alpha(p.foreground, alpha));
     let avail = (right - x).max(0.0);
     let label_w = ui.measure(cx, label_spec, &option.label).min(avail);
-    ui.text(cx, rect(x, r.pos.y, label_w, r.size.y), label_spec, &option.label);
+    ui.text(
+        cx,
+        rect(x, r.pos.y, label_w, r.size.y),
+        label_spec,
+        &option.label,
+    );
     if let Some(description) = &option.description {
         let dx = x + label_w + 8.0;
         if right - dx > 8.0 {
             let spec = ui.spec(Font::Regular, 12.0, with_alpha(p.muted, alpha));
-            ui.text(cx, rect(dx, r.pos.y + 1.0, right - dx, r.size.y), spec, description);
+            ui.text(
+                cx,
+                rect(dx, r.pos.y + 1.0, right - dx, r.size.y),
+                spec,
+                description,
+            );
         }
     }
 }
@@ -952,7 +1481,17 @@ fn clip_rect(r: Rect, clip: Rect) -> Rect {
 /// `SheetContents`-style chrome around a dialog body; returns the body rect. `back` shows the
 /// leading back chevron (`onBack`), whose click reaches the sheet as `sheet:back`.
 #[allow(clippy::too_many_arguments)]
-fn dialog_frame(ui: &mut Ui, cx: &mut Cx2d, window: Rect, width: f64, height: f64, title: &str, compact: bool, top: bool, back: bool) -> Rect {
+fn dialog_frame(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    window: Rect,
+    width: f64,
+    height: f64,
+    title: &str,
+    compact: bool,
+    top: bool,
+    back: bool,
+) -> Rect {
     let p = ui.p;
     let title_h = super::chrome::text_line_height(24.0, 14.0);
     let header_h = title_h + 33.0;
@@ -963,14 +1502,37 @@ fn dialog_frame(ui: &mut Ui, cx: &mut Cx2d, window: Rect, width: f64, height: f6
         let h = (height + header_h + 24.0 + insets.bottom)
             .min(window.size.y * 0.9)
             .min((window.size.y - insets.top).max(0.0));
-        let r = rect(window.pos.x, window.pos.y + window.size.y - h, window.size.x, h);
-        ui.painter.draw_box.paint(cx, rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 16.0), p.surface0, 16.0);
+        let r = rect(
+            window.pos.x,
+            window.pos.y + window.size.y - h,
+            window.size.x,
+            h,
+        );
+        ui.painter.draw_box.paint(
+            cx,
+            rect(r.pos.x, r.pos.y, r.size.x, r.size.y + 16.0),
+            p.surface0,
+            16.0,
+        );
         ui.sheet_handle(cx, r.pos.x + r.size.x * 0.5, r.pos.y - 4.0);
-        (r, rect(r.pos.x, r.pos.y + 16.0, r.size.x, (r.size.y - 16.0 - insets.bottom).max(0.0)))
+        (
+            r,
+            rect(
+                r.pos.x,
+                r.pos.y + 16.0,
+                r.size.x,
+                (r.size.y - 16.0 - insets.bottom).max(0.0),
+            ),
+        )
     } else {
         let w = width.max(0.0).min((window.size.x - 48.0).max(0.0));
         let h = (height + header_h).min(window.size.y * 0.85);
-        let r = rect(window.pos.x + (window.size.x - w) * 0.5, window.pos.y + (window.size.y - h) * 0.5, w, h);
+        let r = rect(
+            window.pos.x + (window.size.x - w) * 0.5,
+            window.pos.y + (window.size.y - h) * 0.5,
+            w,
+            h,
+        );
         ui.painter.outline(cx, r, p.surface1, p.surface2, 1.0, 12.0);
         (r, r)
     };
@@ -983,28 +1545,113 @@ fn dialog_frame(ui: &mut Ui, cx: &mut Cx2d, window: Rect, width: f64, height: f6
     let mut title_x = frame.pos.x + 24.0;
     if back {
         let r = rect(frame.pos.x + 12.0, frame.pos.y + 12.0, 32.0, 32.0);
-        ui.icon_button(cx, r, if top { "sheet:back" } else { "" }, "chevron-left", 16.0, 8.0, &if compact { String::new() } else { tr("common.actions.back") });
+        ui.icon_button(
+            cx,
+            r,
+            if top { "sheet:back" } else { "" },
+            "chevron-left",
+            16.0,
+            8.0,
+            &if compact {
+                String::new()
+            } else {
+                tr("common.actions.back")
+            },
+        );
         title_x = r.pos.x + 32.0 + 4.0;
     }
-    ui.text(cx, rect(title_x, frame.pos.y + 16.0, frame.pos.x + frame.size.x - 56.0 - title_x, title_h), spec, title);
-    let close = rect(frame.pos.x + frame.size.x - 16.0 - 32.0, frame.pos.y + 12.0, 32.0, 32.0);
-    ui.icon_button(cx, close, if top { "dialog:close" } else { "" }, "x", 16.0, 8.0, &if compact { String::new() } else { tr("common.actions.close") });
-    ui.painter.hline(cx, frame.pos.x, frame.pos.y + header_h - 1.0, frame.size.x, p.surface2);
-    rect(frame.pos.x, frame.pos.y + header_h, frame.size.x, (frame.size.y - header_h).max(0.0))
+    ui.text(
+        cx,
+        rect(
+            title_x,
+            frame.pos.y + 16.0,
+            frame.pos.x + frame.size.x - 56.0 - title_x,
+            title_h,
+        ),
+        spec,
+        title,
+    );
+    let close = rect(
+        frame.pos.x + frame.size.x - 16.0 - 32.0,
+        frame.pos.y + 12.0,
+        32.0,
+        32.0,
+    );
+    ui.icon_button(
+        cx,
+        close,
+        if top { "dialog:close" } else { "" },
+        "x",
+        16.0,
+        8.0,
+        &if compact {
+            String::new()
+        } else {
+            tr("common.actions.close")
+        },
+    );
+    ui.painter.hline(
+        cx,
+        frame.pos.x,
+        frame.pos.y + header_h - 1.0,
+        frame.size.x,
+        p.surface2,
+    );
+    rect(
+        frame.pos.x,
+        frame.pos.y + header_h,
+        frame.size.x,
+        (frame.size.y - header_h).max(0.0),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_confirm(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect, title: &str, message: &str, confirm_label: &str, destructive: bool, ok_focused: bool, top: bool) {
+fn draw_confirm(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    window: Rect,
+    title: &str,
+    message: &str,
+    confirm_label: &str,
+    destructive: bool,
+    ok_focused: bool,
+    top: bool,
+) {
     let compact = shell.data.compact;
     let mut ui = overlay_ui(shell);
     let p = ui.p;
     let spec = ui.spec(Font::Regular, 14.0, p.muted);
     let width: f64 = 420.0;
     let text_w = (width.min(window.size.x - 48.0)) - 48.0;
-    let text_h = ui.painter.paragraph_height(cx, if compact { window.size.x - 48.0 } else { text_w }, spec, message);
+    let text_h = ui.painter.paragraph_height(
+        cx,
+        if compact {
+            window.size.x - 48.0
+        } else {
+            text_w
+        },
+        spec,
+        message,
+    );
     let button_h = theme::control_height(ControlSize::Sm);
-    let body = dialog_frame(&mut ui, cx, window, width, text_h + 48.0 + button_h, title, compact, top, false);
-    ui.painter.paragraph(cx, dvec2(body.pos.x + 24.0, body.pos.y + 16.0), body.size.x - 48.0, spec, message);
+    let body = dialog_frame(
+        &mut ui,
+        cx,
+        window,
+        width,
+        text_h + 48.0 + button_h,
+        title,
+        compact,
+        top,
+        false,
+    );
+    ui.painter.paragraph(
+        cx,
+        dvec2(body.pos.x + 24.0, body.pos.y + 16.0),
+        body.size.x - 48.0,
+        spec,
+        message,
+    );
     let y = body.pos.y + body.size.y - 16.0 - button_h;
     let cancel = tr("common.actions.cancel");
     let cw = ui.button_width(cx, &cancel, None, ControlSize::Sm);
@@ -1012,13 +1659,47 @@ fn draw_confirm(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect, title: &str
     let right = body.pos.x + body.size.x - 24.0;
     let ok = rect(right - ow, y, ow, button_h);
     let cancel_rect = rect(right - ow - 8.0 - cw, y, cw, button_h);
-    ui.button(cx, ok, if top { "confirm:ok" } else { "" }, confirm_label, None, if destructive { Variant::Destructive } else { Variant::Primary }, ControlSize::Sm, top);
-    ui.button(cx, cancel_rect, if top { "confirm:cancel" } else { "" }, &cancel, None, Variant::Ghost, ControlSize::Sm, top);
+    ui.button(
+        cx,
+        ok,
+        if top { "confirm:ok" } else { "" },
+        confirm_label,
+        None,
+        if destructive {
+            Variant::Destructive
+        } else {
+            Variant::Primary
+        },
+        ControlSize::Sm,
+        top,
+    );
+    ui.button(
+        cx,
+        cancel_rect,
+        if top { "confirm:cancel" } else { "" },
+        &cancel,
+        None,
+        Variant::Ghost,
+        ControlSize::Sm,
+        top,
+    );
     // Desktop keyboard focus (Enter activates it; ←/→/Tab move it).
     if top && !compact {
         let focused = if ok_focused { ok } else { cancel_rect };
-        let ring = rect(focused.pos.x - 2.0, focused.pos.y - 2.0, focused.size.x + 4.0, focused.size.y + 4.0);
-        ui.painter.outline(cx, ring, Vec4::default(), p.muted, 1.5, (button_h * 0.5 + 2.0).min(14.0));
+        let ring = rect(
+            focused.pos.x - 2.0,
+            focused.pos.y - 2.0,
+            focused.size.x + 4.0,
+            focused.size.y + 4.0,
+        );
+        ui.painter.outline(
+            cx,
+            ring,
+            Vec4::default(),
+            p.muted,
+            1.5,
+            (button_h * 0.5 + 2.0).min(14.0),
+        );
     }
 }
 
@@ -1040,8 +1721,14 @@ fn draw_prompt(
         let mut ui = overlay_ui(shell);
         let p = ui.p;
         let spec = ui.spec(Font::Regular, 14.0, p.muted);
-        let message_w = if compact { window.size.x - 48.0 } else { 480.0f64.min(window.size.x - 48.0) - 48.0 };
-        let message_h = message.map_or(0.0, |m| ui.painter.paragraph_height(cx, message_w, spec, m) + 12.0);
+        let message_w = if compact {
+            window.size.x - 48.0
+        } else {
+            480.0f64.min(window.size.x - 48.0) - 48.0
+        };
+        let message_h = message.map_or(0.0, |m| {
+            ui.painter.paragraph_height(cx, message_w, spec, m) + 12.0
+        });
         // `minLines: 4, maxLines: 12`: the field grows with its wrapped text and scrolls past
         // twelve lines, keeping the end (where typing happens) in view.
         let (field_h, scroll) = if multiline {
@@ -1049,14 +1736,31 @@ fn draw_prompt(
             let line_h = ui.painter.line_height(cx, text_spec);
             let width = (480.0f64.min(window.size.x - 48.0) - 48.0 - 24.0).max(40.0);
             let text = field.text();
-            let lines = (ui.painter.paragraph_height(cx, width, text_spec, if text.is_empty() { " " } else { &text }) / line_h).ceil().max(1.0);
+            let lines = (ui.painter.paragraph_height(
+                cx,
+                width,
+                text_spec,
+                if text.is_empty() { " " } else { &text },
+            ) / line_h)
+                .ceil()
+                .max(1.0);
             let visible = lines.clamp(4.0, 12.0);
             (visible * line_h + 12.0, (lines - visible) * line_h)
         } else {
             (20.0 + super::chrome::text_line_height(20.0, 14.0), 0.0)
         };
         let button_h = theme::control_height(ControlSize::Sm);
-        let body = dialog_frame(&mut ui, cx, window, 480.0, message_h + 16.0 + field_h + 4.0 + 40.0 + button_h, title, compact, top, false);
+        let body = dialog_frame(
+            &mut ui,
+            cx,
+            window,
+            480.0,
+            message_h + 16.0 + field_h + 4.0 + 40.0 + button_h,
+            title,
+            compact,
+            top,
+            false,
+        );
         // The action row is reserved first; the message and then the field share what is
         // left above it, so the field (which takes input before the overlay's hit map) never
         // draws or receives taps over the buttons.
@@ -1067,24 +1771,67 @@ fn draw_prompt(
         let message_vis = message_h.min((limit - y - field_h.min(single_h)).max(0.0));
         if let Some(message) = message {
             let clip = rect(body.pos.x + 24.0, y, body.size.x - 48.0, message_vis);
-            cx.begin_turtle(Walk::abs_rect(clip), Layout { clip_x: true, clip_y: true, ..Layout::default() });
-            ui.painter.paragraph(cx, dvec2(body.pos.x + 24.0, y), body.size.x - 48.0, spec, message);
+            cx.begin_turtle(
+                Walk::abs_rect(clip),
+                Layout {
+                    clip_x: true,
+                    clip_y: true,
+                    ..Layout::default()
+                },
+            );
+            ui.painter.paragraph(
+                cx,
+                dvec2(body.pos.x + 24.0, y),
+                body.size.x - 48.0,
+                spec,
+                message,
+            );
             cx.end_turtle();
             y += message_vis;
         }
         let field_vis = field_h.min((limit - y).max(0.0));
         // A shortened multiline field keeps its end (where typing happens) in view.
-        let scroll = if multiline { scroll + (field_h - field_vis) } else { scroll };
+        let scroll = if multiline {
+            scroll + (field_h - field_vis)
+        } else {
+            scroll
+        };
         let field_rect = rect(body.pos.x + 24.0, y, body.size.x - 48.0, field_vis);
         let cancel = tr("common.actions.cancel");
         let cw = ui.button_width(cx, &cancel, None, ControlSize::Sm);
         let ow = ui.button_width(cx, confirm_label, None, ControlSize::Sm);
         let right = body.pos.x + body.size.x - 24.0;
-        ui.button(cx, rect(right - ow, by, ow, button_h), if top { "prompt:ok" } else { "" }, confirm_label, None, Variant::Primary, ControlSize::Sm, top);
-        ui.button(cx, rect(right - ow - 8.0 - cw, by, cw, button_h), if top { "prompt:cancel" } else { "" }, &cancel, None, Variant::Ghost, ControlSize::Sm, top);
+        ui.button(
+            cx,
+            rect(right - ow, by, ow, button_h),
+            if top { "prompt:ok" } else { "" },
+            confirm_label,
+            None,
+            Variant::Primary,
+            ControlSize::Sm,
+            top,
+        );
+        ui.button(
+            cx,
+            rect(right - ow - 8.0 - cw, by, cw, button_h),
+            if top { "prompt:cancel" } else { "" },
+            &cancel,
+            None,
+            Variant::Ghost,
+            ControlSize::Sm,
+            top,
+        );
         (field_rect, scroll)
     };
-    cx.begin_turtle(Walk::abs_rect(field_rect), Layout { scroll: dvec2(0.0, scroll), clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(field_rect),
+        Layout {
+            scroll: dvec2(0.0, scroll),
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     field.draw_all(cx, scope);
     cx.end_turtle();
 }
@@ -1110,41 +1857,110 @@ fn draw_sheet(
             return;
         }
         SheetStyle::Draggable { material_handle } if compact => {
-            draw_draggable_sheet(shell, cx, scope, window, sheet, &title, material_handle, scroll, content_height, viewport, motion, top);
+            draw_draggable_sheet(
+                shell,
+                cx,
+                scope,
+                window,
+                sheet,
+                &title,
+                material_handle,
+                scroll,
+                content_height,
+                viewport,
+                motion,
+                top,
+            );
             return;
         }
         SheetStyle::FadeBottom => {
-            draw_fade_sheet(shell, cx, scope, window, sheet, content_height, viewport, motion, top);
+            draw_fade_sheet(
+                shell,
+                cx,
+                scope,
+                window,
+                sheet,
+                content_height,
+                viewport,
+                motion,
+                top,
+            );
             return;
         }
         _ => {}
     }
     let width = sheet.max_width();
     let back = sheet.can_go_back();
-    let estimated = if *content_height > 0.0 { *content_height } else { 240.0 };
+    let estimated = if *content_height > 0.0 {
+        *content_height
+    } else {
+        240.0
+    };
     // A sheet footer stays pinned below the scrolling body here too (divider, 12px padding).
     let footer_h = sheet.footer_height();
-    let footer_band = if footer_h > 0.0 { 1.0 + 12.0 + footer_h + 12.0 } else { 0.0 };
+    let footer_band = if footer_h > 0.0 {
+        1.0 + 12.0 + footer_h + 12.0
+    } else {
+        0.0
+    };
     let inner = {
         let mut ui = overlay_ui(shell);
-        let body = dialog_frame(&mut ui, cx, window, width, estimated + 48.0 + footer_band, &title, compact, top, back);
-        let inner = rect(body.pos.x, body.pos.y, body.size.x, (body.size.y - footer_band).max(0.0));
+        let body = dialog_frame(
+            &mut ui,
+            cx,
+            window,
+            width,
+            estimated + 48.0 + footer_band,
+            &title,
+            compact,
+            top,
+            back,
+        );
+        let inner = rect(
+            body.pos.x,
+            body.pos.y,
+            body.size.x,
+            (body.size.y - footer_band).max(0.0),
+        );
         if footer_h > 0.0 {
             let bottom = inner.pos.y + inner.size.y;
             let p = ui.p;
-            ui.painter.hline(cx, body.pos.x, bottom, body.size.x, p.border);
-            sheet.draw_footer(cx, &mut ui, body.pos.x + 24.0, bottom + 1.0 + 12.0, body.size.x - 48.0, top);
+            ui.painter
+                .hline(cx, body.pos.x, bottom, body.size.x, p.border);
+            sheet.draw_footer(
+                cx,
+                &mut ui,
+                body.pos.x + 24.0,
+                bottom + 1.0 + 12.0,
+                body.size.x - 48.0,
+                top,
+            );
         }
         inner
     };
     *viewport = inner;
     let max = (*content_height + 48.0 - inner.size.y).max(0.0);
     *scroll = scroll.clamp(0.0, max);
-    cx.begin_turtle(Walk::abs_rect(inner), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(inner),
+        Layout {
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     let height = {
         let mut ui = overlay_ui(shell);
         ui.hits.set_clip(Some(inner));
-        let h = sheet.draw(cx, &mut ui, scope, inner.pos.x + 24.0, inner.pos.y + 24.0 - *scroll, inner.size.x - 48.0, top);
+        let h = sheet.draw(
+            cx,
+            &mut ui,
+            scope,
+            inner.pos.x + 24.0,
+            inner.pos.y + 24.0 - *scroll,
+            inner.size.x - 48.0,
+            top,
+        );
         ui.hits.set_clip(None);
         h
     };
@@ -1160,7 +1976,9 @@ fn draw_sheet(
 
 /// How far a fading sheet has faded in (200ms `FadeTransition`).
 fn fade_progress(motion: &SheetMotion, now: f64) -> f64 {
-    motion.opened.map_or(0.0, |opened| ((now - opened) / 0.2).clamp(0.0, 1.0))
+    motion
+        .opened
+        .map_or(0.0, |opened| ((now - opened) / 0.2).clamp(0.0, 1.0))
 }
 
 /// `SheetStyle::Draggable` on compact layouts.
@@ -1191,36 +2009,78 @@ fn draw_draggable_sheet(
     // `useSafeArea`: never under the top inset.
     let max_h = window.size.y - insets.top;
     let h = (window.size.y * motion.extent).min(max_h).max(0.0);
-    let frame = rect(window.pos.x, window.pos.y + window.size.y - h, window.size.x, h);
+    let frame = rect(
+        window.pos.x,
+        window.pos.y + window.size.y - h,
+        window.size.x,
+        h,
+    );
     motion.frame = frame;
     motion.window_h = window.size.y;
     let body = {
         let mut ui = overlay_ui(shell);
         let p = ui.p;
-        ui.fill(cx, rect(frame.pos.x, frame.pos.y, frame.size.x, frame.size.y + 16.0), p.surface0, 16.0);
+        ui.fill(
+            cx,
+            rect(frame.pos.x, frame.pos.y, frame.size.x, frame.size.y + 16.0),
+            p.surface0,
+            16.0,
+        );
         if top {
             ui.hit(frame, "dialog:surface");
         }
         let cxm = frame.pos.x + frame.size.x * 0.5;
         let band = if material_handle {
             // Material 3 drag handle: 32x4 in a 48px band, onSurfaceVariant at 40%.
-            ui.fill(cx, rect(cxm - 16.0, frame.pos.y + 22.0, 32.0, 4.0), with_alpha(p.muted, 0.4), 2.0);
+            ui.fill(
+                cx,
+                rect(cxm - 16.0, frame.pos.y + 22.0, 32.0, 4.0),
+                with_alpha(p.muted, 0.4),
+                2.0,
+            );
             48.0
         } else {
             // The sheet's own 36x4 surface2 handle with 10px margins.
-            ui.fill(cx, rect(cxm - 18.0, frame.pos.y + 10.0, 36.0, 4.0), p.surface2, 2.0);
+            ui.fill(
+                cx,
+                rect(cxm - 18.0, frame.pos.y + 10.0, 36.0, 4.0),
+                p.surface2,
+                2.0,
+            );
             24.0
         };
         let spec = ui.spec(Font::Medium, 14.0, p.foreground);
         let title_h = super::chrome::text_line_height(20.0, 14.0);
-        ui.text(cx, rect(frame.pos.x + 24.0, frame.pos.y + band, frame.size.x - 48.0, title_h), spec, title);
+        ui.text(
+            cx,
+            rect(
+                frame.pos.x + 24.0,
+                frame.pos.y + band,
+                frame.size.x - 48.0,
+                title_h,
+            ),
+            spec,
+            title,
+        );
         let y = frame.pos.y + band + title_h + 8.0;
         let footer_h = sheet.footer_height();
-        let footer_band = if footer_h > 0.0 { 1.0 + 12.0 + footer_h + 12.0 + insets.bottom } else { insets.bottom };
+        let footer_band = if footer_h > 0.0 {
+            1.0 + 12.0 + footer_h + 12.0 + insets.bottom
+        } else {
+            insets.bottom
+        };
         let bottom = frame.pos.y + frame.size.y - footer_band;
         if footer_h > 0.0 {
-            ui.painter.hline(cx, frame.pos.x, bottom, frame.size.x, p.border);
-            sheet.draw_footer(cx, &mut ui, frame.pos.x + 24.0, bottom + 1.0 + 12.0, frame.size.x - 48.0, top);
+            ui.painter
+                .hline(cx, frame.pos.x, bottom, frame.size.x, p.border);
+            sheet.draw_footer(
+                cx,
+                &mut ui,
+                frame.pos.x + 24.0,
+                bottom + 1.0 + 12.0,
+                frame.size.x - 48.0,
+                top,
+            );
         }
         rect(frame.pos.x, y, frame.size.x, (bottom - y).max(0.0))
     };
@@ -1228,11 +2088,26 @@ fn draw_draggable_sheet(
     // List padding (8, 4, 8, 32).
     let max = (*content_height + 4.0 + 32.0 - body.size.y).max(0.0);
     *scroll = scroll.clamp(0.0, max);
-    cx.begin_turtle(Walk::abs_rect(body), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(body),
+        Layout {
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     let height = {
         let mut ui = overlay_ui(shell);
         ui.hits.set_clip(Some(body));
-        let h = sheet.draw(cx, &mut ui, scope, body.pos.x + 8.0, body.pos.y + 4.0 - *scroll, body.size.x - 16.0, top);
+        let h = sheet.draw(
+            cx,
+            &mut ui,
+            scope,
+            body.pos.x + 8.0,
+            body.pos.y + 4.0 - *scroll,
+            body.size.x - 16.0,
+            top,
+        );
         ui.hits.set_clip(None);
         h
     };
@@ -1266,22 +2141,55 @@ fn draw_fade_sheet(
         shell.data.overlays.spin = cx.new_next_frame();
     }
     let insets = crate::shell::platform::safe_insets();
-    let bottom = if insets.bottom > 24.0 { insets.bottom } else { 24.0 };
-    let estimated = if *content_height > 0.0 { *content_height } else { 72.0 };
+    let bottom = if insets.bottom > 24.0 {
+        insets.bottom
+    } else {
+        24.0
+    };
+    let estimated = if *content_height > 0.0 {
+        *content_height
+    } else {
+        72.0
+    };
     let h = 16.0 + 4.0 + 16.0 + estimated + bottom;
-    let frame = rect(window.pos.x, window.pos.y + window.size.y - h, window.size.x, h);
+    let frame = rect(
+        window.pos.x,
+        window.pos.y + window.size.y - h,
+        window.size.x,
+        h,
+    );
     motion.frame = frame;
     shell.overlay_painter.set_alpha(t as f32);
     {
         let mut ui = overlay_ui(shell);
         let p = ui.p;
-        ui.fill(cx, rect(frame.pos.x, frame.pos.y, frame.size.x, frame.size.y + 16.0), p.surface2, 16.0);
+        ui.fill(
+            cx,
+            rect(frame.pos.x, frame.pos.y, frame.size.x, frame.size.y + 16.0),
+            p.surface2,
+            16.0,
+        );
         if top {
             ui.hit(frame, "dialog:surface");
         }
-        ui.fill(cx, rect(frame.pos.x + frame.size.x * 0.5 - 20.0, frame.pos.y + 16.0, 40.0, 4.0), with_alpha(p.muted, 0.3), 2.0);
+        ui.fill(
+            cx,
+            rect(
+                frame.pos.x + frame.size.x * 0.5 - 20.0,
+                frame.pos.y + 16.0,
+                40.0,
+                4.0,
+            ),
+            with_alpha(p.muted, 0.3),
+            2.0,
+        );
     }
-    let body = rect(frame.pos.x + 24.0, frame.pos.y + 16.0 + 4.0 + 16.0, frame.size.x - 48.0, estimated);
+    let body = rect(
+        frame.pos.x + 24.0,
+        frame.pos.y + 16.0 + 4.0 + 16.0,
+        frame.size.x - 48.0,
+        estimated,
+    );
     *viewport = body;
     let height = {
         let mut ui = overlay_ui(shell);
@@ -1298,7 +2206,16 @@ fn draw_fade_sheet(
 /// `BackHeader` (safe area + 8px, 12px sides, 56px row, 32px round back island with a 16px
 /// muted arrow, lg medium title 8px after it), then the body with 24px sides and bottom.
 #[allow(clippy::too_many_arguments)]
-fn draw_full_screen_sheet(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, window: Rect, sheet: &mut dyn Sheet, title: &str, viewport: &mut Rect, top: bool) {
+fn draw_full_screen_sheet(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    scope: &mut Scope,
+    window: Rect,
+    sheet: &mut dyn Sheet,
+    title: &str,
+    viewport: &mut Rect,
+    top: bool,
+) {
     let insets = crate::shell::platform::safe_insets();
     let body = {
         let mut ui = overlay_ui(shell);
@@ -1309,7 +2226,12 @@ fn draw_full_screen_sheet(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Sco
         }
         let row_y = window.pos.y + insets.top + 8.0;
         let row_h = 32.0 + super::chrome::text_line_height(24.0, 16.0);
-        let island = rect(window.pos.x + 12.0 + insets.left, row_y + (row_h - 32.0) * 0.5, 32.0, 32.0);
+        let island = rect(
+            window.pos.x + 12.0 + insets.left,
+            row_y + (row_h - 32.0) * 0.5,
+            32.0,
+            32.0,
+        );
         let id = if top { "sheet:close" } else { "" };
         if top && (ui.is_hover(id) || ui.is_pressed(id)) {
             ui.fill(cx, island, p.interaction_highlight, 16.0);
@@ -1320,13 +2242,35 @@ fn draw_full_screen_sheet(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Sco
         }
         let spec = ui.spec(Font::Medium, 16.0, p.foreground);
         let tx = island.pos.x + 32.0 + 8.0;
-        ui.text(cx, rect(tx, row_y, window.pos.x + window.size.x - 12.0 - insets.right - tx, row_h), spec, title);
+        ui.text(
+            cx,
+            rect(
+                tx,
+                row_y,
+                window.pos.x + window.size.x - 12.0 - insets.right - tx,
+                row_h,
+            ),
+            spec,
+            title,
+        );
         let top_y = row_y + row_h;
-        rect(window.pos.x + 24.0, top_y, window.size.x - 48.0, (window.pos.y + window.size.y - insets.bottom - 24.0 - top_y).max(0.0))
+        rect(
+            window.pos.x + 24.0,
+            top_y,
+            window.size.x - 48.0,
+            (window.pos.y + window.size.y - insets.bottom - 24.0 - top_y).max(0.0),
+        )
     };
     *viewport = body;
     sheet.set_body_height(body.size.y);
-    cx.begin_turtle(Walk::abs_rect(body), Layout { clip_x: true, clip_y: true, ..Layout::default() });
+    cx.begin_turtle(
+        Walk::abs_rect(body),
+        Layout {
+            clip_x: true,
+            clip_y: true,
+            ..Layout::default()
+        },
+    );
     {
         let mut ui = overlay_ui(shell);
         ui.hits.set_clip(Some(body));
@@ -1340,7 +2284,15 @@ fn draw_full_screen_sheet(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Sco
 }
 
 fn draw_toast(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
-    let Some((message, error)) = shell.data.overlays.toast.as_ref().map(|t| (t.message.clone(), t.error)) else { return };
+    let Some((message, error)) = shell
+        .data
+        .overlays
+        .toast
+        .as_ref()
+        .map(|t| (t.message.clone(), t.error))
+    else {
+        return;
+    };
     let insets = crate::shell::platform::safe_insets();
     let mut ui = overlay_ui(shell);
     let p = ui.p;
@@ -1349,22 +2301,51 @@ fn draw_toast(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
     // and notch on phones), surface0 + border, a dismiss glyph at the end.
     let w = (window.size.x * 0.92).min(480.0);
     let text_w = (w - 36.0 - 36.0).max(40.0);
-    let h = ui.painter.paragraph_height(cx, text_w, spec, &message).max(20.0) + 20.0;
+    let h = ui
+        .painter
+        .paragraph_height(cx, text_w, spec, &message)
+        .max(20.0)
+        + 20.0;
     let top = window.pos.y + insets.top + if ui.compact { 72.0 } else { 44.0 };
     let r = rect(window.pos.x + (window.size.x - w) * 0.5, top, w, h);
     let border = if error { p.danger } else { p.border };
     ui.painter.outline(cx, r, p.surface0, border, 1.0, 16.0);
     let icon = if error { "circle-alert" } else { "info" };
-    ui.icon(cx, rect(r.pos.x + 12.0, r.pos.y + (h - 16.0) * 0.5, 16.0, 16.0), icon, 16.0, if error { p.danger } else { p.muted });
-    ui.painter.paragraph(cx, dvec2(r.pos.x + 36.0, r.pos.y + 10.0), text_w, spec, &message);
-    ui.icon(cx, rect(r.pos.x + r.size.x - 28.0, r.pos.y + (h - 16.0) * 0.5, 16.0, 16.0), "x", 14.0, p.muted);
+    ui.icon(
+        cx,
+        rect(r.pos.x + 12.0, r.pos.y + (h - 16.0) * 0.5, 16.0, 16.0),
+        icon,
+        16.0,
+        if error { p.danger } else { p.muted },
+    );
+    ui.painter.paragraph(
+        cx,
+        dvec2(r.pos.x + 36.0, r.pos.y + 10.0),
+        text_w,
+        spec,
+        &message,
+    );
+    ui.icon(
+        cx,
+        rect(
+            r.pos.x + r.size.x - 28.0,
+            r.pos.y + (h - 16.0) * 0.5,
+            16.0,
+            16.0,
+        ),
+        "x",
+        14.0,
+        p.muted,
+    );
     if let Some(toast) = shell.data.overlays.toast.as_mut() {
         toast.rect = r;
     }
 }
 
 fn draw_tooltip(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
-    let Some(tip) = shell.data.overlays.tooltip.clone() else { return };
+    let Some(tip) = shell.data.overlays.tooltip.clone() else {
+        return;
+    };
     let mut ui = overlay_ui(shell);
     let p = ui.p;
     let spec = ui.spec(Font::Regular, 12.0, p.surface0);
@@ -1376,8 +2357,15 @@ fn draw_tooltip(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
     let cx0 = a.pos.x + a.size.x * 0.5;
     let cy = a.pos.y + a.size.y * 0.5;
     let below = cy + 24.0;
-    let y = if below + h > window.pos.y + window.size.y - 4.0 { cy - 24.0 - h } else { below };
-    let x = (cx0 - w * 0.5).clamp(window.pos.x + 4.0, (window.pos.x + window.size.x - w - 4.0).max(window.pos.x + 4.0));
+    let y = if below + h > window.pos.y + window.size.y - 4.0 {
+        cy - 24.0 - h
+    } else {
+        below
+    };
+    let x = (cx0 - w * 0.5).clamp(
+        window.pos.x + 4.0,
+        (window.pos.x + window.size.x - w - 4.0).max(window.pos.x + 4.0),
+    );
     let r = rect(x, y, w, h);
     ui.fill(cx, r, with_alpha(p.foreground, 0.9), 4.0);
     ui.text_centered(cx, r, spec, &tip.text);
@@ -1416,7 +2404,14 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         }
         return true;
     }
-    if matches!(event, Event::BackPressed { .. } | Event::KeyDown(KeyEvent { key_code: KeyCode::Escape, .. })) {
+    if matches!(
+        event,
+        Event::BackPressed { .. }
+            | Event::KeyDown(KeyEvent {
+                key_code: KeyCode::Escape,
+                ..
+            })
+    ) {
         return true;
     }
     if let Event::KeyDown(key) = event
@@ -1429,7 +2424,9 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         // Text fields and sheets receive events first (unlocked).
         cx.sweep_unlock(area);
         match &mut shell.data.overlays.stack[top] {
-            Modal::Prompt { field, id, owner, .. } => {
+            Modal::Prompt {
+                field, id, owner, ..
+            } => {
                 let field = field.clone();
                 let (id, owner) = (*id, owner.clone());
                 field.handle_event(cx, event, scope);
@@ -1489,7 +2486,12 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         let viewport = scroll_viewport(shell);
         let eligible = !matches!(&swept, Hit::FingerDown(e) if !viewport.contains(e.abs));
         if eligible {
-            if let Some(dy) = shell.data.overlays.touch_scroll.handle_event(cx, event, &swept) {
+            if let Some(dy) = shell
+                .data
+                .overlays
+                .touch_scroll
+                .handle_event(cx, event, &swept)
+            {
                 shell.data.overlays.pointer.pressed = None;
                 scroll_top(shell, dy);
                 shell.redraw(cx);
@@ -1545,8 +2547,21 @@ fn drag_sheet(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, hit: &Hit)
         return false;
     }
     {
-        let Some(Modal::Sheet { sheet, motion, scroll, content_height, viewport, .. }) = shell.data.overlays.stack.last_mut() else { return false };
-        if !compact || !matches!(sheet.style(), SheetStyle::Draggable { .. }) || motion.window_h <= 0.0 {
+        let Some(Modal::Sheet {
+            sheet,
+            motion,
+            scroll,
+            content_height,
+            viewport,
+            ..
+        }) = shell.data.overlays.stack.last_mut()
+        else {
+            return false;
+        };
+        if !compact
+            || !matches!(sheet.style(), SheetStyle::Draggable { .. })
+            || motion.window_h <= 0.0
+        {
             return false;
         }
         match hit {
@@ -1556,14 +2571,18 @@ fn drag_sheet(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, hit: &Hit)
                 motion.start = None;
             }
             Hit::FingerMove(fe) => {
-                let Some(last) = motion.drag else { return false };
+                let Some(last) = motion.drag else {
+                    return false;
+                };
                 let dy = fe.abs.y - last;
                 motion.drag = Some(fe.abs.y);
                 motion.travel += dy.abs();
                 cancel_tap = motion.travel > 8.0;
                 let max_scroll = (*content_height + 4.0 + 32.0 - viewport.size.y).max(0.0);
                 if dy < 0.0 {
-                    let grow = (-dy / motion.window_h).min(DRAG_SNAPS[2] - motion.extent).max(0.0);
+                    let grow = (-dy / motion.window_h)
+                        .min(DRAG_SNAPS[2] - motion.extent)
+                        .max(0.0);
                     motion.extent += grow;
                     *scroll = (*scroll + (-dy - grow * motion.window_h)).min(max_scroll);
                 } else {
@@ -1618,7 +2637,13 @@ fn step_active(candidates: &[usize], current: Option<usize>, key: &KeyEvent) -> 
 
 /// The scroll that keeps `[top, bottom)` (content coordinates) inside a viewport of `height`.
 fn scroll_into_view(scroll: f64, max: f64, height: f64, top: f64, bottom: f64) -> f64 {
-    let next = if top < scroll { top } else if bottom > scroll + height { bottom - height } else { scroll };
+    let next = if top < scroll {
+        top
+    } else if bottom > scroll + height {
+        bottom - height
+    } else {
+        scroll
+    };
     next.clamp(0.0, max.max(0.0))
 }
 
@@ -1638,11 +2663,19 @@ fn menu_selectable(entries: &[MenuEntry]) -> Vec<usize> {
 /// Content offset (top, bottom) of menu entry `index`, matching [`draw_menu`].
 fn menu_entry_span(entries: &[MenuEntry], index: usize, compact: bool) -> (f64, f64) {
     let top = 4.0 + entries_height(&entries[..index], compact) - 8.0;
-    (top, top + entries_height(&entries[index..=index], compact) - 8.0)
+    (
+        top,
+        top + entries_height(&entries[index..=index], compact) - 8.0,
+    )
 }
 
 /// Content offset (top, bottom) of option `index` in a select list, matching [`draw_select`].
-fn select_option_span(select: &OpenSelect, visible: &[usize], index: usize, sheet: bool) -> Option<(f64, f64)> {
+fn select_option_span(
+    select: &OpenSelect,
+    visible: &[usize],
+    index: usize,
+    sheet: bool,
+) -> Option<(f64, f64)> {
     let mut y = 4.0;
     let gap = if sheet { 4.0 } else { 0.0 };
     for &i in visible {
@@ -1666,7 +2699,9 @@ fn modal_key(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, key: &KeyEv
         return false;
     }
     let compact = shell.data.compact;
-    let Some(top) = shell.data.overlays.stack.last_mut() else { return false };
+    let Some(top) = shell.data.overlays.stack.last_mut() else {
+        return false;
+    };
     let pick = match top {
         Modal::Menu(menu) => {
             let depth = menu.pages.len();
@@ -1676,31 +2711,54 @@ fn modal_key(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, key: &KeyEv
             if let Some(next) = step_active(&selectable, active, key) {
                 menu.active = Some(next);
                 let (top_y, bottom_y) = menu_entry_span(entries, next, compact);
-                menu.scroll = scroll_into_view(menu.scroll, menu.max_scroll, menu.viewport.size.y, top_y, bottom_y);
+                menu.scroll = scroll_into_view(
+                    menu.scroll,
+                    menu.max_scroll,
+                    menu.viewport.size.y,
+                    top_y,
+                    bottom_y,
+                );
                 shell.redraw(cx);
                 return true;
             }
             match (key.key_code, active) {
-                (KeyCode::ReturnKey | KeyCode::Space, Some(i)) | (KeyCode::ArrowRight, Some(i)) => match &entries[i] {
-                    MenuEntry::Submenu { .. } => format!("menu:sub:{i}"),
-                    _ if key.key_code == KeyCode::ArrowRight => return false,
-                    _ => format!("menu:item:{i}"),
-                },
-                (KeyCode::ArrowLeft | KeyCode::Backspace, _) if depth > 1 => "menu:back".to_string(),
+                (KeyCode::ReturnKey | KeyCode::Space, Some(i)) | (KeyCode::ArrowRight, Some(i)) => {
+                    match &entries[i] {
+                        MenuEntry::Submenu { .. } => format!("menu:sub:{i}"),
+                        _ if key.key_code == KeyCode::ArrowRight => return false,
+                        _ => format!("menu:item:{i}"),
+                    }
+                }
+                (KeyCode::ArrowLeft | KeyCode::Backspace, _) if depth > 1 => {
+                    "menu:back".to_string()
+                }
                 _ => return false,
             }
         }
         Modal::Select(select) => {
             let visible: Vec<usize> = select.visible();
-            let enabled: Vec<usize> = visible.iter().copied().filter(|&i| select.options[i].enabled).collect();
+            let enabled: Vec<usize> = visible
+                .iter()
+                .copied()
+                .filter(|&i| select.options[i].enabled)
+                .collect();
             let active = select.active.filter(|a| enabled.contains(a));
-            let edits_query = select.search.is_some() && matches!(key.key_code, KeyCode::Home | KeyCode::End);
-            if key.key_code != KeyCode::Tab && !edits_query
+            let edits_query =
+                select.search.is_some() && matches!(key.key_code, KeyCode::Home | KeyCode::End);
+            if key.key_code != KeyCode::Tab
+                && !edits_query
                 && let Some(next) = step_active(&enabled, active, key)
             {
                 select.active = Some(next);
-                if let Some((top_y, bottom_y)) = select_option_span(select, &visible, next, compact) {
-                    select.scroll = scroll_into_view(select.scroll, select.max_scroll, select.viewport.size.y, top_y, bottom_y);
+                if let Some((top_y, bottom_y)) = select_option_span(select, &visible, next, compact)
+                {
+                    select.scroll = scroll_into_view(
+                        select.scroll,
+                        select.max_scroll,
+                        select.viewport.size.y,
+                        top_y,
+                        bottom_y,
+                    );
                 }
                 shell.redraw(cx);
                 return true;
@@ -1717,7 +2775,12 @@ fn modal_key(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, key: &KeyEv
                 shell.redraw(cx);
                 return true;
             }
-            KeyCode::ReturnKey | KeyCode::Space => (if *ok_focused { "confirm:ok" } else { "confirm:cancel" }).to_string(),
+            KeyCode::ReturnKey | KeyCode::Space => (if *ok_focused {
+                "confirm:ok"
+            } else {
+                "confirm:cancel"
+            })
+            .to_string(),
             _ => return false,
         },
         _ => return false,
@@ -1734,7 +2797,9 @@ fn modal_key(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, key: &KeyEv
         && depth != after_depth
         && let Some(Modal::Menu(menu)) = shell.data.overlays.stack.last_mut()
     {
-        menu.active = menu_selectable(&menu.pages[after_depth - 1].1).first().copied();
+        menu.active = menu_selectable(&menu.pages[after_depth - 1].1)
+            .first()
+            .copied();
     }
     true
 }
@@ -1751,8 +2816,19 @@ fn scroll_viewport(shell: &PaseoShell) -> Rect {
 fn scroll_top(shell: &mut PaseoShell, delta: f64) {
     let overlays = &mut shell.data.overlays;
     let (scroll, max) = match overlays.stack.last_mut() {
-        Some(Modal::Sheet { scroll, content_height, viewport, sheet, .. }) => {
-            let padding = if shell.data.compact && matches!(sheet.style(), SheetStyle::Draggable { .. }) { 36.0 } else { 48.0 };
+        Some(Modal::Sheet {
+            scroll,
+            content_height,
+            viewport,
+            sheet,
+            ..
+        }) => {
+            let padding =
+                if shell.data.compact && matches!(sheet.style(), SheetStyle::Draggable { .. }) {
+                    36.0
+                } else {
+                    48.0
+                };
             (scroll, *content_height + padding - viewport.size.y)
         }
         Some(Modal::Menu(menu)) => (&mut menu.scroll, menu.max_scroll),
@@ -1765,7 +2841,14 @@ fn scroll_top(shell: &mut PaseoShell, delta: f64) {
     overlays.touch_scroll.apply_delta(scroll, delta, max);
 }
 
-fn answer(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, owner: &str, id: u64, args: Value) {
+fn answer(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    scope: &mut Scope,
+    owner: &str,
+    id: u64,
+    args: Value,
+) {
     if let Some(ui) = scope.data.get_mut::<UiContext>() {
         shell.overlay_answer(cx, ui, owner, id, args);
     }
@@ -1779,12 +2862,26 @@ pub fn dismiss_all(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
     shell.data.overlays.pointer = Pointer::default();
     // An answer may open a follow-up (a close guard's next step); stop after a bounded number.
     for _ in 0..64 {
-        let Some(modal) = shell.data.overlays.pop(cx) else { break };
+        let Some(modal) = shell.data.overlays.pop(cx) else {
+            break;
+        };
         match modal {
-            Modal::Menu(menu) => shell.overlay_answer(cx, ui, &menu.owner, menu.id, json!({ "cancelled": true })),
-            Modal::Select(select) => shell.overlay_answer(cx, ui, &select.owner, select.id, json!({ "cancelled": true })),
-            Modal::Confirm { id, owner, .. } => shell.overlay_answer(cx, ui, &owner, id, json!({ "confirmed": false })),
-            Modal::Prompt { id, owner, .. } => shell.overlay_answer(cx, ui, &owner, id, json!({ "cancelled": true })),
+            Modal::Menu(menu) => {
+                shell.overlay_answer(cx, ui, &menu.owner, menu.id, json!({ "cancelled": true }))
+            }
+            Modal::Select(select) => shell.overlay_answer(
+                cx,
+                ui,
+                &select.owner,
+                select.id,
+                json!({ "cancelled": true }),
+            ),
+            Modal::Confirm { id, owner, .. } => {
+                shell.overlay_answer(cx, ui, &owner, id, json!({ "confirmed": false }))
+            }
+            Modal::Prompt { id, owner, .. } => {
+                shell.overlay_answer(cx, ui, &owner, id, json!({ "cancelled": true }))
+            }
             Modal::Sheet { mut sheet, .. } => {
                 let mut ops = SheetOps::new(ui);
                 sheet.closed(cx, &mut ops);
@@ -1798,12 +2895,32 @@ pub fn dismiss_all(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
 fn dismiss_top(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope) {
     shell.data.overlays.touch_scroll.reset();
     shell.data.overlays.pointer = Pointer::default();
-    let Some(modal) = shell.data.overlays.pop(cx) else { return };
+    let Some(modal) = shell.data.overlays.pop(cx) else {
+        return;
+    };
     match modal {
-        Modal::Menu(menu) => answer(shell, cx, scope, &menu.owner, menu.id, json!({ "cancelled": true })),
-        Modal::Select(select) => answer(shell, cx, scope, &select.owner, select.id, json!({ "cancelled": true })),
-        Modal::Confirm { id, owner, .. } => answer(shell, cx, scope, &owner, id, json!({ "confirmed": false })),
-        Modal::Prompt { id, owner, .. } => answer(shell, cx, scope, &owner, id, json!({ "cancelled": true })),
+        Modal::Menu(menu) => answer(
+            shell,
+            cx,
+            scope,
+            &menu.owner,
+            menu.id,
+            json!({ "cancelled": true }),
+        ),
+        Modal::Select(select) => answer(
+            shell,
+            cx,
+            scope,
+            &select.owner,
+            select.id,
+            json!({ "cancelled": true }),
+        ),
+        Modal::Confirm { id, owner, .. } => {
+            answer(shell, cx, scope, &owner, id, json!({ "confirmed": false }))
+        }
+        Modal::Prompt { id, owner, .. } => {
+            answer(shell, cx, scope, &owner, id, json!({ "cancelled": true }))
+        }
         Modal::Sheet { mut sheet, .. } => {
             if let Some(ui) = scope.data.get_mut::<UiContext>() {
                 let mut ops = SheetOps::new(ui);
@@ -1834,12 +2951,22 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
     }
     match &mut shell.data.overlays.stack[top] {
         Modal::Select(select) => {
-            if let Some(index) = id.strip_prefix("select:item:").and_then(|i| i.parse::<usize>().ok())
+            if let Some(index) = id
+                .strip_prefix("select:item:")
+                .and_then(|i| i.parse::<usize>().ok())
                 && let Some(option) = select.options.get(index).filter(|o| o.enabled)
             {
-                let (owner, select_id, value) = (select.owner.clone(), select.id, option.value.clone());
+                let (owner, select_id, value) =
+                    (select.owner.clone(), select.id, option.value.clone());
                 shell.data.overlays.pop(cx);
-                answer(shell, cx, scope, &owner, select_id, json!({ "value": value }));
+                answer(
+                    shell,
+                    cx,
+                    scope,
+                    &owner,
+                    select_id,
+                    json!({ "value": value }),
+                );
             }
         }
         Modal::Menu(menu) => {
@@ -1852,8 +2979,15 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
                 shell.redraw(cx);
                 return;
             }
-            let entries = menu.pages.last().map(|(_, e)| e.clone()).unwrap_or_default();
-            if let Some(index) = id.strip_prefix("menu:sub:").and_then(|i| i.parse::<usize>().ok()) {
+            let entries = menu
+                .pages
+                .last()
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            if let Some(index) = id
+                .strip_prefix("menu:sub:")
+                .and_then(|i| i.parse::<usize>().ok())
+            {
                 if let Some(MenuEntry::Submenu { label, entries, .. }) = entries.get(index) {
                     menu.pages.push((Some(label.clone()), entries.clone()));
                     menu.scroll = 0.0;
@@ -1862,7 +2996,9 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
                 shell.redraw(cx);
                 return;
             }
-            if let Some(index) = id.strip_prefix("menu:item:").and_then(|i| i.parse::<usize>().ok())
+            if let Some(index) = id
+                .strip_prefix("menu:item:")
+                .and_then(|i| i.parse::<usize>().ok())
                 && let Some(MenuEntry::Item(item)) = entries.get(index)
             {
                 let (owner, menu_id) = (menu.owner.clone(), menu.id);
@@ -1881,9 +3017,21 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
                 _ => return,
             };
             shell.data.overlays.pop(cx);
-            answer(shell, cx, scope, &owner, cid, json!({ "confirmed": confirmed }));
+            answer(
+                shell,
+                cx,
+                scope,
+                &owner,
+                cid,
+                json!({ "confirmed": confirmed }),
+            );
         }
-        Modal::Prompt { id: pid, owner, field, .. } => {
+        Modal::Prompt {
+            id: pid,
+            owner,
+            field,
+            ..
+        } => {
             let (pid, owner, text) = (*pid, owner.clone(), field.text());
             match id {
                 "prompt:ok" => {
@@ -1897,9 +3045,15 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
                 _ => {}
             }
         }
-        Modal::Sheet { sheet, id: sheet_id, .. } => {
+        Modal::Sheet {
+            sheet,
+            id: sheet_id,
+            ..
+        } => {
             let sheet_id = *sheet_id;
-            let Some(ui) = scope.data.get_mut::<UiContext>() else { return };
+            let Some(ui) = scope.data.get_mut::<UiContext>() else {
+                return;
+            };
             let mut ops = SheetOps::for_sheet(ui, sheet_id);
             let flow = sheet.click(cx, id, &mut ops);
             crate::shell::sheets::apply_ops(shell, cx, ui, ops, Some(sheet_id));
@@ -1909,8 +3063,16 @@ fn click(shell: &mut PaseoShell, cx: &mut Cx, scope: &mut Scope, id: &str) {
     shell.redraw(cx);
 }
 
-fn sheet_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &mut Scope, index: usize) -> Option<SheetFlow> {
-    let Modal::Sheet { sheet, id, .. } = &mut shell.data.overlays.stack[index] else { return None };
+fn sheet_event(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    event: &Event,
+    scope: &mut Scope,
+    index: usize,
+) -> Option<SheetFlow> {
+    let Modal::Sheet { sheet, id, .. } = &mut shell.data.overlays.stack[index] else {
+        return None;
+    };
     let sheet_id = *id;
     let flow = sheet.handle_event(cx, event, scope);
     let (ops, after) = {
@@ -1923,11 +3085,21 @@ fn sheet_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &mut S
         crate::shell::sheets::apply_ops(shell, cx, ui, ops, Some(sheet_id));
     }
     shell.redraw(cx);
-    Some(if matches!(flow, SheetFlow::Stay) { after } else { flow })
+    Some(if matches!(flow, SheetFlow::Stay) {
+        after
+    } else {
+        flow
+    })
 }
 
 /// Applies a sheet's navigation result to the overlay stack.
-pub fn apply_flow(shell: &mut PaseoShell, cx: &mut Cx, _scope: &mut Scope, index: usize, flow: SheetFlow) {
+pub fn apply_flow(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    _scope: &mut Scope,
+    index: usize,
+    flow: SheetFlow,
+) {
     match flow {
         SheetFlow::Stay => {}
         SheetFlow::Close => {
@@ -1963,7 +3135,15 @@ mod tests {
     use super::*;
 
     fn key(code: KeyCode, shift: bool) -> KeyEvent {
-        KeyEvent { key_code: code, is_repeat: false, modifiers: KeyModifiers { shift, ..KeyModifiers::default() }, time: 0.0 }
+        KeyEvent {
+            key_code: code,
+            is_repeat: false,
+            modifiers: KeyModifiers {
+                shift,
+                ..KeyModifiers::default()
+            },
+            time: 0.0,
+        }
     }
 
     #[test]
@@ -1977,7 +3157,15 @@ mod tests {
 
     #[test]
     fn info_toasts_never_replace_a_showing_error() {
-        let toast = |error: bool| Toast { message: "m".into(), error, timer: Timer::empty(), remaining: 1.0, started: 0.0, paused: false, rect: Rect::default() };
+        let toast = |error: bool| Toast {
+            message: "m".into(),
+            error,
+            timer: Timer::empty(),
+            remaining: 1.0,
+            started: 0.0,
+            paused: false,
+            rect: Rect::default(),
+        };
         let (error, info) = (toast(true), toast(false));
         assert!(!toast_replaces(Some(&error), false));
         assert!(toast_replaces(Some(&error), true));
@@ -1988,13 +3176,34 @@ mod tests {
     #[test]
     fn keyboard_steps_wrap_over_enabled_rows() {
         let rows = [1, 3, 4];
-        assert_eq!(step_active(&rows, None, &key(KeyCode::ArrowDown, false)), Some(1));
-        assert_eq!(step_active(&rows, None, &key(KeyCode::ArrowUp, false)), Some(4));
-        assert_eq!(step_active(&rows, Some(4), &key(KeyCode::ArrowDown, false)), Some(1));
-        assert_eq!(step_active(&rows, Some(1), &key(KeyCode::Tab, true)), Some(4));
-        assert_eq!(step_active(&rows, Some(3), &key(KeyCode::End, false)), Some(4));
-        assert_eq!(step_active(&rows, Some(3), &key(KeyCode::ReturnKey, false)), None);
-        assert_eq!(step_active(&[], None, &key(KeyCode::ArrowDown, false)), None);
+        assert_eq!(
+            step_active(&rows, None, &key(KeyCode::ArrowDown, false)),
+            Some(1)
+        );
+        assert_eq!(
+            step_active(&rows, None, &key(KeyCode::ArrowUp, false)),
+            Some(4)
+        );
+        assert_eq!(
+            step_active(&rows, Some(4), &key(KeyCode::ArrowDown, false)),
+            Some(1)
+        );
+        assert_eq!(
+            step_active(&rows, Some(1), &key(KeyCode::Tab, true)),
+            Some(4)
+        );
+        assert_eq!(
+            step_active(&rows, Some(3), &key(KeyCode::End, false)),
+            Some(4)
+        );
+        assert_eq!(
+            step_active(&rows, Some(3), &key(KeyCode::ReturnKey, false)),
+            None
+        );
+        assert_eq!(
+            step_active(&[], None, &key(KeyCode::ArrowDown, false)),
+            None
+        );
     }
 
     #[test]

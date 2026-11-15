@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 fn options(args: &[String]) -> Result<BTreeMap<String, String>> {
     ensure!(
-        args.len() % 2 == 0,
+        args.len().is_multiple_of(2),
         "Probe options require --name value pairs"
     );
     let mut options = BTreeMap::new();

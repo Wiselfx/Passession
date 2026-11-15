@@ -1,7 +1,7 @@
 use super::*;
 use crate::providers::api::PromptDeliveryError;
-use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
 #[derive(Default)]
 struct Hooks {
@@ -72,16 +72,28 @@ async fn external_receipt_observer_preserves_live_owner_and_sees_late_ack() -> R
     assert_eq!(observed["phase"], "dispatching");
     assert_eq!(observed["revision"], before["revision"]);
     assert_eq!(receipts.get("agent", "resume").await?, before);
-    receipts.settle("agent", "resume", Settlement::Accepted {
-        result: Some(json!({"disposition":"steered"})),
-        correlation: json!({"nativeMessageId":"native-resume"}),
-    }).await?;
+    receipts
+        .settle(
+            "agent",
+            "resume",
+            Settlement::Accepted {
+                result: Some(json!({"disposition":"steered"})),
+                correlation: json!({"nativeMessageId":"native-resume"}),
+            },
+        )
+        .await?;
     drop(owner);
     let accepted = MessageReceipts::observe_persisted(home.path(), "agent", "resume").await?;
     assert_eq!(accepted["phase"], "accepted");
     assert_eq!(accepted["correlation"]["nativeMessageId"], "native-resume");
-    assert_eq!(replayed(&receipts, "resume", &request).await?["phase"], "accepted");
-    assert_eq!(MessageReceipts::observe_persisted(home.path(), "agent", "absent").await?["phase"], "missing");
+    assert_eq!(
+        replayed(&receipts, "resume", &request).await?["phase"],
+        "accepted"
+    );
+    assert_eq!(
+        MessageReceipts::observe_persisted(home.path(), "agent", "absent").await?["phase"],
+        "missing"
+    );
     Ok(())
 }
 
@@ -97,7 +109,11 @@ async fn completed_and_rejected_sends_replay_without_dispatch() -> Result<()> {
         .settle(
             "agent",
             "message",
-            Settlement::Submitted { result: result.clone(), correlation: json!({"turnId":"turn-1"}), ack_pending: false },
+            Settlement::Submitted {
+                result: result.clone(),
+                correlation: json!({"turnId":"turn-1"}),
+                ack_pending: false,
+            },
         )
         .await?;
     drop(owner);
@@ -147,12 +163,14 @@ async fn live_duplicate_waits_while_queries_and_dismissal_do_not() -> Result<()>
         panic!("a live duplicate must join its owner");
     };
     // The owner holds no receipt lock while it prepares or dispatches.
-    let receipt = tokio::time::timeout(Duration::from_secs(1), receipts.get("agent", "message")).await??;
+    let receipt =
+        tokio::time::timeout(Duration::from_secs(1), receipts.get("agent", "message")).await??;
     assert_eq!(receipt["phase"], "preparing");
     assert_eq!(receipt["mayHaveExecuted"], false);
     assert!(receipts.begin_dispatch("agent", "message").await?);
     let dismissed =
-        tokio::time::timeout(Duration::from_secs(1), receipts.dismiss("agent", "message")).await??;
+        tokio::time::timeout(Duration::from_secs(1), receipts.dismiss("agent", "message"))
+            .await??;
     assert_eq!(dismissed["phase"], "dispatching");
     assert_eq!(dismissed["dismissed"], true);
     assert_eq!(dismissed["mayHaveExecuted"], true);
@@ -160,7 +178,10 @@ async fn live_duplicate_waits_while_queries_and_dismissal_do_not() -> Result<()>
         .settle(
             "agent",
             "message",
-            Settlement::Accepted { result: Some(json!({"disposition":"steered"})), correlation: json!({}) },
+            Settlement::Accepted {
+                result: Some(json!({"disposition":"steered"})),
+                correlation: json!({}),
+            },
         )
         .await?;
     tokio::time::timeout(Duration::from_secs(1), settled.wait_for(|done| *done)).await??;
@@ -183,7 +204,11 @@ async fn dismissal_is_sticky_through_late_acknowledgement_and_unknown_ids() -> R
     let gate = DispatchGate::new("agent", vec!["early".to_owned()], true);
     let error = receipts.begin(&gate).await.unwrap_err();
     receipts
-        .settle("agent", "early", Settlement::failure(&error, gate.invoked()))
+        .settle(
+            "agent",
+            "early",
+            Settlement::failure(&error, gate.invoked()),
+        )
         .await?;
     drop(owner);
     let early = receipts.get("agent", "early").await?;
@@ -192,7 +217,9 @@ async fn dismissal_is_sticky_through_late_acknowledgement_and_unknown_ids() -> R
     assert_eq!(early["mayHaveExecuted"], false);
     assert_eq!(early["canRetry"], false);
     assert_eq!(
-        replay(replayed(&receipts, "early", &request).await?).unwrap_err().to_string(),
+        replay(replayed(&receipts, "early", &request).await?)
+            .unwrap_err()
+            .to_string(),
         DISMISSED
     );
 
@@ -203,7 +230,11 @@ async fn dismissal_is_sticky_through_late_acknowledgement_and_unknown_ids() -> R
         .settle(
             "agent",
             "late",
-            Settlement::Submitted { result: json!({"disposition":"turn_started","turnId":"t"}), correlation: json!({"turnId":"t"}), ack_pending: true },
+            Settlement::Submitted {
+                result: json!({"disposition":"turn_started","turnId":"t"}),
+                correlation: json!({"turnId":"t"}),
+                ack_pending: true,
+            },
         )
         .await?;
     let follower = receipts.claim("agent", "late")?;
@@ -222,7 +253,10 @@ async fn dismissal_is_sticky_through_late_acknowledgement_and_unknown_ids() -> R
     let late = replayed(&receipts, "late", &request).await?;
     assert_eq!(late["phase"], "accepted");
     assert_eq!(late["dismissed"], true);
-    assert_eq!(late["correlation"]["acknowledgement"]["nativeRequestId"], "req_7");
+    assert_eq!(
+        late["correlation"]["acknowledgement"]["nativeRequestId"],
+        "req_7"
+    );
     assert_eq!(replay(late).unwrap_err().to_string(), DISMISSED);
 
     // A request the host never saw can be tombstoned before a retry arrives.
@@ -231,7 +265,9 @@ async fn dismissal_is_sticky_through_late_acknowledgement_and_unknown_ids() -> R
     assert_eq!(tombstone["dismissed"], true);
     assert_eq!(tombstone["revision"], 1);
     assert_eq!(
-        replay(replayed(&receipts, "never-seen", &request).await?).unwrap_err().to_string(),
+        replay(replayed(&receipts, "never-seen", &request).await?)
+            .unwrap_err()
+            .to_string(),
         DISMISSED
     );
     // The same request under a new message ID is a distinct, valid send.
@@ -253,7 +289,11 @@ async fn orphaned_phases_reconcile_conservatively_after_restart() -> Result<()> 
         .settle(
             "agent",
             "acknowledging",
-            Settlement::Submitted { result: json!({"disposition":"turn_started"}), correlation: json!({}), ack_pending: true },
+            Settlement::Submitted {
+                result: json!({"disposition":"turn_started"}),
+                correlation: json!({}),
+                ack_pending: true,
+            },
         )
         .await?;
     let restarted = MessageReceipts::new(home.path().to_owned());
@@ -267,7 +307,9 @@ async fn orphaned_phases_reconcile_conservatively_after_restart() -> Result<()> 
         assert_eq!(unknown["mayHaveExecuted"], true, "{id}");
         assert_eq!(unknown["canRetry"], false, "{id}");
         assert_eq!(
-            replay(replayed(&restarted, id, &request).await?).unwrap_err().to_string(),
+            replay(replayed(&restarted, id, &request).await?)
+                .unwrap_err()
+                .to_string(),
             OUTCOME_UNKNOWN
         );
     }
@@ -282,7 +324,10 @@ async fn stored_receipts_replay_and_versionless_records_are_errors() -> Result<(
     let request = json!({"prompt":"hello"});
     let fingerprint = digest(&request)?;
     // Receipts written by earlier native daemons also carry a `state` field.
-    for (id, phase, dismissed) in [("submitted", "submitted", false), ("dismissed", "outcome_unknown", true)] {
+    for (id, phase, dismissed) in [
+        ("submitted", "submitted", false),
+        ("dismissed", "outcome_unknown", true),
+    ] {
         tokio::fs::write(
             directory.join(format!("{}.json", send_key(id)?)),
             serde_json::to_vec(&json!({
@@ -298,12 +343,16 @@ async fn stored_receipts_replay_and_versionless_records_are_errors() -> Result<(
     assert_eq!(submitted["deduplicated"], true);
     assert_eq!(submitted["receipt"]["revision"], 2);
     assert_eq!(
-        replay(replayed(&receipts, "dismissed", &request).await?).unwrap_err().to_string(),
+        replay(replayed(&receipts, "dismissed", &request).await?)
+            .unwrap_err()
+            .to_string(),
         DISMISSED
     );
 
     let versionless = directory.join(format!("{}.json", send_key("versionless")?));
-    let bytes = serde_json::to_vec(&json!({"fingerprint":fingerprint,"agentId":"agent","state":"completed"}))?;
+    let bytes = serde_json::to_vec(
+        &json!({"fingerprint":fingerprint,"agentId":"agent","state":"completed"}),
+    )?;
     tokio::fs::write(&versionless, &bytes).await?;
     assert!(receipts.get("agent", "versionless").await.is_err());
     assert_eq!(tokio::fs::read(&versionless).await?, bytes);

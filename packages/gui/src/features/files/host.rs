@@ -12,7 +12,10 @@ pub fn host<'a>(state: &'a Value, host_id: &str) -> Option<&'a Value> {
 }
 
 pub fn connected(state: &Value, host_id: &str) -> bool {
-    host(state, host_id).and_then(|h| h.get("status")).and_then(Value::as_str) == Some("connected")
+    host(state, host_id)
+        .and_then(|h| h.get("status"))
+        .and_then(Value::as_str)
+        == Some("connected")
 }
 
 /// The host's `server_info` (state record, falling back to the last `Connected`).
@@ -51,7 +54,10 @@ pub fn preferences(state: &Value) -> &Value {
 }
 
 pub fn set_preference(ui: &mut UiContext, key: &str, value: Value) {
-    ui.push(UiEffect::SetPreference { key: key.to_owned(), value });
+    ui.push(UiEffect::SetPreference {
+        key: key.to_owned(),
+        value,
+    });
 }
 
 /// Flutter `_localHost`: a desktop-managed host reached through a local socket or loopback.
@@ -60,7 +66,10 @@ pub fn is_local_desktop_host(ui: &UiContext, host_id: &str) -> bool {
     if cfg!(any(target_os = "android", target_os = "ios")) {
         return false;
     }
-    host(&ui.state, host_id).and_then(|record| record.get("isLocal")).and_then(Value::as_bool).unwrap_or(false)
+    host(&ui.state, host_id)
+        .and_then(|record| record.get("isLocal"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub fn copy_text(ui: &mut UiContext, text: String, toast: Option<String>) {
@@ -72,25 +81,40 @@ pub fn toast(ui: &mut UiContext, message: impl Into<String>, is_error: bool) {
 }
 
 pub fn open_external(ui: &mut UiContext, url: &str) {
-    ui.push(UiEffect::OpenExternal { url: url.to_owned() });
+    ui.push(UiEffect::OpenExternal {
+        url: url.to_owned(),
+    });
 }
 
 /// Opens a file tab; `beside` is "open to the side" (Flutter `open(beside: true)`).
 pub fn open_file(ui: &mut UiContext, host_id: &str, workspace_id: &str, path: &str, beside: bool) {
     let effect = if beside {
-        UiEffect::OpenFileBeside { host_id: host_id.to_owned(), workspace_id: workspace_id.to_owned(), path: path.to_owned() }
+        UiEffect::OpenFileBeside {
+            host_id: host_id.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            path: path.to_owned(),
+        }
     } else {
-        UiEffect::OpenFile { host_id: host_id.to_owned(), workspace_id: workspace_id.to_owned(), path: path.to_owned() }
+        UiEffect::OpenFile {
+            host_id: host_id.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            path: path.to_owned(),
+        }
     };
     ui.push(effect);
 }
 
 pub fn set_close_guard(ui: &mut UiContext, owner: &str, dirty: bool) {
-    ui.push(UiEffect::SetCloseGuard { owner: owner.to_owned(), dirty });
+    ui.push(UiEffect::SetCloseGuard {
+        owner: owner.to_owned(),
+        dirty,
+    });
 }
 
 pub fn close_tab(ui: &mut UiContext, tab_key: &str) {
-    ui.push(UiEffect::CloseTab { tab_key: tab_key.to_owned() });
+    ui.push(UiEffect::CloseTab {
+        tab_key: tab_key.to_owned(),
+    });
 }
 
 /// Flutter `ChatDrafts.instance.addAttachments(serverId, workspaceId, [...])`.

@@ -66,6 +66,7 @@ impl Shaper {
             text: params.text,
             width_in_ems: glyphs.iter().map(|glyph| glyph.advance_in_ems).sum(),
             has_tabs: glyphs.iter().any(|glyph| glyph.is_tab),
+            has_missing_glyphs: glyphs.iter().any(|glyph| glyph.id == 0),
             glyphs,
         }
     }
@@ -125,7 +126,7 @@ impl Shaper {
                 unicode_buffer.add(if char.is_control() { ' ' } else { char }, cluster as u32);
             }
         }
-        let mut glyph_buffer = rustybuzz::shape(font.rustybuzz_face(), &[], unicode_buffer);
+        let glyph_buffer = rustybuzz::shape(font.rustybuzz_face(), &[], unicode_buffer);
         let out_glyph_start = out_glyphs.len();
         let shaped_glyph = |glyph_info: &rustybuzz::GlyphInfo, glyph_position: &rustybuzz::GlyphPosition| {
             let cluster = glyph_info.cluster as usize;
@@ -154,33 +155,15 @@ impl Shaper {
                 .map(|(glyph_info, glyph_position)| shaped_glyph(glyph_info, glyph_position)),
         );
 
-        // HACK: We don't support right-to-left scripts yet. When such scripts are used, cluster
-        // values may be monotonically decreasing instead of increasing, as we assume. This should
-        // be fixed by properly handling bidirectional text (by further breaking up spans into
-        // spans with a single direction), but for now we just check if the cluster values are
-        // monotonically increasing. If they are not, we re-shape the text by replacing each
-        // grapheme with a single character. This is not ideal, but it works for now.
-        if out_glyphs[out_glyph_start..]
-            .windows(2)
-            .any(|glyphs| {
-                glyphs[0].cluster > glyphs[1].cluster
-            })
-        {
-            out_glyphs.truncate(out_glyph_start);
-            let mut unicode_buffer = glyph_buffer.clear();
-            for (index, grapheme) in text[start..end].grapheme_indices(true) {
-                let cluster = start + index;
-                let control = grapheme.starts_with(|char: char| char.is_control());
-                unicode_buffer.add(if control { ' ' } else { '□' }, cluster as u32);
+        // The current line fitter consumes logical cluster order. Keep the real
+        // shaped glyphs (including contextual RTL forms), not replacement boxes.
+        // Paragraph bidi reordering remains a separate layout responsibility.
+        let glyphs = &mut out_glyphs[out_glyph_start..];
+        if glyphs.windows(2).any(|pair| pair[0].cluster > pair[1].cluster) {
+            glyphs.reverse();
+            for cluster in glyphs.chunk_by_mut(|a, b| a.cluster == b.cluster) {
+                cluster.reverse();
             }
-            glyph_buffer = rustybuzz::shape(font.rustybuzz_face(), &[], unicode_buffer);
-            out_glyphs.extend(
-                glyph_buffer
-                    .glyph_infos()
-                    .iter()
-                    .zip(glyph_buffer.glyph_positions())
-                    .map(|(glyph_info, glyph_position)| shaped_glyph(glyph_info, glyph_position)),
-            );
         }
 
         self.reusable_unicode_buffer = glyph_buffer.clear();
@@ -205,6 +188,7 @@ pub struct ShapedText {
     /// [`ShapedText::width_in_lpxs_at`] for the width in a row.
     pub width_in_ems: f32,
     pub has_tabs: bool,
+    pub has_missing_glyphs: bool,
     pub glyphs: Vec<ShapedGlyph>,
 }
 

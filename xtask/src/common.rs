@@ -62,14 +62,11 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 }
 
 pub fn version() -> Result<String> {
-    let manifest: toml::Value = toml::from_str(&fs::read_to_string(root()?.join("Cargo.toml"))?)?;
-    let value = manifest
-        .get("workspace")
-        .and_then(|v| v.get("package"))
-        .and_then(|v| v.get("version"))
-        .and_then(toml::Value::as_str)
-        .context("Missing workspace.package.version")?;
-    semver::Version::parse(value).context("Invalid workspace version")?;
+    let manifest = read_json(&packaging()?.join("release.json"))?;
+    let value = manifest["version"]
+        .as_str()
+        .context("Missing packaging/release.json version")?;
+    semver::Version::parse(value).context("Invalid collection version")?;
     Ok(value.to_owned())
 }
 

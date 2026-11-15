@@ -320,15 +320,18 @@ impl MessageReceipts {
         agent_id: &str,
         message_id: &str,
     ) -> Result<Value> {
-        let path = home.join("agent-requests").join(format!("{}.json", identity(agent_id, message_id)?));
+        let path = home
+            .join("agent-requests")
+            .join(format!("{}.json", identity(agent_id, message_id)?));
         let record = match read_optional(&path).await? {
             Some(bytes) => Some(parse(&bytes, &path)?),
             None => None,
         };
         if let Some(record) = &record
-            && (record.agent_id != agent_id || record.message_id != message_id) {
-                bail!("Message receipt identity mismatch");
-            }
+            && (record.agent_id != agent_id || record.message_id != message_id)
+        {
+            bail!("Message receipt identity mismatch");
+        }
         Ok(project(agent_id, message_id, record.as_ref()))
     }
     /// Receipt updates, published only after the durable write.
@@ -357,25 +360,36 @@ impl MessageReceipts {
         if !record.dismissed {
             record.dismissed = true;
             let phase = record.phase.clone();
-            self.inner.write(&key, message_id, &mut record, &phase).await?;
+            self.inner
+                .write(&key, message_id, &mut record, &phase)
+                .await?;
         }
         Ok(project(agent_id, message_id, Some(&record)))
     }
 
     /// Direct sends: durable `preparing` before any local preparation.
-    pub async fn admit(&self, agent_id: &str, message_id: &str, request: &Value) -> Result<Admission> {
+    pub async fn admit(
+        &self,
+        agent_id: &str,
+        message_id: &str,
+        request: &Value,
+    ) -> Result<Admission> {
         let key = identity(agent_id, message_id)?;
         let fingerprint = digest(request)?;
         let _lock = self.inner.operations.lock(&key).await;
         let record = self.inner.load(&key, agent_id, message_id).await?;
         if let Some(record) = &record
-            && let Some(admission) = self.existing(&key, agent_id, message_id, record, &fingerprint)? {
-                return Ok(admission);
-            }
+            && let Some(admission) =
+                self.existing(&key, agent_id, message_id, record, &fingerprint)?
+        {
+            return Ok(admission);
+        }
         let mut record =
             record.unwrap_or_else(|| Record::new(agent_id, message_id, Some(fingerprint)));
         record.error = None;
-        self.inner.write(&key, message_id, &mut record, "preparing").await?;
+        self.inner
+            .write(&key, message_id, &mut record, "preparing")
+            .await?;
         Ok(Admission::Run(self.inner.claim(&key, None)))
     }
 
@@ -392,12 +406,17 @@ impl MessageReceipts {
             return Ok(Some(Admission::Replay(receipt)));
         }
         if record.fingerprint.as_deref() != Some(fingerprint) {
-            return Err(SendReceiptError { message: KEY_CONFLICT.to_owned(), receipt }.into());
+            return Err(SendReceiptError {
+                message: KEY_CONFLICT.to_owned(),
+                receipt,
+            }
+            .into());
         }
         if in_flight(&record.phase)
-            && let Some(settled) = self.inner.settled(key) {
-                return Ok(Some(Admission::Wait(settled)));
-            }
+            && let Some(settled) = self.inner.settled(key)
+        {
+            return Ok(Some(Admission::Wait(settled)));
+        }
         // Only a proven non-delivery may be attempted again under this identity.
         Ok((record.phase != "not_delivered").then_some(Admission::Replay(receipt)))
     }
@@ -423,13 +442,19 @@ impl MessageReceipts {
         let record = self.inner.load(&key, agent_id, message_id).await?;
         if let Some(record) = &record {
             if let Some(queued) = self.inner.queued(&key)
-                && !record.dismissed && record.fingerprint.as_deref() == Some(fingerprint.as_str()) {
-                    return Ok(QueuedAdmission::Duplicate(queued));
-                }
+                && !record.dismissed
+                && record.fingerprint.as_deref() == Some(fingerprint.as_str())
+            {
+                return Ok(QueuedAdmission::Duplicate(queued));
+            }
             match self.existing(&key, agent_id, message_id, record, &fingerprint)? {
                 Some(Admission::Replay(receipt)) => return Ok(QueuedAdmission::Replay(receipt)),
                 Some(_) => {
-                    return Ok(QueuedAdmission::Replay(project(agent_id, message_id, Some(record))));
+                    return Ok(QueuedAdmission::Replay(project(
+                        agent_id,
+                        message_id,
+                        Some(record),
+                    )));
                 }
                 None => {}
             }
@@ -439,7 +464,9 @@ impl MessageReceipts {
         let mut record =
             record.unwrap_or_else(|| Record::new(agent_id, message_id, Some(fingerprint)));
         record.error = None;
-        self.inner.write(&key, message_id, &mut record, "queued").await?;
+        self.inner
+            .write(&key, message_id, &mut record, "queued")
+            .await?;
         match enqueue(prepared).await {
             Ok(receipt) => {
                 let guard = self.inner.claim(&key, Some(receipt.clone()));
@@ -447,7 +474,9 @@ impl MessageReceipts {
             }
             Err(error) => {
                 record.error = Some(error.to_string());
-                self.inner.write(&key, message_id, &mut record, "not_delivered").await?;
+                self.inner
+                    .write(&key, message_id, &mut record, "not_delivered")
+                    .await?;
                 Err(error)
             }
         }
@@ -466,13 +495,17 @@ impl MessageReceipts {
         if record.dismissed {
             if in_flight(&record.phase) {
                 record.error = Some(DISMISSED.to_owned());
-                self.inner.write(&key, message_id, &mut record, "not_delivered").await?;
+                self.inner
+                    .write(&key, message_id, &mut record, "not_delivered")
+                    .await?;
                 self.inner.signal(&key);
             }
             return Ok(false);
         }
         if record.phase != "dispatching" {
-            self.inner.write(&key, message_id, &mut record, "dispatching").await?;
+            self.inner
+                .write(&key, message_id, &mut record, "dispatching")
+                .await?;
         }
         Ok(true)
     }
@@ -492,7 +525,12 @@ impl MessageReceipts {
 
     /// Record an outcome. Dismissal is never cleared. Late authoritative
     /// evidence may improve an unknown outcome; definite outcomes are final.
-    pub async fn settle(&self, agent_id: &str, message_id: &str, settlement: Settlement) -> Result<Value> {
+    pub async fn settle(
+        &self,
+        agent_id: &str,
+        message_id: &str,
+        settlement: Settlement,
+    ) -> Result<Value> {
         let key = identity(agent_id, message_id)?;
         let _lock = self.inner.operations.lock(&key).await;
         let mut record = self
@@ -502,19 +540,29 @@ impl MessageReceipts {
             .context("Message receipt disappeared before settlement")?;
         let open = in_flight(&record.phase) || record.phase == "submitted";
         let improves = record.phase == "outcome_unknown"
-            && matches!(settlement, Settlement::Accepted { .. } | Settlement::Rejected(_));
+            && matches!(
+                settlement,
+                Settlement::Accepted { .. } | Settlement::Rejected(_)
+            );
         if !open && !improves {
             return Ok(project(agent_id, message_id, Some(&record)));
         }
         let phase = match settlement {
-            Settlement::Submitted { result, correlation, ack_pending } => {
+            Settlement::Submitted {
+                result,
+                correlation,
+                ack_pending,
+            } => {
                 record.result = result;
                 merge(&mut record.correlation, correlation);
                 record.ack_pending = ack_pending;
                 record.error = None;
                 "submitted"
             }
-            Settlement::Accepted { result, correlation } => {
+            Settlement::Accepted {
+                result,
+                correlation,
+            } => {
                 if let Some(result) = result {
                     record.result = result;
                 }
@@ -539,7 +587,9 @@ impl MessageReceipts {
                 "outcome_unknown"
             }
         };
-        self.inner.write(&key, message_id, &mut record, phase).await?;
+        self.inner
+            .write(&key, message_id, &mut record, phase)
+            .await?;
         self.inner.signal(&key);
         Ok(project(agent_id, message_id, Some(&record)))
     }
@@ -550,7 +600,12 @@ impl MessageReceipts {
     }
 
     /// Release an owner, reconciling whatever it left unsettled.
-    pub async fn finish(&self, guard: LiveGuard, agent_id: &str, message_id: &str) -> Result<Value> {
+    pub async fn finish(
+        &self,
+        guard: LiveGuard,
+        agent_id: &str,
+        message_id: &str,
+    ) -> Result<Value> {
         drop(guard);
         self.get(agent_id, message_id).await
     }
@@ -593,13 +648,18 @@ impl Inner {
         }
         Ok(Some(record))
     }
-    async fn write(&self, key: &str, message_id: &str, record: &mut Record, phase: &str) -> Result<()> {
+    async fn write(
+        &self,
+        key: &str,
+        message_id: &str,
+        record: &mut Record,
+        phase: &str,
+    ) -> Result<()> {
         record.version = 2;
         record.phase = phase.to_owned();
         record.revision += 1;
-        record.updated_at = Some(
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        );
+        record.updated_at =
+            Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         atomic_json(&self.path(key), &serde_json::to_value(&*record)?).await?;
         let receipt = project(&record.agent_id, message_id, Some(record));
         let _ = self
@@ -613,7 +673,11 @@ impl Inner {
         let settled = Arc::new(settled);
         self.live.lock().unwrap().insert(
             key.to_owned(),
-            Live { generation, settled: settled.clone(), queued },
+            Live {
+                generation,
+                settled: settled.clone(),
+                queued,
+            },
         );
         LiveGuard {
             inner: self.clone(),
@@ -646,7 +710,11 @@ impl Inner {
 /// The send result for an existing receipt, never dispatching again.
 pub fn replay(receipt: Value) -> Result<Value> {
     let failure = |message: &str| -> anyhow::Error {
-        SendReceiptError { message: message.to_owned(), receipt: receipt.clone() }.into()
+        SendReceiptError {
+            message: message.to_owned(),
+            receipt: receipt.clone(),
+        }
+        .into()
     };
     if receipt["dismissed"] == true {
         return Err(failure(DISMISSED));
@@ -663,10 +731,14 @@ pub fn replay(receipt: Value) -> Result<Value> {
             Ok(result)
         }
         Some("rejected") => Err(failure(
-            receipt["error"].as_str().unwrap_or("agent_request_rejected"),
+            receipt["error"]
+                .as_str()
+                .unwrap_or("agent_request_rejected"),
         )),
         Some("not_delivered") => Err(failure(
-            receipt["error"].as_str().unwrap_or("agent_request_not_delivered"),
+            receipt["error"]
+                .as_str()
+                .unwrap_or("agent_request_not_delivered"),
         )),
         _ => Err(failure(OUTCOME_UNKNOWN)),
     }

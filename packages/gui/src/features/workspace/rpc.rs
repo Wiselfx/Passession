@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use paseo_gui_core::{CoreError, CoreEvent, CoreHandle, RequestId};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// A failed request as shown to the user.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,11 +21,19 @@ pub struct RpcError {
 
 impl RpcError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), code: String::new(), outcome_unknown: false }
+        Self {
+            message: message.into(),
+            code: String::new(),
+            outcome_unknown: false,
+        }
     }
 
     pub fn coded(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { message: message.into(), code: code.into(), outcome_unknown: false }
+        Self {
+            message: message.into(),
+            code: code.into(),
+            outcome_unknown: false,
+        }
     }
 
     fn from_core(error: &CoreError) -> Self {
@@ -70,7 +78,10 @@ pub fn require_success(response: &Value) -> Result<(), RpcError> {
         Some(Value::Object(map)) => {
             let code = text(map.get("code"));
             let message = text(map.get("message"));
-            RpcError::coded(code.clone(), if message.is_empty() { code } else { message })
+            RpcError::coded(
+                code.clone(),
+                if message.is_empty() { code } else { message },
+            )
         }
         Some(Value::String(message)) => RpcError::new(message.clone()),
         Some(other) => RpcError::new(other.to_string()),
@@ -97,7 +108,12 @@ pub fn domain_error(body: &Value, request_type: &str) -> Option<RpcError> {
         _ => None,
     }
     .or_else(|| result.and_then(|r| r.get("error")).map(value_text))
-    .unwrap_or_else(|| super::i18n::ta("workspace.errors.daemonRejected", &[("request", request_type)]));
+    .unwrap_or_else(|| {
+        super::i18n::ta(
+            "workspace.errors.daemonRejected",
+            &[("request", request_type)],
+        )
+    });
     let code = body
         .get("errorCode")
         .map(value_text)
@@ -110,7 +126,11 @@ pub fn domain_error(body: &Value, request_type: &str) -> Option<RpcError> {
         })
         .unwrap_or_default();
     let outcome_unknown = body.get("outcomeUnknown") == Some(&Value::Bool(true));
-    Some(RpcError { message, code, outcome_unknown })
+    Some(RpcError {
+        message,
+        code,
+        outcome_unknown,
+    })
 }
 
 fn value_text(value: &Value) -> String {
@@ -144,17 +164,25 @@ pub fn flag(value: &Value, key: &str) -> bool {
 
 pub fn int_of(value: &Value, key: &str) -> i64 {
     match value.get(key) {
-        Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)).unwrap_or(0),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_f64().map(|f| f as i64))
+            .unwrap_or(0),
         Some(Value::String(s)) => s.trim().parse().unwrap_or(0),
         _ => 0,
     }
 }
 
 pub fn array_of<'a>(value: &'a Value, key: &str) -> &'a [Value] {
-    value.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
-static EMPTY_OBJECT: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| Value::Object(Map::new()));
+static EMPTY_OBJECT: std::sync::LazyLock<Value> =
+    std::sync::LazyLock::new(|| Value::Object(Map::new()));
 
 /// `JsonMap.object(key)`: the object at `key`, or an empty object.
 pub fn object_of<'a>(value: &'a Value, key: &str) -> &'a Value {
@@ -191,7 +219,7 @@ pub fn response_type(request_type: &str) -> String {
     match request_type {
         "subscribe_terminals_request" => return "terminals_changed".into(),
         "create_agent_request" | "resume_agent_request" | "refresh_agent_request" => {
-            return "status".into()
+            return "status".into();
         }
         _ => {}
     }
@@ -235,22 +263,41 @@ pub struct Pending<K> {
 
 impl<K> Default for Pending<K> {
     fn default() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 }
 
 impl<K> Pending<K> {
     /// Sends `request_type` and remembers `key` for its answer.
-    pub fn send(&mut self, core: &CoreHandle, host_id: &str, request_type: &str, fields: Value, key: K) -> RequestId {
+    pub fn send(
+        &mut self,
+        core: &CoreHandle,
+        host_id: &str,
+        request_type: &str,
+        fields: Value,
+        key: K,
+    ) -> RequestId {
         let id = send(core, host_id, request_type, fields);
-        self.entries.insert(id.clone(), (request_type.to_owned(), key));
+        self.entries
+            .insert(id.clone(), (request_type.to_owned(), key));
         id
     }
 
     /// Sends a fully formed message with an explicit response type.
-    pub fn send_typed(&mut self, core: &CoreHandle, host_id: &str, request_type: &str, fields: Value, response: &str, key: K) -> RequestId {
+    pub fn send_typed(
+        &mut self,
+        core: &CoreHandle,
+        host_id: &str,
+        request_type: &str,
+        fields: Value,
+        response: &str,
+        key: K,
+    ) -> RequestId {
         let id = core.request(host_id, message(request_type, fields), response);
-        self.entries.insert(id.clone(), (request_type.to_owned(), key));
+        self.entries
+            .insert(id.clone(), (request_type.to_owned(), key));
         id
     }
 
@@ -301,7 +348,11 @@ impl<K> Pending<K> {
         }
         let mut answers = Vec::new();
         for event in events {
-            if let CoreEvent::Response { request_id, result, .. } = event && let Some((request_type, key)) = self.entries.remove(request_id) {
+            if let CoreEvent::Response {
+                request_id, result, ..
+            } = event
+                && let Some((request_type, key)) = self.entries.remove(request_id)
+            {
                 answers.push((key, settle(result, &request_type)));
             }
         }
@@ -322,10 +373,17 @@ mod tests {
     fn workspace_success_rejects_error_ok_and_accepted() {
         assert!(require_success(&json!({"ok": true})).is_ok());
         assert_eq!(
-            require_success(&json!({"error": {"code": "stale"}})).unwrap_err().code,
+            require_success(&json!({"error": {"code": "stale"}}))
+                .unwrap_err()
+                .code,
             "stale"
         );
-        assert_eq!(require_success(&json!({"error": "nope"})).unwrap_err().message, "nope");
+        assert_eq!(
+            require_success(&json!({"error": "nope"}))
+                .unwrap_err()
+                .message,
+            "nope"
+        );
         assert!(require_success(&json!({"accepted": false})).is_err());
         assert!(require_success(&json!({"ok": false})).is_err());
         assert!(require_success(&json!({"error": null})).is_ok());
@@ -333,7 +391,11 @@ mod tests {
 
     #[test]
     fn domain_error_reads_result_conflict_and_codes() {
-        let error = domain_error(&json!({"result": {"status": "conflict", "error": "busy"}}), "x").unwrap();
+        let error = domain_error(
+            &json!({"result": {"status": "conflict", "error": "busy"}}),
+            "x",
+        )
+        .unwrap();
         assert_eq!(error.message, "busy");
         assert_eq!(error.code, "conflict");
         assert!(domain_error(&json!({"success": true}), "x").is_none());
@@ -343,10 +405,19 @@ mod tests {
 
     #[test]
     fn response_types_follow_separator_rule() {
-        assert_eq!(response_type("workspace.setup.run.request"), "workspace.setup.run.response");
-        assert_eq!(response_type("checkout_status_request"), "checkout_status_response");
+        assert_eq!(
+            response_type("workspace.setup.run.request"),
+            "workspace.setup.run.response"
+        );
+        assert_eq!(
+            response_type("checkout_status_request"),
+            "checkout_status_response"
+        );
         assert_eq!(response_type("schedule/list"), "schedule/list/response");
-        assert_eq!(response_type("schedule/run-once"), "schedule/run-once/response");
+        assert_eq!(
+            response_type("schedule/run-once"),
+            "schedule/run-once/response"
+        );
     }
 
     #[test]

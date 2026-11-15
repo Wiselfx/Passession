@@ -232,6 +232,11 @@ async fn read_inner(
         )
         .await?;
         for path in untracked.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+            // Without --directory, Git expands ordinary trees but leaves embedded
+            // repositories opaque. They are not files owned by this checkout.
+            if path.ends_with(b"/") {
+                continue;
+            }
             let path = String::from_utf8_lossy(path).into_owned();
             if !changes.iter().any(|c| c.path == path) {
                 changes.push(Change {
@@ -274,7 +279,12 @@ async fn read_inner(
             bail!("git diff cancelled");
         }
         let value = if change.untracked {
-            untracked_file(&cwd, &change, summary, &mut total, &format, cancel).await?
+            let Some(value) =
+                untracked_file(&cwd, &change, summary, &mut total, &format, cancel).await?
+            else {
+                continue;
+            };
+            value
         } else {
             let stat = stats.get(&change.path).copied().unwrap_or_default();
             if whitespace
@@ -413,24 +423,45 @@ async fn untracked_file(
     total: &mut usize,
     format: &parse::PatchFormat,
     cancel: &CancellationToken,
-) -> Result<Value> {
+) -> Result<Option<Value>> {
+    // Never walk into the opaque repository entries emitted by ls-files.
+    if change.path.ends_with('/') {
+        return Ok(None);
+    }
     let path = cwd.join(&change.path);
-    let meta = tokio::fs::symlink_metadata(&path).await?;
+    let mut meta = match tokio::fs::symlink_metadata(&path).await {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     let mut content = Vec::new();
-    let oversized = meta.len() > FILE_LIMIT as u64;
     if meta.file_type().is_symlink() {
-        content = tokio::fs::read_link(&path)
-            .await?
-            .as_os_str()
-            .as_encoded_bytes()
-            .to_vec();
+        content = match tokio::fs::read_link(&path).await {
+            Ok(target) => target.as_os_str().as_encoded_bytes().to_vec(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
     } else if meta.is_file() {
         let mut options = tokio::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
-        options.custom_flags(libc::O_NOFOLLOW);
-        let file = options.open(&path).await?;
-        let maximum = if oversized { 8192 } else { FILE_LIMIT + 1 };
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        let file = match options.open(&path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        // A regular file can be replaced after lstat. Do not read a device or
+        // FIFO, and do not let opening a replacement FIFO block a worker.
+        meta = file.metadata().await?;
+        if !meta.is_file() {
+            return Ok(None);
+        }
+        let maximum = if meta.len() > FILE_LIMIT as u64 {
+            8192
+        } else {
+            FILE_LIMIT + 1
+        };
         content.reserve((meta.len() as usize).min(maximum));
         let mut reader = file.take(maximum as u64);
         tokio::select! {
@@ -438,7 +469,8 @@ async fn untracked_file(
             result = reader.read_to_end(&mut content) => { result?; }
         }
     } else {
-        bail!("Cannot read untracked non-file: {}", change.path);
+        // Git cannot store directories, sockets, FIFOs or devices as file blobs.
+        return Ok(None);
     }
     let sample = &content[..content.len().min(8192)];
     let suspicious = sample
@@ -447,17 +479,17 @@ async fn untracked_file(
         .count();
     let binary = sample.contains(&0) || (!sample.is_empty() && suspicious * 10 > sample.len() * 3);
     if binary {
-        return Ok(file(
+        return Ok(Some(file(
             change,
             Stat {
                 binary: true,
                 ..Stat::default()
             },
             "binary",
-        ));
+        )));
     }
-    if oversized || content.len() > FILE_LIMIT {
-        return Ok(file(change, Stat::default(), "too_large"));
+    if meta.len() > FILE_LIMIT as u64 || content.len() > FILE_LIMIT {
+        return Ok(Some(file(change, Stat::default(), "too_large")));
     }
     let text = String::from_utf8_lossy(&content);
     let count = if text.is_empty() {
@@ -474,7 +506,7 @@ async fn untracked_file(
         "ok",
     );
     if summary {
-        return Ok(value);
+        return Ok(Some(value));
     }
     // Native added-file parsing is exact: every source line is an addition;
     // missing-final-newline markers do not become displayed lines.
@@ -486,7 +518,7 @@ async fn untracked_file(
     let raw_length = parse::added_patch_len(&change.path, &content, count, &header, format);
     if raw_length > FILE_LIMIT || *total + raw_length > TOTAL_LIMIT {
         value["status"] = json!("too_large");
-        return Ok(value);
+        return Ok(Some(value));
     }
     *total += raw_length;
     if count > 0 {
@@ -499,7 +531,7 @@ async fn untracked_file(
         value["hunks"] =
             json!([{"oldStart":0,"oldCount":0,"newStart":1,"newCount":count,"lines":lines}]);
     }
-    Ok(value)
+    Ok(Some(value))
 }
 
 /// One commit against its first parent, including root commits. Binary-only
@@ -690,27 +722,24 @@ pub(crate) async fn shortstat(
         if cancel.is_cancelled() {
             bail!("Git shortstat cancelled");
         }
-        let path = cwd.join(String::from_utf8_lossy(path).as_ref());
-        // Unlike a patch, source shortstat counts a symlink target's contents.
-        // Missing/unreadable/special/oversized files contribute no additions.
-        let read=async {
-            let metadata=tokio::fs::metadata(&path).await?;
-            if !metadata.is_file() || metadata.len()>FILE_LIMIT as u64{return Ok::<_,anyhow::Error>(0);}
-            let file=tokio::fs::File::open(&path).await?;
-            let mut reader=file.take((FILE_LIMIT+1) as u64);
-            let mut bytes=Vec::with_capacity((metadata.len() as usize).saturating_add(1).min(FILE_LIMIT+1));
-            tokio::select!{_=cancel.cancelled()=>bail!("Git shortstat cancelled"),result=reader.read_to_end(&mut bytes)=>{result?;}}
-            if bytes.len()>FILE_LIMIT{return Ok(0);}
-            let sample=&bytes[..bytes.len().min(8192)];
-            let suspicious=sample.iter().filter(|&&b|b<7||(b>14&&b<32)||b==127).count();
-            if sample.contains(&0)||(!sample.is_empty()&&suspicious*10>sample.len()*3){return Ok(0);}
-            Ok(bytes.iter().filter(|&&b|b==b'\n').count() as u64+u64::from(!bytes.is_empty()&&!bytes.ends_with(b"\n")))
-        }.await;
-        if cancel.is_cancelled() {
-            bail!("Git shortstat cancelled");
-        }
-        if let Ok(count) = read {
-            additions += count;
+        let change = Change {
+            path: String::from_utf8_lossy(path).into_owned(),
+            old_path: None,
+            status: 'A',
+            untracked: true,
+        };
+        let mut total = 0;
+        if let Some(value) = untracked_file(
+            cwd,
+            &change,
+            true,
+            &mut total,
+            &parse::PatchFormat::default(),
+            &cancel,
+        )
+        .await?
+        {
+            additions += value["additions"].as_u64().unwrap_or_default();
         }
     }
     if additions == 0 && deletions == 0 {

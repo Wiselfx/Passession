@@ -48,13 +48,19 @@ impl<'a> Host<'a> {
     }
 
     pub fn loading_lists(&self) -> Vec<&'a str> {
-        j::array(self.0, "loadingLists").iter().filter_map(Value::as_str).collect()
+        j::array(self.0, "loadingLists")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect()
     }
 
     /// `listErrors` as (kind, message).
     pub fn list_errors(&self) -> Vec<(&'a str, String)> {
         match self.0.get("listErrors") {
-            Some(Value::Object(map)) => map.iter().map(|(k, v)| (k.as_str(), error_text(v))).collect(),
+            Some(Value::Object(map)) => map
+                .iter()
+                .map(|(k, v)| (k.as_str(), error_text(v)))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -79,7 +85,9 @@ impl<'a> Host<'a> {
     }
 
     pub fn is_local(&self) -> bool {
-        self.config().get("localCredentialPath").is_some_and(|v| !v.is_null())
+        self.config()
+            .get("localCredentialPath")
+            .is_some_and(|v| !v.is_null())
     }
 
     pub fn color(&self) -> &'a str {
@@ -113,8 +121,14 @@ impl<'a> Host<'a> {
         let label = j::text(config, "label").trim();
         let endpoint = j::text(config, "endpoint").trim();
         let without_scheme = match endpoint.find("://") {
-            Some(i) if endpoint[..i].chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
-                && endpoint[..i].chars().next().is_some_and(|c| c.is_ascii_alphabetic()) =>
+            Some(i)
+                if endpoint[..i]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+                    && endpoint[..i]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic()) =>
             {
                 &endpoint[i + 3..]
             }
@@ -133,13 +147,21 @@ impl<'a> Host<'a> {
         if !hostname.is_empty() {
             return hostname.to_string();
         }
-        if label.is_empty() { self.server_id().to_string() } else { label.to_string() }
+        if label.is_empty() {
+            self.server_id().to_string()
+        } else {
+            label.to_string()
+        }
     }
 
     /// `HostState.label`: the configured label or the server id.
     pub fn label(&self) -> String {
         let label = j::text(self.config(), "label");
-        if label.is_empty() { self.server_id().to_string() } else { label.to_string() }
+        if label.is_empty() {
+            self.server_id().to_string()
+        } else {
+            label.to_string()
+        }
     }
 }
 
@@ -148,7 +170,11 @@ pub fn error_text(value: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Object(_) => {
             let message = j::text(value, "message");
-            if message.is_empty() { j::text(value, "code").to_string() } else { message.to_string() }
+            if message.is_empty() {
+                j::text(value, "code").to_string()
+            } else {
+                message.to_string()
+            }
         }
         other => other.to_string(),
     }
@@ -168,7 +194,9 @@ pub fn parent_agent_id(agent: &Value) -> String {
     if !parent.is_empty() {
         return parent.to_string();
     }
-    j::text(j::object(agent, "labels"), "paseo.parent-agent-id").trim().to_string()
+    j::text(j::object(agent, "labels"), "paseo.parent-agent-id")
+        .trim()
+        .to_string()
 }
 
 pub fn is_archived(agent: &Value) -> bool {

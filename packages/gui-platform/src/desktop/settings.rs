@@ -1,6 +1,6 @@
 //! `<support>/desktop-settings.json` (original desktop_settings.dart).
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::{path::PathBuf, sync::Mutex};
 
 pub(crate) struct DesktopSettings {
@@ -23,15 +23,23 @@ fn defaults() -> Map<String, Value> {
 
 /// Whitelisted merge: only known keys with the right types are accepted.
 fn merge(settings: &mut Map<String, Value>, patch: &Map<String, Value>) {
-    if let Some(channel @ ("stable" | "beta")) = patch.get("releaseChannel").and_then(Value::as_str) {
+    if let Some(channel @ ("stable" | "beta")) = patch.get("releaseChannel").and_then(Value::as_str)
+    {
         settings.insert("releaseChannel".into(), channel.into());
     }
     for (section, keys) in [
         ("notifications", &["playSound"][..]),
-        ("daemon", &["manageBuiltInDaemon", "keepRunningAfterQuit"][..]),
+        (
+            "daemon",
+            &["manageBuiltInDaemon", "keepRunningAfterQuit"][..],
+        ),
     ] {
         let source = patch.get(section).and_then(Value::as_object);
-        let mut target = settings.get(section).and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut target = settings
+            .get(section)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         if let Some(source) = source {
             for key in keys {
                 if let Some(value @ Value::Bool(_)) = source.get(*key) {
@@ -46,7 +54,9 @@ fn merge(settings: &mut Map<String, Value>, patch: &Map<String, Value>) {
 impl DesktopSettings {
     /// Blocking: reads, normalizes and rewrites the document (worker or startup).
     pub fn load() -> anyhow::Result<Self> {
-        let file = crate::paths::app_paths().support_dir.join("desktop-settings.json");
+        let file = crate::paths::app_paths()
+            .support_dir
+            .join("desktop-settings.json");
         let mut document = match std::fs::read(&file) {
             Ok(bytes) => match serde_json::from_slice::<Value>(&bytes)? {
                 Value::Object(map) => map,
@@ -61,7 +71,11 @@ impl DesktopSettings {
         }
         document.insert("version".into(), 1.into());
         document.insert("settings".into(), Value::Object(settings));
-        let this = Self { file, document: Mutex::new(document), write: Mutex::new(()) };
+        let this = Self {
+            file,
+            document: Mutex::new(document),
+            write: Mutex::new(()),
+        };
         this.save()?;
         Ok(this)
     }
@@ -123,7 +137,11 @@ impl DesktopSettings {
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let temporary = PathBuf::from(format!("{}.{}.tmp", self.file.display(), std::process::id()));
+        let temporary = PathBuf::from(format!(
+            "{}.{}.tmp",
+            self.file.display(),
+            std::process::id()
+        ));
         {
             use std::io::Write as _;
             let mut file = std::fs::File::create(&temporary)?;
@@ -145,7 +163,10 @@ mod tests {
         let patch = json!({"releaseChannel":"nightly","daemon":{"keepRunningAfterQuit":true,"manageBuiltInDaemon":"no","other":true},"notifications":{"playSound":false}});
         merge(&mut settings, patch.as_object().unwrap());
         assert_eq!(settings["releaseChannel"], "stable");
-        assert_eq!(settings["daemon"], json!({"manageBuiltInDaemon":true,"keepRunningAfterQuit":true}));
+        assert_eq!(
+            settings["daemon"],
+            json!({"manageBuiltInDaemon":true,"keepRunningAfterQuit":true})
+        );
         assert_eq!(settings["notifications"], json!({"playSound":false}));
     }
 }

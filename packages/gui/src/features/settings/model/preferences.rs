@@ -38,7 +38,10 @@ pub fn sanitize_font_family(value: &str) -> Option<String> {
     if trimmed.is_empty() {
         return Some(String::new());
     }
-    if trimmed.chars().count() > MAX_FONT_FAMILY || trimmed.contains([';', '{', '}', '<', '>']) || trimmed.chars().any(|c| (c as u32) <= 0x1f) {
+    if trimmed.chars().count() > MAX_FONT_FAMILY
+        || trimmed.contains([';', '{', '}', '<', '>'])
+        || trimmed.chars().any(|c| (c as u32) <= 0x1f)
+    {
         return None;
     }
     let mut quote: Option<char> = None;
@@ -58,7 +61,11 @@ pub fn sanitize_font_family(value: &str) -> Option<String> {
             return None;
         }
     }
-    if quote.is_none() && !escaped { Some(trimmed.to_string()) } else { None }
+    if quote.is_none() && !escaped {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
 }
 
 /// Original `toPreferences`: resolved rows lead in the slots of the stored keys
@@ -143,17 +150,27 @@ pub fn normalized_theme(value: &Value) -> String {
         Some(name) => name,
         None => "auto",
     };
-    if THEMES.iter().any(|(t, _)| *t == theme) { theme.to_string() } else { "auto".into() }
+    if THEMES.iter().any(|(t, _)| *t == theme) {
+        theme.to_string()
+    } else {
+        "auto".into()
+    }
 }
 
 /// `paseoLanguagePreference`.
 pub fn language_preference(value: &Value) -> &'static str {
-    let Some(stored) = value.as_str() else { return "system" };
+    let Some(stored) = value.as_str() else {
+        return "system";
+    };
     let trimmed = stored.trim();
     if trimmed.is_empty() || trimmed == "system" || trimmed == "auto" {
         return "system";
     }
-    let tag = trimmed.split(['-', '_']).next().unwrap_or("").to_lowercase();
+    let tag = trimmed
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     if tag == "ko" { "ko" } else { "en" }
 }
 
@@ -165,10 +182,26 @@ pub struct FilePanel {
 }
 
 pub const BUILTIN_FILE_PANELS: &[FilePanel] = &[
-    FilePanel { id: "builtin:markdown", extensions: Some(&["md", "markdown"]), filenames: &[] },
-    FilePanel { id: "builtin:html", extensions: Some(&["html", "htm"]), filenames: &[] },
-    FilePanel { id: "builtin:image", extensions: Some(&["png", "jpg", "jpeg", "gif", "webp", "svg"]), filenames: &[] },
-    FilePanel { id: "builtin:source", extensions: None, filenames: &[] },
+    FilePanel {
+        id: "builtin:markdown",
+        extensions: Some(&["md", "markdown"]),
+        filenames: &[],
+    },
+    FilePanel {
+        id: "builtin:html",
+        extensions: Some(&["html", "htm"]),
+        filenames: &[],
+    },
+    FilePanel {
+        id: "builtin:image",
+        extensions: Some(&["png", "jpg", "jpeg", "gif", "webp", "svg"]),
+        filenames: &[],
+    },
+    FilePanel {
+        id: "builtin:source",
+        extensions: None,
+        filenames: &[],
+    },
 ];
 
 fn parse_selector(key: &str) -> (&'static str, &str) {
@@ -195,37 +228,67 @@ fn extension_of(name: &str) -> String {
 }
 
 fn claims(panel: &FilePanel, key: &str) -> bool {
-    let Some(extensions) = panel.extensions else { return false };
+    let Some(extensions) = panel.extensions else {
+        return false;
+    };
     let (kind, value) = parse_selector(key);
     let name = if kind == "name" { value } else { "" };
-    let extension = if kind == "name" { extension_of(value) } else { value.to_string() };
+    let extension = if kind == "name" {
+        extension_of(value)
+    } else {
+        value.to_string()
+    };
     panel.filenames.contains(&name) || extensions.iter().any(|e| e.to_lowercase() == extension)
 }
 
 /// Original `offeredCandidates`: the panels claiming the key; Source only
 /// when no built-in claims it.
 pub fn offered_panels(key: &str) -> Vec<&'static FilePanel> {
-    let claiming: Vec<&FilePanel> = BUILTIN_FILE_PANELS.iter().filter(|p| claims(p, key)).collect();
+    let claiming: Vec<&FilePanel> = BUILTIN_FILE_PANELS
+        .iter()
+        .filter(|p| claims(p, key))
+        .collect();
     BUILTIN_FILE_PANELS
         .iter()
-        .filter(|p| if p.extensions.is_none() { claiming.is_empty() } else { claiming.iter().any(|c| c.id == p.id) })
+        .filter(|p| {
+            if p.extensions.is_none() {
+                claiming.is_empty()
+            } else {
+                claiming.iter().any(|c| c.id == p.id)
+            }
+        })
         .collect()
 }
 
 /// Original `buildFilePanelSettingsRows`: remembered keys, extensions before
 /// filenames, each alphabetically.
-pub fn file_panel_rows(associations: &Map<String, Value>) -> Vec<(String, Vec<&'static FilePanel>, Option<String>)> {
+pub fn file_panel_rows(
+    associations: &Map<String, Value>,
+) -> Vec<(String, Vec<&'static FilePanel>, Option<String>)> {
     let mut keys: Vec<&String> = associations.keys().collect();
     keys.sort_by(|a, b| {
         let (ka, va) = parse_selector(a);
         let (kb, vb) = parse_selector(b);
         if ka != kb {
-            return if ka == "ext" { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            return if ka == "ext" {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
         }
         va.to_lowercase().cmp(&vb.to_lowercase())
     });
     keys.into_iter()
-        .map(|key| (key.clone(), offered_panels(key), associations.get(key).and_then(Value::as_str).map(String::from)))
+        .map(|key| {
+            (
+                key.clone(),
+                offered_panels(key),
+                associations
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(String::from),
+            )
+        })
         .collect()
 }
 
@@ -235,8 +298,16 @@ mod tests {
 
     #[test]
     fn sidebar_preferences_keep_unavailable_keys_in_place() {
-        let previous = vec![json!({"key": "plugin-row", "visible": true}), json!({"key": "history", "visible": true}), json!({"key": "search", "visible": false})];
-        let items = vec![json!({"key": "search", "visible": true}), json!({"key": "history", "visible": false}), json!({"key": "schedules", "visible": true})];
+        let previous = vec![
+            json!({"key": "plugin-row", "visible": true}),
+            json!({"key": "history", "visible": true}),
+            json!({"key": "search", "visible": false}),
+        ];
+        let items = vec![
+            json!({"key": "search", "visible": true}),
+            json!({"key": "history", "visible": false}),
+            json!({"key": "schedules", "visible": true}),
+        ];
         let next = sidebar_nav_preferences(&items, &previous);
         assert_eq!(
             next,
@@ -252,7 +323,10 @@ mod tests {
     #[test]
     fn font_family_sanitizing_rejects_css_injection() {
         assert_eq!(sanitize_font_family("  "), Some(String::new()));
-        assert_eq!(sanitize_font_family("'JetBrains Mono', monospace").as_deref(), Some("'JetBrains Mono', monospace"));
+        assert_eq!(
+            sanitize_font_family("'JetBrains Mono', monospace").as_deref(),
+            Some("'JetBrains Mono', monospace")
+        );
         assert_eq!(sanitize_font_family("a; color: red"), None);
         assert_eq!(sanitize_font_family("url(x)"), None);
         assert_eq!(sanitize_font_family("'unterminated"), None);
@@ -261,16 +335,34 @@ mod tests {
 
     #[test]
     fn file_panels_offer_claimers_or_source() {
-        assert_eq!(offered_panels("ext:md").iter().map(|p| p.id).collect::<Vec<_>>(), vec!["builtin:markdown"]);
-        assert_eq!(offered_panels("ext:rs").iter().map(|p| p.id).collect::<Vec<_>>(), vec!["builtin:source"]);
+        assert_eq!(
+            offered_panels("ext:md")
+                .iter()
+                .map(|p| p.id)
+                .collect::<Vec<_>>(),
+            vec!["builtin:markdown"]
+        );
+        assert_eq!(
+            offered_panels("ext:rs")
+                .iter()
+                .map(|p| p.id)
+                .collect::<Vec<_>>(),
+            vec!["builtin:source"]
+        );
         assert_eq!(selector_label("name:Makefile"), "Makefile");
         assert_eq!(selector_label("ext:rs"), ".rs");
     }
 
     #[test]
     fn sizes_clamp_and_floor() {
-        assert_eq!(parse_clamped(&json!(30), MIN_UI_FONT, MAX_UI_FONT), Some(21));
-        assert_eq!(parse_clamped(&json!("12.9"), MIN_UI_FONT, MAX_UI_FONT), Some(12));
+        assert_eq!(
+            parse_clamped(&json!(30), MIN_UI_FONT, MAX_UI_FONT),
+            Some(21)
+        );
+        assert_eq!(
+            parse_clamped(&json!("12.9"), MIN_UI_FONT, MAX_UI_FONT),
+            Some(12)
+        );
         assert_eq!(parse_clamped(&json!(""), MIN_UI_FONT, MAX_UI_FONT), None);
     }
 }

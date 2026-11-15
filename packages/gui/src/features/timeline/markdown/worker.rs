@@ -2,9 +2,12 @@
 //! Larger documents capture bounded chunks for whole-document worker parsing.
 //! A captured revision finishes before newer demand replaces it.
 
-use super::model::{self, Block, Inline, Style};
 use super::super::links::FileLinkSourceType;
-use super::super::reveal::{TEXT_REVEAL_FRAME_INTERVAL_S, clamp_to_safe_reveal_boundary, compute_reveal_step, trim_incomplete_trailing_cluster};
+use super::super::reveal::{
+    TEXT_REVEAL_FRAME_INTERVAL_S, clamp_to_safe_reveal_boundary, compute_reveal_step,
+    trim_incomplete_trailing_cluster,
+};
+use super::model::{self, Block, Inline, Style};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, LinkedList};
@@ -22,7 +25,10 @@ pub struct ParagraphKey {
 
 impl ParagraphKey {
     pub fn of(inlines: &[Inline]) -> Self {
-        Self { address: inlines.as_ptr() as usize, len: inlines.len() }
+        Self {
+            address: inlines.as_ptr() as usize,
+            len: inlines.len(),
+        }
     }
 }
 
@@ -42,6 +48,7 @@ pub struct SemanticParagraph {
     pub text: Arc<str>,
     pub copy_end: usize,
     pub empty: bool,
+    pub contains_images: bool,
     pub find_matches: Arc<[(usize, usize)]>,
     pub spans: Arc<[SemanticSpan]>,
     pub codes: Arc<[(usize, usize)]>,
@@ -79,10 +86,15 @@ struct ParsedDocument {
 impl From<ParsedDocument> for ParsedSnapshot {
     fn from(document: ParsedDocument) -> Self {
         Self {
-            revision: document.revision, epoch: document.epoch, source: document.source,
-            replaces_previous: document.replaces_previous, find_pattern: document.find_pattern,
-            interactive: document.interactive, codes: document.codes,
-            blocks: Rc::new(document.blocks), paragraphs: document.paragraphs,
+            revision: document.revision,
+            epoch: document.epoch,
+            source: document.source,
+            replaces_previous: document.replaces_previous,
+            find_pattern: document.find_pattern,
+            interactive: document.interactive,
+            codes: document.codes,
+            blocks: Rc::new(document.blocks),
+            paragraphs: document.paragraphs,
         }
     }
 }
@@ -96,11 +108,17 @@ struct Demand {
 
 impl Demand {
     fn same(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.entry, &other.entry) && self.bytes == other.bytes && self.live == other.live
+        Rc::ptr_eq(&self.entry, &other.entry)
+            && self.bytes == other.bytes
+            && self.live == other.live
     }
 
     fn text(&self) -> &str {
-        self.entry.get("item").and_then(|item| item.get("text")).and_then(Value::as_str).unwrap_or("")
+        self.entry
+            .get("item")
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
     }
 }
 
@@ -133,7 +151,10 @@ fn parse_document(request: &mut ParseRequest) -> ParsedDocument {
         text.push_str(&chunk);
     }
     let end = revealed_end(&text, request.reveal_bytes, request.live);
-    let replaces_previous = request.previous.as_ref().is_some_and(|old| !text.starts_with(old.as_ref()));
+    let replaces_previous = request
+        .previous
+        .as_ref()
+        .is_some_and(|old| !text.starts_with(old.as_ref()));
     let blocks = model::parse(&text[..end], request.root.as_deref(), request.linkify);
     let mut paragraphs = HashMap::new();
     let mut codes = HashMap::new();
@@ -141,13 +162,26 @@ fn parse_document(request: &mut ParseRequest) -> ParsedDocument {
     if let Some(pattern) = &request.find {
         for rich in paragraphs.values_mut().chain(codes.values_mut()) {
             let rich = Arc::get_mut(rich).expect("unshared paragraph");
-            rich.find_matches = pattern.find_iter(&rich.text).map(|m| (m.start(), m.end())).collect::<Vec<_>>().into();
+            rich.find_matches = pattern
+                .find_iter(&rich.text)
+                .map(|m| (m.start(), m.end()))
+                .collect::<Vec<_>>()
+                .into();
         }
     }
     ParsedDocument {
-        revision: request.revision, epoch: request.epoch, source: Arc::from(text),
-        replaces_previous, blocks, paragraphs, codes, interactive: request.interactive,
-        find_pattern: request.find.as_ref().map(|pattern| pattern.as_str().to_owned()),
+        revision: request.revision,
+        epoch: request.epoch,
+        source: Arc::from(text),
+        replaces_previous,
+        blocks,
+        paragraphs,
+        codes,
+        interactive: request.interactive,
+        find_pattern: request
+            .find
+            .as_ref()
+            .map(|pattern| pattern.as_str().to_owned()),
     }
 }
 
@@ -170,19 +204,22 @@ static PARSER_QUEUE: LazyLock<mpsc::SyncSender<ParseRequest>> = LazyLock::new(||
     let receive = Arc::new(Mutex::new(receive));
     for index in 0..2 {
         let receive = receive.clone();
-        std::thread::Builder::new().name(format!("markdown-parse-{index}")).spawn(move || {
-            loop {
-                let request = {
-                    let receive = receive.lock().expect("Markdown request queue");
-                    receive.recv()
-                };
-                let Ok(mut request) = request else { break };
-                let document = parse_document(&mut request);
-                // Every owner has only one in-flight job and a one-slot result
-                // mailbox; a deleted row simply drops this completed result.
-                let _ = request.result.send(document);
-            }
-        }).expect("spawn Markdown parser");
+        std::thread::Builder::new()
+            .name(format!("markdown-parse-{index}"))
+            .spawn(move || {
+                loop {
+                    let request = {
+                        let receive = receive.lock().expect("Markdown request queue");
+                        receive.recv()
+                    };
+                    let Ok(mut request) = request else { break };
+                    let document = parse_document(&mut request);
+                    // Every owner has only one in-flight job and a one-slot result
+                    // mailbox; a deleted row simply drops this completed result.
+                    let _ = request.result.send(document);
+                }
+            })
+            .expect("spawn Markdown parser");
     }
     send
 });
@@ -219,10 +256,26 @@ pub struct MarkdownWorker {
 impl MarkdownWorker {
     /// Call once in the row's preparation pass, never in its final paint pass.
     /// Returns whether the UI should schedule another preparation frame.
-    pub fn update(&mut self, owner: (&str, &str, &str), entry: Rc<Value>, live: bool, options: ParseOptions<'_>, now: f64) -> bool {
-        let ParseOptions { root, linkify, find } = options;
-        let reset = self.owner.as_ref().map(|(row, host, agent)| (row.as_str(), host.as_str(), agent.as_str())) != Some(owner)
-            || self.root.as_deref() != root || self.linkify != linkify
+    pub fn update(
+        &mut self,
+        owner: (&str, &str, &str),
+        entry: Rc<Value>,
+        live: bool,
+        options: ParseOptions<'_>,
+        now: f64,
+    ) -> bool {
+        let ParseOptions {
+            root,
+            linkify,
+            find,
+        } = options;
+        let reset = self
+            .owner
+            .as_ref()
+            .map(|(row, host, agent)| (row.as_str(), host.as_str(), agent.as_str()))
+            != Some(owner)
+            || self.root.as_deref() != root
+            || self.linkify != linkify
             || self.find.as_ref().map(Regex::as_str) != find.map(Regex::as_str);
         if reset {
             // Keep one in-flight job and let its revision finish. Its epoch
@@ -233,11 +286,21 @@ impl MarkdownWorker {
             let active = self.active.take();
             *self = Self {
                 owner: Some((owner.0.to_owned(), owner.1.to_owned(), owner.2.to_owned())),
-                root: root.map(str::to_owned), linkify, find: find.cloned(),
-                revision, epoch, parser, active, ..Self::default()
+                root: root.map(str::to_owned),
+                linkify,
+                find: find.cloned(),
+                revision,
+                epoch,
+                parser,
+                active,
+                ..Self::default()
             };
         }
-        let text = entry.get("item").and_then(|item| item.get("text")).and_then(Value::as_str).unwrap_or("");
+        let text = entry
+            .get("item")
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let target = text.len();
         let release = std::mem::take(&mut self.release);
         if self.latest.is_none() || !live || release {
@@ -247,13 +310,21 @@ impl MarkdownWorker {
             self.paced_bytes = self.paced_bytes.min(target);
             if self.paced_bytes < target {
                 // use-revealed-text.ts: the first frame after growth counts as one interval.
-                let previous = self.last_step.replace(now).unwrap_or(now - TEXT_REVEAL_FRAME_INTERVAL_S);
-                self.paced_bytes += compute_reveal_step(target - self.paced_bytes, (now - previous) * 1000.0);
+                let previous = self
+                    .last_step
+                    .replace(now)
+                    .unwrap_or(now - TEXT_REVEAL_FRAME_INTERVAL_S);
+                self.paced_bytes +=
+                    compute_reveal_step(target - self.paced_bytes, (now - previous) * 1000.0);
             } else {
                 self.last_step = None;
             }
         }
-        self.latest = Some(Demand { entry, bytes: self.paced_bytes, live });
+        self.latest = Some(Demand {
+            entry,
+            bytes: self.paced_bytes,
+            live,
+        });
 
         if let Some(parser) = &self.parser
             && let Ok(document) = parser.results.try_recv()
@@ -266,8 +337,16 @@ impl MarkdownWorker {
         }
         if self.active.is_none() && self.capture.is_none() && self.candidate.is_none() {
             let latest = self.latest.as_ref().expect("current demand");
-            if !self.completed.as_ref().is_some_and(|done| done.same(latest)) {
-                self.capture = Some(Capture { demand: latest.clone(), offset: 0, chunks: LinkedList::new() });
+            if !self
+                .completed
+                .as_ref()
+                .is_some_and(|done| done.same(latest))
+            {
+                self.capture = Some(Capture {
+                    demand: latest.clone(),
+                    offset: 0,
+                    chunks: LinkedList::new(),
+                });
             }
         }
         if let Some(capture) = &mut self.capture {
@@ -280,7 +359,9 @@ impl MarkdownWorker {
                 end -= 1;
             }
             if end > capture.offset {
-                capture.chunks.push_back(text[capture.offset..end].to_owned());
+                capture
+                    .chunks
+                    .push_back(text[capture.offset..end].to_owned());
                 capture.offset = end;
             }
             if capture.offset == target {
@@ -290,12 +371,26 @@ impl MarkdownWorker {
                 // Queue saturation retains the completed bounded capture; it
                 // never blocks the UI or restarts source copying.
                 let interactive = capture.offset <= INTERACTIVE_SOURCE_BYTES
-                    && (capture.demand.live || self.published.as_ref().is_some_and(|snapshot| snapshot.interactive));
+                    && (capture.demand.live
+                        || self
+                            .published
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.interactive));
                 let mut request = ParseRequest {
-                    revision: self.revision, epoch: self.epoch, root: self.root.clone(), linkify: self.linkify, find: self.find.clone(),
-                    previous: self.published.as_ref().map(|snapshot| snapshot.source.clone()),
+                    revision: self.revision,
+                    epoch: self.epoch,
+                    root: self.root.clone(),
+                    linkify: self.linkify,
+                    find: self.find.clone(),
+                    previous: self
+                        .published
+                        .as_ref()
+                        .map(|snapshot| snapshot.source.clone()),
                     result: parser.send.clone(),
-                    chunks: capture.chunks, bytes: capture.offset, reveal_bytes: capture.demand.bytes, live: capture.demand.live,
+                    chunks: capture.chunks,
+                    bytes: capture.offset,
+                    reveal_bytes: capture.demand.bytes,
+                    live: capture.demand.live,
                     interactive,
                 };
                 if interactive {
@@ -306,9 +401,15 @@ impl MarkdownWorker {
                 match PARSER_QUEUE.try_send(request) {
                     Ok(()) => self.active = Some(capture.demand),
                     Err(mpsc::TrySendError::Full(request)) => {
-                        self.capture = Some(Capture { demand: capture.demand, offset: capture.offset, chunks: request.chunks });
+                        self.capture = Some(Capture {
+                            demand: capture.demand,
+                            offset: capture.offset,
+                            chunks: request.chunks,
+                        });
                     }
-                    Err(mpsc::TrySendError::Disconnected(_)) => panic!("Markdown parser pool disconnected"),
+                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                        panic!("Markdown parser pool disconnected")
+                    }
                 }
             }
         }
@@ -323,10 +424,15 @@ impl MarkdownWorker {
 
     /// The final paint pass must retain preparation demand from the dry pass.
     pub fn is_pending(&self) -> bool {
-        self.active.is_some() || self.capture.is_some() || self.candidate.is_some()
+        self.active.is_some()
+            || self.capture.is_some()
+            || self.candidate.is_some()
             || self.latest.as_ref().is_some_and(|latest| {
                 latest.bytes < latest.text().len()
-                    || !self.completed.as_ref().is_some_and(|done| done.same(latest))
+                    || !self
+                        .completed
+                        .as_ref()
+                        .is_some_and(|done| done.same(latest))
             })
     }
 
@@ -345,7 +451,9 @@ impl MarkdownWorker {
     /// The view calls this only after every layout in the candidate is ready.
     /// A source owner and its exact geometry are thus committed together.
     pub fn publish(&mut self, revision: u64) -> bool {
-        let Some(candidate) = &self.candidate else { return false };
+        let Some(candidate) = &self.candidate else {
+            return false;
+        };
         if candidate.revision != revision {
             return false;
         }
@@ -364,11 +472,19 @@ fn revealed_end(text: &str, bytes: usize, live: bool) -> usize {
     }
 }
 
-fn collect_blocks(blocks: &[Block], paragraphs: &mut HashMap<ParagraphKey, Arc<SemanticParagraph>>, codes: &mut HashMap<usize, Arc<SemanticParagraph>>) {
+fn collect_blocks(
+    blocks: &[Block],
+    paragraphs: &mut HashMap<ParagraphKey, Arc<SemanticParagraph>>,
+    codes: &mut HashMap<usize, Arc<SemanticParagraph>>,
+) {
     for block in blocks {
         match block {
-            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => collect_inlines(inlines, paragraphs),
-            Block::Quote(blocks) | Block::Alert { blocks, .. } => collect_blocks(blocks, paragraphs, codes),
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                collect_inlines(inlines, paragraphs)
+            }
+            Block::Quote(blocks) | Block::Alert { blocks, .. } => {
+                collect_blocks(blocks, paragraphs, codes)
+            }
             Block::List { items, .. } => {
                 for item in items {
                     collect_blocks(&item.blocks, paragraphs, codes);
@@ -380,20 +496,32 @@ fn collect_blocks(blocks: &[Block], paragraphs: &mut HashMap<ParagraphKey, Arc<S
                 }
             }
             Block::Code { text, .. } => {
-                codes.insert(text.as_ptr() as usize, Arc::new(SemanticParagraph {
-                    text: Arc::from(text.as_str()),
-                    empty: text.is_empty(),
-                    copy_end: text.trim_end_matches('\n').len(),
-                    spans: vec![SemanticSpan { len: text.len(), style: Style::default(), code: true, link: false }].into(),
-                    ..SemanticParagraph::default()
-                }));
+                codes.insert(
+                    text.as_ptr() as usize,
+                    Arc::new(SemanticParagraph {
+                        text: Arc::from(text.as_str()),
+                        empty: text.is_empty(),
+                        copy_end: text.len(),
+                        spans: vec![SemanticSpan {
+                            len: text.len(),
+                            style: Style::default(),
+                            code: true,
+                            link: false,
+                        }]
+                        .into(),
+                        ..SemanticParagraph::default()
+                    }),
+                );
             }
             Block::Rule => {}
         }
     }
 }
 
-fn collect_inlines(inlines: &[Inline], paragraphs: &mut HashMap<ParagraphKey, Arc<SemanticParagraph>>) {
+fn collect_inlines(
+    inlines: &[Inline],
+    paragraphs: &mut HashMap<ParagraphKey, Arc<SemanticParagraph>>,
+) {
     // The painter partitions top-level images into separate visual blocks.
     // Include the complete cell too: table layout consumes the unsplit slice.
     paragraphs.insert(ParagraphKey::of(inlines), Arc::new(flatten(inlines)));
@@ -401,13 +529,19 @@ fn collect_inlines(inlines: &[Inline], paragraphs: &mut HashMap<ParagraphKey, Ar
     for (index, inline) in inlines.iter().enumerate() {
         if matches!(inline, Inline::Image { .. }) {
             if index > start {
-                paragraphs.insert(ParagraphKey::of(&inlines[start..index]), Arc::new(flatten(&inlines[start..index])));
+                paragraphs.insert(
+                    ParagraphKey::of(&inlines[start..index]),
+                    Arc::new(flatten(&inlines[start..index])),
+                );
             }
             start = index + 1;
         }
     }
     if start > 0 && start < inlines.len() {
-        paragraphs.insert(ParagraphKey::of(&inlines[start..]), Arc::new(flatten(&inlines[start..])));
+        paragraphs.insert(
+            ParagraphKey::of(&inlines[start..]),
+            Arc::new(flatten(&inlines[start..])),
+        );
     }
 }
 
@@ -418,16 +552,31 @@ fn flatten(inlines: &[Inline]) -> SemanticParagraph {
         codes: Vec<(usize, usize)>,
         strikes: Vec<(usize, usize)>,
         links: Vec<SemanticLink>,
+        contains_images: bool,
     }
-    fn push(text: &mut String, rich: &mut FlatBuilder, value: &str, style: Style, code: bool, link: bool) {
+    fn push(
+        text: &mut String,
+        rich: &mut FlatBuilder,
+        value: &str,
+        style: Style,
+        code: bool,
+        link: bool,
+    ) {
         if value.is_empty() {
             return;
         }
         let start = text.len();
         text.push_str(value);
-        let span = SemanticSpan { len: value.len(), style, code, link };
+        let span = SemanticSpan {
+            len: value.len(),
+            style,
+            code,
+            link,
+        };
         match rich.spans.last_mut() {
-            Some(last) if last.style == style && last.code == code && last.link == link => last.len += value.len(),
+            Some(last) if last.style == style && last.code == code && last.link == link => {
+                last.len += value.len()
+            }
             _ => rich.spans.push(span),
         }
         if code {
@@ -442,16 +591,26 @@ fn flatten(inlines: &[Inline]) -> SemanticParagraph {
             match inline {
                 Inline::Text { text: value, style } => push(text, rich, value, *style, false, link),
                 Inline::Code { text: value, style } => push(text, rich, value, *style, true, link),
-                Inline::Link { href, kind, children } => {
+                Inline::Link {
+                    href,
+                    kind,
+                    children,
+                } => {
                     let start = text.len();
                     visit(text, rich, children, true);
                     if text.len() > start {
-                        rich.links.push((start, text.len(), Arc::from(href.as_str()), *kind, Arc::from(&text[start..])));
+                        rich.links.push((
+                            start,
+                            text.len(),
+                            Arc::from(href.as_str()),
+                            *kind,
+                            Arc::from(&text[start..]),
+                        ));
                     }
                 }
                 // A soft break uses the paragraph color, even inside a link.
                 Inline::Break => push(text, rich, "\n", Style::default(), false, false),
-                Inline::Image { .. } => {}
+                Inline::Image { .. } => rich.contains_images = true,
             }
         }
     }
@@ -460,15 +619,21 @@ fn flatten(inlines: &[Inline]) -> SemanticParagraph {
     visit(&mut text, &mut rich, inlines, false);
     rich.links.sort_by_key(|link| (link.0, link.1));
     let mut max_end = 0;
-    let link_max_ends: Arc<[usize]> = rich.links.iter().map(|link| {
-        max_end = max_end.max(link.1);
-        max_end
-    }).collect::<Vec<_>>().into();
+    let link_max_ends: Arc<[usize]> = rich
+        .links
+        .iter()
+        .map(|link| {
+            max_end = max_end.max(link.1);
+            max_end
+        })
+        .collect::<Vec<_>>()
+        .into();
     let empty = text.trim_matches('\n').is_empty();
     let copy_end = text.trim_end_matches('\n').len();
     SemanticParagraph {
         text: Arc::from(text),
         empty,
+        contains_images: rich.contains_images,
         copy_end,
         find_matches: Arc::default(),
         link_max_ends,
@@ -484,7 +649,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    const OPTIONS: ParseOptions<'_> = ParseOptions { root: None, linkify: true, find: None };
+    const OPTIONS: ParseOptions<'_> = ParseOptions {
+        root: None,
+        linkify: true,
+        find: None,
+    };
 
     #[test]
     fn captures_bounded_chunks_and_does_not_restart_for_new_tokens() {
@@ -495,7 +664,10 @@ mod tests {
         let capture = worker.capture.as_ref().unwrap();
         assert_eq!(capture.offset, CAPTURE_BYTES);
         assert!(Rc::ptr_eq(&capture.demand.entry, &first));
-        assert!(worker.is_pending(), "final paint must keep the dry-pass capture scheduled");
+        assert!(
+            worker.is_pending(),
+            "final paint must keep the dry-pass capture scheduled"
+        );
         assert!(worker.update(("row", "host", "agent"), next.clone(), false, OPTIONS, 0.01));
         let capture = worker.capture.as_ref().unwrap();
         assert_eq!(capture.offset, CAPTURE_BYTES * 2);
@@ -508,8 +680,16 @@ mod tests {
 
     #[test]
     fn same_length_edits_are_distinct_demands() {
-        let first = Demand { entry: Rc::new(json!({"item": {"text": "before"}})), bytes: 6, live: false };
-        let replacement = Demand { entry: Rc::new(json!({"item": {"text": "after!"}})), bytes: 6, live: false };
+        let first = Demand {
+            entry: Rc::new(json!({"item": {"text": "before"}})),
+            bytes: 6,
+            live: false,
+        };
+        let replacement = Demand {
+            entry: Rc::new(json!({"item": {"text": "after!"}})),
+            bytes: 6,
+            live: false,
+        };
         assert!(!first.same(&replacement));
         assert!(first.same(&first.clone()));
     }
@@ -520,8 +700,14 @@ mod tests {
         assert_eq!(revealed_end(text, "prefix 👩".len(), true), "prefix ".len());
         assert_eq!(revealed_end(text, 1, false), text.len());
         let trailing = "complete 🇦";
-        assert_eq!(revealed_end(trailing, trailing.len(), true), "complete ".len());
-        assert_eq!(revealed_end(trailing, trailing.len(), false), trailing.len());
+        assert_eq!(
+            revealed_end(trailing, trailing.len(), true),
+            "complete ".len()
+        );
+        assert_eq!(
+            revealed_end(trailing, trailing.len(), false),
+            trailing.len()
+        );
         let followed = "🇦 rest";
         assert_eq!(revealed_end(followed, "🇦".len(), true), "🇦".len());
     }
@@ -529,18 +715,36 @@ mod tests {
     #[test]
     fn semantic_text_and_ranges_preserve_utf8_and_nested_styles() {
         let inlines = vec![
-            Inline::Text { text: "é ".into(), style: Style { bold: true, ..Style::default() } },
+            Inline::Text {
+                text: "é ".into(),
+                style: Style {
+                    bold: true,
+                    ..Style::default()
+                },
+            },
             Inline::Link {
                 href: "file.rs".into(),
                 kind: FileLinkSourceType::Markdown,
-                children: vec![Inline::Code { text: "👩🏽‍💻".into(), style: Style { strike: true, ..Style::default() } }],
+                children: vec![Inline::Code {
+                    text: "👩🏽‍💻".into(),
+                    style: Style {
+                        strike: true,
+                        ..Style::default()
+                    },
+                }],
             },
             Inline::Break,
-            Inline::Text { text: "終".into(), style: Style::default() },
+            Inline::Text {
+                text: "終".into(),
+                style: Style::default(),
+            },
         ];
         let rich = flatten(&inlines);
         assert_eq!(&*rich.text, "é 👩🏽‍💻\n終");
-        assert_eq!(rich.spans.iter().map(|span| span.len).sum::<usize>(), rich.text.len());
+        assert_eq!(
+            rich.spans.iter().map(|span| span.len).sum::<usize>(),
+            rich.text.len()
+        );
         let start = "é ".len();
         let end = "é 👩🏽‍💻".len();
         assert_eq!(&*rich.codes, &[(start, end)]);
@@ -552,11 +756,24 @@ mod tests {
 
     #[test]
     fn semantic_index_covers_nested_blocks_cells_and_image_segments() {
-        let blocks = model::parse("# Heading\n\n> quoted\n\n- item\n\n| column |\n| --- |\n| cell |\n\nbefore ![alt](image.png) after", None, false);
+        let blocks = model::parse(
+            "# Heading\n\n> quoted\n\n- item\n\n| column |\n| --- |\n| cell |\n\nbefore ![alt](image.png) after",
+            None,
+            false,
+        );
         let mut paragraphs = HashMap::new();
         collect_blocks(&blocks, &mut paragraphs, &mut HashMap::new());
-        for text in ["Heading", "quoted", "item", "column", "cell", "before ", " after"] {
-            assert!(paragraphs.values().any(|rich| &*rich.text == text), "missing {text:?}");
+        let Block::Paragraph(inlines) = blocks.last().unwrap() else {
+            panic!("expected mixed image paragraph");
+        };
+        assert!(paragraphs[&ParagraphKey::of(inlines)].contains_images);
+        for text in [
+            "Heading", "quoted", "item", "column", "cell", "before ", " after",
+        ] {
+            assert!(
+                paragraphs.values().any(|rich| &*rich.text == text),
+                "missing {text:?}"
+            );
         }
     }
 
@@ -564,12 +781,21 @@ mod tests {
     fn publication_is_exact_and_candidate_blocks_new_capture() {
         let entry = Rc::new(json!({"item": {"text": "latest"}}));
         let snapshot = Rc::new(ParsedSnapshot {
-            revision: 7, epoch: 0, source: Arc::from("old"), replaces_previous: false,
-            find_pattern: None, codes: HashMap::new(), interactive: false,
-            blocks: Rc::new(Vec::new()), paragraphs: HashMap::new(),
+            revision: 7,
+            epoch: 0,
+            source: Arc::from("old"),
+            replaces_previous: false,
+            find_pattern: None,
+            codes: HashMap::new(),
+            interactive: false,
+            blocks: Rc::new(Vec::new()),
+            paragraphs: HashMap::new(),
         });
         let mut worker = MarkdownWorker {
-            owner: Some(("row".into(), "host".into(), "agent".into())), linkify: true, candidate: Some(snapshot.clone()), ..MarkdownWorker::default()
+            owner: Some(("row".into(), "host".into(), "agent".into())),
+            linkify: true,
+            candidate: Some(snapshot.clone()),
+            ..MarkdownWorker::default()
         };
         assert!(worker.update(("row", "host", "agent"), entry, false, OPTIONS, 0.0));
         assert!(worker.capture.is_none());
@@ -578,7 +804,10 @@ mod tests {
         assert!(worker.publish(7));
         assert!(Rc::ptr_eq(&worker.published().unwrap(), &snapshot));
         assert!(worker.candidate().is_none());
-        assert!(worker.is_pending(), "publishing an older candidate must still schedule latest demand");
+        assert!(
+            worker.is_pending(),
+            "publishing an older candidate must still schedule latest demand"
+        );
     }
 
     #[test]
@@ -587,11 +816,26 @@ mod tests {
         let mut worker = MarkdownWorker::default();
         worker.update(("row", "host", "agent"), entry.clone(), false, OPTIONS, 0.0);
         let first = worker.epoch();
-        worker.update(("row", "other-host", "agent"), entry.clone(), false, OPTIONS, 0.0);
+        worker.update(
+            ("row", "other-host", "agent"),
+            entry.clone(),
+            false,
+            OPTIONS,
+            0.0,
+        );
         assert_ne!(worker.epoch(), first);
         let second = worker.epoch();
         let pattern = model::find_pattern("a").unwrap();
-        worker.update(("row", "other-host", "agent"), entry, false, ParseOptions { find: Some(&pattern), ..OPTIONS }, 0.0);
+        worker.update(
+            ("row", "other-host", "agent"),
+            entry,
+            false,
+            ParseOptions {
+                find: Some(&pattern),
+                ..OPTIONS
+            },
+            0.0,
+        );
         assert_ne!(worker.epoch(), second);
         assert!(worker.candidate().is_none());
         assert!(worker.published().is_none());
@@ -609,9 +853,14 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         let paragraph = paragraphs.values().next().unwrap();
         assert_eq!(paragraph.text.as_ref(), text.as_str());
-        let code = vec![Block::Code { lang: String::new(), text: text.clone() }];
+        let code = vec![Block::Code {
+            lang: String::new(),
+            text: text.clone(),
+        }];
         collect_blocks(&code, &mut paragraphs, &mut codes);
-        let Block::Code { text: source, .. } = &code[0] else { unreachable!() };
+        let Block::Code { text: source, .. } = &code[0] else {
+            unreachable!()
+        };
         let prepared = codes.get(&(source.as_ptr() as usize)).unwrap();
         assert_eq!(&*prepared.text, text);
         assert_eq!(prepared.spans[0].len, text.len());
@@ -619,21 +868,12 @@ mod tests {
     }
 
     #[test]
-    fn copy_boundary_preserves_unicode_and_only_trims_trailing_newlines() {
-        let text = "é漢 \n\n";
-        let blocks = vec![Block::Code { lang: String::new(), text: text.into() }];
+    fn code_copy_preserves_blank_lines_from_fenced_source() {
+        let blocks = model::parse("```text\né漢 \n\n```\n", None, false);
         let mut codes = HashMap::new();
         collect_blocks(&blocks, &mut HashMap::new(), &mut codes);
         let code = codes.values().next().unwrap();
-        assert_eq!(&code.text[..code.copy_end], "é漢 ");
-        assert_eq!(&*code.text, text);
-        let paragraph = flatten(&[
-            Inline::Text { text: "é漢 ".into(), style: Style::default() },
-            Inline::Break,
-            Inline::Break,
-        ]);
-        assert_eq!(&paragraph.text[..paragraph.copy_end], "é漢 ");
-        assert_eq!(paragraph.copy_end, code.copy_end);
+        assert_eq!(&code.text[..code.copy_end], "é漢 \n\n");
     }
 
     const OWNER: (&str, &str, &str) = ("row", "host", "agent");
@@ -650,13 +890,23 @@ mod tests {
         let grown = message(&"a".repeat(10_001));
         let mut now = 100.5;
         worker.update(OWNER, grown.clone(), true, OPTIONS, now);
-        assert_eq!(worker.paced_bytes, 1 + 10_000_usize.div_ceil(9), "growth starts on the frame that sees it");
+        assert_eq!(
+            worker.paced_bytes,
+            1 + 10_000_usize.div_ceil(9),
+            "growth starts on the frame that sees it"
+        );
         let mut frames = 1;
         while worker.paced_bytes < 10_001 {
             now += 1.0 / 60.0;
             frames += 1;
-            assert!(worker.update(OWNER, grown.clone(), true, OPTIONS, now), "held-back text keeps frames scheduled");
-            assert!(frames < 70, "10 kB must not trail the stream for more than about 1.1s");
+            assert!(
+                worker.update(OWNER, grown.clone(), true, OPTIONS, now),
+                "held-back text keeps frames scheduled"
+            );
+            assert!(
+                frames < 70,
+                "10 kB must not trail the stream for more than about 1.1s"
+            );
         }
         assert_eq!(worker.latest.as_ref().unwrap().bytes, 10_001);
     }
@@ -697,17 +947,29 @@ mod tests {
         assert!(worker.active.is_some() && worker.candidate.is_none());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while worker.candidate.is_none() {
-            assert!(worker.is_pending(), "the final paint must schedule a frame while the parse is in flight");
-            assert!(std::time::Instant::now() < deadline, "the parser result never arrived");
+            assert!(
+                worker.is_pending(),
+                "the final paint must schedule a frame while the parse is in flight"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the parser result never arrived"
+            );
             std::thread::sleep(std::time::Duration::from_millis(1));
             // The next frame's preparation pass collects the result; no other event is needed.
             assert!(worker.update(OWNER, complete.clone(), false, OPTIONS, 0.0));
         }
         let revision = worker.candidate().unwrap().revision;
-        assert!(worker.is_pending(), "an unpublished candidate still needs its layout passes");
+        assert!(
+            worker.is_pending(),
+            "an unpublished candidate still needs its layout passes"
+        );
         assert!(worker.publish(revision));
         assert!(!worker.is_pending());
-        assert!(!worker.update(OWNER, complete, false, OPTIONS, 0.0), "a published document stops scheduling frames");
+        assert!(
+            !worker.update(OWNER, complete, false, OPTIONS, 0.0),
+            "a published document stops scheduling frames"
+        );
         assert_eq!(&*worker.published().unwrap().source, source);
     }
 }

@@ -4,9 +4,9 @@ mod ingress;
 mod tests;
 
 use crate::state::AppState;
-use paseo_protocol::crypto::{KeyPair, MAX_WIRE_BYTES};
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
+use paseo_protocol::crypto::{KeyPair, MAX_WIRE_BYTES};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -115,11 +115,10 @@ impl RelayService {
                     .unwrap_or(false),
                 Ordering::Release,
             );
-            if !enabled
-                && let Some(active) = runtime.take() {
-                    active.cancel.cancel();
-                    active.task.await.context("Relay runtime failed")?;
-                }
+            if !enabled && let Some(active) = runtime.take() {
+                active.cancel.cancel();
+                active.task.await.context("Relay runtime failed")?;
+            }
         }
         Ok(())
     }

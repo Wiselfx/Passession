@@ -5,11 +5,11 @@
 use super::host;
 use super::json::text;
 use super::model::format_base_ref_label;
-use super::policy::{
-    ActionRuntime, ActionStatus, ActionsContext, GitAction, GitActions, actions_input_from, build_git_actions,
-    forge_presentation, normalize_forge, action_label_keys,
-};
 use super::overlay::{MenuEntry, MenuItem};
+use super::policy::{
+    ActionRuntime, ActionStatus, ActionsContext, GitAction, GitActions, action_label_keys,
+    actions_input_from, build_git_actions, forge_presentation, normalize_forge,
+};
 use super::store::{GitStore, ReviewPlan, pr_status};
 use super::text::{msg, t, tr_forge};
 use crate::common::{PanelTarget, TabPlacement, UiContext, UiEffect};
@@ -33,15 +33,21 @@ pub struct Checkout {
 
 impl Checkout {
     fn status<'a>(&self, store: &'a GitStore) -> Option<&'a Value> {
-        store.checkout(&self.host, &self.cwd).and_then(|s| s.status.as_ref())
+        store
+            .checkout(&self.host, &self.cwd)
+            .and_then(|s| s.status.as_ref())
     }
 
     fn pr_payload<'a>(&self, store: &'a GitStore) -> Option<&'a Value> {
-        store.checkout(&self.host, &self.cwd).and_then(|s| s.pr_payload.as_ref())
+        store
+            .checkout(&self.host, &self.cwd)
+            .and_then(|s| s.pr_payload.as_ref())
     }
 
     fn repo_root(&self, store: &GitStore) -> String {
-        self.status(store).map(|s| text(s, "repoRoot").to_owned()).unwrap_or_default()
+        self.status(store)
+            .map(|s| text(s, "repoRoot").to_owned())
+            .unwrap_or_default()
     }
 
     /// `preferences.changesShipDefault[repoRoot]`, `merge` or `pr`.
@@ -50,7 +56,10 @@ impl Checkout {
         if root.is_empty() {
             return "pr";
         }
-        match host::preference(ui, "changesShipDefault").get(&root).and_then(Value::as_str) {
+        match host::preference(ui, "changesShipDefault")
+            .get(&root)
+            .and_then(Value::as_str)
+        {
             Some("merge") => "merge",
             _ => "pr",
         }
@@ -105,7 +114,11 @@ impl Checkout {
             let status = store.action_status(&self.host, &self.cwd, store_id);
             ActionRuntime {
                 disabled: actions_disabled || status == ActionStatus::Pending,
-                status: if id == "pr" && has_pull_request { ActionStatus::Idle } else { status },
+                status: if id == "pr" && has_pull_request {
+                    ActionStatus::Idle
+                } else {
+                    status
+                },
             }
         };
         let input = actions_input_from(
@@ -123,7 +136,8 @@ impl Checkout {
             self.status(store).map(|s| text(s, "baseRef")).unwrap_or(""),
             &t("workspace.git.diff.base"),
         );
-        let [idle, pending, success] = action_label_keys(action.id, self.has_pull_request(store), &base);
+        let [idle, pending, success] =
+            action_label_keys(action.id, self.has_pull_request(store), &base);
         let chosen = match action.status {
             ActionStatus::Idle => idle,
             ActionStatus::Pending => pending,
@@ -162,19 +176,38 @@ impl Checkout {
 
     /// Runs a git actions menu answer: the last failure's Retry / Copy /
     /// Dismiss, an action without its review (`…:direct`), or an action.
-    pub fn run_menu(&self, cx: &mut Cx, ui: &mut UiContext, store: &mut GitStore, actions: &GitActions, id: &str) {
+    pub fn run_menu(
+        &self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        store: &mut GitStore,
+        actions: &GitActions,
+        id: &str,
+    ) {
         match id {
             FAILURE_RETRY => store.retry_failure(cx, &self.host, &self.cwd),
             FAILURE_COPY => {
                 if let Some(failure) = store.last_failure(&self.host, &self.cwd) {
                     let text = failure.message.clone();
-                    ui.push(UiEffect::CopyText { text, toast: Some(t("workspace.git.actions.failure.copied")) });
+                    ui.push(UiEffect::CopyText {
+                        text,
+                        toast: Some(t("workspace.git.actions.failure.copied")),
+                    });
                 }
             }
             FAILURE_DISMISS => store.dismiss_failure(cx, &self.host, &self.cwd),
             _ => {
-                let (action_id, review) = if id == "pr:direct" { ("pr", false) } else { (id, true) };
-                if let Some(action) = actions.primary.iter().chain(actions.secondary.iter()).find(|a| a.id == action_id) {
+                let (action_id, review) = if id == "pr:direct" {
+                    ("pr", false)
+                } else {
+                    (id, true)
+                };
+                if let Some(action) = actions
+                    .primary
+                    .iter()
+                    .chain(actions.secondary.iter())
+                    .find(|a| a.id == action_id)
+                {
                     self.run_with(cx, ui, store, action, review);
                 }
             }
@@ -183,22 +216,55 @@ impl Checkout {
 
     /// Menu entries besides the actions: the last failure (title with the
     /// host's message, Retry, Copy, Dismiss) first, and Create PR without review.
-    pub fn menu_extras(&self, ui: &UiContext, store: &GitStore, actions: &GitActions) -> (Vec<MenuEntry>, Vec<MenuEntry>) {
+    pub fn menu_extras(
+        &self,
+        ui: &UiContext,
+        store: &GitStore,
+        actions: &GitActions,
+    ) -> (Vec<MenuEntry>, Vec<MenuEntry>) {
         let mut failure_entries = Vec::new();
         if let Some(failure) = store.last_failure(&self.host, &self.cwd) {
-            let pending = store.action_status(&self.host, &self.cwd, &failure.action_id) == ActionStatus::Pending;
+            let pending = store.action_status(&self.host, &self.cwd, &failure.action_id)
+                == ActionStatus::Pending;
             failure_entries.push(MenuEntry::Item(
-                MenuItem::new("failure-message", format!("{}: {}", failure.title, failure.message)).icon("circle-alert").enabled(false),
+                MenuItem::new(
+                    "failure-message",
+                    format!("{}: {}", failure.title, failure.message),
+                )
+                .icon("circle-alert")
+                .enabled(false),
             ));
-            failure_entries.push(MenuEntry::Item(MenuItem::new(FAILURE_RETRY, t("workspace.git.actions.failure.retry")).icon("rotate-cw").enabled(failure.retryable && !pending && host::connected(ui, &self.host))));
-            failure_entries.push(MenuEntry::Item(MenuItem::new(FAILURE_COPY, t("workspace.git.actions.failure.copy")).icon("copy")));
-            failure_entries.push(MenuEntry::Item(MenuItem::new(FAILURE_DISMISS, t("workspace.git.actions.failure.dismiss")).icon("x")));
+            failure_entries.push(MenuEntry::Item(
+                MenuItem::new(FAILURE_RETRY, t("workspace.git.actions.failure.retry"))
+                    .icon("rotate-cw")
+                    .enabled(failure.retryable && !pending && host::connected(ui, &self.host)),
+            ));
+            failure_entries.push(MenuEntry::Item(
+                MenuItem::new(FAILURE_COPY, t("workspace.git.actions.failure.copy")).icon("copy"),
+            ));
+            failure_entries.push(MenuEntry::Item(
+                MenuItem::new(FAILURE_DISMISS, t("workspace.git.actions.failure.dismiss"))
+                    .icon("x"),
+            ));
         }
         let mut direct = Vec::new();
         let all = || actions.primary.iter().chain(actions.secondary.iter());
-        let ready = |id: &str| all().any(|a| a.id == id && !a.disabled && a.unavailable.is_none() && a.status == ActionStatus::Idle);
+        let ready = |id: &str| {
+            all().any(|a| {
+                a.id == id
+                    && !a.disabled
+                    && a.unavailable.is_none()
+                    && a.status == ActionStatus::Idle
+            })
+        };
         if ready("pr") && !self.has_pull_request(store) {
-            direct.push(MenuEntry::Item(MenuItem::new(format!("pr{DIRECT_SUFFIX}"), self.forge_label(store, "workspace.git.actions.review.prDirect")).icon("git-pull-request")));
+            direct.push(MenuEntry::Item(
+                MenuItem::new(
+                    format!("pr{DIRECT_SUFFIX}"),
+                    self.forge_label(store, "workspace.git.actions.review.prDirect"),
+                )
+                .icon("git-pull-request"),
+            ));
         }
         (failure_entries, direct)
     }
@@ -208,7 +274,14 @@ impl Checkout {
         self.run_with(cx, ui, store, action, true)
     }
 
-    fn run_with(&self, cx: &mut Cx, ui: &mut UiContext, store: &mut GitStore, action: &GitAction, review: bool) {
+    fn run_with(
+        &self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        store: &mut GitStore,
+        action: &GitAction,
+        review: bool,
+    ) {
         if action.disabled {
             return;
         }
@@ -216,22 +289,48 @@ impl Checkout {
             ui.toast(msg(unavailable), false);
             return;
         }
-        let base_ref = self.status(store).map(|s| text(s, "baseRef").to_owned()).unwrap_or_default();
+        let base_ref = self
+            .status(store)
+            .map(|s| text(s, "baseRef").to_owned())
+            .unwrap_or_default();
         let (host, cwd) = (self.host.clone(), self.cwd.clone());
         let success = |store: &GitStore, key: &str| Some(self.forge_label(store, key));
-        let plan = |success_label| ReviewPlan { host: host.clone(), cwd: cwd.clone(), success_label };
+        let plan = |success_label| ReviewPlan {
+            host: host.clone(),
+            cwd: cwd.clone(),
+            success_label,
+        };
         match action.id {
             "commit" => {
                 let target = PanelTarget::new("git_commit", &host, &self.workspace_id, &cwd);
-                ui.push(UiEffect::OpenTab { target, placement: TabPlacement::Main });
+                ui.push(UiEffect::OpenTab {
+                    target,
+                    placement: TabPlacement::Main,
+                });
             }
             "pull" => {
                 let label = success(store, "workspace.git.actions.pull.success");
-                store.run_action(cx, &host, &cwd, "pull", vec![("checkout_pull_request", json!({}))], "workspace.git.actions.toasts.failedPull", label);
+                store.run_action(
+                    cx,
+                    &host,
+                    &cwd,
+                    "pull",
+                    vec![("checkout_pull_request", json!({}))],
+                    "workspace.git.actions.toasts.failedPull",
+                    label,
+                );
             }
             "push" => {
                 let label = success(store, "workspace.git.actions.push.success");
-                store.run_action(cx, &host, &cwd, "push", vec![("checkout_push_request", json!({}))], "workspace.git.actions.toasts.failedPush", label);
+                store.run_action(
+                    cx,
+                    &host,
+                    &cwd,
+                    "push",
+                    vec![("checkout_push_request", json!({}))],
+                    "workspace.git.actions.toasts.failedPush",
+                    label,
+                );
             }
             "pull-and-push" => {
                 let label = success(store, "workspace.git.actions.pullAndPush.success");
@@ -240,7 +339,10 @@ impl Checkout {
                     &host,
                     &cwd,
                     "pull-and-push",
-                    vec![("checkout_pull_request", json!({})), ("checkout_push_request", json!({}))],
+                    vec![
+                        ("checkout_pull_request", json!({})),
+                        ("checkout_push_request", json!({})),
+                    ],
                     "workspace.git.actions.toasts.failedPullAndPush",
                     label,
                 );
@@ -254,10 +356,21 @@ impl Checkout {
                 self.persist_ship_default(ui, store, "pr");
                 let label = success(store, "workspace.git.actions.createPr.success");
                 if review {
-                    let branch = self.status(store).map(|s| text(s, "currentBranch").to_owned()).unwrap_or_default();
+                    let branch = self
+                        .status(store)
+                        .map(|s| text(s, "currentBranch").to_owned())
+                        .unwrap_or_default();
                     store.review_pr(cx, ui, plan(label), base_ref, branch);
                 } else {
-                    store.run_action(cx, &host, &cwd, "create-pr", vec![("checkout_pr_create_request", json!({}))], "workspace.git.actions.toasts.failedCreatePr", label);
+                    store.run_action(
+                        cx,
+                        &host,
+                        &cwd,
+                        "create-pr",
+                        vec![("checkout_pr_create_request", json!({}))],
+                        "workspace.git.actions.toasts.failedCreatePr",
+                        label,
+                    );
                 }
             }
             "disable-pr-auto-merge" => {
@@ -266,7 +379,15 @@ impl Checkout {
                     return;
                 };
                 let label = success(store, "workspace.git.actions.autoMerge.disabled");
-                store.run_action(cx, &host, &cwd, "disable-pr-auto-merge", vec![(rpc, json!({ "enabled": false }))], "workspace.git.actions.toasts.failedDisableAutoMerge", label);
+                store.run_action(
+                    cx,
+                    &host,
+                    &cwd,
+                    "disable-pr-auto-merge",
+                    vec![(rpc, json!({ "enabled": false }))],
+                    "workspace.git.actions.toasts.failedDisableAutoMerge",
+                    label,
+                );
             }
             "merge-branch" => {
                 if base_ref.is_empty() {
@@ -296,7 +417,10 @@ impl Checkout {
                     &host,
                     &cwd,
                     "merge-from-base",
-                    vec![("checkout_merge_from_base_request", json!({ "baseRef": base_ref, "requireCleanTarget": true }))],
+                    vec![(
+                        "checkout_merge_from_base_request",
+                        json!({ "baseRef": base_ref, "requireCleanTarget": true }),
+                    )],
                     "workspace.git.actions.toasts.failedMergeFromBase",
                     label,
                 );
@@ -310,7 +434,10 @@ impl Checkout {
                     &host,
                     &cwd,
                     action.id,
-                    vec![("checkout_pr_merge_request", json!({ "mergeMethod": method }))],
+                    vec![(
+                        "checkout_pr_merge_request",
+                        json!({ "mergeMethod": method }),
+                    )],
                     "workspace.git.actions.toasts.failedMergePr",
                     label,
                 );
@@ -336,12 +463,15 @@ impl Checkout {
             _ => {}
         }
     }
-
 }
 
 /// Original `gitActionMenuEntries`: separators before group starters (never
 /// first); unavailable actions muted; a pending or succeeded row disabled.
-pub fn menu_entries(checkout: &Checkout, store: &GitStore, actions: &[GitAction]) -> Vec<MenuEntry> {
+pub fn menu_entries(
+    checkout: &Checkout,
+    store: &GitStore,
+    actions: &[GitAction],
+) -> Vec<MenuEntry> {
     let mut entries = Vec::new();
     for (index, action) in actions.iter().enumerate() {
         if action.starts_group && index > 0 {
@@ -356,4 +486,3 @@ pub fn menu_entries(checkout: &Checkout, store: &GitStore, actions: &[GitAction]
     }
     entries
 }
-

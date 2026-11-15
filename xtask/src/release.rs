@@ -5,16 +5,14 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{env, path::PathBuf};
-mod integrity;
+pub(crate) mod integrity;
 mod metadata;
-mod remote;
+pub(crate) mod remote;
 
 pub(super) const REPOSITORY: &str = "emotionbug/Passession";
 pub(super) const WORKFLOW: &str = ".github/workflows/desktop-release.yml";
-/// Desktop client feed runtime and asset prefix (`flutter-<channel>-<target>.json`).
-/// Installed clients, including Flutter-era builds, discover updates by this
-/// exact identity, so it stays `flutter` for the Rust client.
-pub(super) const CLIENT: &str = "flutter";
+/// Desktop application feed runtime and asset prefix (`app-<channel>-<target>.json`).
+pub(super) const CLIENT: &str = "app";
 pub(super) const CLIENT_APP_ID: &str = "sh.paseo.sessions.desktop";
 /// Standalone daemon feed runtime (`daemon-<channel>-<target>.json`).
 pub(super) const DAEMON: &str = "rust";
@@ -179,7 +177,13 @@ fn plan(
     );
     ensure!(
         [
-            "all", "desktop", "linux", "macos", "windows", "android", "ios",
+            "all",
+            "desktop",
+            "linux",
+            "macos",
+            "windows",
+            "android",
+            "ios",
             "linux-windows-x64-android",
         ]
         .contains(&selection)
@@ -191,9 +195,7 @@ fn plan(
             || (["all", "linux-windows-x64-android"].contains(&selection) && publish),
         "publish-only requires platform=all or linux-windows-x64-android and publish=true"
     );
-    let selection = if event == "push"
-        || (mode == "publish-only" && selection == "all")
-    {
+    let selection = if event == "push" || (mode == "publish-only" && selection == "all") {
         if source.starts_with("desktop-macos-") {
             "macos"
         } else if source.starts_with("desktop-linux-") {
@@ -324,7 +326,7 @@ pub fn run(args: &[String]) -> Result<()> {
     match command.as_str() {
         "plan" => {
             ensure!(rest.is_empty(), "plan takes environment inputs only");
-            let p = plan(
+            let mut p = plan(
                 &required("SOURCE_TAG")?,
                 &var("INPUT_PLATFORM", "all"),
                 &var("RECOVERY_MODE", "build"),
@@ -334,9 +336,64 @@ pub fn run(args: &[String]) -> Result<()> {
             )?;
             ensure!(
                 p["version"] == common::version()?,
-                "Tag version differs from Cargo workspace version"
+                "Tag version differs from collection version"
             );
             hours(&var("ROLLOUT_HOURS", "36"))?;
+            let targets: Vec<String> = serde_json::from_value(p["expected"].clone())?;
+            let component_plan = if p["mode"] == "publish-only" {
+                let recovered = remote::recovery_plan()?;
+                ensure!(
+                    recovered
+                        .targets
+                        .iter()
+                        .all(|target| targets.contains(&target.target)),
+                    "Recovered plan exceeds the selected publication scope"
+                );
+                recovered
+            } else {
+                let (prior, package_hashes) = remote::prior_inventory(None)?;
+                crate::components::plan::create(&targets, prior.as_ref(), &package_hashes)?
+            };
+            ensure!(
+                component_plan.version == p["version"]
+                    && component_plan.source_sha == required("SOURCE_SHA")?,
+                "Component plan source mismatch"
+            );
+            let changed: Vec<_> = component_plan
+                .targets
+                .iter()
+                .filter(|t| t.changed())
+                .map(|t| t.target.clone())
+                .collect();
+            let recovered: Vec<String> = serde_json::from_value(p["recovery"].clone())?;
+            let matrix: Vec<_> = changed
+                .iter()
+                .filter(|id| !recovered.contains(id))
+                .map(|id| {
+                    let mut value = serde_json::to_value(target(id)?)?;
+                    let decision = component_plan
+                        .targets
+                        .iter()
+                        .find(|t| t.target == *id)
+                        .unwrap();
+                    value["components"] = serde_json::to_value(&decision.build)?;
+                    value["package"] = json!(decision.package);
+                    Ok(value)
+                })
+                .collect::<Result<_>>()?;
+            p["matrix"] = json!({"include":matrix});
+            p["expected"] = json!(changed);
+            p["recovery"] = json!(
+                recovered
+                    .into_iter()
+                    .filter(|id| changed.contains(id))
+                    .collect::<Vec<_>>()
+            );
+            p["noChanges"] = json!(component_plan.no_changes);
+            common::write_json(
+                &common::root()?.join("artifacts/component-plan.json"),
+                &serde_json::to_value(component_plan)?,
+            )?;
             for (k, v) in p.as_object().unwrap() {
                 println!(
                     "{k}={}",
@@ -352,6 +409,9 @@ pub fn run(args: &[String]) -> Result<()> {
             &Identity::environment(&required("TARGET_ID")?, &required("GITHUB_RUN_ID")?)?,
         ),
         "verify" => {
+            if integrity::component_plan()?.no_changes {
+                return Ok(());
+            }
             for id in expected()? {
                 integrity::verify(&directory()?, &id)?;
             }
@@ -416,17 +476,40 @@ mod tests {
         assert_eq!(build["expected"], targets);
         assert_eq!(build["recovery"], json!([]));
         assert_eq!(build["createRelease"], true);
-        let recovery = plan("v0.13.4", scope, "publish-only", true, "123", "workflow_dispatch").unwrap();
+        let recovery = plan(
+            "v0.13.4",
+            scope,
+            "publish-only",
+            true,
+            "123",
+            "workflow_dispatch",
+        )
+        .unwrap();
         assert_eq!(recovery["expected"], targets);
         assert_eq!(recovery["recovery"], targets);
-        assert!(plan("v0.13.4", scope, "publish-only", true, "", "workflow_dispatch").is_err());
+        assert!(
+            plan(
+                "v0.13.4",
+                scope,
+                "publish-only",
+                true,
+                "",
+                "workflow_dispatch"
+            )
+            .is_err()
+        );
     }
     #[test]
     fn android_publication_only_accepts_arm64_apk() {
         let p = plan("v0.13.4", "android", "build", true, "", "workflow_dispatch").unwrap();
         assert_eq!(p["expected"], json!(["android-arm64"]));
         assert_eq!(p["matrix"]["include"][0]["format"], "apk");
-        for removed in ["android-arm", "android-x64", "android-universal", "android-universal-aab"] {
+        for removed in [
+            "android-arm",
+            "android-x64",
+            "android-universal",
+            "android-universal-aab",
+        ] {
             assert!(target(removed).is_err());
             assert!(plan("v0.13.4", removed, "build", true, "", "workflow_dispatch").is_err());
         }

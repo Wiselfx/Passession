@@ -49,12 +49,25 @@ pub fn learn(events: &[CoreEvent]) {
         let mut learned = learned.borrow_mut();
         for event in events {
             match event {
-                CoreEvent::Connected { host_id, server_info } => {
-                    learned.insert(host_id.clone(), (Connection::Connected, server_info.clone()));
+                CoreEvent::Connected {
+                    host_id,
+                    server_info,
+                } => {
+                    learned.insert(
+                        host_id.clone(),
+                        (Connection::Connected, server_info.clone()),
+                    );
                 }
                 CoreEvent::Disconnected { host_id, error } => {
-                    let info = learned.remove(host_id).map(|(_, info)| info).unwrap_or(Value::Null);
-                    let status = if error.is_some() { Connection::Error } else { Connection::Disconnected };
+                    let info = learned
+                        .remove(host_id)
+                        .map(|(_, info)| info)
+                        .unwrap_or(Value::Null);
+                    let status = if error.is_some() {
+                        Connection::Error
+                    } else {
+                        Connection::Disconnected
+                    };
                     learned.insert(host_id.clone(), (status, info));
                 }
                 _ => {}
@@ -106,10 +119,16 @@ impl<'a> Host<'a> {
             .value
             .get("status")
             .or_else(|| self.value.get("connectionStatus"))
-            .and_then(|s| s.as_str().map(str::to_owned).or_else(|| s.get("status").and_then(Value::as_str).map(str::to_owned)));
+            .and_then(|s| {
+                s.as_str()
+                    .map(str::to_owned)
+                    .or_else(|| s.get("status").and_then(Value::as_str).map(str::to_owned))
+            });
         match status {
             Some(status) => Connection::parse(&status),
-            None => LEARNED.with(|l| l.borrow().get(self.id()).map(|(c, _)| *c)).unwrap_or(Connection::Disconnected),
+            None => LEARNED
+                .with(|l| l.borrow().get(self.id()).map(|(c, _)| *c))
+                .unwrap_or(Connection::Disconnected),
         }
     }
 
@@ -134,10 +153,9 @@ impl<'a> Host<'a> {
             return object_of(info, "features").get(feature) == Some(&Value::Bool(true));
         }
         LEARNED.with(|learned| {
-            learned
-                .borrow()
-                .get(self.id())
-                .is_some_and(|(_, info)| info.get("features").and_then(|f| f.get(feature)) == Some(&Value::Bool(true)))
+            learned.borrow().get(self.id()).is_some_and(|(_, info)| {
+                info.get("features").and_then(|f| f.get(feature)) == Some(&Value::Bool(true))
+            })
         })
     }
 
@@ -179,11 +197,16 @@ impl<'a> Host<'a> {
 
     /// An agent row, unwrapping the `{agent: {...}}` directory envelope.
     pub fn agent(&self, agent_id: &str) -> Option<&'a Value> {
-        self.agents().iter().map(agent_of).find(|agent| str_of(agent, "id") == agent_id)
+        self.agents()
+            .iter()
+            .map(agent_of)
+            .find(|agent| str_of(agent, "id") == agent_id)
     }
 
     pub fn workspace(&self, workspace_id: &str) -> Option<&'a Value> {
-        self.workspaces().iter().find(|w| str_of(w, "id") == workspace_id)
+        self.workspaces()
+            .iter()
+            .find(|w| str_of(w, "id") == workspace_id)
     }
 
     /// The project whose root is `root` (`projectRootPath`, else `repoRoot`).
@@ -192,7 +215,9 @@ impl<'a> Host<'a> {
         if root.is_empty() {
             return None;
         }
-        self.projects().iter().find(|p| project_root(p).trim() == root)
+        self.projects()
+            .iter()
+            .find(|p| project_root(p).trim() == root)
     }
 }
 
@@ -227,7 +252,10 @@ pub fn project_name(project: &Value) -> String {
 }
 
 pub fn last_segment(path: &str) -> String {
-    path.split(['/', '\\']).rfind(|s| !s.is_empty()).unwrap_or(path).to_owned()
+    path.split(['/', '\\'])
+        .rfind(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_owned()
 }
 
 /// Every host of the directory state, in directory order.
@@ -237,7 +265,10 @@ pub fn hosts(state: &Value) -> Vec<Host<'_>> {
         Some(Value::Object(map)) => map.values().collect(),
         _ => Vec::new(),
     };
-    list.into_iter().map(|value| Host { value }).filter(|h| !h.id().is_empty()).collect()
+    list.into_iter()
+        .map(|value| Host { value })
+        .filter(|h| !h.id().is_empty())
+        .collect()
 }
 
 pub fn host<'a>(state: &'a Value, host_id: &str) -> Option<Host<'a>> {
@@ -252,7 +283,10 @@ pub fn preferences(state: &Value) -> &Value {
 /// Writes one preference through the shell, the single preferences writer (`ui-api.md`
 /// §12): `Null` removes the key; unknown keys survive.
 pub fn set_preference(effects: &mut Vec<crate::common::UiEffect>, key: &str, value: Value) {
-    effects.push(crate::common::UiEffect::SetPreference { key: key.to_owned(), value });
+    effects.push(crate::common::UiEffect::SetPreference {
+        key: key.to_owned(),
+        value,
+    });
 }
 
 /// Whether the shell's current palette is dark (stored theme, `auto` following the system).

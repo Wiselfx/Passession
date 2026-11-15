@@ -8,8 +8,7 @@
 use std::fmt::Write as _;
 
 use paseo_terminal::{
-    CellStyle, CellWidth, Color, Cursor, CursorShape, Emulator, Options, Row, RowCell,
-    ThreadBound,
+    CellStyle, CellWidth, Color, Cursor, CursorShape, Emulator, Options, Row, RowCell, ThreadBound,
 };
 use serde_json::{Value, json};
 
@@ -356,10 +355,7 @@ fn js_whitespace(c: char) -> bool {
 /// erased cell or the padding before a wrapped wide character is a space.
 fn cell_text(cells: &[RowCell], column: usize) -> &str {
     let cell = &cells[column];
-    if cell.width == CellWidth::Spacer
-        && column > 0
-        && cells[column - 1].width == CellWidth::Wide
-    {
+    if cell.width == CellWidth::Spacer && column > 0 && cells[column - 1].width == CellWidth::Wide {
         ""
     } else if cell.text.is_empty() {
         " "
@@ -453,10 +449,7 @@ fn wire_color(color: Color) -> Option<(u8, u32)> {
         Color::Default => None,
         Color::Indexed(index) if index < 16 => Some((1, u32::from(index))),
         Color::Indexed(index) => Some((2, u32::from(index))),
-        Color::Rgb(r, g, b) => Some((
-            3,
-            (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
-        )),
+        Color::Rgb(r, g, b) => Some((3, (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b))),
     }
 }
 

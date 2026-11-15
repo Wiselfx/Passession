@@ -117,18 +117,19 @@ impl HttpTransport {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
-            {
-                headers.insert("mcp-protocol-version", version);
-            }
-        if !self.legacy && !headers.contains_key("mcp-session-id")
+        {
+            headers.insert("mcp-protocol-version", version);
+        }
+        if !self.legacy
+            && !headers.contains_key("mcp-session-id")
             && let Some(session) = self
                 .session
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
-            {
-                headers.insert("mcp-session-id", session);
-            }
+        {
+            headers.insert("mcp-session-id", session);
+        }
         headers
     }
 
@@ -168,20 +169,21 @@ impl HttpTransport {
             );
         }
         if !self.legacy
-            && let Some(session) = response.headers().get("mcp-session-id") {
-                if session.as_bytes().is_empty()
-                    || session.as_bytes().len() > 4096
-                    || !session
-                        .as_bytes()
-                        .iter()
-                        .all(|byte| (0x21..=0x7e).contains(byte))
-                {
-                    bail!("MCP HTTP server returned an invalid session ID");
-                }
-                let mut session = session.clone();
-                session.set_sensitive(true);
-                *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(session);
+            && let Some(session) = response.headers().get("mcp-session-id")
+        {
+            if session.as_bytes().is_empty()
+                || session.as_bytes().len() > 4096
+                || !session
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| (0x21..=0x7e).contains(byte))
+            {
+                bail!("MCP HTTP server returned an invalid session ID");
             }
+            let mut session = session.clone();
+            session.set_sensitive(true);
+            *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(session);
+        }
         let request_id = message
             .get("method")
             .and_then(|_| message.get("id"))

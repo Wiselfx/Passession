@@ -42,6 +42,7 @@ on:
 permissions:
   contents: read
   packages: read
+  actions: read
 
 concurrency:
   group: native-release-${{ github.event.inputs.tag || github.ref_name }}
@@ -76,11 +77,20 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
       create_release: ${{ steps.plan.outputs.createRelease }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
+      no_changes: ${{ steps.plan.outputs.noChanges }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
       - uses: dtolnay/rust-toolchain@1.93.1
+      - name: Apply explicitly pinned planning notice inputs
+        if: env.NOTICE_SUPPLEMENT_SHA != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$NOTICE_SUPPLEMENT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags --depth=1 origin "$NOTICE_SUPPLEMENT_SHA"
+          git show "$NOTICE_SUPPLEMENT_SHA:packaging/cargo-notice-supplements.json" > packaging/cargo-notice-supplements.json
       # source and publish only build xtask (dev profile) on the same runner
       # image and environment, so they share one cache entry.
       - uses: Swatinem/rust-cache@v2
@@ -95,16 +105,24 @@ jobs:
       - id: plan
         env:
           INPUT_PLATFORM: ${{ github.event.inputs.platform || 'all' }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: cargo xtask release plan >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-component-plan
+          path: artifacts/component-plan.json
+          if-no-files-found: error
+          retention-days: 7
       - id: windows
         name: Select Windows runners for the COM smoke test
         env:
           MATRIX: ${{ steps.plan.outputs.matrix }}
         shell: bash
-        run: echo "runners=$(jq -c '[.include[] | select(.platform == "windows") | .runner] | unique' <<< "$MATRIX")" >> "$GITHUB_OUTPUT"
+        run: echo "runners=$(jq -c '[.include[] | select(.platform == "windows" and (.components | index("app"))) | .runner] | unique' <<< "$MATRIX")" >> "$GITHUB_OUTPUT"
       - name: Validate recovery workflow and complete artifact inventory
-        if: env.RECOVERY_RUN_ID != ''
+        if: env.RECOVERY_RUN_ID != '' && steps.plan.outputs.recovery != '[]'
         env:
           GH_TOKEN: ${{ github.token }}
           RECOVERY_TARGETS: ${{ steps.plan.outputs.recovery }}
@@ -112,7 +130,7 @@ jobs:
 
   native:
     needs: source
-    if: github.event.inputs.mode != 'publish-only'
+    if: github.event.inputs.mode != 'publish-only' && needs.source.outputs.no_changes != 'true' && needs.source.outputs.matrix != '{"include":[]}'
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -128,10 +146,19 @@ jobs:
       PASEO_UPDATE_REPOSITORY: emotionbug/Passession
       PASEO_BUILD_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       TARGET_ID: ${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.format == 'aab' && '-aab' || '' }}
+      GOMODCACHE: ${{ github.workspace }}/target/paseo-tailnet/modules
+      GOCACHE: ${{ github.workspace }}/target/paseo-tailnet/go-cache
     steps:
+      - name: Keep checkout bytes identical to the planned fingerprints
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-component-plan
+          path: artifacts
       - name: Apply explicitly pinned packaging notice corrections
         if: env.NOTICE_SUPPLEMENT_SHA != ''
         shell: bash
@@ -155,7 +182,13 @@ jobs:
       # .github/actions/setup-zig existing in the checked-out source; keep the
       # official archive digests (https://ziglang.org/download/index.json) in
       # sync with that action.
+      - uses: actions/setup-go@v6
+        if: contains(matrix.components, 'tailnet') || contains(matrix.components, 'update-helper')
+        with:
+          go-version-file: packages/tailnet/native/go.mod
+          cache-dependency-path: packages/tailnet/native/go.sum
       - name: Install Zig 0.15.2
+        if: contains(matrix.components, 'app') || contains(matrix.components, 'daemon')
         shell: bash
         env:
           ZIG_VERSION: 0.15.2
@@ -199,6 +232,7 @@ jobs:
       # (zig-cache-<GHOSTTY_COMMIT>), so a warm run skips the Zig compile.
       # build.rs pins GHOSTTY_COMMIT, so its hash covers the commit.
       - uses: actions/cache@v6
+        if: contains(matrix.components, 'app') || contains(matrix.components, 'daemon')
         with:
           path: |
             ${{ runner.temp }}/zig-global-cache
@@ -210,6 +244,7 @@ jobs:
       # shared with CI and Native Desktop Packages. build.rs reuses it only when
       # HEAD is the pinned GHOSTTY_COMMIT and the tree is clean, else reclones.
       - uses: actions/cache@v6
+        if: contains(matrix.components, 'app') || contains(matrix.components, 'daemon')
         with:
           path: ${{ runner.temp }}/ghostty-cache/ghostty-src
           key: ghostty-src-${{ runner.os }}-${{ hashFiles('packages/terminal/vendor/libghostty-vt-sys/build.rs') }}
@@ -225,7 +260,7 @@ jobs:
       # uses the unpacked Gradle, so its downloaded archive is not cached.
       - name: Select packaging cache key
         id: packaging-cache
-        if: matrix.platform == 'linux' || matrix.platform == 'android'
+        if: matrix.package && (matrix.platform == 'linux' || matrix.platform == 'android')
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -250,17 +285,17 @@ jobs:
           restore-keys: |
             native-packaging-${{ runner.os }}-${{ matrix.platform }}-${{ matrix.arch }}-
       - name: Install Linux native build prerequisites
-        if: matrix.platform == 'linux'
+        if: matrix.platform == 'linux' && (matrix.package || contains(matrix.components, 'app') || contains(matrix.components, 'daemon'))
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libx11-dev libxcursor-dev libglx-dev libgl-dev libegl-dev libasound2-dev libpulse-dev libwayland-dev libxss1 libsm6 libice6 dpkg-dev xdg-utils patchelf
       - name: Provision pinned AppImage tools
-        if: matrix.platform == 'linux'
+        if: matrix.package && matrix.platform == 'linux'
         run: cargo xtask appimage-tools
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Install NSIS
-        if: matrix.platform == 'windows'
+        if: matrix.package && matrix.platform == 'windows'
         shell: pwsh
         run: choco install nsis --version=3.11 --no-progress -y
       - uses: actions/setup-java@v6
@@ -305,26 +340,14 @@ jobs:
             printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/paseo-release.keystore"
             echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/paseo-release.keystore" >> "$GITHUB_ENV"
           fi
-      - name: Build Rust GUI client and native Rust desktop runtime
-        run: cargo xtask build-gui ${{ matrix.platform }} --profile release ${{ matrix.platform == 'android' && format('--arch {0} --format {1}', matrix.arch, matrix.format) || '' }}
+      - name: Build only planned components and changed OS packages
+        run: cargo xtask components build --plan artifacts/component-plan.json --target "${{ env.TARGET_ID }}"
         env:
+          GH_TOKEN: ${{ github.token }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           PASEO_BUILD_NUMBER: ${{ vars.PASEO_BUILD_NUMBER }}
-      - name: Inspect native macOS build output
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          bundle=".dev/build/gui/desktop/${TARGET_ID}/release/Passession.app"
-          /usr/bin/lipo -info "$bundle/Contents/MacOS/Passession"
-          "$bundle/Contents/Resources/runtime/paseo" --version
-      # Without mobile signing credentials, artifacts are explicitly labelled
-      # debug-signed APK/AAB / unsigned iOS .app, never presented as store submissions.
-      - name: Package native desktop installers
-        if: matrix.desktop
-        run: cargo xtask package-desktop ${{ matrix.platform }}
-        env:
           CSC_LINK: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_ID || '' }}
@@ -332,22 +355,10 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
           WIN_CSC_LINK: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_LINK || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-      - name: Package complete standalone native daemon
-        if: matrix.desktop
-        run: cargo xtask package-daemon
-        env:
-          CSC_LINK: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'macos' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
-          WIN_CSC_LINK: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_LINK || '' }}
-          WIN_CSC_KEY_PASSWORD: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-      - name: Generate native update manifests
-        if: matrix.desktop
-        run: cargo xtask release manifests
       - name: Record exact source, run and artifact hashes
         run: cargo xtask release record
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v7
         with:
           name: native-release-${{ env.TARGET_ID }}
@@ -355,10 +366,9 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           path: |
+            artifacts/native/Paseo-Component-*
             artifacts/native/Passession-*
-            artifacts/native/Paseo-Daemon-*
-            artifacts/native/daemon-*.json
-            artifacts/native/flutter-*.json
+            artifacts/native/components-*.json
             artifacts/native/packages-*.json
             artifacts/native/provenance-*.json
 
@@ -392,7 +402,7 @@ jobs:
 
   publish:
     needs: [source, native, windows-com-smoke]
-    if: ${{ !cancelled() && github.repository == 'emotionbug/Passession' && needs.source.result == 'success' && needs.source.outputs.publish == 'true' && (needs.native.result == 'success' || github.event.inputs.mode == 'publish-only') && (needs.windows-com-smoke.result == 'success' || needs.windows-com-smoke.result == 'skipped') }}
+    if: ${{ !cancelled() && github.repository == 'emotionbug/Passession' && needs.source.result == 'success' && needs.source.outputs.publish == 'true' && needs.source.outputs.no_changes != 'true' && (needs.native.result == 'success' || github.event.inputs.mode == 'publish-only' || (needs.native.result == 'skipped' && needs.source.outputs.matrix == '{"include":[]}')) && (needs.windows-com-smoke.result == 'success' || needs.windows-com-smoke.result == 'skipped') }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -416,20 +426,26 @@ jobs:
         with:
           shared-key: release-xtask
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-component-plan
+          path: artifacts
       - name: Download current build artifacts
-        if: github.event.inputs.mode != 'publish-only'
+        if: needs.native.result == 'success'
         uses: actions/download-artifact@v8
         with:
           pattern: native-release-*
           merge-multiple: true
           path: artifacts/native
       - name: Download exact recovery artifacts
-        if: env.RECOVERY_RUN_ID != ''
+        if: env.RECOVERY_RUN_ID != '' && needs.source.outputs.recovery != '[]'
         env:
           GH_TOKEN: ${{ github.token }}
         run: cargo xtask release recovery --download
       - name: Validate all source and artifact provenance before any release mutation
         run: cargo xtask release verify
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish native release assets and finalize complete desktop rollout
         env:
           GH_TOKEN: ${{ github.token }}

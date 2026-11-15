@@ -16,25 +16,88 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  GOMODCACHE: ${{ github.workspace }}/target/paseo-tailnet/modules
+  GOCACHE: ${{ github.workspace }}/target/paseo-tailnet/go-cache
 
 jobs:
   tests:
+    # Required even for documentation-only changes: no path-filter skipped checks.
     name: tests
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@1.93.1
-      # libghostty-vt-sys builds the Ghostty VT library with Zig 0.15.2; the
-      # action also restores Zig's global cache (Ghostty's fetched packages).
-      - uses: ./.github/actions/setup-zig
         with:
-          cache-key: tests-linux-x64
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.93.1
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: tests-linux-x64
-      # Makepad links X11/GL/audio; native file dialogs also require Wayland.
-      - name: Install native GUI build libraries
+      - name: Plan affected packages and native boundaries
+        id: plan
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
+        run: cargo xtask components ci-plan --base "$BASE" --output artifacts/ci-plan.json >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        if: steps.plan.outputs.tailnet == 'true' || steps.plan.outputs.helper == 'true' || steps.plan.outputs.abi == 'true'
+        with:
+          go-version-file: packages/tailnet/native/go.mod
+          cache-dependency-path: |
+            packages/tailnet/native/go.sum
+            packages/app-updater/go.sum
+      - uses: ./.github/actions/setup-zig
+        if: steps.plan.outputs.rust == 'true' && steps.plan.outputs.native == 'true'
+        with:
+          cache-key: tests-linux-x64
+      - name: Install affected GUI build libraries
+        if: steps.plan.outputs.gui == 'true'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxcursor-dev libglx-dev libgl-dev libegl-dev libasound2-dev libpulse-dev libwayland-dev
-      - name: Run Rust workspace tests
-        run: cargo test --locked --workspace --all-targets
+      - name: Test embedded Tailscale against isolated local control and DERP
+        if: steps.plan.outputs.tailnet == 'true'
+        working-directory: packages/tailnet/native
+        env:
+          GOTOOLCHAIN: local
+          GOMAXPROCS: "2"
+        run: go test -mod=readonly -p=2 -timeout=3m . ./tsnet
+      - name: Compile and inspect changed tailnet C ABI
+        if: steps.plan.outputs.abi == 'true'
+        working-directory: packages/tailnet/native
+        env:
+          GOTOOLCHAIN: local
+          GOMAXPROCS: "2"
+          CGO_ENABLED: "1"
+        run: |
+          go build -mod=readonly -p=2 -buildmode=c-shared -o "$RUNNER_TEMP/libpaseo_tailscale.so" .
+          nm -D --defined-only "$RUNNER_TEMP/libpaseo_tailscale.so" | grep -w PaseoAbiVersion
+      - name: Test isolated desktop update handoff and recovery
+        if: steps.plan.outputs.helper == 'true'
+        working-directory: packages/app-updater
+        env:
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+          GOMAXPROCS: "2"
+        run: go test -mod=readonly -p=2 -timeout=3m .
+      - name: Compile changed desktop helper native boundaries
+        if: steps.plan.outputs.helper == 'true'
+        working-directory: packages/app-updater
+        env:
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+          GOMAXPROCS: "2"
+        run: |
+          GOOS=windows GOARCH=amd64 go build -mod=readonly -trimpath -ldflags="-H=windowsgui" -o "$RUNNER_TEMP/passession-update-helper.exe" .
+          GOOS=darwin GOARCH=arm64 go build -mod=readonly -trimpath -o "$RUNNER_TEMP/passession-update-helper-macos" .
+      - name: Test affected Rust packages and reverse dependencies
+        if: steps.plan.outputs.rust == 'true'
+        env:
+          PACKAGES: ${{ steps.plan.outputs.packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r package; do args+=(-p "$package"); done < <(jq -r '.[]' <<< "$PACKAGES")
+          test ${#args[@]} -gt 0
+          cargo test --locked --all-targets "${args[@]}"
+      - name: Record successful no-effect check
+        if: steps.plan.outputs.native == 'false' && steps.plan.outputs.rust == 'false'
+        run: echo 'No affected compile or native inputs; required tests check succeeds without native work.'

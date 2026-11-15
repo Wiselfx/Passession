@@ -337,10 +337,19 @@ mod tests {
             )]),
         };
         let accounts = discover(&runtime, &scope).await.unwrap();
-        assert_eq!(accounts.iter().map(|account| account.key.as_str()).collect::<Vec<_>>(), ["session-account"]);
+        assert_eq!(
+            accounts
+                .iter()
+                .map(|account| account.key.as_str())
+                .collect::<Vec<_>>(),
+            ["session-account"]
+        );
         for model in ["openai/gpt-test", "anthropic/claude-test", "kiro-http/auto"] {
             scope.model = Some(model.into());
-            assert!(discover(&runtime, &scope).await.unwrap().is_empty(), "{model}");
+            assert!(
+                discover(&runtime, &scope).await.unwrap().is_empty(),
+                "{model}"
+            );
         }
         scope.model = Some("openai-codex/gpt-test".into());
         scope.env.clear();

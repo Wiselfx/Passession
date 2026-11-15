@@ -5,19 +5,30 @@
 
 use makepad_widgets::*;
 use paseo_gui_platform::{
-    NotificationRequest, PermissionState, PlatformAction, PlatformError, PlatformRequestId, PlatformValue, platform,
+    NotificationRequest, PermissionState, PlatformAction, PlatformError, PlatformRequestId,
+    PlatformValue, platform,
 };
 use serde_json::{Map, Value};
 
-pub const DESKTOP: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows"));
+pub const DESKTOP: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+));
 pub const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
 pub const APPLE: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 
 /// Build-time client version (Flutter `--dart-define=PASEO_VERSION`), falling
 /// back to the GUI crate version like the shell's `PlatformConfig.app_version`.
 pub fn app_version() -> Option<String> {
-    let raw = option_env!("PASEO_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).trim();
-    if raw.is_empty() { None } else { Some(raw.trim_start_matches(['v', 'V']).to_string()) }
+    let raw = option_env!("PASEO_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .trim();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.trim_start_matches(['v', 'V']).to_string())
+    }
 }
 
 pub fn platform_name() -> &'static str {
@@ -26,7 +37,10 @@ pub fn platform_name() -> &'static str {
 
 /// Whether the native desktop host service is running (Flutter `DesktopHost.instance != null`).
 pub fn desktop_available() -> bool {
-    DESKTOP && platform().map(|p| p.capabilities().desktop_host).unwrap_or(false)
+    DESKTOP
+        && platform()
+            .map(|p| p.capabilities().desktop_host)
+            .unwrap_or(false)
 }
 
 pub type Reply = (PlatformRequestId, Result<Value, String>);
@@ -54,7 +68,11 @@ fn to_value(value: &PlatformValue) -> Value {
 }
 
 fn error_text(error: &PlatformError) -> String {
-    if error.message.is_empty() { error.code.clone() } else { error.message.clone() }
+    if error.message.is_empty() {
+        error.code.clone()
+    } else {
+        error.message.clone()
+    }
 }
 
 /// Issues platform requests and converts their completions. Requests that
@@ -77,7 +95,9 @@ impl Bridge {
     /// Desktop host IPC command (`desktop_settings_get`, `start_desktop_daemon`, …).
     pub fn desktop(&mut self, command: &str, args: Value) -> PlatformRequestId {
         match platform() {
-            Some(handle) if DESKTOP && handle.capabilities().desktop_host => handle.desktop_invoke(command, args),
+            Some(handle) if DESKTOP && handle.capabilities().desktop_host => {
+                handle.desktop_invoke(command, args)
+            }
             _ => self.local_failure(unavailable()),
         }
     }
@@ -100,7 +120,14 @@ impl Bridge {
 
     pub fn notify(&mut self, id: i32, title: String, body: String) -> PlatformRequestId {
         match platform() {
-            Some(handle) => handle.notify(NotificationRequest { id, title, body: Some(body), data: Map::new(), event_key: None, sound: None }),
+            Some(handle) => handle.notify(NotificationRequest {
+                id,
+                title,
+                body: Some(body),
+                data: Map::new(),
+                event_key: None,
+                sound: None,
+            }),
             None => self.local_failure(unavailable()),
         }
     }
@@ -111,7 +138,10 @@ impl Bridge {
         match platform() {
             Some(handle) => {
                 handle.cancel_audio();
-                handle.play_audio(paseo_gui_platform::audio::THINKING_TONE_PCM16_16K.to_vec(), paseo_gui_platform::audio::THINKING_TONE_MIME)
+                handle.play_audio(
+                    paseo_gui_platform::audio::THINKING_TONE_PCM16_16K.to_vec(),
+                    paseo_gui_platform::audio::THINKING_TONE_MIME,
+                )
             }
             None => self.local_failure(unavailable()),
         }
@@ -122,7 +152,9 @@ impl Bridge {
         let mut out: Vec<Reply> = std::mem::take(&mut self.failed);
         if let Event::Actions(actions) = event {
             for action in actions.iter() {
-                if let Some(PlatformAction::Completed { request, result }) = action.downcast_ref::<PlatformAction>() {
+                if let Some(PlatformAction::Completed { request, result }) =
+                    action.downcast_ref::<PlatformAction>()
+                {
                     out.push((*request, result.as_ref().map(to_value).map_err(error_text)));
                 }
             }

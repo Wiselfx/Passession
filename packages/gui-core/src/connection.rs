@@ -12,12 +12,7 @@
 //! - every accepted frame is also delivered, in wire order, to the core (`Inbound`), which owns
 //!   request correlation, observations and directory synchronization;
 //! - envelope `ping`/`pong` drive the liveness heartbeat.
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use paseo_client::{
@@ -107,16 +102,17 @@ struct Admission {
 impl Admission {
     fn verify(&self, info: &Value) -> Result<(), (CoreError, &'static str)> {
         if let Some(expected) = &self.expected_server_id
-            && info["serverId"].as_str() != Some(expected.as_str()) {
-                return Err((
-                    CoreError::new(
-                        "DAEMON_IDENTITY_MISMATCH",
-                        "Connected daemon identity does not match the selected host",
-                        false,
-                    ),
-                    "Daemon identity mismatch",
-                ));
-            }
+            && info["serverId"].as_str() != Some(expected.as_str())
+        {
+            return Err((
+                CoreError::new(
+                    "DAEMON_IDENTITY_MISMATCH",
+                    "Connected daemon identity does not match the selected host",
+                    false,
+                ),
+                "Daemon identity mismatch",
+            ));
+        }
         if let Some((mode, protected_known)) = self.relay {
             let advertised = info["features"]["relayProtectedSecurity"] == true;
             if mode != Some(SecurityMode::Protected) && (advertised || protected_known) {
@@ -379,9 +375,13 @@ impl Pump {
         };
         let error = result.err();
         if let Some(error) = &error {
-            let _ = self.client_in.try_send(Err(anyhow::Error::new(error.clone())));
+            let _ = self
+                .client_in
+                .try_send(Err(anyhow::Error::new(error.clone())));
         }
-        let _ = self.core.send(Inbound::Closed(error.unwrap_or_else(connection_closed)));
+        let _ = self
+            .core
+            .send(Inbound::Closed(error.unwrap_or_else(connection_closed)));
         self.cancel.cancel();
         self.raw.close().await;
     }
@@ -441,11 +441,20 @@ pub(crate) async fn open_direct(
     request: OpenRequest,
     global: Arc<Semaphore>,
     parent: &CancellationToken,
+    proxy: Option<paseo_tailnet::Proxy>,
 ) -> Result<Opened, CoreError> {
     let deadline = request.timeout;
     let cancel = parent.child_token();
+    let guard = cancel.clone().drop_guard();
     let work = async {
         let resolved = host_config::resolve(config)?;
+        if host_config::uses_tailnet(config) != proxy.is_some() {
+            return Err(CoreError::new(
+                "TAILNET_UNAVAILABLE",
+                "Embedded Tailscale is not connected; this host cannot use the normal network.",
+                false,
+            ));
+        }
         if cfg!(any(target_os = "android", target_os = "ios")) && resolved.ssh {
             return Err(CoreError::new(
                 "invalid_connection",
@@ -466,9 +475,10 @@ pub(crate) async fn open_direct(
         } else {
             SecurityMode::Legacy
         };
-        let connection = Connection::connect(&target, minimum, global, cancel.clone())
-            .await
-            .map_err(|error| CoreError::from_anyhow(&error))?;
+        let connection =
+            Connection::connect_with_proxy(&target, minimum, global, cancel.clone(), proxy)
+                .await
+                .map_err(|error| CoreError::from_anyhow(&error))?;
         let relay = resolved
             .is_relay()
             .then_some((connection.security, request.protected_known));
@@ -486,6 +496,9 @@ pub(crate) async fn open_direct(
     };
     match tokio::time::timeout(deadline, work).await {
         Ok(result) => {
+            if result.is_ok() {
+                guard.disarm();
+            }
             if result.is_err() {
                 cancel.cancel();
             }
@@ -585,7 +598,11 @@ mod tests {
             relay: Some((Some(SecurityMode::Legacy), false)),
         };
         assert_eq!(
-            admission.verify(&json!({"serverId":"other"})).unwrap_err().0.code,
+            admission
+                .verify(&json!({"serverId":"other"}))
+                .unwrap_err()
+                .0
+                .code,
             "DAEMON_IDENTITY_MISMATCH"
         );
         assert!(admission.verify(&json!({"serverId":"srv"})).is_ok());

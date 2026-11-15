@@ -9,11 +9,11 @@ mod session;
 mod tests;
 mod transport;
 
+use crate::providers::api::*;
 use crate::providers::registry::catalog::refresh_activity;
-use paseo_client::process::{self, CommandSpec};
-use crate::{ providers::api::*, };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use paseo_client::process::{self, CommandSpec};
 use serde_json::{Value, json};
 use session::CodexSession;
 use std::{
@@ -183,18 +183,25 @@ impl CodexProvider {
         cancel: CancellationToken,
     ) -> Result<Arc<metadata::Discovery>> {
         self.discovery
-            .discover(&self.spec, &["app-server"], &BTreeMap::new(), cwd, &cancel, || async {
-                let c = self.client(cancel.clone()).await?;
-                let result = tokio::select! {
-                    biased;
-                    _=cancel.cancelled()=>Err(anyhow!("Codex metadata discovery canceled")),
-                    result=metadata::fetch(&c,cwd)=>result,
-                };
-                let close = c.close().await;
-                let result = result?;
-                close?;
-                Ok(result)
-            })
+            .discover(
+                &self.spec,
+                &["app-server"],
+                &BTreeMap::new(),
+                cwd,
+                &cancel,
+                || async {
+                    let c = self.client(cancel.clone()).await?;
+                    let result = tokio::select! {
+                        biased;
+                        _=cancel.cancelled()=>Err(anyhow!("Codex metadata discovery canceled")),
+                        result=metadata::fetch(&c,cwd)=>result,
+                    };
+                    let close = c.close().await;
+                    let result = result?;
+                    close?;
+                    Ok(result)
+                },
+            )
             .await
     }
     async fn open(
@@ -329,7 +336,10 @@ impl AgentProvider for CodexProvider {
             .and_then(|v| version(&v))
             .is_some_and(|v| v >= (0, 115, 0));
         let discovery = discovery?;
-        let (models, config) = (&discovery.metadata.models, &discovery.metadata.resolved_config);
+        let (models, config) = (
+            &discovery.metadata.models,
+            &discovery.metadata.resolved_config,
+        );
         let configured = models.iter().any(|m| m["id"] == config["model"]);
         let models:Vec<Value>=models.iter().map(|m|{
             let effort=config["model_reasoning_effort"].as_str().or(m["defaultReasoningEffort"].as_str());
@@ -342,12 +352,20 @@ impl AgentProvider for CodexProvider {
         )
     }
     async fn list_features(&self, config: &Value) -> Result<Vec<Value>> {
-        let discovery = self.discover(&config["cwd"], CancellationToken::new()).await?;
+        let discovery = self
+            .discover(&config["cwd"], CancellationToken::new())
+            .await?;
         let metadata = &discovery.metadata;
-        Ok(session::features(config, &metadata.models, &metadata.collaboration))
+        Ok(session::features(
+            config,
+            &metadata.models,
+            &metadata.collaboration,
+        ))
     }
     async fn list_commands(&self, config: &Value) -> Result<Vec<Value>> {
-        let discovery = self.discover(&config["cwd"], CancellationToken::new()).await?;
+        let discovery = self
+            .discover(&config["cwd"], CancellationToken::new())
+            .await?;
         let goals = self
             .discovery
             .probe(&self.spec, CancellationToken::new())
@@ -454,7 +472,9 @@ impl AgentProvider for CodexProvider {
             Err(e) => Ok(format!("Codex unavailable: {e}")),
         }
     }
-    fn supports_native_archive(&self) -> bool { true }
+    fn supports_native_archive(&self) -> bool {
+        true
+    }
     async fn archive_native_session(&self, persistence: &Value) -> Result<()> {
         self.archive(persistence, false).await
     }
@@ -472,9 +492,10 @@ impl AgentProvider for CodexProvider {
         let mut first = None;
         for s in sessions {
             if let Err(e) = s.close().await
-                && first.is_none() {
-                    first = Some(e);
-                }
+                && first.is_none()
+            {
+                first = Some(e);
+            }
         }
         if let Some(e) = first { Err(e) } else { Ok(()) }
     }

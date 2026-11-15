@@ -1,7 +1,7 @@
-use super::{resample_interleaved, DecodedAudio, OUTPUT_RATE};
+use super::{DecodedAudio, OUTPUT_RATE, resample_interleaved};
 use symphonia::core::{
     audio::SampleBuffer,
-    codecs::{DecoderOptions, CODEC_TYPE_NULL},
+    codecs::{CODEC_TYPE_NULL, DecoderOptions},
     errors::Error,
     formats::FormatOptions,
     io::MediaSourceStream,
@@ -12,7 +12,10 @@ use symphonia::core::{
 /// Decodes a complete encoded source (MP3, WAV, OGG/Vorbis, FLAC) to interleaved
 /// f32 at the output rate.
 pub(super) fn decode_encoded(bytes: &[u8], mime_type: &str) -> anyhow::Result<DecodedAudio> {
-    let source = MediaSourceStream::new(Box::new(std::io::Cursor::new(bytes.to_vec())), Default::default());
+    let source = MediaSourceStream::new(
+        Box::new(std::io::Cursor::new(bytes.to_vec())),
+        Default::default(),
+    );
     let mut hint = Hint::new();
     let essence = mime_type.split(';').next().unwrap_or(mime_type).trim();
     hint.mime_type(essence);
@@ -26,7 +29,12 @@ pub(super) fn decode_encoded(bytes: &[u8], mime_type: &str) -> anyhow::Result<De
         hint.with_extension(extension);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            source,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|error| anyhow::anyhow!("Unsupported audio format {essence}: {error}"))?;
     let mut format = probed.format;
     let track = format
@@ -44,7 +52,9 @@ pub(super) fn decode_encoded(bytes: &[u8], mime_type: &str) -> anyhow::Result<De
     loop {
         let packet = match format.next_packet() {
             Ok(packet) => packet,
-            Err(Error::IoError(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(Error::IoError(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break;
+            }
             Err(Error::ResetRequired) => break,
             Err(error) => return Err(anyhow::anyhow!("Audio demux failed: {error}")),
         };
@@ -67,6 +77,12 @@ pub(super) fn decode_encoded(bytes: &[u8], mime_type: &str) -> anyhow::Result<De
             Err(error) => return Err(anyhow::anyhow!("Audio decode failed: {error}")),
         }
     }
-    anyhow::ensure!(channels > 0 && !samples.is_empty(), "The audio source decoded to silence.");
-    Ok(DecodedAudio { samples: resample_interleaved(&samples, channels, rate, OUTPUT_RATE), channels })
+    anyhow::ensure!(
+        channels > 0 && !samples.is_empty(),
+        "The audio source decoded to silence."
+    );
+    Ok(DecodedAudio {
+        samples: resample_interleaved(&samples, channels, rate, OUTPUT_RATE),
+        channels,
+    })
 }

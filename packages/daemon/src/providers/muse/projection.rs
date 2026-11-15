@@ -459,7 +459,8 @@ impl View {
                         let timestamp = item.get("recordedAt").cloned();
                         let child = eligible_child(&item).map(str::to_owned);
                         let call_id = item.get("callId").unwrap_or(&item["itemId"]).clone();
-                        let (accepted, projected) = self.timeline.fold(host, id, item, None).await?;
+                        let (accepted, projected) =
+                            self.timeline.fold(host, id, item, None).await?;
                         if let Some(item) = projected {
                             paged.push(Paged::Row(item, timestamp));
                         }
@@ -1162,7 +1163,10 @@ mod tests {
                 .unwrap()
                 .iter()
                 .map(|(method, params)| {
-                    (method.clone(), params["sessionId"].as_str().unwrap().to_owned())
+                    (
+                        method.clone(),
+                        params["sessionId"].as_str().unwrap().to_owned(),
+                    )
                 })
                 .collect()
         }
@@ -1202,7 +1206,9 @@ mod tests {
     fn upserts(events: &[Value]) -> Vec<&Value> {
         events
             .iter()
-            .filter(|event| event["type"] == "provider_subagent" && event["event"]["type"] == "upsert")
+            .filter(|event| {
+                event["type"] == "provider_subagent" && event["event"]["type"] == "upsert"
+            })
             .map(|event| &event["event"])
             .collect()
     }
@@ -1241,8 +1247,10 @@ mod tests {
         let mut views = views.lock().unwrap();
         let events = views.entry(session.into()).or_default();
         let cursor = format!("v:{session}:{}", events.len() + 1);
-        events.push(json!({"method":"item/updated","params":{"sessionId":session,
-            "viewCursor":cursor,"item":item}}));
+        events.push(
+            json!({"method":"item/updated","params":{"sessionId":session,
+            "viewCursor":cursor,"item":item}}),
+        );
     }
 
     fn texts(events: &[Value]) -> Vec<String> {
@@ -1284,7 +1292,13 @@ mod tests {
         assert_eq!(texts(&replay.events), ["Hel"]);
         // Between the snapshot and the daemon's outcome the child is paused:
         // its pushed delta waits and its poll reads nothing.
-        assert!(projection.child_notify("child-a", &delta("child-a", "m", "lo")).await.unwrap().is_empty());
+        assert!(
+            projection
+                .child_notify("child-a", &delta("child-a", "m", "lo"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
         append(&views, "child-a", message("m", 2, "inProgress", "Hello"));
         let reads = host.reads().len();
         assert!(projection.refresh_children().await.unwrap().is_empty());
@@ -1313,7 +1327,12 @@ mod tests {
             ["lo"]
         );
         assert_eq!(
-            texts(&projection.child_notify("child-a", &delta("child-a", "m", "!")).await.unwrap()),
+            texts(
+                &projection
+                    .child_notify("child-a", &delta("child-a", "m", "!"))
+                    .await
+                    .unwrap()
+            ),
             ["!"]
         );
         assert!(projection.refresh_children().await.unwrap().is_empty());
@@ -1331,7 +1350,13 @@ mod tests {
             .unwrap();
         projection.go_live();
         assert!(projection.replay_child("child-a").await.unwrap().collected);
-        assert!(projection.settle_replay("child-a", false).await.unwrap().is_empty());
+        assert!(
+            projection
+                .settle_replay("child-a", false)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         append(&views, "child-a", message("m", 2, "inProgress", "Hello"));
         let reads = host.reads().len();
         assert!(projection.refresh_children().await.unwrap().is_empty());
@@ -1342,7 +1367,13 @@ mod tests {
     async fn closing_before_the_outcome_keeps_the_previous_view() {
         let (_views, _host, mut projection) = collecting().await;
         projection.replay_child("child-a").await.unwrap();
-        assert!(projection.child_notify("child-a", &delta("child-a", "m", "lo")).await.unwrap().is_empty());
+        assert!(
+            projection
+                .child_notify("child-a", &delta("child-a", "m", "lo"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let closed = projection.close_children().await.unwrap();
         assert_eq!(texts(&closed), ["lo"]);
         assert_eq!(closed.last().unwrap()["event"]["status"], "completed");
@@ -1353,7 +1384,11 @@ mod tests {
         let host = RecordedHost::new(|method, params| match method {
             "session/read" => {
                 let id = params["sessionId"].as_str().unwrap();
-                let root = if id == "child-b" { json!("/worktree") } else { Value::Null };
+                let root = if id == "child-b" {
+                    json!("/worktree")
+                } else {
+                    Value::Null
+                };
                 Ok(session_read(id, root, "notLoaded"))
             }
             other => bail!("parent history must not request {other}"),
@@ -1394,7 +1429,10 @@ mod tests {
         assert!(projection.refresh_children().await.unwrap().is_empty());
         assert_eq!(
             host.reads(),
-            [read("session/read", "child-a"), read("session/read", "child-b")]
+            [
+                read("session/read", "child-a"),
+                read("session/read", "child-b")
+            ]
         );
         assert!(
             host.calls
@@ -1424,18 +1462,41 @@ mod tests {
                 "item":{"type":"assistant_message","messageId":"m","text":"Hel"},"timestamp":"2026-11-03T00:00:00Z"}})
         );
         // A push of an item revision already paged projects nothing.
-        let repeated = item_event("item/started", "child-a", message("m", 1, "inProgress", "Hel"));
-        assert!(projection.child_notify("child-a", &repeated).await.unwrap().is_empty());
+        let repeated = item_event(
+            "item/started",
+            "child-a",
+            message("m", 1, "inProgress", "Hel"),
+        );
+        assert!(
+            projection
+                .child_notify("child-a", &repeated)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         append(&views, "child-a", message("m", 2, "inProgress", "Hello"));
         let polled = projection.refresh_children().await.unwrap();
         assert_eq!(texts(&polled), ["lo"]);
         // Pushed deltas still stream between polls, then the poll does not repeat them.
         let delta = json!({"method":"item/delta","params":{"sessionId":"child-a","itemId":"m","delta":"!"}});
-        assert_eq!(texts(&projection.child_notify("child-a", &delta).await.unwrap()), ["!"]);
+        assert_eq!(
+            texts(&projection.child_notify("child-a", &delta).await.unwrap()),
+            ["!"]
+        );
         append(&views, "child-a", message("m", 3, "completed", "Hello!"));
         assert!(projection.refresh_children().await.unwrap().is_empty());
-        let sibling = item_event("item/started", "child-z", message("z", 1, "inProgress", "No"));
-        assert!(projection.child_notify("child-z", &sibling).await.unwrap().is_empty());
+        let sibling = item_event(
+            "item/started",
+            "child-z",
+            message("z", 1, "inProgress", "No"),
+        );
+        assert!(
+            projection
+                .child_notify("child-z", &sibling)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             projection.close_children().await.unwrap(),
             [json!({"type":"provider_subagent","provider":"muse",
@@ -1470,24 +1531,43 @@ mod tests {
         // Opening a recovered running child replays its body; once the daemon
         // applies it, the child is collected from the replayed end.
         let replay = projection.replay_child("child-a").await.unwrap();
-        assert!(projection.settle_replay("child-a", true).await.unwrap().is_empty());
+        assert!(
+            projection
+                .settle_replay("child-a", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(replay.coverage == HistoryCoverage::Complete);
         assert_eq!(texts(&replay.events), ["Hel"]);
-        assert!(replay.events.iter().all(|event| event["event"]["id"] == "child-a"
-            && event["event"]["historyComplete"] == true));
+        assert!(
+            replay
+                .events
+                .iter()
+                .all(|event| event["event"]["id"] == "child-a"
+                    && event["event"]["historyComplete"] == true)
+        );
         append(&views, "child-a", message("m", 2, "completed", "Hello"));
         append(&views, "child-a", message("n", 1, "completed", "Done"));
         let live = projection.refresh_children().await.unwrap();
         assert_eq!(texts(&live), ["lo", "Done"]);
         assert_eq!(
-            [texts(&replay.events), texts(&live)[..1].to_vec()].concat().concat(),
+            [texts(&replay.events), texts(&live)[..1].to_vec()]
+                .concat()
+                .concat(),
             "Hello"
         );
         assert!(projection.refresh_children().await.unwrap().is_empty());
 
         // Reopening replaces the live view; collection resumes after the new replay.
         let reopened = projection.replay_child("child-a").await.unwrap();
-        assert!(projection.settle_replay("child-a", true).await.unwrap().is_empty());
+        assert!(
+            projection
+                .settle_replay("child-a", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(texts(&reopened.events), ["Hel", "lo", "Done"]);
         append(&views, "child-a", message("n", 2, "completed", "Done."));
         assert_eq!(texts(&projection.refresh_children().await.unwrap()), ["."]);
@@ -1510,39 +1590,57 @@ mod tests {
     #[tokio::test]
     async fn opened_child_replays_only_its_rows_and_announces_its_children() {
         let host = RecordedHost::new(|method, params| {
-            match (method, params["sessionId"].as_str().unwrap(), params.get("cursor")) {
+            match (
+                method,
+                params["sessionId"].as_str().unwrap(),
+                params.get("cursor"),
+            ) {
                 ("view/page", "child-a", None) => Ok(json!({"nextCursor":"c1","events":[
                     item_event("item/completed", "child-a", json!({"itemId":"u","kind":"userMessage",
                         "revision":1,"status":"completed","text":"Objective"})),
                     item_event("item/started", "child-a", message("m", 1, "inProgress", "Hi")),
                     {"method":"item/delta","params":{"sessionId":"child-a","itemId":"m","delta":" there"}},
                 ]})),
-                ("view/page", "child-a", Some(cursor)) if *cursor == "c1" => Ok(json!({"nextCursor":null,"events":[
-                    item_event("item/completed", "child-a", message("m", 2, "completed", "Hi there")),
-                    item_event("item/completed", "child-a", spawn_item("spawn-g", "grand", 2, "completed")),
-                    item_event("item/completed", "child-b", message("s", 1, "completed", "sibling")),
-                    {"method":"turn/completed","params":{"sessionId":"child-a","turnId":"t"}},
-                ]})),
-                ("session/read", "grand", None) => Ok(session_read("grand", Value::Null, "notLoaded")),
+                ("view/page", "child-a", Some(cursor)) if *cursor == "c1" => {
+                    Ok(json!({"nextCursor":null,"events":[
+                        item_event("item/completed", "child-a", message("m", 2, "completed", "Hi there")),
+                        item_event("item/completed", "child-a", spawn_item("spawn-g", "grand", 2, "completed")),
+                        item_event("item/completed", "child-b", message("s", 1, "completed", "sibling")),
+                        {"method":"turn/completed","params":{"sessionId":"child-a","turnId":"t"}},
+                    ]}))
+                }
+                ("session/read", "grand", None) => {
+                    Ok(session_read("grand", Value::Null, "notLoaded"))
+                }
                 other => bail!("unexpected read {other:?}"),
             }
         });
-        let replay = read_child(host.as_ref(), "muse", "child-a", "/repo").await.unwrap();
+        let replay = read_child(host.as_ref(), "muse", "child-a", "/repo")
+            .await
+            .unwrap();
         assert!(replay.coverage == HistoryCoverage::Complete);
         let events = replay.events;
         let rows: Vec<_> = events
             .iter()
             .filter(|event| event["event"]["type"] == "timeline")
             .collect();
-        assert!(rows.iter().all(|row| row["event"]["id"] == "child-a"
-            && row["event"]["historyComplete"] == true));
+        assert!(
+            rows.iter()
+                .all(|row| row["event"]["id"] == "child-a"
+                    && row["event"]["historyComplete"] == true)
+        );
         assert_eq!(texts(&events), ["Objective", "Hi", " there"]);
-        assert!(rows.iter().any(|row| row["event"]["item"]["name"] == "subagent_spawn"));
+        assert!(
+            rows.iter()
+                .any(|row| row["event"]["item"]["name"] == "subagent_spawn")
+        );
         assert_eq!(
             upserts(&events),
-            [&json!({"type":"upsert","id":"grand","parentSubagentId":"child-a","toolCallId":"call-spawn-g",
+            [
+                &json!({"type":"upsert","id":"grand","parentSubagentId":"child-a","toolCallId":"call-spawn-g",
                 "title":"Title grand","description":null,"status":"completed","cwd":"/repo",
-                "source":{"sessionId":"grand"}})]
+                "source":{"sessionId":"grand"}})
+            ]
         );
         assert!(!serde_json::to_string(&events).unwrap().contains("sibling"));
         assert_eq!(
@@ -1571,7 +1669,11 @@ mod tests {
         assert_eq!(missing.reads().len(), 2);
 
         let malformed = RecordedHost::new(|_, _| Ok(json!({"nextCursor":7,"events":[]})));
-        assert!(read_child(malformed.as_ref(), "muse", "child-a", "/repo").await.is_err());
+        assert!(
+            read_child(malformed.as_ref(), "muse", "child-a", "/repo")
+                .await
+                .is_err()
+        );
 
         let unreadable_grandchild = RecordedHost::new(|method, _| match method {
             "view/page" => Ok(json!({"nextCursor":null,"events":[
@@ -1612,7 +1714,13 @@ mod tests {
             .unwrap();
         let live_row = live.last().unwrap()["event"]["item"].clone();
         let replay = projection.replay_child("child-a").await.unwrap();
-        assert!(projection.settle_replay("child-a", true).await.unwrap().is_empty());
+        assert!(
+            projection
+                .settle_replay("child-a", true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         // The replay carries the stored live row's identity, so the daemon's
         // guarded replacement supersedes it instead of keeping both.
         assert_eq!(replay.events.len(), 1);

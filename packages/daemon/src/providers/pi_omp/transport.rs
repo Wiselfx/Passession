@@ -1,6 +1,6 @@
-use paseo_client::process::{CommandSpec, ManagedProcess, WriteError};
 use anyhow::{Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use paseo_client::process::{CommandSpec, ManagedProcess, WriteError};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -10,11 +10,11 @@ use std::{
     },
     time::Duration,
 };
+use tokio::time::Instant;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     sync::{mpsc, oneshot, watch},
 };
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_REASSEMBLED: usize = 64 * 1024 * 1024;
@@ -163,7 +163,12 @@ fn request_failure(id: &str, source: anyhow::Error, may_have_been_sent: bool) ->
         // An explicit native response is different from a lost transport ACK.
         source
     } else {
-        RequestError { request_id: id.to_owned(), may_have_been_sent, source: source.into() }.into()
+        RequestError {
+            request_id: id.to_owned(),
+            may_have_been_sent,
+            source: source.into(),
+        }
+        .into()
     }
 }
 type Reply = Result<Value>;
@@ -251,7 +256,10 @@ impl Transport {
                         };
                         if let Some(reply) = pending {
                             let result = if frame["success"] == true {
-                                Ok(frame.get_mut("data").map(Value::take).unwrap_or(Value::Null))
+                                Ok(frame
+                                    .get_mut("data")
+                                    .map(Value::take)
+                                    .unwrap_or(Value::Null))
                             } else {
                                 Err(CommandError(
                                     frame["error"]
@@ -269,7 +277,9 @@ impl Transport {
                             }
                             // The spool never waits for the consumer, so this push is
                             // bounded; abandoning it could drop an accepted frame.
-                            if events.send(frame).await.is_err() { break; }
+                            if events.send(frame).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     Ok(None) => {}
@@ -293,7 +303,10 @@ impl Transport {
             );
             // Replies and events written before exit stay ahead of the terminal
             // frame; pending requests may still resolve from that drained output.
-            if tokio::time::timeout(STDOUT_DRAIN_GRACE, &mut drained).await.is_err() {
+            if tokio::time::timeout(STDOUT_DRAIN_GRACE, &mut drained)
+                .await
+                .is_err()
+            {
                 stop_reading.cancel();
                 let _ = drained.await;
             }
@@ -308,11 +321,15 @@ impl Transport {
         *self.host_tools.lock().unwrap() = router;
     }
     pub(super) fn event_queue_failed(&self, message: &str) {
-        if self.closed.swap(true, Ordering::AcqRel) { return; }
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         tracing::error!(%message, "Provider output spool failed");
         self.fail(message);
         let process = self.process.clone();
-        tokio::spawn(async move { let _ = process.terminate(Duration::from_secs(2)).await; });
+        tokio::spawn(async move {
+            let _ = process.terminate(Duration::from_secs(2)).await;
+        });
     }
     fn fail(&self, error: &str) {
         for (_, reply) in self.pending.lock().unwrap().drain() {
@@ -358,21 +375,36 @@ impl Transport {
     ) -> Result<(String, Value)> {
         let started = Instant::now();
         let id = format!("req_{}", self.sequence.fetch_add(1, Ordering::Relaxed));
-        let deadline = timeout.map(|timeout| started.checked_add(timeout)
-            .ok_or_else(|| request_failure(&id, anyhow!("JSONL request deadline exceeds clock range"), false)))
+        let deadline = timeout
+            .map(|timeout| {
+                started.checked_add(timeout).ok_or_else(|| {
+                    request_failure(
+                        &id,
+                        anyhow!("JSONL request deadline exceeds clock range"),
+                        false,
+                    )
+                })
+            })
             .transpose()?;
         command["id"] = json!(id);
         let (sender, receiver) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
             if self.closed.load(Ordering::Acquire) || self.exited.load(Ordering::Acquire) {
-                return Err(request_failure(&id, anyhow!("JSONL provider process is closed"), false));
+                return Err(request_failure(
+                    &id,
+                    anyhow!("JSONL provider process is closed"),
+                    false,
+                ));
             }
             // Exit drains this same map after setting exited; never install a
             // waiter behind that drain.
             pending.insert(id.clone(), sender);
         }
-        let pending = PendingRequest { pending: &self.pending, id: &id };
+        let pending = PendingRequest {
+            pending: &self.pending,
+            id: &id,
+        };
         let result = async {
             self.send_with_deadline(&command, deadline).await.map_err(|error| {
                 let attempted = error.downcast_ref::<WriteError>()
@@ -412,13 +444,27 @@ impl Transport {
     async fn send_with_deadline(&self, value: &Value, deadline: Option<Instant>) -> Result<()> {
         if self.closed.load(Ordering::Acquire) || self.exited.load(Ordering::Acquire) {
             return Err(WriteError {
-                attempted: false, written: 0, total: 0,
-                source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "JSONL process is closed"),
-            }.into());
+                attempted: false,
+                written: 0,
+                total: 0,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "JSONL process is closed",
+                ),
+            }
+            .into());
         }
-        match self.process.write_json_with_deadline(value, deadline, &self.cancel).await {
+        match self
+            .process
+            .write_json_with_deadline(value, deadline, &self.cancel)
+            .await
+        {
             Ok(()) => Ok(()),
-            Err(error) if error.downcast_ref::<WriteError>().is_some_and(|error| !error.attempted) => {
+            Err(error)
+                if error
+                    .downcast_ref::<WriteError>()
+                    .is_some_and(|error| !error.attempted) =>
+            {
                 // Waiting for another writer is not an attempted mutation and
                 // cannot justify killing that writer's healthy process.
                 Err(error)
@@ -478,8 +524,10 @@ mod tests {
         assert_eq!(line.capacity(), 0);
         assert_eq!(decoded, Some(expected));
         input.read_until(b'\n', &mut line).await.unwrap();
-        assert_eq!(decoder.decode(&line).unwrap(),
-            Some(json!({"type":"small","data":[null,42,"ok"]})));
+        assert_eq!(
+            decoder.decode(&line).unwrap(),
+            Some(json!({"type":"small","data":[null,42,"ok"]}))
+        );
         let capacity = line.capacity();
         let pointer = line.as_ptr();
         clear_read_buffer(&mut line);
@@ -495,24 +543,38 @@ mod tests {
         let decoded_oversize = STANDARD.encode(vec![b'x'; 256 * 1024 + 1]);
         assert_eq!(decoded_oversize.len(), 349528);
         let invalid = [
-            "Zg".to_owned(), "Zg=".to_owned(), "Zg===".to_owned(),
-            "Zh==".to_owned(), "Zm9=".to_owned(), "Z g==".to_owned(),
-            String::new(), decoded_oversize, "A".repeat(349532),
+            "Zg".to_owned(),
+            "Zg=".to_owned(),
+            "Zg===".to_owned(),
+            "Zh==".to_owned(),
+            "Zm9=".to_owned(),
+            "Z g==".to_owned(),
+            String::new(),
+            decoded_oversize,
+            "A".repeat(349532),
         ];
         let mut decoder = Decoder::default();
         for data in invalid {
             assert!(decoder.decode(&frames[0]).unwrap().is_none());
             let mut frame: Value = serde_json::from_slice(&frames[1]).unwrap();
             frame["data"] = json!(data);
-            let error = decoder.decode(&serde_json::to_vec(&frame).unwrap()).unwrap_err();
+            let error = decoder
+                .decode(&serde_json::to_vec(&frame).unwrap())
+                .unwrap_err();
             assert_eq!(error.to_string(), "invalid-base64");
             assert!(decoder.assembly.is_none());
-            assert_eq!(decoder.decode(&frames[1]).unwrap_err().to_string(), "out-of-order-chunk");
+            assert_eq!(
+                decoder.decode(&frames[1]).unwrap_err().to_string(),
+                "out-of-order-chunk"
+            );
         }
         for frame in &frames[..frames.len() - 1] {
             assert!(decoder.decode(frame).unwrap().is_none());
         }
-        assert_eq!(decoder.decode(frames.last().unwrap()).unwrap(), Some(expected));
+        assert_eq!(
+            decoder.decode(frames.last().unwrap()).unwrap(),
+            Some(expected)
+        );
     }
 
     #[test]
@@ -534,14 +596,22 @@ mod tests {
             assert!(decoder.decode(&frames[0]).unwrap().is_none());
             let mut frame: Value = serde_json::from_slice(&frames[1]).unwrap();
             frame[field] = value;
-            assert_eq!(decoder.decode(&serde_json::to_vec(&frame).unwrap())
-                .unwrap_err().to_string(), message);
+            assert_eq!(
+                decoder
+                    .decode(&serde_json::to_vec(&frame).unwrap())
+                    .unwrap_err()
+                    .to_string(),
+                message
+            );
             assert!(decoder.assembly.is_none());
         }
         for frame in &frames[..frames.len() - 1] {
             assert!(decoder.decode(frame).unwrap().is_none());
         }
-        assert_eq!(decoder.decode(frames.last().unwrap()).unwrap(), Some(expected));
+        assert_eq!(
+            decoder.decode(frames.last().unwrap()).unwrap(),
+            Some(expected)
+        );
     }
 
     fn chunks(value: &Value) -> Vec<Vec<u8>> {
@@ -608,28 +678,48 @@ mod request_tests {
     use super::*;
 
     async fn fixture(script: &str) -> (Arc<Transport>, mpsc::Receiver<Value>) {
-        Transport::spawn(CommandSpec {
-            program: "/bin/sh".into(),
-            args: vec!["-c".into(), script.into()],
-            cwd: None, env: Default::default(), clear_env: false,
-        }, Duration::from_secs(2), CancellationToken::new()).await.unwrap()
+        Transport::spawn(
+            CommandSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script.into()],
+                cwd: None,
+                env: Default::default(),
+                clear_env: false,
+            },
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
     async fn successful_native_replies_preserve_missing_null_and_all_data_types() {
         let (transport, _events) = fixture("cat").await;
-        assert_eq!(transport.request(json!({"type":"response","success":true})).await.unwrap(),
-            Value::Null);
+        assert_eq!(
+            transport
+                .request(json!({"type":"response","success":true}))
+                .await
+                .unwrap(),
+            Value::Null
+        );
         let values = [
-            Value::Null, json!(false), json!(42), json!(-1.5), json!("hello €"),
+            Value::Null,
+            json!(false),
+            json!(42),
+            json!(-1.5),
+            json!("hello €"),
             json!([null, true, {"text":"nested"}]),
             json!({"text":"a€".repeat(MAX_RETAINED_LINE), "nested":{"values":[1,2,3]}}),
             json!({"small":"after the large legacy reply"}),
         ];
         for expected in values {
-            let reply = transport.request(json!({
-                "type":"response","success":true,"data":expected,
-            })).await.unwrap();
+            let reply = transport
+                .request(json!({
+                    "type":"response","success":true,"data":expected,
+                }))
+                .await
+                .unwrap();
             assert_eq!(reply, expected);
         }
         assert!(transport.pending.lock().unwrap().is_empty());
@@ -647,18 +737,32 @@ mod request_tests {
              '{\"type\":\"response\",\"id\":\"req_1\",\"success\":true,\"data\":{\"reply\":true}}'; \
              cat >/dev/null"
         ).await;
-        assert_eq!(transport.request(json!({"type":"get_state"})).await.unwrap(),
-            json!({"reply":true}));
-        assert_eq!(next(&mut events).await.unwrap(), json!({
-            "type":"message_update","id":"req_1","success":true,"data":{"text":"event"},
-        }));
-        assert_eq!(next(&mut events).await.unwrap(), json!({
-            "type":"response","id":"unknown","success":true,"data":[null,{"text":"unsolicited"}],
-        }));
-        assert_eq!(next(&mut events).await.unwrap(), json!({
-            "type":"response","id":"unknown","success":false,
-            "error":"unmatched rejection","data":{"detail":42},
-        }));
+        assert_eq!(
+            transport
+                .request(json!({"type":"get_state"}))
+                .await
+                .unwrap(),
+            json!({"reply":true})
+        );
+        assert_eq!(
+            next(&mut events).await.unwrap(),
+            json!({
+                "type":"message_update","id":"req_1","success":true,"data":{"text":"event"},
+            })
+        );
+        assert_eq!(
+            next(&mut events).await.unwrap(),
+            json!({
+                "type":"response","id":"unknown","success":true,"data":[null,{"text":"unsolicited"}],
+            })
+        );
+        assert_eq!(
+            next(&mut events).await.unwrap(),
+            json!({
+                "type":"response","id":"unknown","success":false,
+                "error":"unmatched rejection","data":{"detail":42},
+            })
+        );
         transport.close().await.unwrap();
     }
 
@@ -666,15 +770,21 @@ mod request_tests {
     async fn request_deadline_includes_blocked_stdin_and_cleans_waiter() {
         let (transport, _events) = fixture("sleep 30").await;
         let command = json!({"type":"prompt", "text":"x".repeat(2 * 1024 * 1024)});
-        let error = tokio::time::timeout(Duration::from_secs(3),
-            transport.request_with_timeout(command, Some(Duration::from_millis(300))))
-            .await.expect("the deadline must include a full stdin pipe").unwrap_err();
+        let error = tokio::time::timeout(
+            Duration::from_secs(3),
+            transport.request_with_timeout(command, Some(Duration::from_millis(300))),
+        )
+        .await
+        .expect("the deadline must include a full stdin pipe")
+        .unwrap_err();
         let error = error.downcast_ref::<RequestError>().unwrap();
         assert!(error.may_have_been_sent);
         assert_eq!(error.request_id, "req_1");
         assert!(transport.pending.lock().unwrap().is_empty());
         tokio::time::timeout(Duration::from_secs(3), transport.process.wait())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -686,16 +796,28 @@ mod request_tests {
         ).await;
         let owner = transport.clone();
         let request = tokio::spawn(async move {
-            owner.request_with_timeout(json!({"type":"prompt"}), None).await
+            owner
+                .request_with_timeout(json!({"type":"prompt"}), None)
+                .await
         });
-        assert_eq!(tokio::time::timeout(Duration::from_secs(3), events.recv())
-            .await.unwrap().unwrap()["type"], "input_seen");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), events.recv())
+                .await
+                .unwrap()
+                .unwrap()["type"],
+            "input_seen"
+        );
         assert_eq!(transport.pending.lock().unwrap().len(), 1);
         request.abort();
         assert!(request.await.unwrap_err().is_cancelled());
         assert!(transport.pending.lock().unwrap().is_empty());
-        assert_eq!(transport.request(json!({"type":"get_state"})).await.unwrap(),
-            json!({"value":42}));
+        assert_eq!(
+            transport
+                .request(json!({"type":"get_state"}))
+                .await
+                .unwrap(),
+            json!({"value":42})
+        );
         transport.close().await.unwrap();
     }
 
@@ -704,7 +826,10 @@ mod request_tests {
         let (transport, _events) = fixture(
             "IFS= read -r first; printf '{\"type\":\"response\",\"id\":\"req_1\",\"success\":false,\"error\":\"denied\"}\\n'; cat >/dev/null"
         ).await;
-        let error = transport.request(json!({"type":"prompt"})).await.unwrap_err();
+        let error = transport
+            .request(json!({"type":"prompt"}))
+            .await
+            .unwrap_err();
         assert_eq!(error.downcast_ref::<CommandError>().unwrap().0, "denied");
         assert!(error.downcast_ref::<RequestError>().is_none());
         transport.close().await.unwrap();
@@ -714,15 +839,26 @@ mod request_tests {
     async fn cancelled_request_before_io_is_not_delivery_ambiguity() {
         let (transport, _events) = fixture("sleep 30").await;
         transport.cancel.cancel();
-        let error = transport.request(json!({"type":"prompt"})).await.unwrap_err();
-        assert!(!error.downcast_ref::<RequestError>().unwrap().may_have_been_sent);
+        let error = transport
+            .request(json!({"type":"prompt"}))
+            .await
+            .unwrap_err();
+        assert!(
+            !error
+                .downcast_ref::<RequestError>()
+                .unwrap()
+                .may_have_been_sent
+        );
         assert!(transport.pending.lock().unwrap().is_empty());
         tokio::time::timeout(Duration::from_secs(3), transport.process.wait())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     async fn next(events: &mut mpsc::Receiver<Value>) -> Option<Value> {
-        tokio::time::timeout(Duration::from_secs(10), events.recv()).await
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
             .expect("event delivery must not stall")
     }
 
@@ -736,14 +872,25 @@ mod request_tests {
         assert_eq!(next(&mut events).await.unwrap()["type"], "stdin_closed");
         // Nobody consumes while the reader accepts the tail into the spool.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let error = transport.request(json!({"type":"prompt"})).await.unwrap_err();
-        assert!(error.downcast_ref::<RequestError>().unwrap().may_have_been_sent);
+        let error = transport
+            .request(json!({"type":"prompt"}))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<RequestError>()
+                .unwrap()
+                .may_have_been_sent
+        );
         assert!(transport.cancel.is_cancelled());
         let mut tail = 0;
         let terminal = loop {
-            let event = next(&mut events).await
+            let event = next(&mut events)
+                .await
                 .expect("the stream must not end before process_exit");
-            if event["type"] != "tail" { break event; }
+            if event["type"] != "tail" {
+                break event;
+            }
             assert_eq!(event["index"], tail);
             tail += 1;
         };
@@ -759,7 +906,10 @@ mod request_tests {
         ).await;
         for index in 0..200 {
             let event = next(&mut events).await.unwrap();
-            assert_eq!((event["type"].as_str(), event["index"].as_u64()), (Some("row"), Some(index)));
+            assert_eq!(
+                (event["type"].as_str(), event["index"].as_u64()),
+                (Some("row"), Some(index))
+            );
         }
         assert_eq!(next(&mut events).await.unwrap()["type"], "process_exit");
         assert!(next(&mut events).await.is_none());

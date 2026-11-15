@@ -44,7 +44,11 @@ pub fn decode(bytes: &[u8], mime: &str, min_side: u32) -> Result<Decoded, String
         image
     };
     let rgba = image.to_rgba8();
-    Ok(Decoded { width: rgba.width() as usize, height: rgba.height() as usize, rgba: rgba.into_raw() })
+    Ok(Decoded {
+        width: rgba.width() as usize,
+        height: rgba.height() as usize,
+        rgba: rgba.into_raw(),
+    })
 }
 
 fn decode_svg(bytes: &[u8], min_side: u32) -> Result<Decoded, String> {
@@ -54,10 +58,16 @@ fn decode_svg(bytes: &[u8], min_side: u32) -> Result<Decoded, String> {
     let size = tree.size();
     let (w, h) = (size.width().max(1.0), size.height().max(1.0));
     let longer = w.max(h);
-    let scale = (min_side as f32 / longer).max(1.0).min(MAX_SIDE as f32 / longer);
+    let scale = (min_side as f32 / longer)
+        .max(1.0)
+        .min(MAX_SIDE as f32 / longer);
     let (pw, ph) = ((w * scale).ceil() as u32, (h * scale).ceil() as u32);
     let mut pixmap = tiny_skia::Pixmap::new(pw.max(1), ph.max(1)).ok_or("Invalid SVG size")?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     let mut rgba = pixmap.take();
     // tiny-skia stores premultiplied alpha; textures take straight alpha.
     for pixel in rgba.chunks_exact_mut(4) {
@@ -68,18 +78,28 @@ fn decode_svg(bytes: &[u8], min_side: u32) -> Result<Decoded, String> {
             }
         }
     }
-    Ok(Decoded { width: pw as usize, height: ph as usize, rgba })
+    Ok(Decoded {
+        width: pw as usize,
+        height: ph as usize,
+        rgba,
+    })
 }
 
 pub fn texture(cx: &mut Cx, decoded: &Decoded) -> Option<Texture> {
-    ImageBuffer::new(&decoded.rgba, decoded.width, decoded.height).ok().map(|buffer| buffer.into_new_texture(cx))
+    ImageBuffer::new(&decoded.rgba, decoded.width, decoded.height)
+        .ok()
+        .map(|buffer| buffer.into_new_texture(cx))
 }
 
 /// A texture keyed by an owner key, decoded off-thread.
 #[derive(Clone)]
 pub enum ImageSlot {
     Decoding,
-    Ready { texture: Texture, width: usize, height: usize },
+    Ready {
+        texture: Texture,
+        width: usize,
+        height: usize,
+    },
     Failed(String),
 }
 
@@ -150,7 +170,10 @@ pub fn finish_web_fetch(url: &str, body: Result<Vec<u8>, String>) {
             request(&key, Arc::new(bytes), "", 0);
         }
         Err(error) => CACHE.with(|cache| {
-            cache.borrow_mut().slots.insert(key, ImageSlot::Failed(error));
+            cache
+                .borrow_mut()
+                .slots
+                .insert(key, ImageSlot::Failed(error));
         }),
     }
 }
@@ -181,24 +204,33 @@ pub fn slot(key: &str) -> Option<ImageSlot> {
         let mut cache = cache.borrow_mut();
         let slot = cache.slots.get(key).cloned();
         // A shown web image is the most recently used.
-        if matches!(slot, Some(ImageSlot::Ready { .. })) && key.starts_with(WEB_PREFIX)
+        if matches!(slot, Some(ImageSlot::Ready { .. }))
+            && key.starts_with(WEB_PREFIX)
             && let Some(index) = cache.web.iter().position(|(k, _)| k == key)
-            && let Some(entry) = cache.web.remove(index) {
-                cache.web.push_back(entry);
-            }
+            && let Some(entry) = cache.web.remove(index)
+        {
+            cache.web.push_back(entry);
+        }
         slot
     })
 }
 
 /// Drops every slot whose key starts with `prefix` (a closed panel's images).
 pub fn forget_prefix(prefix: &str) {
-    CACHE.with(|cache| cache.borrow_mut().slots.retain(|key, _| !key.starts_with(prefix)));
+    CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .slots
+            .retain(|key, _| !key.starts_with(prefix))
+    });
 }
 
 fn evict_web(cache: &mut Cache) {
     let mut total: usize = cache.web.iter().map(|(_, bytes)| bytes).sum();
     while cache.web.len() > WEB_MAX_IMAGES || (total > WEB_MAX_BYTES && cache.web.len() > 1) {
-        let Some((key, bytes)) = cache.web.pop_front() else { break };
+        let Some((key, bytes)) = cache.web.pop_front() else {
+            break;
+        };
         total -= bytes;
         cache.slots.remove(&key);
     }
@@ -213,14 +245,20 @@ pub fn poll(cx: &mut Cx) -> bool {
             any = true;
             let slot = match job.result {
                 Ok(decoded) => match texture(cx, &decoded) {
-                    Some(texture) => ImageSlot::Ready { texture, width: decoded.width, height: decoded.height },
+                    Some(texture) => ImageSlot::Ready {
+                        texture,
+                        width: decoded.width,
+                        height: decoded.height,
+                    },
                     None => ImageSlot::Failed("Invalid image data".to_owned()),
                 },
                 Err(error) => ImageSlot::Failed(error),
             };
             // A slot forgotten meanwhile stays forgotten.
             if cache.slots.contains_key(&job.key) {
-                if let (true, ImageSlot::Ready { width, height, .. }) = (job.key.starts_with(WEB_PREFIX), &slot) {
+                if let (true, ImageSlot::Ready { width, height, .. }) =
+                    (job.key.starts_with(WEB_PREFIX), &slot)
+                {
                     let bytes = width * height * 4;
                     cache.web.push_back((job.key.clone(), bytes));
                     cache.slots.insert(job.key, slot);
@@ -237,13 +275,15 @@ pub fn poll(cx: &mut Cx) -> bool {
 /// The material icon name for a file name (Flutter `_rawFileIconSvg`).
 pub fn file_icon_name(file_name: &str) -> &'static str {
     if let Some(index) = file_name.rfind('.')
-        && index + 1 < file_name.len() {
-            let extension = file_name[index + 1..].to_lowercase();
-            if let Some((_, icon)) = EXTENSION_TO_ICON.iter().find(|(ext, _)| *ext == extension)
-                && SVG_ICONS.iter().any(|(name, _)| name == icon) {
-                    return icon;
-                }
+        && index + 1 < file_name.len()
+    {
+        let extension = file_name[index + 1..].to_lowercase();
+        if let Some((_, icon)) = EXTENSION_TO_ICON.iter().find(|(ext, _)| *ext == extension)
+            && SVG_ICONS.iter().any(|(name, _)| name == icon)
+        {
+            return icon;
         }
+    }
     "_default"
 }
 
@@ -256,7 +296,11 @@ pub fn file_icon(file_name: &str) -> Option<Texture> {
         Some(ImageSlot::Ready { texture, .. }) => Some(texture),
         Some(_) => None,
         None => {
-            let svg = SVG_ICONS.iter().find(|(n, _)| *n == name).map(|(_, svg)| *svg).unwrap_or("");
+            let svg = SVG_ICONS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, svg)| *svg)
+                .unwrap_or("");
             request(&key, Arc::new(svg.as_bytes().to_vec()), "image/svg+xml", 64);
             None
         }

@@ -255,7 +255,8 @@ pub(super) fn entries(
             };
             let mut entry = if base_id == "acp" {
                 if override_value["command"]
-                    .as_array().is_none_or(|command| command.is_empty())
+                    .as_array()
+                    .is_none_or(|command| command.is_empty())
                 {
                     bail!("ACP provider '{id}' requires a command");
                 }

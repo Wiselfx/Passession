@@ -41,9 +41,9 @@ impl CoreError {
         }
         if let Some(error) = error.downcast_ref::<ClientError>() {
             let outcome_unknown = match error.code.as_str() {
-                "DAEMON_REQUEST_TIMEOUT" | "DAEMON_REQUEST_CANCELLED" | "DAEMON_CONNECTION_LOST" => {
-                    !error.message.contains(BEFORE_SUBMISSION)
-                }
+                "DAEMON_REQUEST_TIMEOUT"
+                | "DAEMON_REQUEST_CANCELLED"
+                | "DAEMON_CONNECTION_LOST" => !error.message.contains(BEFORE_SUBMISSION),
                 _ => error
                     .details
                     .as_ref()
@@ -97,7 +97,11 @@ pub(crate) fn not_connected() -> CoreError {
 }
 
 pub(crate) fn host_unknown(host_id: &str) -> CoreError {
-    CoreError::new("HOST_UNKNOWN", format!("Host is not saved: {host_id}"), false)
+    CoreError::new(
+        "HOST_UNKNOWN",
+        format!("Host is not saved: {host_id}"),
+        false,
+    )
 }
 
 pub(crate) fn invalid_request(message: impl Into<String>) -> CoreError {

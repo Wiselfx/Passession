@@ -41,22 +41,32 @@ pub fn ensure_about(s: &mut Settings, env: &mut Env, _v: &View) {
 }
 
 fn load(s: &mut Settings, env: &mut Env) {
-    s.desktop(env, "desktop_settings_get", json!({}), |s, _, result| match result {
-        Ok(settings) => s.about.settings = settings,
-        Err(error) => s.about.error = Some(error.text()),
-    });
+    s.desktop(
+        env,
+        "desktop_settings_get",
+        json!({}),
+        |s, _, result| match result {
+            Ok(settings) => s.about.settings = settings,
+            Err(error) => s.about.error = Some(error.text()),
+        },
+    );
 }
 
 fn check(s: &mut Settings, env: &mut Env, manual: bool) {
     s.about.checking = true;
-    s.desktop(env, "check_app_update", json!({"intent": if manual { "manual" } else { "automatic" }}), move |s, _, result| {
-        s.about.checking = false;
-        match result {
-            Ok(update) => s.about.update = update,
-            Err(error) if manual => s.about.error = Some(error.text()),
-            Err(_) => {}
-        }
-    });
+    s.desktop(
+        env,
+        "check_app_update",
+        json!({"intent": if manual { "manual" } else { "automatic" }}),
+        move |s, _, result| {
+            s.about.checking = false;
+            match result {
+                Ok(update) => s.about.update = update,
+                Err(error) if manual => s.about.error = Some(error.text()),
+                Err(_) => {}
+            }
+        },
+    );
 }
 
 fn install(s: &mut Settings, _env: &mut Env) {
@@ -70,8 +80,18 @@ fn install(s: &mut Settings, _env: &mut Env) {
             }
         });
     });
-    let message = format!("{}\n{}", t("settings.about.updates.installMessage"), t("desktop.updates.callout.restartWarning"));
-    s.confirm(t("settings.about.updates.installTitle"), message, t("settings.about.updates.installConfirm"), false, go);
+    let message = format!(
+        "{}\n{}",
+        t("settings.about.updates.installMessage"),
+        t("desktop.updates.callout.restartWarning")
+    );
+    s.confirm(
+        t("settings.about.updates.installTitle"),
+        message,
+        t("settings.about.updates.installConfirm"),
+        false,
+        go,
+    );
 }
 
 pub fn draw_about(ui: &mut Ui, s: &Settings, v: &View) {
@@ -79,50 +99,112 @@ pub fn draw_about(ui: &mut Ui, s: &Settings, v: &View) {
     let pal = ui.pal;
     let client = platform::app_version();
     let desktop = DESKTOP && platform::desktop_available();
-    let value = |text: String| Ctl::Label { text, color: pal.muted, size: 14.0, font: Font::Regular, max_w: 220.0 };
+    let value = |text: String| Ctl::Label {
+        text,
+        color: pal.muted,
+        size: 14.0,
+        font: Font::Regular,
+        max_w: 220.0,
+    };
     ui.section_title(&t("settings.about.title"), None, None);
     ui.card_begin();
-    ui.row(row(t("settings.about.appVersion")).hint(t("settings.about.thisDevice")).control(value(version_label(client.as_deref()))));
+    ui.row(
+        row(t("settings.about.appVersion"))
+            .hint(t("settings.about.thisDevice"))
+            .control(value(version_label(client.as_deref()))),
+    );
     if desktop {
-        let channel = if str_of(&state.settings, "releaseChannel") == "beta" { "beta" } else { "stable" };
+        let channel = if str_of(&state.settings, "releaseChannel") == "beta" {
+            "beta"
+        } else {
+            "stable"
+        };
         let enabled = !state.busy && state.settings.is_object();
         let segment = |id: &'static str| {
             let act = (enabled && channel != id).then(|| {
                 handler(move |s, env| {
                     s.about.busy = true;
-                    s.desktop(env, "desktop_settings_update", json!({"patch": {"releaseChannel": id}}), |s, env, result| {
-                        s.about.busy = false;
-                        match result {
-                            Ok(_) => {
-                                s.about.error = None;
-                                load(s, env);
+                    s.desktop(
+                        env,
+                        "desktop_settings_update",
+                        json!({"patch": {"releaseChannel": id}}),
+                        |s, env, result| {
+                            s.about.busy = false;
+                            match result {
+                                Ok(_) => {
+                                    s.about.error = None;
+                                    load(s, env);
+                                }
+                                Err(error) => s.about.error = Some(error.text()),
                             }
-                            Err(error) => s.about.error = Some(error.text()),
-                        }
-                    });
+                        },
+                    );
                 })
             });
-            (t(&format!("settings.about.releaseChannel.{id}")), channel == id, act)
+            (
+                t(&format!("settings.about.releaseChannel.{id}")),
+                channel == id,
+                act,
+            )
         };
-        let control = Ctl::Segmented { key: "about.channel".into(), items: vec![segment("stable"), segment("beta")] };
-        ui.row(row(t("settings.about.releaseChannel.label")).hint(t("settings.about.releaseChannel.description")).control(control));
+        let control = Ctl::Segmented {
+            key: "about.channel".into(),
+            items: vec![segment("stable"), segment("beta")],
+        };
+        ui.row(
+            row(t("settings.about.releaseChannel.label"))
+                .hint(t("settings.about.releaseChannel.description"))
+                .control(control),
+        );
 
-        let latest = state.update.get("latestVersion").filter(|v| !v.is_null()).map(scalar_text);
+        let latest = state
+            .update
+            .get("latestVersion")
+            .filter(|v| !v.is_null())
+            .map(scalar_text);
         let ready = is_true(&state.update, "readyToInstall");
         let has_update = is_true(&state.update, "hasUpdate") || ready;
         let mut hint = Vec::new();
         if has_update {
-            hint.push(ta("settings.about.updates.updateTo", &[("version", &version_label(latest.as_deref()))]));
-        } else if state.update.is_object() && !state.update.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-            let current = state.update.get("currentVersion").filter(|v| !v.is_null()).map(scalar_text).or(client.clone());
+            hint.push(ta(
+                "settings.about.updates.updateTo",
+                &[("version", &version_label(latest.as_deref()))],
+            ));
+        } else if state.update.is_object()
+            && !state
+                .update
+                .as_object()
+                .map(|m| m.is_empty())
+                .unwrap_or(true)
+        {
+            let current = state
+                .update
+                .get("currentVersion")
+                .filter(|v| !v.is_null())
+                .map(scalar_text)
+                .or(client.clone());
             hint.push(version_label(current.as_deref()));
         }
         if ready {
-            hint.push(ta("settings.about.updates.readyToInstall", &[("version", &version_label(latest.as_deref()))]));
+            hint.push(ta(
+                "settings.about.updates.readyToInstall",
+                &[("version", &version_label(latest.as_deref()))],
+            ));
         }
-        let error = state.error.clone().or_else(|| state.update.get("errorMessage").filter(|v| !v.is_null()).map(scalar_text));
-        let check_act = (!state.checking && !state.installing).then(|| handler(|s, env| check(s, env, true)));
-        let check_label = if state.checking { t("settings.about.updates.checking") } else { t("settings.about.updates.check") };
+        let error = state.error.clone().or_else(|| {
+            state
+                .update
+                .get("errorMessage")
+                .filter(|v| !v.is_null())
+                .map(scalar_text)
+        });
+        let check_act =
+            (!state.checking && !state.installing).then(|| handler(|s, env| check(s, env, true)));
+        let check_label = if state.checking {
+            t("settings.about.updates.checking")
+        } else {
+            t("settings.about.updates.check")
+        };
         let mut buttons = vec![button("about.check", check_label, check_act).ctl()];
         if has_update {
             let label = if state.installing {
@@ -130,24 +212,49 @@ pub fn draw_about(ui: &mut Ui, s: &Settings, v: &View) {
             } else if latest.is_none() {
                 t("settings.about.updates.update")
             } else {
-                ta("settings.about.updates.updateTo", &[("version", &version_label(latest.as_deref()))])
+                ta(
+                    "settings.about.updates.updateTo",
+                    &[("version", &version_label(latest.as_deref()))],
+                )
             };
-            buttons.push(button("about.install", label, (!state.installing).then(|| handler(install))).variant(Variant::Primary).ctl());
+            buttons.push(
+                button(
+                    "about.install",
+                    label,
+                    (!state.installing).then(|| handler(install)),
+                )
+                .variant(Variant::Primary)
+                .ctl(),
+            );
         }
-        ui.row(row(t("settings.about.updates.label")).hint(hint.join("\n")).error(error).control(Ctl::Row(buttons, 8.0)));
+        ui.row(
+            row(t("settings.about.updates.label"))
+                .hint(hint.join("\n"))
+                .error(error)
+                .control(Ctl::Row(buttons, 8.0)),
+        );
         let diag = (!state.busy).then(|| {
             handler(|s, env| {
                 s.about.busy = true;
-                s.desktop(env, "desktop_update_diagnostics", json!({}), |s, _, result| {
-                    s.about.busy = false;
-                    match result {
-                        Ok(report) => s.report(t("settingsNative.updateDiagnostics"), &report),
-                        Err(error) => s.about.error = Some(error.text()),
-                    }
-                });
+                s.desktop(
+                    env,
+                    "desktop_update_diagnostics",
+                    json!({}),
+                    |s, _, result| {
+                        s.about.busy = false;
+                        match result {
+                            Ok(report) => s.report(t("settingsNative.updateDiagnostics"), &report),
+                            Err(error) => s.about.error = Some(error.text()),
+                        }
+                    },
+                );
             })
         });
-        ui.row(row(t("settingsNative.updateDiagnostics")).control(button("about.diagnostics", t("settings.diagnostics.app.run"), diag).ctl()));
+        ui.row(
+            row(t("settingsNative.updateDiagnostics")).control(
+                button("about.diagnostics", t("settings.diagnostics.app.run"), diag).ctl(),
+            ),
+        );
     }
     ui.card_end();
     ui.gap(24.0);
@@ -158,10 +265,20 @@ pub fn draw_about(ui: &mut Ui, s: &Settings, v: &View) {
             let connected = host.connected();
             let host_version = normalize_version(&host.version());
             let mismatch = matches!((&host_version, &client), (Some(h), Some(c)) if h != c);
-            let text = if !connected { t("settings.about.offline") } else { version_label(host_version.as_deref()) };
+            let text = if !connected {
+                t("settings.about.offline")
+            } else {
+                version_label(host_version.as_deref())
+            };
             let color = if mismatch { pal.warning } else { pal.muted };
             let hint = mismatch.then(|| t("settings.about.versionDiffers"));
-            ui.row(row(host.label.clone()).hint_opt(hint).control(Ctl::Label { text, color, size: 14.0, font: Font::Regular, max_w: 200.0 }));
+            ui.row(row(host.label.clone()).hint_opt(hint).control(Ctl::Label {
+                text,
+                color,
+                size: 14.0,
+                font: Font::Regular,
+                max_w: 200.0,
+            }));
         }
         ui.card_end();
         ui.gap(24.0);

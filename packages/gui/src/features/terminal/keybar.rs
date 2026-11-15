@@ -54,8 +54,22 @@ pub enum Control {
 use Control::{Key as K, KeyboardToggle as Toggle, Modifier as M, Paste};
 
 const ROWS: &[&[Control]] = &[
-    &[K(Key::Escape), K(Key::Tab), M(Modifier::Ctrl), K(Key::Up), M(Modifier::Shift), Toggle],
-    &[M(Modifier::Alt), Paste, K(Key::Left), K(Key::Down), K(Key::Right), K(Key::Enter)],
+    &[
+        K(Key::Escape),
+        K(Key::Tab),
+        M(Modifier::Ctrl),
+        K(Key::Up),
+        M(Modifier::Shift),
+        Toggle,
+    ],
+    &[
+        M(Modifier::Alt),
+        Paste,
+        K(Key::Left),
+        K(Key::Down),
+        K(Key::Right),
+        K(Key::Enter),
+    ],
 ];
 
 const WIDE_ROWS: &[&[Control]] = &[&[
@@ -110,7 +124,10 @@ fn label(control: Control) -> &'static str {
 
 /// Keys that repeat while held.
 pub fn repeats(control: Control) -> bool {
-    matches!(control, K(Key::Up | Key::Down | Key::Left | Key::Right | Key::Backspace | Key::Enter))
+    matches!(
+        control,
+        K(Key::Up | Key::Down | Key::Left | Key::Right | Key::Backspace | Key::Enter)
+    )
 }
 
 #[derive(Clone, Debug, DefaultNone)]
@@ -189,10 +206,18 @@ impl Widget for WaTerminalKeyBar {
         }
         if self.repeat_timer.is_event(event).is_some() {
             self.repeat_timer = Timer::default();
-            if let Some(control) = self.pressed.and_then(|index| self.controls.get(index).copied()).filter(|c| repeats(*c)) {
+            if let Some(control) = self
+                .pressed
+                .and_then(|index| self.controls.get(index).copied())
+                .filter(|c| repeats(*c))
+            {
                 self.repeated = true;
                 self.repeat_timer = cx.start_timeout(REPEAT_INTERVAL);
-                cx.widget_action(self.widget_uid(), &scope.path, KeyBarAction::Pressed(control));
+                cx.widget_action(
+                    self.widget_uid(),
+                    &scope.path,
+                    KeyBarAction::Pressed(control),
+                );
             }
         }
         match event.hits(cx, self.area) {
@@ -200,7 +225,11 @@ impl Widget for WaTerminalKeyBar {
                 let hovered = self.key_at(cx, fe.abs);
                 if hovered != self.hovered {
                     self.hovered = hovered;
-                    cx.set_cursor(if hovered.is_some() { MouseCursor::Hand } else { MouseCursor::Default });
+                    cx.set_cursor(if hovered.is_some() {
+                        MouseCursor::Hand
+                    } else {
+                        MouseCursor::Default
+                    });
                     self.redraw(cx);
                 }
             }
@@ -212,7 +241,11 @@ impl Widget for WaTerminalKeyBar {
                 self.pressed = self.key_at(cx, fe.abs);
                 self.repeated = false;
                 self.stop_repeat(cx);
-                if self.pressed.and_then(|index| self.controls.get(index).copied()).is_some_and(repeats) {
+                if self
+                    .pressed
+                    .and_then(|index| self.controls.get(index).copied())
+                    .is_some_and(repeats)
+                {
                     self.repeat_timer = cx.start_timeout(REPEAT_DELAY);
                 }
                 self.redraw(cx);
@@ -235,7 +268,11 @@ impl Widget for WaTerminalKeyBar {
                     && self.key_at(cx, fe.abs) == Some(index)
                     && let Some(control) = self.controls.get(index).copied()
                 {
-                    cx.widget_action(self.widget_uid(), &scope.path, KeyBarAction::Pressed(control));
+                    cx.widget_action(
+                        self.widget_uid(),
+                        &scope.path,
+                        KeyBarAction::Pressed(control),
+                    );
                 }
                 self.redraw(cx);
             }
@@ -249,9 +286,17 @@ impl Widget for WaTerminalKeyBar {
         let available = cx.turtle().width_left();
         let inner = (available - PADDING * 2.0).max(0.0);
         let rows = rows_for(self.compact, inner);
-        let height = PADDING * 2.0 + 1.0 + rows.len() as f64 * KEY_HEIGHT + (rows.len() as f64 - 1.0).max(0.0) * GAP;
-        let r = cx.walk_turtle(Walk { height: Size::Fixed(height), ..walk });
-        self.area = self.painter.capture_box(cx, r, p.surface0, Vec4::default(), 0.0, 0.0);
+        let height = PADDING * 2.0
+            + 1.0
+            + rows.len() as f64 * KEY_HEIGHT
+            + (rows.len() as f64 - 1.0).max(0.0) * GAP;
+        let r = cx.walk_turtle(Walk {
+            height: Size::Fixed(height),
+            ..walk
+        });
+        self.area = self
+            .painter
+            .capture_box(cx, r, p.surface0, Vec4::default(), 0.0, 0.0);
         self.painter.hline(cx, r.pos.x, r.pos.y, r.size.x, p.border);
         let width = inner.min(MAX_WIDTH);
         let left = r.pos.x + (r.size.x - width) * 0.5;
@@ -265,16 +310,29 @@ impl Widget for WaTerminalKeyBar {
             for (column, control) in row.iter().enumerate() {
                 let index = self.controls.len();
                 self.controls.push(*control);
-                let key = rect(left + column as f64 * (key_width + GAP), y, key_width, KEY_HEIGHT);
+                let key = rect(
+                    left + column as f64 * (key_width + GAP),
+                    y,
+                    key_width,
+                    KEY_HEIGHT,
+                );
                 let active = self.active(*control);
                 let lit = self.hovered == Some(index) || self.pressed == Some(index);
-                let fill = if active || lit { p.surface2 } else { p.surface1 };
+                let fill = if active || lit {
+                    p.surface2
+                } else {
+                    p.surface1
+                };
                 let border = if active { p.primary } else { p.border };
                 self.painter.outline(cx, key, fill, border, 1.0, 6.0);
                 let color = if active { p.foreground } else { p.muted };
                 match control {
                     Toggle => {
-                        let icon = if self.keyboard_visible { "keyboard-off" } else { "keyboard" };
+                        let icon = if self.keyboard_visible {
+                            "keyboard-off"
+                        } else {
+                            "keyboard"
+                        };
                         self.painter.icon(cx, key, icon, 16.0, p.muted);
                     }
                     Paste => {
@@ -282,10 +340,24 @@ impl Widget for WaTerminalKeyBar {
                         self.painter.icon(cx, key, "clipboard-paste", 16.0, color);
                     }
                     _ => {
-                        self.painter.text_in(cx, key, TextSpec { color, ..spec }, label(*control), 0.5);
+                        self.painter.text_in(
+                            cx,
+                            key,
+                            TextSpec { color, ..spec },
+                            label(*control),
+                            0.5,
+                        );
                     }
                 }
-                self.hits.push(rect(key.pos.x - r.pos.x, key.pos.y - r.pos.y, key.size.x, key.size.y), index);
+                self.hits.push(
+                    rect(
+                        key.pos.x - r.pos.x,
+                        key.pos.y - r.pos.y,
+                        key.size.x,
+                        key.size.y,
+                    ),
+                    index,
+                );
             }
         }
         DrawStep::done()
@@ -302,10 +374,31 @@ impl WaTerminalKeyBarRef {
     }
 
     /// Sticky modifier, soft-keyboard and layout state shown by the keys.
-    pub fn set_state(&self, cx: &mut Cx, modifiers: paseo_terminal::Modifiers, keyboard_visible: bool, compact: bool) {
-        let Some(mut bar) = self.borrow_mut() else { return };
-        let next = (modifiers.control, modifiers.alt, modifiers.shift, keyboard_visible, compact);
-        if (bar.ctrl, bar.alt, bar.shift, bar.keyboard_visible, bar.compact) != next {
+    pub fn set_state(
+        &self,
+        cx: &mut Cx,
+        modifiers: paseo_terminal::Modifiers,
+        keyboard_visible: bool,
+        compact: bool,
+    ) {
+        let Some(mut bar) = self.borrow_mut() else {
+            return;
+        };
+        let next = (
+            modifiers.control,
+            modifiers.alt,
+            modifiers.shift,
+            keyboard_visible,
+            compact,
+        );
+        if (
+            bar.ctrl,
+            bar.alt,
+            bar.shift,
+            bar.keyboard_visible,
+            bar.compact,
+        ) != next
+        {
             bar.ctrl = modifiers.control;
             bar.alt = modifiers.alt;
             bar.shift = modifiers.shift;

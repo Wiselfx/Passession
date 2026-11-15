@@ -27,7 +27,12 @@ pub struct FileReader<T> {
 
 impl<T> FileReader<T> {
     fn new() -> FileReader<T> {
-        FileReader { generation: 0, ready: false, value: None, error: None }
+        FileReader {
+            generation: 0,
+            ready: false,
+            value: None,
+            error: None,
+        }
     }
 
     pub fn loading(&self) -> bool {
@@ -35,11 +40,19 @@ impl<T> FileReader<T> {
     }
 
     pub fn value(&self) -> Option<&T> {
-        if self.ready { self.value.as_ref() } else { None }
+        if self.ready {
+            self.value.as_ref()
+        } else {
+            None
+        }
     }
 
     pub fn error(&self) -> Option<&str> {
-        if self.ready { None } else { self.error.as_deref() }
+        if self.ready {
+            None
+        } else {
+            self.error.as_deref()
+        }
     }
 
     fn begin(&mut self) -> u64 {
@@ -88,11 +101,16 @@ struct SessionIo<'a> {
 
 impl ModelIo for SessionIo<'_> {
     fn read_text(&mut self, seq: u64, reconcile: bool) {
-        let purpose = if reconcile { Purpose::ModelReconcile(seq) } else { Purpose::ModelReload(seq) };
+        let purpose = if reconcile {
+            Purpose::ModelReconcile(seq)
+        } else {
+            Purpose::ModelReload(seq)
+        };
         self.handle.read_text(purpose);
     }
     fn write_text(&mut self, text: String, force: bool, seq: u64) {
-        self.handle.write_text(text, force, Purpose::ModelWrite(seq));
+        self.handle
+            .write_text(text, force, Purpose::ModelWrite(seq));
     }
     fn flush_text(&mut self, text: String) {
         self.handle.write_text(text, false, Purpose::Flush);
@@ -193,7 +211,11 @@ impl FileSession {
     /// The mount key `panel:presentation` the text view resets on.
     pub fn mount_key(&self) -> Option<String> {
         self.panel.map(|panel| {
-            format!("{}:{}", panel.id, self.presentation.map(|p| p.name()).unwrap_or(""))
+            format!(
+                "{}:{}",
+                panel.id,
+                self.presentation.map(|p| p.name()).unwrap_or("")
+            )
         })
     }
 
@@ -206,7 +228,9 @@ impl FileSession {
                 _ => Some(model.content()),
             };
         }
-        self.text.as_ref().and_then(|reader| reader.value().map(String::as_str))
+        self.text
+            .as_ref()
+            .and_then(|reader| reader.value().map(String::as_str))
     }
 
     fn changed(&mut self) {
@@ -214,9 +238,16 @@ impl FileSession {
     }
 
     /// Applies `f` to the model with this session's IO, then routes what it caused.
-    pub fn with_model(&mut self, associations: &Value, f: impl FnOnce(&mut FileEditorModel, &mut dyn ModelIo)) {
+    pub fn with_model(
+        &mut self,
+        associations: &Value,
+        f: impl FnOnce(&mut FileEditorModel, &mut dyn ModelIo),
+    ) {
         if let Some(model) = self.model.as_mut() {
-            let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+            let mut io = SessionIo {
+                handle: &mut self.handle,
+                autosave: &mut self.autosave,
+            };
             f(model, &mut io);
             self.changed();
         }
@@ -260,7 +291,10 @@ impl FileSession {
 
     fn on_file_event(&mut self, event: FileEvent) {
         if let Some(model) = self.model.as_mut() {
-            let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+            let mut io = SessionIo {
+                handle: &mut self.handle,
+                autosave: &mut self.autosave,
+            };
             model.on_file_event(event, &mut io);
         }
         if let Some(reader) = self.text.as_mut() {
@@ -293,7 +327,10 @@ impl FileSession {
                     _ => return,
                 };
                 if let Some(model) = self.model.as_mut() {
-                    let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+                    let mut io = SessionIo {
+                        handle: &mut self.handle,
+                        autosave: &mut self.autosave,
+                    };
                     model.on_read(seq, reconcile, result, &mut io);
                 }
             }
@@ -306,7 +343,10 @@ impl FileSession {
                     _ => return,
                 };
                 if let Some(model) = self.model.as_mut() {
-                    let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+                    let mut io = SessionIo {
+                        handle: &mut self.handle,
+                        autosave: &mut self.autosave,
+                    };
                     model.on_write(seq, result, &mut io);
                 }
             }
@@ -336,7 +376,9 @@ impl FileSession {
 
     /// The handle's snapshot changed: resolve the panel and mount its file state.
     fn on_handle(&mut self, associations: &Value) {
-        let Snapshot::Ready(stat) = self.handle.snapshot() else { return };
+        let Snapshot::Ready(stat) = self.handle.snapshot() else {
+            return;
+        };
         let resolution = resolve_file_panel(
             &self.path,
             stat.kind().unwrap_or("binary"),
@@ -379,7 +421,10 @@ impl FileSession {
             self.handle.read_bytes(Purpose::BytesReader(generation));
         } else if editable {
             let mut model = FileEditorModel::new();
-            let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+            let mut io = SessionIo {
+                handle: &mut self.handle,
+                autosave: &mut self.autosave,
+            };
             model.open(&mut io);
             self.model = Some(model);
         } else if readable {
@@ -394,7 +439,10 @@ impl FileSession {
     /// edit.
     fn unmount(&mut self) {
         if let Some(mut model) = self.model.take() {
-            let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+            let mut io = SessionIo {
+                handle: &mut self.handle,
+                autosave: &mut self.autosave,
+            };
             model.close(true, &mut io);
         }
         self.text = None;
@@ -409,7 +457,11 @@ impl FileSession {
             return false;
         }
         self.view_mount = mount;
-        self.view = if line_target { TextView::Source } else { TextView::Preview };
+        self.view = if line_target {
+            TextView::Source
+        } else {
+            TextView::Preview
+        };
         true
     }
 
@@ -428,7 +480,10 @@ impl FileSession {
     /// Closing the tab after "close without saving": held and queued writes are dropped.
     pub fn dispose(&mut self) {
         if let Some(mut model) = self.model.take() {
-            let mut io = SessionIo { handle: &mut self.handle, autosave: &mut self.autosave };
+            let mut io = SessionIo {
+                handle: &mut self.handle,
+                autosave: &mut self.autosave,
+            };
             model.close(false, &mut io);
         }
         self.text = None;

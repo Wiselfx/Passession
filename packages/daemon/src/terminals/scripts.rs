@@ -120,17 +120,18 @@ impl Scripts {
             .or_else(|| workspace["branch"].as_str())
             .map(str::to_owned);
         if let Some(id) = workspace["projectId"].as_str()
-            && let Some(project) = app.projects.project(id).await? {
-                let root = project["rootPath"]
-                    .as_str()
-                    .ok_or_else(|| anyhow!("Project rootPath missing"))?;
-                let slug = format!(
-                    "{}-{}",
-                    project_slug(root, None),
-                    &hex::encode(Sha256::digest(id.as_bytes()))[..8]
-                );
-                return Ok((slug, branch));
-            }
+            && let Some(project) = app.projects.project(id).await?
+        {
+            let root = project["rootPath"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Project rootPath missing"))?;
+            let slug = format!(
+                "{}-{}",
+                project_slug(root, None),
+                &hex::encode(Sha256::digest(id.as_bytes()))[..8]
+            );
+            return Ok((slug, branch));
+        }
         let remote = git
             .filter(|git| git["isGit"].as_bool() == Some(true))
             .and_then(|git| git["remoteUrl"].as_str());
@@ -346,11 +347,12 @@ impl Scripts {
                 .flatten()
                 {
                     if let Some(existing) = self.route(hostname)
-                        && (existing["workspaceId"] != id || existing["scriptName"] != name) {
-                            bail!(
-                                "Another workspace is already serving \"{name}\" at {hostname}. Stop that service or run this one on a different branch to free the address."
-                            );
-                        }
+                        && (existing["workspaceId"] != id || existing["scriptName"] != name)
+                    {
+                        bail!(
+                            "Another workspace is already serving \"{name}\" at {hostname}. Stop that service or run this one on a different branch to free the address."
+                        );
+                    }
                 }
             }
         }
@@ -360,7 +362,12 @@ impl Scripts {
         // The configured command is the PTY child, not input to a persistent
         // shell: bash/sh do not emit the zsh-only command-completion hooks.
         #[cfg(windows)]
-        let args = vec!["/d".into(), "/s".into(), "/c".into(), script.command.clone()];
+        let args = vec![
+            "/d".into(),
+            "/s".into(),
+            "/c".into(),
+            script.command.clone(),
+        ];
         #[cfg(not(windows))]
         let args = vec!["-c".into(), script.command.clone()];
         let terminal = app
@@ -756,9 +763,10 @@ impl Scripts {
 pub(crate) async fn wait_ready(terminal: &Arc<Terminal>) {
     let mut events = terminal.subscribe();
     if let Ok((lines, _)) = terminal.capture(None, None, true).await
-        && lines.iter().any(|line| !line.trim().is_empty()) {
-            return;
-        }
+        && lines.iter().any(|line| !line.trim().is_empty())
+    {
+        return;
+    }
     let _ = tokio::time::timeout(Duration::from_millis(1500), async {
         loop {
             match events.recv().await {

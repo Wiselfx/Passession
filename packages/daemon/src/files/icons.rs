@@ -210,9 +210,10 @@ fn recursive(path: &Path, depth: usize) -> Option<PathBuf> {
             continue;
         }
         if entry.is_dir()
-            && let Some(found) = recursive(&entry, depth - 1) {
-                return Some(found);
-            }
+            && let Some(found) = recursive(&entry, depth - 1)
+        {
+            return Some(found);
+        }
     }
     None
 }
@@ -220,9 +221,10 @@ fn priority(path: &Path) -> Option<PathBuf> {
     for directory in PRIORITY {
         let directory = path.join(directory);
         if directory.is_dir()
-            && let Some(found) = recursive(&directory, 2) {
-                return Some(found);
-            }
+            && let Some(found) = recursive(&directory, 2)
+        {
+            return Some(found);
+        }
     }
     None
 }
@@ -233,9 +235,10 @@ fn find(path: &Path) -> Option<PathBuf> {
     for directory in ["packages", "apps"] {
         for package in entries(&path.join(directory)) {
             if package.is_dir()
-                && let Some(found) = priority(&package).or_else(|| in_directory(&package)) {
-                    return Some(found);
-                }
+                && let Some(found) = priority(&package).or_else(|| in_directory(&package))
+            {
+                return Some(found);
+            }
         }
     }
     in_directory(path)

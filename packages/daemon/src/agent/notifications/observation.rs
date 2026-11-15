@@ -24,9 +24,9 @@ impl Outcome {
             && let Some(error) = value["error"]
                 .as_str()
                 .filter(|e| !e.starts_with("Agent not found: "))
-            {
-                bail!("{error}");
-            }
+        {
+            bail!("{error}");
+        }
         Ok(Self {
             status: value["status"]
                 .as_str()
@@ -91,16 +91,17 @@ impl BufferState {
         self.initial_pending = false;
         if result.status == "permission" {
             if let Some(snapshot) = &mut result.final_snapshot
-                && let Some(requests) = snapshot["pendingPermissions"].as_array_mut() {
-                    requests.retain(|r| {
-                        !r["id"]
-                            .as_str()
-                            .is_some_and(|id| self.resolved_before_initial.contains(id))
-                    });
-                    if !requests.is_empty() {
-                        self.push(result);
-                    }
+                && let Some(requests) = snapshot["pendingPermissions"].as_array_mut()
+            {
+                requests.retain(|r| {
+                    !r["id"]
+                        .as_str()
+                        .is_some_and(|id| self.resolved_before_initial.contains(id))
+                });
+                if !requests.is_empty() {
+                    self.push(result);
                 }
+            }
         } else if self.terminal.is_none()
             && !result
                 .final_snapshot
@@ -234,9 +235,10 @@ impl Observation {
                 .await
             };
             if let Err(error) = result
-                && !task_cancel.is_cancelled() {
-                    task_buffer.fail(error).await;
-                }
+                && !task_cancel.is_cancelled()
+            {
+                task_buffer.fail(error).await;
+            }
         });
         Self {
             buffer,
@@ -358,9 +360,14 @@ async fn local_updates(
     events: &mut tokio::sync::broadcast::Receiver<Value>,
 ) -> Result<()> {
     loop {
-        let event = events.recv().await.context("Finish observation event stream ended or lagged")?;
+        let event = events
+            .recv()
+            .await
+            .context("Finish observation event stream ended or lagged")?;
         let id_matches = event["agentId"] == id || event["agent"]["id"] == id;
-        if !id_matches { continue; }
+        if !id_matches {
+            continue;
+        }
         if event["type"] == "agent_stream" && relevant(&event["event"]) {
             let snapshot = manager.agent_snapshot(id).await?;
             let last = manager.last_assistant_message(id).await?;
@@ -473,11 +480,19 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
-        let app = AppState::new(home.clone(), root.path().into(), std::env::current_exe().unwrap());
+        let app = AppState::new(
+            home.clone(),
+            root.path().into(),
+            std::env::current_exe().unwrap(),
+        );
         let manager = &app.agents;
-        manager.storage.get_or_init(|| async { AgentStorage::new(home) }).await;
+        manager
+            .storage
+            .get_or_init(|| async { AgentStorage::new(home) })
+            .await;
         let id = "00000000-0000-4000-8000-000000000044";
-        let snapshot = json!({"id":id,"provider":"mock","internal":true,"config":{},"cwd":root.path()});
+        let snapshot =
+            json!({"id":id,"provider":"mock","internal":true,"config":{},"cwd":root.path()});
         let (cell, _receiver) = manager.make_cell(id, snapshot, true).await.unwrap();
         let mut data = cell.data.lock().await;
         data.ready = true;
@@ -489,13 +504,21 @@ mod tests {
             cancel: cancel.clone(),
             task: None,
         };
-        let observing = local(Arc::downgrade(&app), id, observation.buffer.clone(), cancel.clone());
+        let observing = local(
+            Arc::downgrade(&app),
+            id,
+            observation.buffer.clone(),
+            cancel.clone(),
+        );
         tokio::pin!(observing);
 
         // Queue the initial read first, then make the event handler contend for
         // the same lock before either read can acquire it.
         assert!(futures_util::poll!(&mut observing).is_pending());
-        manager.events.send(json!({"type":"agent_state","agent":{"id":id,"lifecycle":"running"}})).unwrap();
+        manager
+            .events
+            .send(json!({"type":"agent_state","agent":{"id":id,"lifecycle":"running"}}))
+            .unwrap();
         assert!(futures_util::poll!(&mut observing).is_pending());
         drop(data);
 
@@ -508,7 +531,10 @@ mod tests {
         assert_eq!(outcome.status, "idle");
         assert_eq!(outcome.final_snapshot.unwrap()["id"], id);
         cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(1), &mut observing).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), &mut observing)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(manager.agent_snapshot(id).await.unwrap().unwrap()["id"], id);
     }
 

@@ -13,15 +13,27 @@ fn korean() -> bool {
 fn time_of_day(local: &DateTime<Local>) -> String {
     let (pm, hour) = local.hour12();
     if korean() {
-        format!("{} {}:{:02}", if pm { "오후" } else { "오전" }, hour, local.minute())
+        format!(
+            "{} {}:{:02}",
+            if pm { "오후" } else { "오전" },
+            hour,
+            local.minute()
+        )
     } else {
-        format!("{}:{:02} {}", hour, local.minute(), if pm { "PM" } else { "AM" })
+        format!(
+            "{}:{:02} {}",
+            hour,
+            local.minute(),
+            if pm { "PM" } else { "AM" }
+        )
     }
 }
 
 /// Today: the time; the last week: weekday + time; older: date + time.
 pub fn message_timestamp(millis: i64) -> String {
-    let Some(local) = Local.timestamp_millis_opt(millis).single() else { return String::new() };
+    let Some(local) = Local.timestamp_millis_opt(millis).single() else {
+        return String::new();
+    };
     let time = time_of_day(&local);
     let today = Local::now().date_naive();
     let days = (today - local.date_naive()).num_days();
@@ -32,25 +44,65 @@ pub fn message_timestamp(millis: i64) -> String {
     if days > 0 && days < 7 {
         let weekday = local.weekday().num_days_from_monday() as usize;
         let name = if ko {
-            ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"][weekday]
+            [
+                "월요일",
+                "화요일",
+                "수요일",
+                "목요일",
+                "금요일",
+                "토요일",
+                "일요일",
+            ][weekday]
         } else {
-            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][weekday]
+            [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ][weekday]
         };
         return format!("{name} {time}");
     }
-    let date = date_label(local.year(), local.month(), local.day(), local.weekday().num_days_from_monday() as usize, local.year() == Local::now().year(), ko);
-    if ko { format!("{date} {time}") } else { format!("{date}, {time}") }
+    let date = date_label(
+        local.year(),
+        local.month(),
+        local.day(),
+        local.weekday().num_days_from_monday() as usize,
+        local.year() == Local::now().year(),
+        ko,
+    );
+    if ko {
+        format!("{date} {time}")
+    } else {
+        format!("{date}, {time}")
+    }
 }
 
 /// The date of an older message: Korean `11월 14일 (금)` (with `2025년` outside the current
 /// year), English `Nov 14, 2025`.
-fn date_label(year: i32, month: u32, day: u32, weekday: usize, this_year: bool, ko: bool) -> String {
+fn date_label(
+    year: i32,
+    month: u32,
+    day: u32,
+    weekday: usize,
+    this_year: bool,
+    ko: bool,
+) -> String {
     if ko {
         let short = ["월", "화", "수", "목", "금", "토", "일"][weekday % 7];
         let date = format!("{month}월 {day}일 ({short})");
-        if this_year { date } else { format!("{year}년 {date}") }
+        if this_year {
+            date
+        } else {
+            format!("{year}년 {date}")
+        }
     } else {
-        let name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][(month as usize).saturating_sub(1) % 12];
+        let name = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ][(month as usize).saturating_sub(1) % 12];
         format!("{name} {day}, {year}")
     }
 }
@@ -63,11 +115,19 @@ pub fn duration(millis: i64) -> String {
     let minutes = total / 60;
     if minutes < 60 {
         let seconds = total % 60;
-        return if seconds == 0 { format!("{minutes}m") } else { format!("{minutes}m {seconds}s") };
+        return if seconds == 0 {
+            format!("{minutes}m")
+        } else {
+            format!("{minutes}m {seconds}s")
+        };
     }
     let hours = minutes / 60;
     let rest = minutes % 60;
-    if rest == 0 { format!("{hours}h") } else { format!("{hours}h {rest}m") }
+    if rest == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h {rest}m")
+    }
 }
 
 /// _OverviewGroup.summaryLabel ("Edited 2 files and ran 3 commands").
@@ -83,7 +143,10 @@ pub fn overview_summary(summary: &OverviewSummary) -> String {
     ] {
         if count > 0 {
             let suffix = if count == 1 { "one" } else { "other" };
-            parts.push(ta(&format!("{key}.{suffix}"), &[("count", &count.to_string())]));
+            parts.push(ta(
+                &format!("{key}.{suffix}"),
+                &[("count", &count.to_string())],
+            ));
         }
     }
     if parts.is_empty() {
@@ -111,7 +174,10 @@ pub fn compaction_label(status: &str, trigger: Option<&str>, pre_tokens: Option<
         Some("auto") => t("message.compaction.auto"),
         Some("manual") => t("message.compaction.manual"),
         _ => match pre_tokens {
-            Some(tokens) if tokens != 0.0 => ta("message.compaction.withTokens", &[("tokens", &((tokens / 1000.0).round() as i64).to_string())]),
+            Some(tokens) if tokens != 0.0 => ta(
+                "message.compaction.withTokens",
+                &[("tokens", &((tokens / 1000.0).round() as i64).to_string())],
+            ),
             _ => t("message.compaction.completed"),
         },
     }
@@ -125,7 +191,10 @@ mod tests {
     fn older_dates_follow_the_locale() {
         // 2026-11-14 is a Saturday (index 5 from Monday).
         assert_eq!(date_label(2026, 11, 14, 5, true, true), "11월 14일 (토)");
-        assert_eq!(date_label(2025, 11, 14, 4, false, true), "2025년 11월 14일 (금)");
+        assert_eq!(
+            date_label(2025, 11, 14, 4, false, true),
+            "2025년 11월 14일 (금)"
+        );
         assert_eq!(date_label(2025, 1, 3, 4, false, false), "Jan 3, 2025");
         assert_eq!(date_label(2026, 12, 31, 3, true, false), "Dec 31, 2026");
     }

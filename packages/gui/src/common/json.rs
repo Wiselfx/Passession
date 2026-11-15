@@ -31,13 +31,19 @@ pub fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
 
 pub fn int(value: &Value, key: &str, fallback: i64) -> i64 {
     match value.get(key) {
-        Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)).unwrap_or(fallback),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_f64().map(|f| f as i64))
+            .unwrap_or(fallback),
         _ => fallback,
     }
 }
 
 pub fn number(value: &Value, key: &str) -> Option<f64> {
-    value.get(key).and_then(Value::as_f64).filter(|v| v.is_finite())
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite())
 }
 
 pub fn boolean(value: &Value, key: &str, fallback: bool) -> bool {

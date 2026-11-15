@@ -4,15 +4,15 @@ mod terminal;
 #[cfg(test)]
 mod tests;
 
-use crate::providers::registry::catalog::refresh_activity;
-use paseo_client::process::CommandSpec;
-use crate::{ providers::api::{
+use crate::providers::api::{
     AgentProvider, AgentSession, EventSink, ImportedSession, LaunchContext, ProviderSpec,
     RewindTarget,
-}, };
+};
+use crate::providers::registry::catalog::refresh_activity;
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use mapping::*;
+use paseo_client::process::CommandSpec;
 use rpc::{Rpc, RpcError};
 use serde_json::{Value, json};
 use std::{
@@ -155,9 +155,10 @@ impl Inner {
         };
         if matches!(event["type"].as_str(), Some("timeline" | "usage_updated"))
             && event.get("turnId").is_none()
-            && let Some(turn) = turn {
-                event["turnId"] = json!(turn);
-            }
+            && let Some(turn) = turn
+        {
+            event["turnId"] = json!(turn);
+        }
         if replay {
             if event["type"] == "timeline" {
                 self.state.lock().unwrap().history.push(event);
@@ -329,9 +330,10 @@ impl Inner {
                 }
                 if let Some(pending) = s.pending_user.as_mut() {
                     if pending.get("messageId").is_none()
-                        && let Some(id) = update["messageId"].as_str().filter(|id| !id.is_empty()) {
-                            pending["messageId"] = json!(id);
-                        }
+                        && let Some(id) = update["messageId"].as_str().filter(|id| !id.is_empty())
+                    {
+                        pending["messageId"] = json!(id);
+                    }
                     let Value::String(combined) = &mut pending["text"] else {
                         unreachable!("ACP user message text invariant")
                     };
@@ -498,18 +500,19 @@ impl Inner {
         }
         self.validate_owner(&params)?;
         let auto = self.state.lock().unwrap().config["featureValues"]["auto_accept"] == true;
-        if auto && !chooser(&params["options"])
+        if auto
+            && !chooser(&params["options"])
             && let Some(option) =
                 permission_option(&params["options"], &json!({"behavior":"allow"}))?
-            {
-                return self
-                    .rpc
-                    .reply(
-                        rpc_id,
-                        Ok(json!({"outcome":{"outcome":"selected","optionId":option["optionId"]}})),
-                    )
-                    .await;
-            }
+        {
+            return self
+                .rpc
+                .reply(
+                    rpc_id,
+                    Ok(json!({"outcome":{"outcome":"selected","optionId":option["optionId"]}})),
+                )
+                .await;
+        }
         let request_id = id();
         let snapshot = {
             let s = self.state.lock().unwrap();
@@ -677,30 +680,32 @@ impl Inner {
         {
             self.rpc.cancel.cancel();
         }
-        if !released && !self.rpc.cancel.is_cancelled()
-            && let Some(session) = session {
-                if active {
-                    let _ = tokio::time::timeout(
-                        Duration::from_secs(2),
-                        self.rpc
-                            .notify("session/cancel", json!({"sessionId":session})),
+        if !released
+            && !self.rpc.cancel.is_cancelled()
+            && let Some(session) = session
+        {
+            if active {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    self.rpc
+                        .notify("session/cancel", json!({"sessionId":session})),
+                )
+                .await;
+            }
+            let supported = self.agent_capabilities.lock().unwrap()["sessionCapabilities"]
+                .get("close")
+                .is_some_and(|v| !v.is_null() && v != false);
+            if supported {
+                let _ = self
+                    .rpc
+                    .request(
+                        "session/close",
+                        json!({"sessionId":session}),
+                        Some(Duration::from_secs(2)),
                     )
                     .await;
-                }
-                let supported = self.agent_capabilities.lock().unwrap()["sessionCapabilities"]
-                    .get("close")
-                    .is_some_and(|v| !v.is_null() && v != false);
-                if supported {
-                    let _ = self
-                        .rpc
-                        .request(
-                            "session/close",
-                            json!({"sessionId":session}),
-                            Some(Duration::from_secs(2)),
-                        )
-                        .await;
-                }
             }
+        }
         let terminals: Vec<_> = self
             .state
             .lock()
@@ -974,7 +979,7 @@ impl AcpProvider {
             }
             client["_meta"]["parameterizedModelPicker"] = json!(true);
         }
-        match inner.rpc.call("initialize",json!({"protocolVersion":1,"clientCapabilities":client,"clientInfo":{"name":"Paseo","version":env!("CARGO_PKG_VERSION")}})).await {
+        match inner.rpc.call("initialize",json!({"protocolVersion":1,"clientCapabilities":client,"clientInfo":{"name":"Paseo","version":crate::VERSION}})).await {
             Ok(response)=>{*inner.agent_capabilities.lock().unwrap()=response.get("agentCapabilities").cloned().unwrap_or_else(||json!({}));Ok(inner)},
             Err(error)=>{let _=inner.close().await;Err(error)},
         }
@@ -1217,7 +1222,10 @@ impl AgentSession for AcpSession {
             self.provider()
         )
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         let history = std::mem::take(&mut self.inner.state.lock().unwrap().history);
         for event in history {
             sink.emit(event).await?;

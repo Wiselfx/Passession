@@ -8,13 +8,13 @@
 use super::attachments::{raster_image_mime_type, sniff_image_mime};
 use makepad_widgets::image_cache::ImageBuffer;
 use makepad_widgets::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Sender, channel};
 
 /// Thumbnails are decoded at 2x the 48px pill for high-DPI displays.
 pub const THUMBNAIL_PIXELS: u32 = 96;
@@ -25,12 +25,23 @@ const PREVIEW_CACHE: usize = 4;
 
 pub enum BlobJob {
     /// Store raw image bytes (clipboard).
-    StoreBytes { token: u64, bytes: Arc<Vec<u8>>, mime: Option<String> },
+    StoreBytes {
+        token: u64,
+        bytes: Arc<Vec<u8>>,
+        mime: Option<String>,
+    },
     /// Read image files from disk and store them (picker/drop).
-    ImportImages { token: u64, files: Vec<(PathBuf, String)> },
+    ImportImages {
+        token: u64,
+        files: Vec<(PathBuf, String)>,
+    },
     /// Stat dropped/picked paths: (path, name, size, raster image mime).
     Stat { token: u64, paths: Vec<PathBuf> },
-    Decode { key: String, source: ImageSource, max: u32 },
+    Decode {
+        key: String,
+        source: ImageSource,
+        max: u32,
+    },
     /// Delete blobs nobody references (startup, after drafts load).
     Collect { keep: HashSet<String> },
 }
@@ -51,9 +62,18 @@ pub struct DecodedImage {
 
 pub enum BlobResult {
     /// Draft image entries `{blobId, mimeType, byteSize}` or the error text.
-    Stored { token: u64, images: Result<Vec<Value>, String> },
-    Stat { token: u64, files: Result<Vec<StatFile>, String> },
-    Decoded { key: String, result: Result<DecodedImage, String> },
+    Stored {
+        token: u64,
+        images: Result<Vec<Value>, String>,
+    },
+    Stat {
+        token: u64,
+        files: Result<Vec<StatFile>, String>,
+    },
+    Decoded {
+        key: String,
+        result: Result<DecodedImage, String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -66,8 +86,11 @@ pub struct StatFile {
 
 fn blob_path(dir: &Path, id: &str) -> Option<PathBuf> {
     // Ids are lowercase sha256 hex; anything else never reaches the filesystem.
-    (id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
-        .then(|| dir.join(id))
+    (id.len() == 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+    .then(|| dir.join(id))
 }
 
 fn store(dir: &Path, bytes: &[u8], mime: Option<&str>) -> Result<Value, String> {
@@ -106,7 +129,9 @@ fn decode_inline(data: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = data.chars().filter(|c| !c.is_whitespace()).collect();
     base64::engine::general_purpose::STANDARD
         .decode(cleaned.trim_end_matches('='))
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(cleaned.trim_end_matches('=')))
+        .or_else(|_| {
+            base64::engine::general_purpose::STANDARD_NO_PAD.decode(cleaned.trim_end_matches('='))
+        })
         .map_err(|e| e.to_string())
 }
 
@@ -130,10 +155,18 @@ fn decode(dir: &Path, source: &ImageSource, max: u32) -> Result<DecodedImage, St
             ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32
         })
         .collect();
-    Ok(DecodedImage { width, height, pixels })
+    Ok(DecodedImage {
+        width,
+        height,
+        pixels,
+    })
 }
 
-fn run_worker(dir: PathBuf, jobs: std::sync::mpsc::Receiver<BlobJob>, results: ToUISender<BlobResult>) {
+fn run_worker(
+    dir: PathBuf,
+    jobs: std::sync::mpsc::Receiver<BlobJob>,
+    results: ToUISender<BlobResult>,
+) {
     while let Ok(job) = jobs.recv() {
         let result = match job {
             BlobJob::StoreBytes { token, bytes, mime } => BlobResult::Stored {
@@ -160,12 +193,20 @@ fn run_worker(dir: PathBuf, jobs: std::sync::mpsc::Receiver<BlobJob>, results: T
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.to_string_lossy().into_owned());
                         let image_mime = raster_image_mime_type(&name);
-                        Ok(StatFile { path, name, size: metadata.len(), image_mime })
+                        Ok(StatFile {
+                            path,
+                            name,
+                            size: metadata.len(),
+                            image_mime,
+                        })
                     })
                     .collect();
                 BlobResult::Stat { token, files }
             }
-            BlobJob::Decode { key, source, max } => BlobResult::Decoded { key, result: decode(&dir, &source, max) },
+            BlobJob::Decode { key, source, max } => BlobResult::Decoded {
+                key,
+                result: decode(&dir, &source, max),
+            },
             BlobJob::Collect { keep } => {
                 if let Ok(entries) = std::fs::read_dir(&dir) {
                     for entry in entries.flatten() {
@@ -252,16 +293,29 @@ impl BlobStore {
     fn cache_key(image: &Value, thumbnail: bool) -> Option<(String, ImageSource)> {
         let suffix = if thumbnail { "thumb" } else { "full" };
         if let Some(id) = image.get("blobId").and_then(Value::as_str) {
-            return Some((format!("blob:{id}:{suffix}"), ImageSource::Blob(id.to_owned())));
+            return Some((
+                format!("blob:{id}:{suffix}"),
+                ImageSource::Blob(id.to_owned()),
+            ));
         }
-        let data = image.get("data").and_then(Value::as_str).filter(|d| !d.is_empty())?;
+        let data = image
+            .get("data")
+            .and_then(Value::as_str)
+            .filter(|d| !d.is_empty())?;
         let digest = format!("{:x}", Sha256::digest(data.as_bytes()));
-        Some((format!("inline:{digest}:{suffix}"), ImageSource::Inline(data.to_owned())))
+        Some((
+            format!("inline:{digest}:{suffix}"),
+            ImageSource::Inline(data.to_owned()),
+        ))
     }
 
     /// A cached texture for an image reference, or None while it decodes (the decode is
     /// queued once). `Err` when it cannot be decoded.
-    pub fn texture(&mut self, image: &Value, thumbnail: bool) -> Result<Option<CachedTexture>, String> {
+    pub fn texture(
+        &mut self,
+        image: &Value,
+        thumbnail: bool,
+    ) -> Result<Option<CachedTexture>, String> {
         let Some((key, source)) = Self::cache_key(image, thumbnail) else {
             return Err("Image has no content".into());
         };
@@ -271,8 +325,20 @@ impl BlobStore {
             }
             return Ok(entry.texture.clone().map(|t| (t, entry.size)));
         }
-        self.textures.insert(key.clone(), TextureEntry { texture: None, size: (0, 0), failed: None, pending: true });
-        let max = if thumbnail { THUMBNAIL_PIXELS } else { PREVIEW_PIXELS };
+        self.textures.insert(
+            key.clone(),
+            TextureEntry {
+                texture: None,
+                size: (0, 0),
+                failed: None,
+                pending: true,
+            },
+        );
+        let max = if thumbnail {
+            THUMBNAIL_PIXELS
+        } else {
+            PREVIEW_PIXELS
+        };
         self.submit(BlobJob::Decode { key, source, max });
         Ok(None)
     }
@@ -282,10 +348,25 @@ impl BlobStore {
         let entry = match result {
             Ok(decoded) => {
                 let size = (decoded.width, decoded.height);
-                let buffer = ImageBuffer { width: decoded.width, height: decoded.height, data: decoded.pixels, animation: None };
-                TextureEntry { texture: Some(buffer.into_new_texture(cx)), size, failed: None, pending: false }
+                let buffer = ImageBuffer {
+                    width: decoded.width,
+                    height: decoded.height,
+                    data: decoded.pixels,
+                    animation: None,
+                };
+                TextureEntry {
+                    texture: Some(buffer.into_new_texture(cx)),
+                    size,
+                    failed: None,
+                    pending: false,
+                }
             }
-            Err(error) => TextureEntry { texture: None, size: (0, 0), failed: Some(error), pending: false },
+            Err(error) => TextureEntry {
+                texture: None,
+                size: (0, 0),
+                failed: Some(error),
+                pending: false,
+            },
         };
         let thumb = key.ends_with(":thumb");
         self.textures.insert(key.clone(), entry);

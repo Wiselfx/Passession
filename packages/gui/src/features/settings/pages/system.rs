@@ -54,25 +54,35 @@ pub fn ensure_local_daemon(s: &mut Settings, env: &mut Env) {
 
 fn load_local_daemon(s: &mut Settings, env: &mut Env) {
     s.local_daemon.loading = true;
-    s.desktop(env, "desktop_settings_get", json!({}), |s, env, settings| match settings {
-        Err(error) => {
-            s.local_daemon.loading = false;
-            s.local_daemon.loaded = true;
-            s.local_daemon.error = Some(error.text());
-        }
-        Ok(settings) => s.desktop(env, "desktop_daemon_status", json!({}), move |s, _, daemon| {
-            s.local_daemon.loading = false;
-            s.local_daemon.loaded = true;
-            match daemon {
-                Ok(daemon) => {
-                    s.local_daemon.settings = settings;
-                    s.local_daemon.daemon = daemon;
-                    s.local_daemon.error = None;
-                }
-                Err(error) => s.local_daemon.error = Some(error.text()),
+    s.desktop(
+        env,
+        "desktop_settings_get",
+        json!({}),
+        |s, env, settings| match settings {
+            Err(error) => {
+                s.local_daemon.loading = false;
+                s.local_daemon.loaded = true;
+                s.local_daemon.error = Some(error.text());
             }
-        }),
-    });
+            Ok(settings) => s.desktop(
+                env,
+                "desktop_daemon_status",
+                json!({}),
+                move |s, _, daemon| {
+                    s.local_daemon.loading = false;
+                    s.local_daemon.loaded = true;
+                    match daemon {
+                        Ok(daemon) => {
+                            s.local_daemon.settings = settings;
+                            s.local_daemon.daemon = daemon;
+                            s.local_daemon.error = None;
+                        }
+                        Err(error) => s.local_daemon.error = Some(error.text()),
+                    }
+                },
+            ),
+        },
+    );
 }
 
 /// `_DesktopInvoke.run`: one operation at a time; failures land in `error`.
@@ -113,7 +123,15 @@ fn report_local(s: &mut Settings, env: &mut Env, command: &'static str, title: S
 }
 
 fn patch_daemon(patch: Value) -> crate::features::settings::rpc::Handler {
-    handler(move |s, env| run_local(s, env, "desktop_settings_update", json!({"patch": {"daemon": patch.clone()}}), true))
+    handler(move |s, env| {
+        run_local(
+            s,
+            env,
+            "desktop_settings_update",
+            json!({"patch": {"daemon": patch.clone()}}),
+            true,
+        )
+    })
 }
 
 pub fn draw_local_daemon(ui: &mut Ui, s: &Settings) {
@@ -124,7 +142,10 @@ pub fn draw_local_daemon(ui: &mut Ui, s: &Settings) {
         ui.card_begin();
         ui.card_row_separator();
         let (x, y, w) = (ui.x, ui.y, ui.w);
-        ui.draw_ctl(Ctl::Spinner(20.0), makepad_widgets::dvec2(x + (w - 20.0) / 2.0, y + 24.0));
+        ui.draw_ctl(
+            Ctl::Spinner(20.0),
+            makepad_widgets::dvec2(x + (w - 20.0) / 2.0, y + 24.0),
+        );
         ui.y += 68.0;
         ui.card_end();
         ui.gap(24.0);
@@ -133,44 +154,123 @@ pub fn draw_local_daemon(ui: &mut Ui, s: &Settings) {
     let daemon_settings = get(&state.settings, "daemon");
     let running = str_of(&state.daemon, "status") == "running";
     let owned = is_true(&state.daemon, "ownedByDesktop");
-    let pid = state.daemon.get("pid").filter(|p| !p.is_null()).map(scalar_text);
+    let pid = state
+        .daemon
+        .get("pid")
+        .filter(|p| !p.is_null())
+        .map(scalar_text);
     let busy = state.busy;
     ui.card_begin();
     let status = Ctl::Col(
         vec![
-            Ctl::Label { text: t(if running { "desktop.daemon.status.running" } else { "desktop.daemon.status.notRunning" }), color: pal.muted, size: 14.0, font: crate::features::settings::ui::draw::Font::Regular, max_w: 200.0 },
-            small(ta("desktop.daemon.status.pid", &[("pid", pid.as_deref().unwrap_or("—"))]), pal.muted),
+            Ctl::Label {
+                text: t(if running {
+                    "desktop.daemon.status.running"
+                } else {
+                    "desktop.daemon.status.notRunning"
+                }),
+                color: pal.muted,
+                size: 14.0,
+                font: crate::features::settings::ui::draw::Font::Regular,
+                max_w: 200.0,
+            },
+            small(
+                ta(
+                    "desktop.daemon.status.pid",
+                    &[("pid", pid.as_deref().unwrap_or("—"))],
+                ),
+                pal.muted,
+            ),
         ],
         0.0,
         true,
     );
-    ui.row(row(t("desktop.daemon.status.title")).hint(t("desktop.daemon.status.builtInOnly")).error(state.error.clone()).control(status));
-    let manage = daemon_settings.get("manageBuiltInDaemon").and_then(Value::as_bool) != Some(false);
+    ui.row(
+        row(t("desktop.daemon.status.title"))
+            .hint(t("desktop.daemon.status.builtInOnly"))
+            .error(state.error.clone())
+            .control(status),
+    );
+    let manage = daemon_settings
+        .get("manageBuiltInDaemon")
+        .and_then(Value::as_bool)
+        != Some(false);
     let toggle_manage = (!busy).then(|| {
         handler(move |s, env| {
             if manage {
                 let confirmed = patch_daemon(json!({"manageBuiltInDaemon": false}));
-                s.confirm(t("desktop.daemon.management.pauseTitle"), t("desktop.daemon.management.pauseMessage"), t("desktop.daemon.management.pauseAndStop"), true, confirmed);
+                s.confirm(
+                    t("desktop.daemon.management.pauseTitle"),
+                    t("desktop.daemon.management.pauseMessage"),
+                    t("desktop.daemon.management.pauseAndStop"),
+                    true,
+                    confirmed,
+                );
             } else {
                 patch_daemon(json!({"manageBuiltInDaemon": true}))(s, env);
             }
         })
     });
-    ui.row(row(t("desktop.daemon.management.title")).hint(t("desktop.daemon.management.hint")).control(switch("local.manage", manage, toggle_manage)));
+    ui.row(
+        row(t("desktop.daemon.management.title"))
+            .hint(t("desktop.daemon.management.hint"))
+            .control(switch("local.manage", manage, toggle_manage)),
+    );
     let keep = is_true(daemon_settings, "keepRunningAfterQuit");
     ui.row(
         row(t("desktop.daemon.keepRunning.title"))
             .hint(t("desktop.daemon.keepRunning.hint"))
-            .control(switch("local.keep", keep, (!busy).then(|| patch_daemon(json!({"keepRunningAfterQuit": !keep}))))),
+            .control(switch(
+                "local.keep",
+                keep,
+                (!busy).then(|| patch_daemon(json!({"keepRunningAfterQuit": !keep}))),
+            )),
     );
-    let log_hint = state.daemon.get("logPath").filter(|p| !p.is_null()).map(scalar_text).unwrap_or_else(|| t("desktop.daemon.logs.unavailable"));
-    let logs = (!busy).then(|| handler(|s, env| report_local(s, env, "desktop_daemon_logs", t("desktop.daemon.logs.modalTitle"))));
-    ui.row(row(t("desktop.daemon.logs.title")).hint(log_hint).control(button("local.logs", t("desktop.daemon.logs.open"), logs).icon(Icon::FileText).ctl()));
-    let status_report = (!busy).then(|| handler(|s, env| report_local(s, env, "desktop_daemon_status", t("desktop.daemon.fullStatus.modalTitle"))));
+    let log_hint = state
+        .daemon
+        .get("logPath")
+        .filter(|p| !p.is_null())
+        .map(scalar_text)
+        .unwrap_or_else(|| t("desktop.daemon.logs.unavailable"));
+    let logs = (!busy).then(|| {
+        handler(|s, env| {
+            report_local(
+                s,
+                env,
+                "desktop_daemon_logs",
+                t("desktop.daemon.logs.modalTitle"),
+            )
+        })
+    });
+    ui.row(
+        row(t("desktop.daemon.logs.title")).hint(log_hint).control(
+            button("local.logs", t("desktop.daemon.logs.open"), logs)
+                .icon(Icon::FileText)
+                .ctl(),
+        ),
+    );
+    let status_report = (!busy).then(|| {
+        handler(|s, env| {
+            report_local(
+                s,
+                env,
+                "desktop_daemon_status",
+                t("desktop.daemon.fullStatus.modalTitle"),
+            )
+        })
+    });
     ui.row(
         row(t("desktop.daemon.fullStatus.title"))
             .hint(t("desktop.daemon.fullStatus.hint"))
-            .control(button("local.status", t("desktop.daemon.fullStatus.view"), status_report).icon(Icon::Activity).ctl()),
+            .control(
+                button(
+                    "local.status",
+                    t("desktop.daemon.fullStatus.view"),
+                    status_report,
+                )
+                .icon(Icon::Activity)
+                .ctl(),
+            ),
     );
     ui.card_end();
     ui.gap(12.0);
@@ -179,23 +279,58 @@ pub fn draw_local_daemon(ui: &mut Ui, s: &Settings) {
     let label = if pid.is_none() {
         t("desktop.daemon.status.notRunning")
     } else {
-        t(if owned { "desktop.daemon.lifecycle.owned" } else { "desktop.daemon.lifecycle.attached" })
+        t(if owned {
+            "desktop.daemon.lifecycle.owned"
+        } else {
+            "desktop.daemon.lifecycle.attached"
+        })
     };
-    let version = state.daemon.get("version").filter(|v| !v.is_null()).map(|v| format!("v{}", scalar_text(v)));
+    let version = state
+        .daemon
+        .get("version")
+        .filter(|v| !v.is_null())
+        .map(|v| format!("v{}", scalar_text(v)));
     let mut buttons = Vec::new();
     if !running {
-        let start = (!busy).then(|| handler(|s, env| run_local(s, env, "start_desktop_daemon", json!({}), true)));
+        let start = (!busy)
+            .then(|| handler(|s, env| run_local(s, env, "start_desktop_daemon", json!({}), true)));
         buttons.push(button("local.start", t("settingsNative.startDaemon"), start).ctl());
     }
     // Restart lives once, in the host's danger zone (`restart.confirmTitle`).
     if running && owned {
         let ownership = t("desktop.daemon.lifecycle.ownedMessage");
-        let home = state.daemon.get("home").filter(|v| !v.is_null()).map(scalar_text).unwrap_or_else(|| "—".into());
-        let message = ta("desktop.daemon.lifecycle.stopMessage", &[("ownership", &ownership), ("home", &home), ("pid", pid.as_deref().unwrap_or("—"))]);
+        let home = state
+            .daemon
+            .get("home")
+            .filter(|v| !v.is_null())
+            .map(scalar_text)
+            .unwrap_or_else(|| "—".into());
+        let message = ta(
+            "desktop.daemon.lifecycle.stopMessage",
+            &[
+                ("ownership", &ownership),
+                ("home", &home),
+                ("pid", pid.as_deref().unwrap_or("—")),
+            ],
+        );
         let stop = (!busy).then(|| {
             handler(move |s, _| {
-                let go = handler(|s, env| run_local(s, env, "stop_desktop_daemon", json!({"reason": "settings"}), true));
-                s.confirm(t("desktop.daemon.lifecycle.stopTitle"), message.clone(), t("desktop.daemon.lifecycle.stop"), true, go);
+                let go = handler(|s, env| {
+                    run_local(
+                        s,
+                        env,
+                        "stop_desktop_daemon",
+                        json!({"reason": "settings"}),
+                        true,
+                    )
+                });
+                s.confirm(
+                    t("desktop.daemon.lifecycle.stopTitle"),
+                    message.clone(),
+                    t("desktop.daemon.lifecycle.stop"),
+                    true,
+                    go,
+                );
             })
         });
         buttons.push(button("local.stop", t("desktop.daemon.lifecycle.stop"), stop).ctl());
@@ -206,15 +341,24 @@ pub fn draw_local_daemon(ui: &mut Ui, s: &Settings) {
 }
 
 /// Remove-host flow for the local host: stop managing the built-in daemon first.
-pub fn disable_builtin_then(s: &mut Settings, env: &mut Env, then: impl FnOnce(&mut Settings, &mut Env) + 'static) {
+pub fn disable_builtin_then(
+    s: &mut Settings,
+    env: &mut Env,
+    then: impl FnOnce(&mut Settings, &mut Env) + 'static,
+) {
     if !platform::desktop_available() {
         then(s, env);
         return;
     }
-    s.desktop(env, "desktop_settings_update", json!({"patch": {"daemon": {"manageBuiltInDaemon": false}}}), move |s, env, result| match result {
-        Ok(_) => then(s, env),
-        Err(error) => env.error(&error),
-    });
+    s.desktop(
+        env,
+        "desktop_settings_update",
+        json!({"patch": {"daemon": {"manageBuiltInDaemon": false}}}),
+        move |s, env, result| match result {
+            Ok(_) => then(s, env),
+            Err(error) => env.error(&error),
+        },
+    );
 }
 
 // ------------------------------------------------------------ notifications
@@ -255,10 +399,15 @@ fn permission_of(value: &Value) -> Option<String> {
 }
 
 fn load_notifications(s: &mut Settings, env: &mut Env) {
-    s.desktop(env, "desktop_settings_get", json!({}), |s, _, result| match result {
-        Ok(settings) => s.notifications.settings = settings,
-        Err(error) => s.notifications.error = Some(error.text()),
-    });
+    s.desktop(
+        env,
+        "desktop_settings_get",
+        json!({}),
+        |s, _, result| match result {
+            Ok(settings) => s.notifications.settings = settings,
+            Err(error) => s.notifications.error = Some(error.text()),
+        },
+    );
 }
 
 pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
@@ -297,39 +446,80 @@ pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
     };
     // Granted needs nothing; denied can only change in the OS settings.
     let control = if granted {
-        Ctl::Badge { label: t("settings.permissions.actions.granted"), tone: Some(ui.pal.success), xs: false, dot: None, icon: None }
+        Ctl::Badge {
+            label: t("settings.permissions.actions.granted"),
+            tone: Some(ui.pal.success),
+            xs: false,
+            dot: None,
+            icon: None,
+        }
     } else if denied {
-        Ctl::Badge { label: t("settingsNative.permissionDenied"), tone: Some(ui.pal.danger), xs: false, dot: None, icon: None }
+        Ctl::Badge {
+            label: t("settingsNative.permissionDenied"),
+            tone: Some(ui.pal.danger),
+            xs: false,
+            dot: None,
+            icon: None,
+        }
     } else {
-        let label = if busy { t("settings.permissions.actions.requesting") } else { t("settings.permissions.actions.request") };
-        button("notifications.request", label, request).icon(Icon::Bell).ctl()
+        let label = if busy {
+            t("settings.permissions.actions.requesting")
+        } else {
+            t("settings.permissions.actions.request")
+        };
+        button("notifications.request", label, request)
+            .icon(Icon::Bell)
+            .ctl()
     };
-    ui.row(row(t("settings.notifications.permission")).hint(status_hint).control(control));
-    let play_sound = get(&state.settings, "notifications").get("playSound").and_then(Value::as_bool) != Some(false);
+    ui.row(
+        row(t("settings.notifications.permission"))
+            .hint(status_hint)
+            .control(control),
+    );
+    let play_sound = get(&state.settings, "notifications")
+        .get("playSound")
+        .and_then(Value::as_bool)
+        != Some(false);
     let toggle = (!busy && state.settings.is_object()).then(|| {
         handler(move |s, env| {
             s.notifications.busy = true;
-            s.desktop(env, "desktop_settings_update", json!({"patch": {"notifications": {"playSound": !play_sound}}}), |s, env, result| {
-                s.notifications.busy = false;
-                match result {
-                    Ok(_) => {
-                        s.notifications.error = None;
-                        load_notifications(s, env);
+            s.desktop(
+                env,
+                "desktop_settings_update",
+                json!({"patch": {"notifications": {"playSound": !play_sound}}}),
+                |s, env, result| {
+                    s.notifications.busy = false;
+                    match result {
+                        Ok(_) => {
+                            s.notifications.error = None;
+                            load_notifications(s, env);
+                        }
+                        Err(error) => s.notifications.error = Some(error.text()),
                     }
-                    Err(error) => s.notifications.error = Some(error.text()),
-                }
-            });
+                },
+            );
         })
     });
-    ui.row(row(t("settings.notifications.playSound")).hint(t("settings.notifications.playSoundHint")).control(switch("notifications.sound", play_sound, toggle)));
+    ui.row(
+        row(t("settings.notifications.playSound"))
+            .hint(t("settings.notifications.playSoundHint"))
+            .control(switch("notifications.sound", play_sound, toggle)),
+    );
     let send = (!busy && available && !denied).then(|| {
         handler(|s, env| {
             s.notifications.busy = true;
             s.notifications.test_sent = false;
             s.notifications.test_error = None;
-            let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+            let millis = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
             let id = (millis & 0x7fff_ffff) as i32;
-            let token = env.bridge.notify(id, "Passession".into(), t("settings.notifications.testHint"));
+            let token = env.bridge.notify(
+                id,
+                "Passession".into(),
+                t("settings.notifications.testHint"),
+            );
             s.bridge_job(token, |s, _, result| {
                 s.notifications.busy = false;
                 match result {
@@ -339,16 +529,39 @@ pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
             });
         })
     });
-    let hint = if denied { t("settings.notifications.permissionRequired") } else { t("settings.notifications.testHint") };
-    let label = if busy { t("settings.notifications.sending") } else { t("settings.notifications.send") };
-    ui.row(row(t("settings.notifications.test")).hint(hint).error(state.error.clone()).control(button("notifications.send", label, send).ctl()));
+    let hint = if denied {
+        t("settings.notifications.permissionRequired")
+    } else {
+        t("settings.notifications.testHint")
+    };
+    let label = if busy {
+        t("settings.notifications.sending")
+    } else {
+        t("settings.notifications.send")
+    };
+    ui.row(
+        row(t("settings.notifications.test"))
+            .hint(hint)
+            .error(state.error.clone())
+            .control(button("notifications.send", label, send).ctl()),
+    );
     ui.card_end();
     if state.test_sent {
         ui.gap(12.0);
-        ui.alert(true, &t("settings.notifications.sentTitle"), Some(&t("settings.notifications.sentDescription")), None);
+        ui.alert(
+            true,
+            &t("settings.notifications.sentTitle"),
+            Some(&t("settings.notifications.sentDescription")),
+            None,
+        );
     } else if let Some(error) = &state.test_error {
         ui.gap(12.0);
-        ui.alert(false, &t("settings.notifications.sendFailedTitle"), Some(error), None);
+        ui.alert(
+            false,
+            &t("settings.notifications.sendFailedTitle"),
+            Some(error),
+            None,
+        );
     }
     ui.gap(24.0);
 }
@@ -381,16 +594,32 @@ fn run_diagnostic(s: &mut Settings, env: &mut Env) {
             entry
         }).collect::<Vec<_>>(),
     });
-    let desktop_steps: Vec<(&'static str, &'static str)> = if DESKTOP && platform::desktop_available() {
-        vec![("desktop", "desktop_get_runtime_info"), ("daemon", "desktop_daemon_status"), ("updates", "desktop_update_diagnostics"), ("logs", "desktop_app_logs")]
-    } else {
-        Vec::new()
-    };
-    let connected: Vec<String> = hosts.iter().filter(|h| h.status == Status::Connected).map(|h| h.server_id.clone()).collect();
+    let desktop_steps: Vec<(&'static str, &'static str)> =
+        if DESKTOP && platform::desktop_available() {
+            vec![
+                ("desktop", "desktop_get_runtime_info"),
+                ("daemon", "desktop_daemon_status"),
+                ("updates", "desktop_update_diagnostics"),
+                ("logs", "desktop_app_logs"),
+            ]
+        } else {
+            Vec::new()
+        };
+    let connected: Vec<String> = hosts
+        .iter()
+        .filter(|h| h.status == Status::Connected)
+        .map(|h| h.server_id.clone())
+        .collect();
     diagnostic_desktop_step(s, env, report, desktop_steps, connected);
 }
 
-fn diagnostic_desktop_step(s: &mut Settings, env: &mut Env, report: Value, mut steps: Vec<(&'static str, &'static str)>, hosts: Vec<String>) {
+fn diagnostic_desktop_step(
+    s: &mut Settings,
+    env: &mut Env,
+    report: Value,
+    mut steps: Vec<(&'static str, &'static str)>,
+    hosts: Vec<String>,
+) {
     if steps.is_empty() {
         diagnostic_host_step(s, env, report, hosts);
         return;
@@ -414,17 +643,24 @@ fn diagnostic_host_step(s: &mut Settings, env: &mut Env, report: Value, mut host
     }
     let host = hosts.remove(0);
     let key = host.clone();
-    s.request(env, &host, "diagnostics.request", json!({}), "diagnostics.response", move |s, env, result| {
-        let mut report = report;
-        if !report["hostDiagnostics"].is_object() {
-            report["hostDiagnostics"] = json!({});
-        }
-        report["hostDiagnostics"][key] = match result {
-            Ok(value) => get(&value, "diagnostic").clone(),
-            Err(error) => json!({"error": error.text()}),
-        };
-        diagnostic_host_step(s, env, report, hosts);
-    });
+    s.request(
+        env,
+        &host,
+        "diagnostics.request",
+        json!({}),
+        "diagnostics.response",
+        move |s, env, result| {
+            let mut report = report;
+            if !report["hostDiagnostics"].is_object() {
+                report["hostDiagnostics"] = json!({});
+            }
+            report["hostDiagnostics"][key] = match result {
+                Ok(value) => get(&value, "diagnostic").clone(),
+                Err(error) => json!({"error": error.text()}),
+            };
+            diagnostic_host_step(s, env, report, hosts);
+        },
+    );
 }
 
 pub fn draw_diagnostics(ui: &mut Ui, s: &Settings) {
@@ -432,8 +668,16 @@ pub fn draw_diagnostics(ui: &mut Ui, s: &Settings) {
     ui.section_title(&t("settings.diagnostics.title"), None, None);
     ui.card_begin();
     let run = (!state.running).then(|| handler(run_diagnostic));
-    let label = if state.running { t("settings.diagnostics.app.running") } else { t("settings.diagnostics.app.run") };
-    ui.row(row(t("settings.diagnostics.app.rowTitle")).hint(t("settings.diagnostics.app.rowHint")).control(button("diagnostics.run", label, run).ctl()));
+    let label = if state.running {
+        t("settings.diagnostics.app.running")
+    } else {
+        t("settings.diagnostics.app.run")
+    };
+    ui.row(
+        row(t("settings.diagnostics.app.rowTitle"))
+            .hint(t("settings.diagnostics.app.rowHint"))
+            .control(button("diagnostics.run", label, run).ctl()),
+    );
     let play = (!state.playing).then(|| {
         handler(|s, env| {
             s.diagnostics.playing = true;
@@ -442,13 +686,28 @@ pub fn draw_diagnostics(ui: &mut Ui, s: &Settings) {
             s.bridge_job(token, |s, _, result: Result<Value, ReqError>| {
                 s.diagnostics.playing = false;
                 if let Err(error) = result {
-                    s.diagnostics.playback_result = Some(ta("settings.diagnostics.playbackFailed", &[("message", &error.text())]));
+                    s.diagnostics.playback_result = Some(ta(
+                        "settings.diagnostics.playbackFailed",
+                        &[("message", &error.text())],
+                    ));
                 }
             });
         })
     });
-    let label = if state.playing { t("settings.diagnostics.playing") } else { t("settings.diagnostics.playTest") };
-    ui.row(row(t("settings.diagnostics.testAudio")).hint_opt(state.playback_result.clone()).control(button("diagnostics.play", label, play).variant(Variant::Outline).ctl()));
+    let label = if state.playing {
+        t("settings.diagnostics.playing")
+    } else {
+        t("settings.diagnostics.playTest")
+    };
+    ui.row(
+        row(t("settings.diagnostics.testAudio"))
+            .hint_opt(state.playback_result.clone())
+            .control(
+                button("diagnostics.play", label, play)
+                    .variant(Variant::Outline)
+                    .ctl(),
+            ),
+    );
     ui.card_end();
     ui.gap(24.0);
 }

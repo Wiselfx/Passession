@@ -3,7 +3,10 @@
 //! not access Makepad fonts or UI draw state.
 
 use makepad_widgets::{ToUIReceiver, Vec4};
-use paseo_highlight::{ColorScheme, Highlighter, Language, StyledRange, SyntaxThemeId, get_language_for_file, resolve_syntax_colors};
+use paseo_highlight::{
+    ColorScheme, Highlighter, Language, StyledRange, SyntaxThemeId, get_language_for_file,
+    resolve_syntax_colors,
+};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -15,7 +18,6 @@ pub const HIGHLIGHT_LIMIT: usize = 100_000;
 
 /// One colored byte range of the source (None = foreground).
 pub type Colored = Rc<Vec<(std::ops::Range<usize>, Option<Vec4>)>>;
-
 
 type RawColored = Vec<(std::ops::Range<usize>, Option<Vec4>)>;
 const PENDING_FENCES: usize = 16;
@@ -85,17 +87,20 @@ impl FenceWorker {
         let receiver = ToUIReceiver::default();
         let done = receiver.sender();
         let (sender, work) = sync_channel::<FenceWork>(1);
-        let spawned = std::thread::Builder::new().name("paseo-chat-highlight".into()).spawn(move || {
-            let mut highlighter = Highlighter::new().ok();
-            while let Ok(job) = work.recv() {
-                let result = highlighter.as_mut()
-                    .and_then(|h| h.highlight_spans(&job.code, job.language).ok())
-                    .map(|spans| resolve(spans, &job.theme, job.dark));
-                if done.send(result).is_err() {
-                    break;
+        let spawned = std::thread::Builder::new()
+            .name("paseo-chat-highlight".into())
+            .spawn(move || {
+                let mut highlighter = Highlighter::new().ok();
+                while let Ok(job) = work.recv() {
+                    let result = highlighter
+                        .as_mut()
+                        .and_then(|h| h.highlight_spans(&job.code, job.language).ok())
+                        .map(|spans| resolve(spans, &job.theme, job.dark));
+                    if done.send(result).is_err() {
+                        break;
+                    }
                 }
-            }
-        });
+            });
         Self {
             sender: spawned.ok().map(|_| sender),
             receiver,
@@ -109,12 +114,18 @@ impl FenceWorker {
             return;
         }
         while let Some(job) = self.pending.pop_front() {
-            let Some(slot) = job.slot.upgrade() else { continue };
+            let Some(slot) = job.slot.upgrade() else {
+                continue;
+            };
             if slot.borrow().ready || slot.borrow().key != Some(job.work.key) {
                 continue;
             }
             let key = job.work.key;
-            if self.sender.as_ref().is_some_and(|sender| sender.try_send(job.work).is_ok()) {
+            if self
+                .sender
+                .as_ref()
+                .is_some_and(|sender| sender.try_send(job.work).is_ok())
+            {
                 self.active = Some((job.slot, key));
                 break;
             }
@@ -134,7 +145,9 @@ thread_local! {
 pub fn poll() -> bool {
     FENCE_WORKER.with(|worker| {
         let mut worker = worker.borrow_mut();
-        let Some(worker) = worker.as_mut() else { return false };
+        let Some(worker) = worker.as_mut() else {
+            return false;
+        };
         let mut changed = false;
         while let Ok(result) = worker.receiver.try_recv() {
             changed = true;
@@ -151,7 +164,12 @@ pub fn poll() -> bool {
 
 /// MarkdownCodeBlock `_aliases` mapped onto the native grammar set.
 fn fence_language(info: &str) -> Option<Language> {
-    let first = info.split_whitespace().next().unwrap_or("").trim_start_matches('.').to_lowercase();
+    let first = info
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('.')
+        .to_lowercase();
     if first.is_empty() {
         return None;
     }
@@ -181,10 +199,19 @@ fn color(hex: &str) -> Vec4 {
 
 fn resolve(spans: Vec<StyledRange>, theme: &str, dark: bool) -> RawColored {
     let theme = SyntaxThemeId::from_name(theme).unwrap_or(SyntaxThemeId::One);
-    let colors = resolve_syntax_colors(theme, if dark { ColorScheme::Dark } else { ColorScheme::Light });
-    spans.into_iter().map(|s| (s.range, s.style.map(|role| color(colors.color(role))))).collect()
+    let colors = resolve_syntax_colors(
+        theme,
+        if dark {
+            ColorScheme::Dark
+        } else {
+            ColorScheme::Light
+        },
+    );
+    spans
+        .into_iter()
+        .map(|s| (s.range, s.style.map(|role| color(colors.color(role)))))
+        .collect()
 }
-
 
 fn key(code: &str, language: Language, theme: &str, dark: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -195,7 +222,13 @@ fn key(code: &str, language: Language, theme: &str, dark: bool) -> u64 {
     hasher.finish()
 }
 
-fn request_colors(request: &mut FenceRequest, code: &str, language: Option<Language>, theme: &str, dark: bool) -> Option<Colored> {
+fn request_colors(
+    request: &mut FenceRequest,
+    code: &str,
+    language: Option<Language>,
+    theme: &str,
+    dark: bool,
+) -> Option<Colored> {
     if code.len() > HIGHLIGHT_LIMIT {
         *request.0.borrow_mut() = FenceSlot::default();
         return None;
@@ -220,13 +253,22 @@ fn request_colors(request: &mut FenceRequest, code: &str, language: Option<Langu
         let worker = worker.get_or_insert_with(FenceWorker::new);
         let slot = Rc::downgrade(&request.0);
         worker.pending.retain(|job| job.slot.strong_count() > 0);
-        let queued = worker.pending.iter().position(|job| Weak::ptr_eq(&job.slot, &slot));
+        let queued = worker
+            .pending
+            .iter()
+            .position(|job| Weak::ptr_eq(&job.slot, &slot));
         if queued.is_none() && worker.pending.len() >= PENDING_FENCES {
             return;
         }
         let job = QueuedFence {
             slot,
-            work: FenceWork { key, code: code.to_owned(), language, theme: theme.to_owned(), dark },
+            work: FenceWork {
+                key,
+                code: code.to_owned(),
+                language,
+                theme: theme.to_owned(),
+                dark,
+            },
         };
         request.0.borrow_mut().submitted = Some(key);
         if let Some(index) = queued {
@@ -240,13 +282,24 @@ fn request_colors(request: &mut FenceRequest, code: &str, language: Option<Langu
 }
 /// Colors only for this source/language/theme revision. Pending revisions
 /// draw selectable plain text, as file previews do while their worker runs.
-pub fn fence(request: &mut FenceRequest, code: &str, lang: &str, theme: &str, dark: bool) -> Option<Colored> {
+pub fn fence(
+    request: &mut FenceRequest,
+    code: &str,
+    lang: &str,
+    theme: &str,
+    dark: bool,
+) -> Option<Colored> {
     request_colors(request, code, fence_language(lang), theme, dark)
 }
 
-
 /// Colors for file content by its path (`SourceController.languageFor`).
-pub fn file(request: &mut FenceRequest, code: &str, path: &str, theme: &str, dark: bool) -> Option<Colored> {
+pub fn file(
+    request: &mut FenceRequest,
+    code: &str,
+    path: &str,
+    theme: &str,
+    dark: bool,
+) -> Option<Colored> {
     request_colors(request, code, get_language_for_file(path), theme, dark)
 }
 

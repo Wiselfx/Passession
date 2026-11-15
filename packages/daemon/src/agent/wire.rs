@@ -34,11 +34,13 @@ pub(super) fn forward_receipt_updates(
                 break;
             };
             let agent_id = text(&event["payload"]["receipt"], "agentId").to_owned();
-            for source in app
-                .transport
-                .event_sources(super::receipts::RECEIPT_UPDATE)
-            {
-                if app.agents.authorize(source.principal(), &agent_id).await.is_err() {
+            for source in app.transport.event_sources(super::receipts::RECEIPT_UPDATE) {
+                if app
+                    .agents
+                    .authorize(source.principal(), &agent_id)
+                    .await
+                    .is_err()
+                {
                     continue;
                 }
                 if let Err(error) = source.emit_event(event.clone()).await {

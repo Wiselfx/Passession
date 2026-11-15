@@ -1,7 +1,10 @@
 //! The shell's one adapter to `paseo-gui-platform` (platform-api.md). Every call is
 //! non-blocking; results arrive as `PlatformAction`s in `Event::Actions`.
 
-use paseo_gui_platform::{CloseDecision, PlatformAction, PlatformEvent, PlatformHandle, PlatformRequestId, PlatformValue, QuitReason};
+use paseo_gui_platform::{
+    CloseDecision, PlatformAction, PlatformEvent, PlatformHandle, PlatformRequestId, PlatformValue,
+    QuitReason,
+};
 
 fn handle() -> Option<PlatformHandle> {
     paseo_gui_platform::platform()
@@ -70,7 +73,9 @@ pub fn report_error(message: &str) {
 }
 
 pub fn revoke_push_host(host_id: &str) -> Option<PlatformRequestId> {
-    handle().filter(|h| h.capabilities().push).map(|h| h.revoke_push_host(host_id))
+    handle()
+        .filter(|h| h.capabilities().push)
+        .map(|h| h.revoke_push_host(host_id))
 }
 
 pub fn window_geometry(key: &str) -> Option<paseo_gui_platform::WindowGeometry> {
@@ -84,25 +89,34 @@ pub fn record_window_geometry(key: &str, geometry: paseo_gui_platform::WindowGeo
 }
 
 pub fn safe_insets() -> paseo_gui_platform::SafeInsets {
-    handle().map(|h| h.safe_insets()).unwrap_or(paseo_gui_platform::SafeInsets {
-        top: 0.0,
-        bottom: 0.0,
-        left: 0.0,
-        right: 0.0,
-        keyboard: 0.0,
-        keyboard_visible: false,
-    })
+    handle()
+        .map(|h| h.safe_insets())
+        .unwrap_or(paseo_gui_platform::SafeInsets {
+            top: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+            keyboard: 0.0,
+            keyboard_visible: false,
+        })
 }
 
 pub fn pick_image_file() -> Option<PlatformRequestId> {
     handle().map(|h| {
-        h.pick_files(paseo_gui_platform::PickFilesOptions { multiple: false, images_only: true, title: None })
+        h.pick_files(paseo_gui_platform::PickFilesOptions {
+            multiple: false,
+            images_only: true,
+            title: None,
+        })
     })
 }
 
 /// Platform actions in an `Event::Actions` batch.
 pub fn actions(actions: &makepad_widgets::Actions) -> Vec<PlatformAction> {
-    actions.iter().filter_map(|action| action.downcast_ref::<PlatformAction>().cloned()).collect()
+    actions
+        .iter()
+        .filter_map(|action| action.downcast_ref::<PlatformAction>().cloned())
+        .collect()
 }
 
 pub fn close_decision(value: &PlatformValue) -> Option<CloseDecision> {

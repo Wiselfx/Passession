@@ -1,11 +1,15 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::{fs::File, io::{BufReader, BufWriter, Seek, Write}};
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter, Seek, Write},
+};
 use tokio::task::JoinHandle;
 
 const MEMORY_EVENTS: usize = 4096;
 const MEMORY_BYTES: usize = 16 * 1024 * 1024;
-type Reader = serde_json::StreamDeserializer<'static, serde_json::de::IoRead<BufReader<File>>, Value>;
+type Reader =
+    serde_json::StreamDeserializer<'static, serde_json::de::IoRead<BufReader<File>>, Value>;
 type Spilled = (BufWriter<File>, Vec<Value>);
 type ReadBatch = (Option<Reader>, Vec<Value>);
 
@@ -32,7 +36,8 @@ impl EventStage {
         self.settle().await?;
         let bytes = event_size(&event);
         if !self.events.is_empty()
-            && (self.events.len() >= MEMORY_EVENTS || self.bytes.saturating_add(bytes) > MEMORY_BYTES)
+            && (self.events.len() >= MEMORY_EVENTS
+                || self.bytes.saturating_add(bytes) > MEMORY_BYTES)
         {
             self.flush().await?;
         }
@@ -53,11 +58,16 @@ impl EventStage {
         self.flushing = Some(tokio::task::spawn_blocking(move || {
             let mut writer = match spill {
                 Some(writer) => writer,
-                None => BufWriter::new(tempfile::tempfile().context("Creating pending event spool")?),
+                None => {
+                    BufWriter::new(tempfile::tempfile().context("Creating pending event spool")?)
+                }
             };
             for event in events.drain(..) {
-                serde_json::to_writer(&mut writer, &event).context("Writing pending event spool")?;
-                writer.write_all(b"\n").context("Writing pending event separator")?;
+                serde_json::to_writer(&mut writer, &event)
+                    .context("Writing pending event spool")?;
+                writer
+                    .write_all(b"\n")
+                    .context("Writing pending event separator")?;
             }
             Ok::<_, anyhow::Error>((writer, events))
         }));
@@ -67,7 +77,9 @@ impl EventStage {
     /// Completes a flush whose original awaiting caller may have been dropped.
     /// Rows pushed after it stay in the memory tail, behind the spilled rows.
     async fn settle(&mut self) -> Result<()> {
-        let Some(task) = self.flushing.as_mut() else { return Ok(()) };
+        let Some(task) = self.flushing.as_mut() else {
+            return Ok(());
+        };
         let result = task.await;
         self.flushing = None;
         let (writer, events) = result.context("Pending event spool writer stopped")??;
@@ -83,14 +95,23 @@ impl EventStage {
         self.settle().await?;
         let disk = match self.spill {
             None => None,
-            Some(mut writer) => Some(tokio::task::spawn_blocking(move || {
-                writer.flush().context("Flushing pending event spool")?;
-                let mut file = writer.into_inner().map_err(|error| error.into_error())?;
-                file.rewind().context("Rewinding pending event spool")?;
-                Ok::<_, anyhow::Error>(serde_json::Deserializer::from_reader(BufReader::new(file)).into_iter())
-            }).await??),
+            Some(mut writer) => Some(
+                tokio::task::spawn_blocking(move || {
+                    writer.flush().context("Flushing pending event spool")?;
+                    let mut file = writer.into_inner().map_err(|error| error.into_error())?;
+                    file.rewind().context("Rewinding pending event spool")?;
+                    Ok::<_, anyhow::Error>(
+                        serde_json::Deserializer::from_reader(BufReader::new(file)).into_iter(),
+                    )
+                })
+                .await??,
+            ),
         };
-        Ok(Replay { disk, reading: None, tail: self.events })
+        Ok(Replay {
+            disk,
+            reading: None,
+            tail: self.events,
+        })
     }
 }
 
@@ -104,21 +125,22 @@ pub(crate) struct Replay {
 impl Replay {
     pub(crate) async fn next_batch(&mut self) -> Result<Vec<Value>> {
         if self.reading.is_none()
-            && let Some(mut reader) = self.disk.take() {
-                self.reading = Some(tokio::task::spawn_blocking(move || {
-                    let mut batch = Vec::new();
-                    let mut bytes = 0usize;
-                    while batch.len() < MEMORY_EVENTS && bytes < MEMORY_BYTES {
-                        let Some(event) = reader.next() else {
-                            return Ok::<_, anyhow::Error>((None, batch));
-                        };
-                        let event = event.context("Reading pending event spool")?;
-                        bytes = bytes.saturating_add(event_size(&event));
-                        batch.push(event);
-                    }
-                    Ok((Some(reader), batch))
-                }));
-            }
+            && let Some(mut reader) = self.disk.take()
+        {
+            self.reading = Some(tokio::task::spawn_blocking(move || {
+                let mut batch = Vec::new();
+                let mut bytes = 0usize;
+                while batch.len() < MEMORY_EVENTS && bytes < MEMORY_BYTES {
+                    let Some(event) = reader.next() else {
+                        return Ok::<_, anyhow::Error>((None, batch));
+                    };
+                    let event = event.context("Reading pending event spool")?;
+                    bytes = bytes.saturating_add(event_size(&event));
+                    batch.push(event);
+                }
+                Ok((Some(reader), batch))
+            }));
+        }
         if let Some(task) = self.reading.as_mut() {
             let result = task.await;
             self.reading = None;
@@ -142,7 +164,9 @@ fn event_heap_size(value: &Value) -> usize {
     match value {
         Value::String(value) => value.capacity(),
         Value::Array(values) => values.iter().fold(
-            values.capacity().saturating_mul(std::mem::size_of::<Value>()),
+            values
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Value>()),
             |bytes, value| bytes.saturating_add(event_heap_size(value)),
         ),
         Value::Object(values) => {
@@ -157,14 +181,16 @@ fn event_heap_size(value: &Value) -> usize {
             } else {
                 entry.saturating_mul(16).saturating_add(
                     values.len().saturating_mul(
-                        entry.saturating_mul(2).saturating_add(
-                            std::mem::size_of::<usize>().saturating_mul(4),
-                        ),
+                        entry
+                            .saturating_mul(2)
+                            .saturating_add(std::mem::size_of::<usize>().saturating_mul(4)),
                     ),
                 )
             };
             values.iter().fold(storage, |bytes, (key, value)| {
-                bytes.saturating_add(key.capacity()).saturating_add(event_heap_size(value))
+                bytes
+                    .saturating_add(key.capacity())
+                    .saturating_add(event_heap_size(value))
             })
         }
         _ => 0,
@@ -197,7 +223,9 @@ mod tests {
         let mut index = 0;
         loop {
             let batch = replay.next_batch().await.unwrap();
-            if batch.is_empty() { break; }
+            if batch.is_empty() {
+                break;
+            }
             // Independently count only the array slots, excluding map estimates.
             // Replay may cross its budget by one complete frame, never by more.
             let mut slots_before_last = 0usize;
@@ -276,7 +304,9 @@ mod tests {
     #[tokio::test]
     async fn object_entry_storage_spills_without_large_strings() {
         let entries = MEMORY_BYTES / std::mem::size_of::<(String, Value)>() + 1;
-        let values = (0..entries).map(|index| (index.to_string(), Value::Null)).collect();
+        let values = (0..entries)
+            .map(|index| (index.to_string(), Value::Null))
+            .collect();
         let mut stage = EventStage::default();
         stage.push(Value::Object(values)).await.unwrap();
         assert!(stage.spill.is_some());
@@ -285,9 +315,11 @@ mod tests {
         assert_eq!(batch.len(), 1);
         let values = batch[0].as_object().unwrap();
         assert_eq!(values.len(), entries);
-        assert!(values.iter().all(|(key, value)| {
-            key.parse::<usize>().unwrap() < entries && value.is_null()
-        }));
+        assert!(
+            values
+                .iter()
+                .all(|(key, value)| { key.parse::<usize>().unwrap() < entries && value.is_null() })
+        );
         assert!(replay.next_batch().await.unwrap().is_empty());
     }
 
@@ -295,7 +327,10 @@ mod tests {
     async fn spills_by_count_and_replays_disk_before_memory_tail() {
         let mut stage = EventStage::default();
         for index in 0..MEMORY_EVENTS * 2 + 3 {
-            stage.push(json!({"index":index,"text":format!("row {index}")})).await.unwrap();
+            stage
+                .push(json!({"index":index,"text":format!("row {index}")}))
+                .await
+                .unwrap();
         }
         assert!(stage.spill.is_some());
         assert!(stage.events.len() <= MEMORY_EVENTS);
@@ -303,7 +338,9 @@ mod tests {
         let mut index = 0;
         loop {
             let batch = replay.next_batch().await.unwrap();
-            if batch.is_empty() { break; }
+            if batch.is_empty() {
+                break;
+            }
             for event in batch {
                 assert_eq!(event, json!({"index":index,"text":format!("row {index}")}));
                 index += 1;
@@ -317,14 +354,19 @@ mod tests {
         let mut stage = EventStage::default();
         let sizes = [MEMORY_BYTES / 2, MEMORY_BYTES / 2, MEMORY_BYTES + 1, 7];
         for (index, size) in sizes.into_iter().enumerate() {
-            stage.push(json!({"index":index,"text":"x".repeat(size)})).await.unwrap();
+            stage
+                .push(json!({"index":index,"text":"x".repeat(size)}))
+                .await
+                .unwrap();
             assert!(stage.bytes <= MEMORY_BYTES);
         }
         let mut replay = stage.replay().await.unwrap();
         let mut index = 0;
         loop {
             let batch = replay.next_batch().await.unwrap();
-            if batch.is_empty() { break; }
+            if batch.is_empty() {
+                break;
+            }
             for event in batch {
                 assert_eq!(event["index"], index);
                 let text = event["text"].as_str().unwrap();
@@ -377,7 +419,9 @@ mod tests {
             }
             loop {
                 let batch = replay.next_batch().await.unwrap();
-                if batch.is_empty() { break; }
+                if batch.is_empty() {
+                    break;
+                }
                 seen.extend(batch);
             }
             for (event, index) in seen.iter().zip(&expected) {

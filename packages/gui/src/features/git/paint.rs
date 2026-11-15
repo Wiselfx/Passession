@@ -4,8 +4,8 @@
 
 use crate::common::paint::{Painter, TextSpec};
 use crate::features::files::{DrawFilesImage, file_icon};
-use makepad_widgets::*;
 use makepad_widgets::makepad_draw::text::layouter::LaidoutText;
+use makepad_widgets::*;
 use std::rc::Rc;
 
 pub use crate::common::paint::Font;
@@ -176,20 +176,42 @@ impl GitPaint {
         let stroke = 1.25 * unit;
         // DrawRing radius = half the rect − stroke / 2 − 0.5.
         let side = 2.0 * (6.25 * unit + stroke / 2.0 + 0.5);
-        self.painter.ring(cx, rect(center.x - side / 2.0, center.y - side / 2.0, side, side), color, stroke, 1.0, 0.0);
+        self.painter.ring(
+            cx,
+            rect(center.x - side / 2.0, center.y - side / 2.0, side, side),
+            color,
+            stroke,
+            1.0,
+            0.0,
+        );
         // The gear spans 3.5..10.5 of the viewBox; DrawIcon fits its bounds to the rect.
         self.manual_gear.color = color;
         let origin = center - dvec2(7.5 * unit, 7.5 * unit);
         self.manual_gear.draw_walk(
             cx,
-            Walk { abs_pos: Some(origin + dvec2(4.0 * unit, 4.0 * unit)), margin: Margin::default(), width: Size::Fixed(7.0 * unit), height: Size::Fixed(7.0 * unit) },
+            Walk {
+                abs_pos: Some(origin + dvec2(4.0 * unit, 4.0 * unit)),
+                margin: Margin::default(),
+                width: Size::Fixed(7.0 * unit),
+                height: Size::Fixed(7.0 * unit),
+            },
         );
     }
 
     /// The layout `text_centered` draws for `text` (fitted to `max_width`)
     /// and its top-left corner: geometry for selection hit tests.
     #[allow(clippy::too_many_arguments)]
-    pub fn line_layout(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, x: f64, top: f64, height: f64, text: &str, max_width: f64) -> Option<(Rc<LaidoutText>, DVec2)> {
+    pub fn line_layout(
+        &mut self,
+        cx: &mut Cx2d,
+        font: Font,
+        size_px: f64,
+        x: f64,
+        top: f64,
+        height: f64,
+        text: &str,
+        max_width: f64,
+    ) -> Option<(Rc<LaidoutText>, DVec2)> {
         if text.is_empty() || max_width <= 0.0 {
             return None;
         }
@@ -201,8 +223,20 @@ impl GitPaint {
     }
 
     /// The layout `text_wrapped` draws for `text` at `max_width`.
-    pub fn wrapped_layout(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, text: &str, max_width: f64) -> Rc<LaidoutText> {
-        self.painter.layout(cx, Self::spec(font, size_px, transparent()), text, Some(max_width.max(1.0)))
+    pub fn wrapped_layout(
+        &mut self,
+        cx: &mut Cx2d,
+        font: Font,
+        size_px: f64,
+        text: &str,
+        max_width: f64,
+    ) -> Rc<LaidoutText> {
+        self.painter.layout(
+            cx,
+            Self::spec(font, size_px, transparent()),
+            text,
+            Some(max_width.max(1.0)),
+        )
     }
 
     pub fn fill(&mut self, cx: &mut Cx2d, area: Rect, color: Vec4) {
@@ -212,7 +246,14 @@ impl GitPaint {
     }
 
     /// A rounded box with an optional `(colour, width)` border inside its bounds.
-    pub fn rounded(&mut self, cx: &mut Cx2d, area: Rect, color: Vec4, radius: f64, border: Option<(Vec4, f64)>) {
+    pub fn rounded(
+        &mut self,
+        cx: &mut Cx2d,
+        area: Rect,
+        color: Vec4,
+        radius: f64,
+        border: Option<(Vec4, f64)>,
+    ) {
         if area.size.x <= 0.0 || area.size.y <= 0.0 {
             return;
         }
@@ -223,43 +264,86 @@ impl GitPaint {
     }
 
     /// An arc from `start` to `end` (fractions of a turn clockwise from twelve).
-    pub fn arc(&mut self, cx: &mut Cx2d, area: Rect, color: Vec4, start: f32, end: f32, stroke: f64) {
+    pub fn arc(
+        &mut self,
+        cx: &mut Cx2d,
+        area: Rect,
+        color: Vec4,
+        start: f32,
+        end: f32,
+        stroke: f64,
+    ) {
         let progress = (end - start).max(0.0) as f64;
         if progress <= 0.0 {
             return;
         }
         // DrawRing's zero angle points down (six o'clock); twelve is half a turn on.
-        self.painter.ring(cx, area, color, stroke, progress, start as f64 + 0.5);
+        self.painter
+            .ring(cx, area, color, stroke, progress, start as f64 + 0.5);
     }
 
     /// A turning partial ring; callers request frames only while pending.
     pub fn spinner(&mut self, cx: &mut Cx2d, center: DVec2, size: f64, color: Vec4, phase: f64) {
         let area = rect(center.x - size / 2.0, center.y - size / 2.0, size, size);
-        self.painter.ring(cx, area, color, (size / 9.0).max(1.5), 0.7, (phase * 0.8).fract());
+        self.painter.ring(
+            cx,
+            area,
+            color,
+            (size / 9.0).max(1.5),
+            0.7,
+            (phase * 0.8).fract(),
+        );
     }
 
     /// Single-line size of `text`.
     pub fn measure(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, text: &str) -> DVec2 {
         if text.is_empty() {
-            return dvec2(0.0, self.painter.line_height(cx, Self::spec(font, size_px, transparent())));
+            return dvec2(
+                0.0,
+                self.painter
+                    .line_height(cx, Self::spec(font, size_px, transparent())),
+            );
         }
-        self.painter.measure(cx, Self::spec(font, size_px, transparent()), text)
+        self.painter
+            .measure(cx, Self::spec(font, size_px, transparent()), text)
     }
 
     /// One line at its top-left `pos`; returns its width.
-    pub fn text(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, color: Vec4, pos: DVec2, text: &str) -> f64 {
+    pub fn text(
+        &mut self,
+        cx: &mut Cx2d,
+        font: Font,
+        size_px: f64,
+        color: Vec4,
+        pos: DVec2,
+        text: &str,
+    ) -> f64 {
         if text.is_empty() {
             return 0.0;
         }
-        self.painter.text(cx, pos, Self::spec(font, size_px, color), text).x
+        self.painter
+            .text(cx, pos, Self::spec(font, size_px, color), text)
+            .x
     }
 
     /// `text` with a trailing ellipsis so it fits `max_width`.
-    pub fn ellipsize(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, text: &str, max_width: f64) -> String {
+    pub fn ellipsize(
+        &mut self,
+        cx: &mut Cx2d,
+        font: Font,
+        size_px: f64,
+        text: &str,
+        max_width: f64,
+    ) -> String {
         if max_width <= 0.0 {
             return String::new();
         }
-        self.painter.fit(cx, Self::spec(font, size_px, transparent()), text, max_width)
+        self.painter.fit(
+            cx,
+            Self::spec(font, size_px, transparent()),
+            text,
+            max_width,
+        )
     }
 
     /// One line clipped with an ellipsis; returns the drawn width.
@@ -296,7 +380,13 @@ impl GitPaint {
             return 0.0;
         }
         self.painter
-            .text_in(cx, rect(x, top, max_width, height), Self::spec(font, size_px, color), text, 0.0)
+            .text_in(
+                cx,
+                rect(x, top, max_width, height),
+                Self::spec(font, size_px, color),
+                text,
+                0.0,
+            )
             .size
             .x
     }
@@ -318,17 +408,36 @@ impl GitPaint {
         text: &str,
         visible_from: f64,
     ) -> f64 {
-        self.painter
-            .line_run(cx, Self::spec(font, size_px, color), line_x, x, top, height, text, visible_from)
+        self.painter.line_run(
+            cx,
+            Self::spec(font, size_px, color),
+            line_x,
+            x,
+            top,
+            height,
+            text,
+            visible_from,
+        )
     }
 
     /// Height of `text` word-wrapped at `max_width`.
-    pub fn measure_wrapped(&mut self, cx: &mut Cx2d, font: Font, size_px: f64, text: &str, max_width: f64) -> f64 {
+    pub fn measure_wrapped(
+        &mut self,
+        cx: &mut Cx2d,
+        font: Font,
+        size_px: f64,
+        text: &str,
+        max_width: f64,
+    ) -> f64 {
         if text.is_empty() {
             return 0.0;
         }
-        self.painter
-            .paragraph_height(cx, max_width.max(1.0), Self::spec(font, size_px, transparent()), text)
+        self.painter.paragraph_height(
+            cx,
+            max_width.max(1.0),
+            Self::spec(font, size_px, transparent()),
+            text,
+        )
     }
 
     /// Word-wrapped text from `pos`; returns its height.
@@ -347,7 +456,13 @@ impl GitPaint {
             return 0.0;
         }
         self.painter
-            .paragraph(cx, pos, max_width.max(1.0), Self::spec(font, size_px, color), text)
+            .paragraph(
+                cx,
+                pos,
+                max_width.max(1.0),
+                Self::spec(font, size_px, color),
+                text,
+            )
             .y
     }
 
@@ -356,7 +471,12 @@ impl GitPaint {
         let box_size = size_px * 2.0;
         self.painter.icon(
             cx,
-            rect(center.x - box_size / 2.0, center.y - box_size / 2.0, box_size, box_size),
+            rect(
+                center.x - box_size / 2.0,
+                center.y - box_size / 2.0,
+                box_size,
+                box_size,
+            ),
             name,
             size_px,
             color,
@@ -403,12 +523,18 @@ impl<T: Clone + PartialEq> Hits<T> {
         self.items
             .iter()
             .rev()
-            .find(|(area, clip, _)| area.contains(point) && clip.is_none_or(|clip| clip.contains(point)))
+            .find(|(area, clip, _)| {
+                area.contains(point) && clip.is_none_or(|clip| clip.contains(point))
+            })
             .map(|(area, _, target)| (*area, target.clone()))
     }
 
     pub fn rect_of(&self, target: &T) -> Option<Rect> {
-        self.items.iter().rev().find(|(_, _, t)| t == target).map(|(area, _, _)| *area)
+        self.items
+            .iter()
+            .rev()
+            .find(|(_, _, t)| t == target)
+            .map(|(area, _, _)| *area)
     }
 
     /// Every registered rect with its clip, in registration order.

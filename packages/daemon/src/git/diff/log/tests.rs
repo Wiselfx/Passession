@@ -91,19 +91,39 @@ async fn fixture() -> Result<Fixture> {
     at(
         &repo,
         5000,
-        &["-c", "tag.gpgsign=false", "tag", "-a", "v1", "-m", "release", &rename],
+        &[
+            "-c",
+            "tag.gpgsign=false",
+            "tag",
+            "-a",
+            "v1",
+            "-m",
+            "release",
+            &rename,
+        ],
     )
     .await?;
     repo.git(&["tag", "light", &merge]).await?;
     repo.git(&["branch", "Zeta", &root]).await?;
     repo.git(&["branch", "gone", &root]).await?;
-    repo.git(&["config", "branch.gone.remote", "origin"]).await?;
+    repo.git(&["config", "branch.gone.remote", "origin"])
+        .await?;
     repo.git(&["config", "branch.gone.merge", "refs/heads/missing"])
         .await?;
-    repo.git(&["remote", "add", "origin", "https://example.invalid/origin.git"])
-        .await?;
-    repo.git(&["remote", "add", "upstream", "https://example.invalid/upstream.git"])
-        .await?;
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.invalid/origin.git",
+    ])
+    .await?;
+    repo.git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://example.invalid/upstream.git",
+    ])
+    .await?;
     repo.git(&["update-ref", "refs/remotes/origin/main", &rename])
         .await?;
     repo.git(&[
@@ -155,7 +175,13 @@ impl Fixture {
             .collect())
     }
     async fn commit(&self, sha: &str) -> Result<Value> {
-        commit(self.repo.path(), sha, &self.repo.env, CancellationToken::new()).await
+        commit(
+            self.repo.path(),
+            sha,
+            &self.repo.env,
+            CancellationToken::new(),
+        )
+        .await
     }
 }
 
@@ -278,8 +304,14 @@ async fn log_pages_and_filters_by_revision() -> Result<()> {
             })
             .await
             .unwrap_err();
-        assert!(error.downcast_ref::<InvalidRevision>().is_some(), "{revision}");
-        assert_eq!(crate::git::checkout_error(&error)["code"], "invalid_revision");
+        assert!(
+            error.downcast_ref::<InvalidRevision>().is_some(),
+            "{revision}"
+        );
+        assert_eq!(
+            crate::git::checkout_error(&error)["code"],
+            "invalid_revision"
+        );
     }
     assert!(
         f.log(LogQuery {
@@ -435,7 +467,10 @@ async fn commit_get_returns_details_and_first_parent_files() -> Result<()> {
     assert_eq!(detail["committerName"], "Fixture");
     assert_eq!(detail["committerEmail"], "fixture@example.invalid");
     assert_eq!(detail["authorDate"], "2023-11-15T08:20:00+09:00");
-    assert_eq!(detail["refs"][0], json!({"name":"main","kind":"local","isHead":true}));
+    assert_eq!(
+        detail["refs"][0],
+        json!({"name":"main","kind":"local","isHead":true})
+    );
     assert_eq!(
         detail["files"],
         json!([{"path":"feature.txt","oldPath":null,"additions":1,"deletions":0,"status":"added"}])
@@ -507,6 +542,9 @@ fn request_schemas_accept_dashboard_requests() {
         json!({"type":"checkout.commit.get.request","cwd":"/repo","requestId":"r","sha":"xyz1"}),
         json!({"type":"checkout.commit.get.request","cwd":"/repo","requestId":"r"}),
     ] {
-        assert!(validate_session(&request, Direction::Inbound).is_err(), "{request}");
+        assert!(
+            validate_session(&request, Direction::Inbound).is_err(),
+            "{request}"
+        );
     }
 }

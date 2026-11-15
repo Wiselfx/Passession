@@ -192,9 +192,10 @@ impl TerminalService {
         let mut events = terminal.subscribe_lifecycle();
         tokio::spawn(async move {
             if let Some(app) = weak.upgrade()
-                && let Err(error) = app.projects.publish_workspace(&waiter.workspace_id).await {
-                    tracing::warn!(%error,"Terminal workspace projection failed");
-                }
+                && let Err(error) = app.projects.publish_workspace(&waiter.workspace_id).await
+            {
+                tracing::warn!(%error,"Terminal workspace projection failed");
+            }
             loop {
                 tokio::select! {biased;
                     _=cancel.cancelled()=>{let _=waiter.terminate().await;break;},
@@ -376,9 +377,10 @@ impl TerminalService {
     pub async fn clear_focused_attention(&self, id: &str) -> Result<()> {
         let terminal = { self.terminals.read().unwrap().get(id).cloned() };
         if let Some(terminal) = terminal
-            && !terminal.info()["activity"]["attentionReason"].is_null() {
-                terminal.set_activity("clear_attention");
-            }
+            && !terminal.info()["activity"]["attentionReason"].is_null()
+        {
+            terminal.set_activity("clear_attention");
+        }
         Ok(())
     }
     fn track_source(&self, context: &RequestContext) {
@@ -452,9 +454,9 @@ impl TerminalService {
                         .as_str()
                         .map(str::trim)
                         .filter(|id| !id.is_empty())
-                    {
-                        self.clear_focused_attention(id).await?;
-                    }
+                {
+                    self.clear_focused_attention(id).await?;
+                }
                 return Ok(false);
             }
             "list_terminals_request" => {
@@ -575,14 +577,15 @@ impl TerminalService {
                 if !workspace["archivedAt"].is_null() {
                     continue;
                 }
-                let (Some(root), Some(id)) = (
-                    workspace["cwd"].as_str(),
-                    workspace["workspaceId"].as_str(),
-                ) else {
+                let (Some(root), Some(id)) =
+                    (workspace["cwd"].as_str(), workspace["workspaceId"].as_str())
+                else {
                     continue;
                 };
                 if cwd.starts_with(root)
-                    && owner.as_ref().is_none_or(|(length, _)| root.len() > *length)
+                    && owner
+                        .as_ref()
+                        .is_none_or(|(length, _)| root.len() > *length)
                 {
                     owner = Some((root.len(), id.to_owned()));
                 }
@@ -697,9 +700,10 @@ impl TerminalService {
         let terminals: Vec<_> = self.terminals.read().unwrap().values().cloned().collect();
         for terminal in terminals {
             if let Err(e) = terminal.terminate().await
-                && error.is_none() {
-                    error = Some(e);
-                }
+                && error.is_none()
+            {
+                error = Some(e);
+            }
         }
         self.terminals.write().unwrap().clear();
         for stream in self.streams.lock().unwrap().values() {

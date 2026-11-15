@@ -21,13 +21,18 @@ pub mod state_keys;
 pub mod ui;
 
 pub use controller::{AgentSnapshot, ComposerCommand, ComposerKind, ComposerTarget};
-pub use ui::creation_panel::{CreationPanel, CreationPanelRef, CreationPanelWidgetExt, CreationPanelWidgetRefExt};
-pub use ui::panel::{ComposerAction, ComposerPanel, ComposerPanelRef, ComposerPanelWidgetExt, ComposerPanelWidgetRefExt};
+pub use ui::creation_panel::{
+    CreationPanel, CreationPanelRef, CreationPanelWidgetExt, CreationPanelWidgetRefExt,
+};
+pub use ui::panel::{
+    ComposerAction, ComposerPanel, ComposerPanelRef, ComposerPanelWidgetExt,
+    ComposerPanelWidgetRefExt,
+};
 
 use crate::common::UiContext;
 use json::*;
 use makepad_widgets::{Cx, Texture};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn live_design(cx: &mut Cx) {
     ui::live_design(cx);
@@ -60,15 +65,26 @@ pub fn flush_drafts(ui: &UiContext) -> Result<(), String> {
 }
 
 /// Pending and sending outgoing prompts of this agent not yet echoed by the timeline.
-pub fn outgoing_rows(host_id: &str, workspace_id: &str, agent_id: &str, echoed: &dyn Fn(&str) -> bool) -> Vec<Value> {
+pub fn outgoing_rows(
+    host_id: &str,
+    workspace_id: &str,
+    agent_id: &str,
+    echoed: &dyn Fn(&str) -> bool,
+) -> Vec<Value> {
     let key = drafts::draft_key(host_id, workspace_id, agent_id);
     service::with(|svc| {
-        let Some(draft) = svc.drafts.peek(&key).cloned() else { return Vec::new() };
+        let Some(draft) = svc.drafts.peek(&key).cloned() else {
+            return Vec::new();
+        };
         let mut outgoing = Vec::new();
         if non_empty_obj(get(&draft, "pending")) {
             outgoing.push(get(&draft, "pending").clone());
         }
-        outgoing.extend(maps(get(&draft, "queue")).into_iter().filter(|m| s(get(m, "state")) == "sending"));
+        outgoing.extend(
+            maps(get(&draft, "queue"))
+                .into_iter()
+                .filter(|m| s(get(m, "state")) == "sending"),
+        );
         let mut seen: Vec<String> = Vec::new();
         let mut rows = Vec::new();
         for message in outgoing {
@@ -78,7 +94,11 @@ pub fn outgoing_rows(host_id: &str, workspace_id: &str, agent_id: &str, echoed: 
             }
             seen.push(id.clone());
             let timestamp = s_or(get(&message, "createdAt"), "").to_owned();
-            let timestamp = if timestamp.is_empty() { ops::now_rfc3339() } else { timestamp };
+            let timestamp = if timestamp.is_empty() {
+                ops::now_rfc3339()
+            } else {
+                timestamp
+            };
             rows.push(json!({
                 "clientMessageId": id,
                 "pending": true,
@@ -108,13 +128,21 @@ pub fn has_pending_delivery(host_id: &str, workspace_id: &str, agent_id: &str) -
     service::with(|svc| {
         svc.drafts.peek(&key).is_some_and(|draft| {
             non_empty_obj(get(draft, "pending"))
-                || maps(get(draft, "queue")).iter().any(|q| matches!(s(get(q, "state")), "sending" | "unacknowledged"))
+                || maps(get(draft, "queue"))
+                    .iter()
+                    .any(|q| matches!(s(get(q, "state")), "sending" | "unacknowledged"))
         })
     })
 }
 
 /// composer-restore.tsx restoreComposerTextIfEmpty (after a conversation rewind).
-pub fn restore_text_if_empty(cx: &mut Cx, host_id: &str, workspace_id: &str, agent_id: &str, text: &str) {
+pub fn restore_text_if_empty(
+    cx: &mut Cx,
+    host_id: &str,
+    workspace_id: &str,
+    agent_id: &str,
+    text: &str,
+) {
     let key = drafts::draft_key(host_id, workspace_id, agent_id);
     let restored = service::with(|svc| {
         if !s(&svc.drafts.field(&key, "text")).is_empty() {
@@ -137,7 +165,13 @@ pub fn sent_message_attachments(agent_id: &str, client_message_id: &str) -> Opti
 /// A stable cached texture for a composer image reference (`{blobId}` or legacy inline
 /// `{data}`); None while it decodes off the GUI thread.
 pub fn image_texture(_cx: &mut Cx, image: &Value, thumbnail: bool) -> Option<Texture> {
-    service::with(|svc| svc.blobs.texture(image, thumbnail).ok().flatten().map(|(texture, _)| texture))
+    service::with(|svc| {
+        svc.blobs
+            .texture(image, thumbnail)
+            .ok()
+            .flatten()
+            .map(|(texture, _)| texture)
+    })
 }
 
 pub fn create_handoff_active(host_id: &str, agent_id: &str) -> bool {
@@ -150,9 +184,15 @@ pub fn clear_create_handoff(host_id: &str, agent_id: &str) {
 
 /// Files "attach to chat" (Flutter `ChatDrafts.addAttachments`): the workspace's selected
 /// composer takes them; `intent_id` makes a repeated intent idempotent.
-pub fn add_workspace_attachments(host_id: &str, workspace_id: &str, attachments: Vec<Value>, intent_id: Option<String>) {
+pub fn add_workspace_attachments(
+    host_id: &str,
+    workspace_id: &str,
+    attachments: Vec<Value>,
+    intent_id: Option<String>,
+) {
     service::with(|svc| {
-        svc.drafts.add_attachments(host_id, workspace_id, attachments, intent_id.as_deref());
+        svc.drafts
+            .add_attachments(host_id, workspace_id, attachments, intent_id.as_deref());
         svc.after_mutation();
     });
 }

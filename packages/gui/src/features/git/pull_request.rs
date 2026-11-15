@@ -19,9 +19,11 @@ pub fn pull_request_number(status: &Value) -> Option<i64> {
     let path = url_path(text(status, "url"))?;
     let segments: Vec<&str> = path.split('/').collect();
     segments.windows(2).find_map(|window| {
-        (window[0] == "pull" && !window[1].is_empty() && window[1].bytes().all(|b| b.is_ascii_digit()))
-            .then(|| window[1].parse().ok())
-            .flatten()
+        (window[0] == "pull"
+            && !window[1].is_empty()
+            && window[1].bytes().all(|b| b.is_ascii_digit()))
+        .then(|| window[1].parse().ok())
+        .flatten()
     })
 }
 
@@ -69,7 +71,9 @@ pub fn is_unsupported_timeline_error(code: &str, request_type: &str) -> bool {
 /// Original `mapPrPaneData` activity: only a timeline of this PR counts.
 pub fn timeline_items(timeline: Option<&Value>, number: i64) -> Vec<Value> {
     match timeline {
-        Some(timeline) if timeline["prNumber"].as_i64() == Some(number) => array(timeline, "items").to_vec(),
+        Some(timeline) if timeline["prNumber"].as_i64() == Some(number) => {
+            array(timeline, "items").to_vec()
+        }
         _ => Vec::new(),
     }
 }
@@ -211,7 +215,11 @@ pub fn classify_gitlab_job(status: &str, allow_failure: bool) -> Check {
     if status == "manual" {
         return classify(
             mapped,
-            if allow_failure { &["manual"] } else { &["manual", "action_required"] },
+            if allow_failure {
+                &["manual"]
+            } else {
+                &["manual", "action_required"]
+            },
         );
     }
     if mapped == "failure" && allow_failure {
@@ -244,9 +252,15 @@ pub fn checks_outcome(checks: &[Value], groups: &[(Check, Vec<Value>)]) -> &'sta
         "none"
     } else if groups.iter().any(|g| g.0 == Check::ActionRequired) {
         "actionRequired"
-    } else if groups.iter().any(|g| matches!(g.0, Check::Failure | Check::Warning)) {
+    } else if groups
+        .iter()
+        .any(|g| matches!(g.0, Check::Failure | Check::Warning))
+    {
         "failure"
-    } else if checks.iter().any(|c| check_status(text(c, "status")) == "pending") {
+    } else if checks
+        .iter()
+        .any(|c| check_status(text(c, "status")) == "pending")
+    {
         "pending"
     } else {
         "success"
@@ -369,14 +383,18 @@ pub fn build_timeline(activities: &[Value]) -> Vec<Entry> {
     let review_ids: Vec<String> = entries
         .iter()
         .filter_map(|entry| match entry {
-            Entry::Single(activity) if text(activity, "kind") == "review" => Some(text(activity, "id").to_owned()),
+            Entry::Single(activity) if text(activity, "kind") == "review" => {
+                Some(text(activity, "id").to_owned())
+            }
             _ => None,
         })
         .collect();
     let mut by_review: Vec<(String, Vec<Thread>)> = Vec::new();
     let mut nested: Vec<String> = Vec::new();
     for entry in &entries {
-        let Entry::Thread(thread) = entry else { continue };
+        let Entry::Thread(thread) = entry else {
+            continue;
+        };
         let review_id = text(&thread.comments[0], "reviewId");
         if review_id.is_empty() || !review_ids.iter().any(|id| id == review_id) {
             continue;
@@ -397,7 +415,10 @@ pub fn build_timeline(activities: &[Value]) -> Vec<Entry> {
             Entry::Single(activity) => {
                 let id = text(&activity, "id").to_owned();
                 match by_review.iter().find(|(review, _)| *review == id) {
-                    Some((_, threads)) => Some(Entry::Review { review: activity, threads: threads.clone() }),
+                    Some((_, threads)) => Some(Entry::Review {
+                        review: activity,
+                        threads: threads.clone(),
+                    }),
                     None => Some(Entry::Single(activity)),
                 }
             }
@@ -412,7 +433,11 @@ pub fn thread_path(location: &Value) -> String {
     let has_line = location.get("line").is_some_and(|l| !l.is_null());
     let has_start = location.get("startLine").is_some_and(|l| !l.is_null());
     if has_line && has_start {
-        return format!("{path}:{}-{}", int(location, "startLine"), int(location, "line"));
+        return format!(
+            "{path}:{}-{}",
+            int(location, "startLine"),
+            int(location, "line")
+        );
     }
     if has_line {
         return format!("{path}:{}", int(location, "line"));
@@ -431,7 +456,8 @@ pub fn activity_counts(activities: &[Value]) -> (usize, usize, usize) {
     let comments = activities
         .iter()
         .filter(|a| {
-            text(a, "kind") == "comment" || (text(a, "kind") == "review" && text(a, "reviewState") == "commented")
+            text(a, "kind") == "comment"
+                || (text(a, "kind") == "review" && text(a, "reviewState") == "commented")
         })
         .count();
     (review("approved"), review("changes_requested"), comments)
@@ -448,7 +474,8 @@ pub fn avatar_fill_index(author: &str) -> usize {
 
 /// Original `IDENTITY_COLORS` fills; order is load-bearing.
 pub const AVATAR_FILLS: [u32; 10] = [
-    0x7a6aa8, 0x3d7ea6, 0x388068, 0xa4673a, 0xb05c80, 0x6a70b8, 0x368080, 0xb06260, 0x8f7838, 0x5179b0,
+    0x7a6aa8, 0x3d7ea6, 0x388068, 0xa4673a, 0xb05c80, 0x6a70b8, 0x368080, 0xb06260, 0x8f7838,
+    0x5179b0,
 ];
 
 /// Original `derivePrState`: (catalog state key, icon state).
@@ -486,7 +513,10 @@ mod tests {
     #[test]
     fn number_comes_from_status_or_pull_url() {
         assert_eq!(pull_request_number(&json!({"number": 5})), Some(5));
-        assert_eq!(pull_request_number(&json!({"url": "https://github.com/a/b/pull/12/files"})), Some(12));
+        assert_eq!(
+            pull_request_number(&json!({"url": "https://github.com/a/b/pull/12/files"})),
+            Some(12)
+        );
         assert_eq!(pull_request_number(&json!({})), None);
     }
 
@@ -517,7 +547,9 @@ mod tests {
 
     #[test]
     fn gitea_ci_status_becomes_one_check() {
-        let checks = pull_request_checks(&json!({"url": "u", "forgeSpecific": {"forge": "gitea", "ciStatus": "warning"}}));
+        let checks = pull_request_checks(
+            &json!({"url": "u", "forgeSpecific": {"forge": "gitea", "ciStatus": "warning"}}),
+        );
         assert_eq!(checks.len(), 1);
         assert_eq!(classify_check(&checks[0]), Check::Warning);
         let groups = check_groups(&checks);

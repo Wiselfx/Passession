@@ -278,9 +278,10 @@ impl ProjectService {
         }
         if workspace["kind"] == "worktree"
             && tokio::fs::try_exists(Path::new(root).join(".git")).await?
-            && let Some(port) = runtime::read_worktree_runtime_port(Path::new(root)).await? {
-                env.insert("PASEO_WORKTREE_PORT".into(), port.to_string());
-            }
+            && let Some(port) = runtime::read_worktree_runtime_port(Path::new(root)).await?
+        {
+            env.insert("PASEO_WORKTREE_PORT".into(), port.to_string());
+        }
         Ok(env)
     }
     pub async fn register_project(&self, cwd: &Path) -> Result<Value> {
@@ -373,9 +374,10 @@ impl ProjectService {
         }
         for workspace in candidates {
             if let Some(project) = self.project(text(&workspace, "projectId")?).await?
-                && project["archivedAt"].is_null() {
-                    return self.unarchive(workspace).await;
-                }
+                && project["archivedAt"].is_null()
+            {
+                return self.unarchive(workspace).await;
+            }
         }
         self.create_directory(&cwd, &json!({})).await
     }
@@ -394,15 +396,16 @@ impl ProjectService {
         }
         let mut caller = input["callerWorkspaceId"].as_str().map(str::to_owned);
         if caller.is_none()
-            && let Some(id) = input["callerAgentId"].as_str() {
-                let a = self
-                    .app()?
-                    .agents
-                    .agent_snapshot(id)
-                    .await?
-                    .ok_or_else(|| anyhow!("Caller agent {id} not found"))?;
-                caller = a["workspaceId"].as_str().map(str::to_owned);
-            }
+            && let Some(id) = input["callerAgentId"].as_str()
+        {
+            let a = self
+                .app()?
+                .agents
+                .agent_snapshot(id)
+                .await?
+                .ok_or_else(|| anyhow!("Caller agent {id} not found"))?;
+            caller = a["workspaceId"].as_str().map(str::to_owned);
+        }
         match caller {
             None => Ok(false),
             Some(id) => Ok(self
@@ -460,9 +463,10 @@ impl ProjectService {
         }
         self.publish_workspace(&id).await?;
         if input["deferName"] != true
-            && let Some(context) = input.get("firstAgentContext") {
-                self.schedule_name(&record, context);
-            }
+            && let Some(context) = input.get("firstAgentContext")
+        {
+            self.schedule_name(&record, context);
+        }
         Ok(record)
     }
     pub async fn create_workspace(&self, input: &Value) -> Result<Value> {
@@ -595,10 +599,11 @@ impl ProjectService {
             app.git.cached_snapshot(cwd).await
         };
         if let Some(snapshot) = snapshot
-            && snapshot["forge"]["pullRequest"]["isMerged"] == true {
-                workspace["autoArchivedChangeRequestUrl"] =
-                    snapshot["forge"]["pullRequest"]["url"].clone();
-            }
+            && snapshot["forge"]["pullRequest"]["isMerged"] == true
+        {
+            workspace["autoArchivedChangeRequestUrl"] =
+                snapshot["forge"]["pullRequest"]["url"].clone();
+        }
         project["archivedAt"] = Value::Null;
         project["updatedAt"] = json!(now());
         self.storage()
@@ -726,19 +731,19 @@ impl ProjectService {
             None => json!({"kind":"remove","id":id}),
         };
         if entry.is_none()
-            && let Some(w) = &workspace {
-                let project_id = text(w, "projectId")?;
-                if !self.list_workspaces().await?.iter().any(|candidate| {
-                    candidate["projectId"] == project_id && candidate["archivedAt"].is_null()
-                })
-                    && let Some(project) = self
-                        .project(project_id)
-                        .await?
-                        .filter(|p| p["archivedAt"].is_null())
-                    {
-                        payload["emptyProject"] = directory::project_descriptor(&project);
-                    }
+            && let Some(w) = &workspace
+        {
+            let project_id = text(w, "projectId")?;
+            if !self.list_workspaces().await?.iter().any(|candidate| {
+                candidate["projectId"] == project_id && candidate["archivedAt"].is_null()
+            }) && let Some(project) = self
+                .project(project_id)
+                .await?
+                .filter(|p| p["archivedAt"].is_null())
+            {
+                payload["emptyProject"] = directory::project_descriptor(&project);
             }
+        }
         let background = workspace.as_ref().is_some_and(|w| w["background"] == true);
         let payload = app
             .agents
@@ -792,11 +797,17 @@ mod retirement_tests {
     #[tokio::test]
     async fn worktree_creation_is_rejected_before_service_or_filesystem_access() {
         let service = ProjectService::new(Weak::new());
-        let error = service.create_workspace(&json!({
-            "type":"workspace.create.request",
-            "source":{"kind":"worktree","cwd":"/not-accessed","action":"branch-off"}
-        })).await.unwrap_err();
-        assert_eq!(error.downcast_ref::<RequestError>().unwrap().code, "unsupported");
+        let error = service
+            .create_workspace(&json!({
+                "type":"workspace.create.request",
+                "source":{"kind":"worktree","cwd":"/not-accessed","action":"branch-off"}
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<RequestError>().unwrap().code,
+            "unsupported"
+        );
         assert!(reject_worktree_source(&json!({"kind":"directory","path":"/local"})).is_ok());
     }
 
@@ -806,27 +817,45 @@ mod retirement_tests {
         let home = root.path().join("home");
         let cwd = root.path().join("checkout");
         tokio::fs::create_dir(&cwd).await.unwrap();
-        tokio::fs::write(cwd.join("uncommitted.txt"), b"user work").await.unwrap();
+        tokio::fs::write(cwd.join("uncommitted.txt"), b"user work")
+            .await
+            .unwrap();
         let store = store::Store::load(&home).await.unwrap();
         store.upsert_project(store::create_project(json!({
             "projectId":"prj_retirement","rootPath":root.path(),"kind":"git",
             "displayName":"Project","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
         })).unwrap()).await.unwrap();
-        store.upsert_workspace(store::create_workspace(json!({
-            "workspaceId":"wks_retirement","projectId":"prj_retirement","cwd":cwd,
-            "kind":"worktree","displayName":"Existing directory","worktreeRoot":cwd,
-            "mainRepoRoot":root.path(),"isPaseoOwnedWorktree":true,
-            "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
-        })).unwrap()).await.unwrap();
+        store
+            .upsert_workspace(
+                store::create_workspace(json!({
+                    "workspaceId":"wks_retirement","projectId":"prj_retirement","cwd":cwd,
+                    "kind":"worktree","displayName":"Existing directory","worktreeRoot":cwd,
+                    "mainRepoRoot":root.path(),"isPaseoOwnedWorktree":true,
+                    "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
         let app = AppState::new(home, root.path().into(), std::env::current_exe().unwrap());
-        app.config.initialize_with_overrides(&json!({"listen":"127.0.0.1:0"})).await.unwrap();
+        app.config
+            .initialize_with_overrides(&json!({"listen":"127.0.0.1:0"}))
+            .await
+            .unwrap();
         app.transport.prepare().await.unwrap();
         app.projects.initialize().await.unwrap();
         app.agents.initialize().await.unwrap();
-        let archived = app.projects.archive_workspace(&json!({"kind":"system"}), "wks_retirement").await.unwrap();
+        let archived = app
+            .projects
+            .archive_workspace(&json!({"kind":"system"}), "wks_retirement")
+            .await
+            .unwrap();
         assert_eq!(archived["removedDirectory"], false);
         assert!(archived["archivedAt"].is_string());
-        assert_eq!(tokio::fs::read(cwd.join("uncommitted.txt")).await.unwrap(), b"user work");
+        assert_eq!(
+            tokio::fs::read(cwd.join("uncommitted.txt")).await.unwrap(),
+            b"user work"
+        );
         assert!(root.path().is_dir());
         app.cancel.cancel();
         app.transport.shutdown().await.unwrap();

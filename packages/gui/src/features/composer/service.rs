@@ -13,7 +13,7 @@ use super::state_keys;
 use crate::common::{UiContext, UiEffect};
 use makepad_widgets::Cx;
 use paseo_gui_core::{CoreError, CoreEvent, CoreHandle};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -54,15 +54,29 @@ pub struct SendJob {
 #[derive(Clone, Debug)]
 pub enum PanelNotice {
     /// A send of `message_id` finished (success or failure); clear the panel's spinner.
-    SendFinished { key: String, message_id: String, error: Option<String> },
+    SendFinished {
+        key: String,
+        message_id: String,
+        error: Option<String>,
+    },
     /// The prompt reached the host: clear attention and stick the timeline to the bottom.
     PromptSubmitted { agent_id: String },
     /// Image blobs stored for a paste/pick/drop.
-    ImagesStored { token: u64, images: Result<Vec<Value>, String> },
+    ImagesStored {
+        token: u64,
+        images: Result<Vec<Value>, String>,
+    },
     /// Dropped/picked paths were inspected.
-    FilesStat { token: u64, files: Result<Vec<StatFile>, String> },
+    FilesStat {
+        token: u64,
+        files: Result<Vec<StatFile>, String>,
+    },
     /// An exact receipt check finished.
-    CheckFinished { key: String, message_id: String, error: Option<String> },
+    CheckFinished {
+        key: String,
+        message_id: String,
+        error: Option<String>,
+    },
 }
 
 pub(super) enum Pending {
@@ -71,7 +85,13 @@ pub(super) enum Pending {
     /// Send operation envelope.
     Send { job: SendJob },
     /// Exact receipt query (`agent.message_receipt.get|dismiss`).
-    Receipt { host: String, key: String, id: String, dismiss: bool, panel: Option<u64> },
+    Receipt {
+        host: String,
+        key: String,
+        id: String,
+        dismiss: bool,
+        panel: Option<u64>,
+    },
     /// Owned session.events subscription for receipt updates.
     ReceiptObservation { host: String },
     /// Timeline subscription that wakes the queue drain for one draft key.
@@ -79,7 +99,10 @@ pub(super) enum Pending {
     /// fetch_agent before draining a queue.
     DrainFetch { host: String, key: String },
     /// Creation lifecycle request.
-    Creation { draft_key: String, step: super::creation::CreationStep },
+    Creation {
+        draft_key: String,
+        step: super::creation::CreationStep,
+    },
 }
 
 pub(super) enum AfterFlush {
@@ -110,7 +133,10 @@ impl ProviderRequests {
             return id.clone();
         }
         let id = send();
-        self.hosts.entry(host.to_owned()).or_default().insert(cwd.to_owned(), id.clone());
+        self.hosts
+            .entry(host.to_owned())
+            .or_default()
+            .insert(cwd.to_owned(), id.clone());
         id
     }
 
@@ -188,7 +214,11 @@ impl ComposerService {
     /// shared request when a panel closes. Both success and failure release it.
     pub fn request_providers(&mut self, core: &CoreHandle, host: &str, cwd: &str) -> String {
         self.provider_requests.request(host, cwd, || {
-            core.request(host, json!({"type": "get_providers_snapshot_request", "cwd": cwd}), "get_providers_snapshot_response")
+            core.request(
+                host,
+                json!({"type": "get_providers_snapshot_request", "cwd": cwd}),
+                "get_providers_snapshot_response",
+            )
         })
     }
 
@@ -233,7 +263,10 @@ impl ComposerService {
     }
 
     pub fn server_info(&self, host: &str) -> Value {
-        self.hosts.get(host).map(|h| h.server_info.clone()).unwrap_or(Value::Null)
+        self.hosts
+            .get(host)
+            .map(|h| h.server_info.clone())
+            .unwrap_or(Value::Null)
     }
 
     pub fn supports(&self, host: &str, feature: &str) -> bool {
@@ -251,7 +284,10 @@ impl ComposerService {
     }
 
     pub fn persistence_error(&self) -> Option<String> {
-        self.drafts.persistence_error.clone().or_else(|| self.persist_error.clone())
+        self.drafts
+            .persistence_error
+            .clone()
+            .or_else(|| self.persist_error.clone())
     }
 
     // ----- sent messages / handoffs (timeline read API) -----
@@ -266,7 +302,8 @@ impl ComposerService {
         }
         let key = format!("{agent_id}/{id}");
         self.sent.retain(|(k, _)| k != &key);
-        self.sent.push_back((key, json!({"images": images, "attachments": attachments})));
+        self.sent
+            .push_back((key, json!({"images": images, "attachments": attachments})));
         while self.sent.len() > 64 {
             self.sent.pop_front();
         }
@@ -277,7 +314,10 @@ impl ComposerService {
             return None;
         }
         let key = format!("{agent_id}/{client_message_id}");
-        self.sent.iter().find(|(k, _)| k == &key).map(|(_, v)| v.clone())
+        self.sent
+            .iter()
+            .find(|(k, _)| k == &key)
+            .map(|(_, v)| v.clone())
     }
 
     fn handoff_key(host: &str, agent: &str) -> String {
@@ -318,7 +358,10 @@ impl ComposerService {
         let mut closed_hosts: HashSet<String> = HashSet::new();
         for event in &ui.events {
             match event {
-                CoreEvent::Connected { host_id, server_info } => {
+                CoreEvent::Connected {
+                    host_id,
+                    server_info,
+                } => {
                     let host = self.hosts.entry(host_id.clone()).or_default();
                     host.connected = true;
                     host.server_info = server_info.clone();
@@ -344,7 +387,9 @@ impl ComposerService {
             }
         }
         // Initial status from state (hosts connected before the composer saw an event).
-        if self.last_state.as_ref().map(std::sync::Arc::as_ptr) != Some(std::sync::Arc::as_ptr(&ui.state)) {
+        if self.last_state.as_ref().map(std::sync::Arc::as_ptr)
+            != Some(std::sync::Arc::as_ptr(&ui.state))
+        {
             self.last_state = Some(ui.state.clone());
             for host in list_ref(get(&ui.state, "hosts")) {
                 let id = s(get(host, "serverId"));
@@ -385,14 +430,21 @@ impl ComposerService {
         }
         for event in ui.events.iter() {
             match event {
-                CoreEvent::Response { host_id, request_id, result } => {
+                CoreEvent::Response {
+                    host_id,
+                    request_id,
+                    result,
+                } => {
                     self.provider_requests.finish(host_id, request_id);
                     if let Some(pending) = self.pending.remove(request_id) {
                         self.on_response(cx, host_id, request_id, pending, result.clone());
                     }
                 }
                 CoreEvent::HostEvent { host_id, event } => self.on_host_event(host_id, event),
-                CoreEvent::Error { host_id: None, error } if error.code.starts_with("STORAGE") || error.code == "INVALID_STATE_KEY" => {
+                CoreEvent::Error {
+                    host_id: None,
+                    error,
+                } if error.code.starts_with("STORAGE") || error.code == "INVALID_STATE_KEY" => {
                     self.persist_error = Some(error.message.clone());
                     self.bump();
                 }
@@ -434,7 +486,10 @@ impl ComposerService {
             self.flush_failed(then, t("composer.errors.draftsLoading"));
             return;
         }
-        let payload = self.drafts.take_save().unwrap_or_else(|| self.full_payload());
+        let payload = self
+            .drafts
+            .take_save()
+            .unwrap_or_else(|| self.full_payload());
         let request = core.save_state_flushed(&state_keys::drafts_save_key(), payload);
         self.pending.insert(request, Pending::Flush { then });
     }
@@ -449,16 +504,36 @@ impl ComposerService {
     fn flush_failed(&mut self, then: AfterFlush, error: String) {
         let message = format!("Draft persistence failed: {error}");
         match then {
-            AfterFlush::Send(job) => self.send_failed(job, &json!({"message": message, "outcomeUnknown": false, "local": true})),
-            AfterFlush::Creation { draft_key } => self.creation_failed(&draft_key, &json!({"message": message, "outcomeUnknown": true})),
+            AfterFlush::Send(job) => self.send_failed(
+                job,
+                &json!({"message": message, "outcomeUnknown": false, "local": true}),
+            ),
+            AfterFlush::Creation { draft_key } => self.creation_failed(
+                &draft_key,
+                &json!({"message": message, "outcomeUnknown": true}),
+            ),
             AfterFlush::Nothing { panel } => {
                 self.persist_error = Some(message);
-                self.notify(panel, PanelNotice::CheckFinished { key: String::new(), message_id: String::new(), error: self.persist_error.clone() });
+                self.notify(
+                    panel,
+                    PanelNotice::CheckFinished {
+                        key: String::new(),
+                        message_id: String::new(),
+                        error: self.persist_error.clone(),
+                    },
+                );
             }
         }
     }
 
-    fn on_response(&mut self, cx: &mut Cx, host: &str, request_id: &str, pending: Pending, result: Result<Value, CoreError>) {
+    fn on_response(
+        &mut self,
+        cx: &mut Cx,
+        host: &str,
+        request_id: &str,
+        pending: Pending,
+        result: Result<Value, CoreError>,
+    ) {
         let _ = cx;
         match pending {
             Pending::Flush { then } => match result {
@@ -473,11 +548,23 @@ impl ComposerService {
                 Err(error) => self.flush_failed(then, error.message),
             },
             Pending::Send { job } => self.send_result(job, result),
-            Pending::Receipt { host, key, id, dismiss, panel } => self.receipt_result(&host, &key, &id, dismiss, panel, result),
-            Pending::ReceiptObservation { host } => self.receipt_observation_result(&host, request_id, result),
-            Pending::TimelineObservation { host, key } => self.timeline_observation_result(&host, &key, request_id, result),
+            Pending::Receipt {
+                host,
+                key,
+                id,
+                dismiss,
+                panel,
+            } => self.receipt_result(&host, &key, &id, dismiss, panel, result),
+            Pending::ReceiptObservation { host } => {
+                self.receipt_observation_result(&host, request_id, result)
+            }
+            Pending::TimelineObservation { host, key } => {
+                self.timeline_observation_result(&host, &key, request_id, result)
+            }
             Pending::DrainFetch { host, key } => self.drain_fetch_result(&host, &key, result),
-            Pending::Creation { draft_key, step } => self.creation_response(host, &draft_key, request_id, step, result),
+            Pending::Creation { draft_key, step } => {
+                self.creation_response(host, &draft_key, request_id, step, result)
+            }
         }
         self.after_mutation();
     }
@@ -486,7 +573,10 @@ impl ComposerService {
 
     /// Persist the job's state, then send (Flutter: `await drafts.flush()` before the RPC).
     pub fn start_send(&mut self, job: SendJob) {
-        self.active_sends.insert(job.key.clone(), s(get(&job.message, "messageId")).to_owned());
+        self.active_sends.insert(
+            job.key.clone(),
+            s(get(&job.message, "messageId")).to_owned(),
+        );
         if job.origin == SendOrigin::Pending || matches!(job.origin, SendOrigin::Queue { .. }) {
             self.remember_sent(&job.agent_id, &job.message);
         }
@@ -496,7 +586,9 @@ impl ComposerService {
     }
 
     fn dispatch_send(&mut self, job: SendJob) {
-        let Some(core) = self.core.clone() else { return };
+        let Some(core) = self.core.clone() else {
+            return;
+        };
         let fields = agent_message_fields(&job.agent_id, &job.message);
         let images = list(get(&job.message, "images"));
         let blob_dir = self.blobs.dir().to_path_buf();
@@ -517,7 +609,9 @@ impl ComposerService {
     fn send_result(&mut self, job: SendJob, result: Result<Value, CoreError>) {
         let outcome = match result {
             Ok(envelope) => super::ops::open_envelope(&envelope),
-            Err(error) => Err(json!({"code": error.code, "message": error.message, "outcomeUnknown": error.outcome_unknown})),
+            Err(error) => Err(
+                json!({"code": error.code, "message": error.message, "outcomeUnknown": error.outcome_unknown}),
+            ),
         };
         match outcome {
             Ok(payload) => self.send_succeeded(job, &payload),
@@ -561,14 +655,22 @@ impl ComposerService {
             }
         }
         self.finish_send(&job, None);
-        self.notify(job.panel, PanelNotice::PromptSubmitted { agent_id: job.agent_id.clone() });
+        self.notify(
+            job.panel,
+            PanelNotice::PromptSubmitted {
+                agent_id: job.agent_id.clone(),
+            },
+        );
         if job.panel.is_none() {
             self.broadcast_prompt(&job.agent_id);
         }
     }
 
     pub(super) fn send_failed(&mut self, job: SendJob, error: &Value) {
-        if let Some(receipt) = get(error, "details").get("receipt").filter(|r| non_empty_obj(r)) {
+        if let Some(receipt) = get(error, "details")
+            .get("receipt")
+            .filter(|r| non_empty_obj(r))
+        {
             self.drafts.apply_receipt(&job.key, receipt);
         }
         let unknown = get(error, "outcomeUnknown") == &Value::Bool(true);
@@ -579,7 +681,10 @@ impl ComposerService {
             SendOrigin::Pending => {
                 // Persistence failures before the RPC are not definite rejections.
                 let rejected = !unknown && get(error, "local") != &Value::Bool(true);
-                if self.drafts.fail_send(&job.key, &job.message, &message, rejected) {
+                if self
+                    .drafts
+                    .fail_send(&job.key, &job.message, &message, rejected)
+                {
                     shown = Some(message.clone());
                 }
             }
@@ -587,13 +692,21 @@ impl ComposerService {
                 let mut queue = maps(&self.drafts.field(&job.key, "queue"));
                 if let Some(entry) = queue.iter_mut().find(|q| s(get(q, "messageId")) == id) {
                     let was_rejected = s(get(entry, "state")) == "rejected";
-                    let state = if was_rejected || !unknown { "rejected" } else { "unacknowledged" };
+                    let state = if was_rejected || !unknown {
+                        "rejected"
+                    } else {
+                        "unacknowledged"
+                    };
                     let previous_error = get(entry, "error").clone();
                     set(entry, "state", json!(state));
                     set(
                         entry,
                         "error",
-                        if was_rejected && !previous_error.is_null() { previous_error } else { json!(message) },
+                        if was_rejected && !previous_error.is_null() {
+                            previous_error
+                        } else {
+                            json!(message)
+                        },
                     );
                     shown = Some(message.clone());
                 }
@@ -614,7 +727,14 @@ impl ComposerService {
         {
             delivery.busy.remove(&job.key);
         }
-        self.notify(job.panel, PanelNotice::SendFinished { key: job.key.clone(), message_id: id, error });
+        self.notify(
+            job.panel,
+            PanelNotice::SendFinished {
+                key: job.key.clone(),
+                message_id: id,
+                error,
+            },
+        );
         self.bump();
         self.schedule(&job.host);
     }
@@ -622,7 +742,9 @@ impl ComposerService {
     /// An automatic drain has no panel owner; every panel of that agent reacts.
     fn broadcast_prompt(&mut self, agent_id: &str) {
         for notices in self.notices.values_mut() {
-            notices.push(PanelNotice::PromptSubmitted { agent_id: agent_id.to_owned() });
+            notices.push(PanelNotice::PromptSubmitted {
+                agent_id: agent_id.to_owned(),
+            });
         }
         self.bump();
     }
@@ -642,10 +764,16 @@ impl ComposerService {
     // ----- blobs -----
 
     /// Store clipboard image bytes for `panel`; the result arrives as `ImagesStored`.
-    pub fn store_image_bytes(&mut self, panel: u64, bytes: std::sync::Arc<Vec<u8>>, mime: Option<String>) -> u64 {
+    pub fn store_image_bytes(
+        &mut self,
+        panel: u64,
+        bytes: std::sync::Arc<Vec<u8>>,
+        mime: Option<String>,
+    ) -> u64 {
         let token = self.blobs.next_token();
         self.blob_owners.insert(token, panel);
-        self.blobs.submit(BlobJob::StoreBytes { token, bytes, mime });
+        self.blobs
+            .submit(BlobJob::StoreBytes { token, bytes, mime });
         token
     }
 
@@ -706,7 +834,11 @@ impl ComposerService {
 /// submit.ts: the error's own message, else composer.errors.failedToSend.
 pub fn send_error_message(error: &Value) -> String {
     let message = s(get(error, "message")).trim().to_owned();
-    if message.is_empty() { t("composer.errors.failedToSend") } else { message }
+    if message.is_empty() {
+        t("composer.errors.failedToSend")
+    } else {
+        message
+    }
 }
 
 #[cfg(test)]
@@ -725,9 +857,18 @@ mod provider_request_tests {
             assert_eq!(id, "shared");
         }
         assert_eq!(sends, 1);
-        assert_eq!(requests.request("host", "/workspace", || panic!("already in flight")), "shared");
-        assert_eq!(requests.request("other-host", "/workspace", || "other-host".into()), "other-host");
-        assert_eq!(requests.request("host", "/other", || "other-cwd".into()), "other-cwd");
+        assert_eq!(
+            requests.request("host", "/workspace", || panic!("already in flight")),
+            "shared"
+        );
+        assert_eq!(
+            requests.request("other-host", "/workspace", || "other-host".into()),
+            "other-host"
+        );
+        assert_eq!(
+            requests.request("host", "/other", || "other-cwd".into()),
+            "other-cwd"
+        );
     }
 
     #[test]
@@ -736,13 +877,19 @@ mod provider_request_tests {
         requests.request("host", "/workspace", || "first".into());
         requests.request("host", "/other", || "other".into());
         requests.finish("host", "unrelated");
-        assert_eq!(requests.request("host", "/workspace", || panic!("still in flight")), "first");
+        assert_eq!(
+            requests.request("host", "/workspace", || panic!("still in flight")),
+            "first"
+        );
         // The service invokes finish before inspecting either Ok or Err.
         for next in ["after-success", "after-failure"] {
             let previous = requests.request("host", "/workspace", || panic!("still in flight"));
             requests.finish("host", &previous);
             assert_eq!(requests.request("host", "/workspace", || next.into()), next);
-            assert_eq!(requests.request("host", "/other", || panic!("unrelated scope")), "other");
+            assert_eq!(
+                requests.request("host", "/other", || panic!("unrelated scope")),
+                "other"
+            );
         }
     }
 
@@ -752,9 +899,18 @@ mod provider_request_tests {
         requests.request("host", "/workspace", || "old".into());
         requests.request("other-host", "/workspace", || "other".into());
         requests.reset("host");
-        assert_eq!(requests.request("host", "/workspace", || "new".into()), "new");
+        assert_eq!(
+            requests.request("host", "/workspace", || "new".into()),
+            "new"
+        );
         requests.finish("host", "old");
-        assert_eq!(requests.request("host", "/workspace", || panic!("replacement in flight")), "new");
-        assert_eq!(requests.request("other-host", "/workspace", || panic!("unrelated host")), "other");
+        assert_eq!(
+            requests.request("host", "/workspace", || panic!("replacement in flight")),
+            "new"
+        );
+        assert_eq!(
+            requests.request("other-host", "/workspace", || panic!("unrelated host")),
+            "other"
+        );
     }
 }

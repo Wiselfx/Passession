@@ -151,3 +151,43 @@ fn a_collection_face_above_index_zero_loads_and_shapes() {
     assert_eq!(glyphs.len(), 2);
     assert!(glyphs.iter().all(|glyph| glyph.font.id() == face && glyph.id != 0));
 }
+
+#[test]
+fn rtl_glyphs_keep_their_source_clusters_instead_of_becoming_boxes() {
+    let Some(data) = system_fixture("MAKEPAD_TEST_HEBREW_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") else { return };
+    let mut layouter = Layouter::new(Settings::default());
+    let (mono, family) = (FontId::from(9501), FontFamilyId::from(9502));
+    layouter.define_font(mono, definition(data.clone(), 0, Vec::new()));
+    layouter.define_font_family(family, FontFamilyDefinition { font_ids: vec![mono] });
+    let parsed = FontFace::from_data_and_index(Arc::new(data), 0).unwrap();
+    let face = parsed.as_ttf_parser_face();
+    let text = "אבג";
+    let result = layout(&mut layouter, family, text);
+    let glyphs: Vec<_> = result.rows.iter().flat_map(|row| &row.glyphs).collect();
+    assert_eq!(glyphs.len(), 3);
+    for (glyph, (cluster, character)) in glyphs.iter().zip(text.char_indices()) {
+        assert_eq!(glyph.cluster, cluster);
+        assert_eq!(glyph.id, face.glyph_index(character).expect("Hebrew fixture glyph").0);
+        assert_ne!(glyph.id, 0);
+    }
+}
+
+#[test]
+fn arabic_fallback_retains_contextual_glyphs_and_cluster_ownership() {
+    let Some(data) = system_fixture("MAKEPAD_TEST_ARABIC_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") else { return };
+    let parsed = FontFace::from_data_and_index(Arc::new(data.clone()), 0).unwrap();
+    let text = "العربية";
+    let mut buffer = makepad_rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(text);
+    let expected = makepad_rustybuzz::shape(parsed.as_rustybuzz_face(), &[], buffer);
+    let mut expected: Vec<_> = expected.glyph_infos().iter().map(|glyph| (glyph.cluster as usize, glyph.glyph_id as u16)).collect();
+    expected.sort_by_key(|glyph| glyph.0);
+    assert!(expected.iter().all(|glyph| glyph.1 != 0), "fixture must cover Arabic");
+    let mut layouter = Layouter::new(Settings::default());
+    let (font, family) = (FontId::from(9601), FontFamilyId::from(9602));
+    layouter.define_font(font, definition(data, 0, Vec::new()));
+    layouter.define_font_family(family, FontFamilyDefinition { font_ids: vec![font] });
+    let laid = layout(&mut layouter, family, text);
+    let actual: Vec<_> = laid.rows.iter().flat_map(|row| &row.glyphs).map(|glyph| (glyph.cluster, glyph.id)).collect();
+    assert_eq!(actual, expected, "renderer must preserve shaped glyphs, not draw replacement squares");
+}

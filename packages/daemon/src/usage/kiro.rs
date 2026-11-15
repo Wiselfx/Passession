@@ -5,11 +5,11 @@ mod transport;
 
 use super::common::{UsageAccount, UsageRuntime, UsageScope, hash_account_key};
 use anyhow::Result;
-use tokio_util::sync::CancellationToken;
 use chrono::{SecondsFormat, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use tokio_util::sync::CancellationToken;
 
 const LOGIN_UNAVAILABLE: &str =
     "Kiro HTTP login unavailable. Run omp-kiro login, then refresh usage.";
@@ -25,8 +25,14 @@ fn scope_env(
     }
     // Preserve OMP HTTP markers, without claiming CLI/non-HTTP sessions.
     if scope.provider.as_deref() == Some("kiro-http")
-        || scope.env.get("OMP_KIRO_TRANSPORT").is_some_and(|v| v == "http")
-        || scope.model.as_deref().is_some_and(|v| v.starts_with("kiro-http/"))
+        || scope
+            .env
+            .get("OMP_KIRO_TRANSPORT")
+            .is_some_and(|v| v == "http")
+        || scope
+            .model
+            .as_deref()
+            .is_some_and(|v| v.starts_with("kiro-http/"))
     {
         Some(scope.env.clone())
     } else {
@@ -37,7 +43,10 @@ fn scope_env(
 pub(super) async fn discover(rt: &UsageRuntime, scope: &UsageScope) -> Result<Vec<UsageAccount>> {
     let Some(env) = scope_env(scope, || {
         let mut env = rt.env.clone();
-        if !env.get("HOME").is_some_and(|home| std::path::Path::new(home).is_absolute()) {
+        if !env
+            .get("HOME")
+            .is_some_and(|home| std::path::Path::new(home).is_absolute())
+        {
             env.insert("HOME".into(), rt.home.to_string_lossy().into_owned());
         }
         env
@@ -80,11 +89,17 @@ struct Input {
 pub(super) async fn fetch(rt: &UsageRuntime, input: &Value) -> Result<Value> {
     let input: Input = match Input::deserialize(input) {
         Ok(input) => input,
-        Err(_) => return Ok(transport::error("Invalid Kiro authentication store locator.")),
+        Err(_) => {
+            return Ok(transport::error(
+                "Invalid Kiro authentication store locator.",
+            ));
+        }
     };
     let path = PathBuf::from(input.auth_file);
     if !path.is_absolute() {
-        return Ok(transport::error("Invalid Kiro authentication store locator."));
+        return Ok(transport::error(
+            "Invalid Kiro authentication store locator.",
+        ));
     }
     Ok(tokio::select! {
         biased;
@@ -104,13 +119,17 @@ async fn fetch_path(rt: &UsageRuntime, path: PathBuf) -> Value {
             "refreshedBy":"omp-kiro",
         }});
     }
-    let extra_ca = rt.env.get("NODE_EXTRA_CA_CERTS")
-        .filter(|v| !v.is_empty()).map(PathBuf::from);
-    let client = match tokio::task::spawn_blocking(move || transport::client(extra_ca.as_deref())).await {
-        Ok(Ok(client)) => client,
-        Ok(Err(message)) => return transport::error(message),
-        Err(_) => return transport::error("The Kiro usage service could not be reached."),
-    };
+    let extra_ca = rt
+        .env
+        .get("NODE_EXTRA_CA_CERTS")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let client =
+        match tokio::task::spawn_blocking(move || transport::client(extra_ca.as_deref())).await {
+            Ok(Ok(client)) => client,
+            Ok(Err(message)) => return transport::error(message),
+            Err(_) => return transport::error("The Kiro usage service could not be reached."),
+        };
     // auth::read has dropped its connection before TLS setup or any HTTP await.
     transport::fetch(rt, client, &credential).await
 }
@@ -123,13 +142,21 @@ mod tests {
 
     pub(super) fn runtime(home: &Path) -> UsageRuntime {
         UsageRuntime {
-            home: home.into(), env: BTreeMap::new(), http: reqwest::Client::new(),
-            cancel: CancellationToken::new(), endpoints: BTreeMap::new(),
-            muse_providers: Vec::new(), plugins: None,
+            home: home.into(),
+            env: BTreeMap::new(),
+            http: reqwest::Client::new(),
+            cancel: CancellationToken::new(),
+            endpoints: BTreeMap::new(),
+            muse_providers: Vec::new(),
+            plugins: None,
         }
     }
     fn global() -> UsageScope {
-        UsageScope { provider: None, model: None, env: BTreeMap::new() }
+        UsageScope {
+            provider: None,
+            model: None,
+            env: BTreeMap::new(),
+        }
     }
 
     pub(super) fn store(path: &Path, provider: &str, expires_at: &str) {
@@ -173,7 +200,10 @@ mod tests {
             json!({"authFile":canonical.to_str().unwrap()})
         );
         assert!(
-            !accounts[0].input.to_string().contains("private-access-token")
+            !accounts[0]
+                .input
+                .to_string()
+                .contains("private-access-token")
         );
         let global = scope_env(&global(), || {
             BTreeMap::from([("OMP_KIRO_AUTH_FILE".into(), daemon.to_str().unwrap().into())])
@@ -227,7 +257,9 @@ mod tests {
         let env = scope_env(&scoped(&path), BTreeMap::new).unwrap();
         let accounts = discover_env(env, &CancellationToken::new()).await;
         assert_eq!(accounts.len(), 1);
-        let result = fetch(&runtime(dir.path()), &accounts[0].input).await.unwrap();
+        let result = fetch(&runtime(dir.path()), &accounts[0].input)
+            .await
+            .unwrap();
         assert_eq!(
             serde_json::to_value(result).unwrap(),
             json!({"status":"unavailable","problem":{"kind":"expired","expiresAt":"2000-01-01T00:00:00.000Z","refreshedBy":"omp-kiro"}})
@@ -246,7 +278,8 @@ mod tests {
             json!({"authFile":"/valid","accessToken":"private-access-token"}),
         ] {
             let value =
-                serde_json::to_value(fetch(&runtime(Path::new("/unused")), &input).await.unwrap()).unwrap();
+                serde_json::to_value(fetch(&runtime(Path::new("/unused")), &input).await.unwrap())
+                    .unwrap();
             assert_eq!(
                 value,
                 json!({"status":"error","error":"Invalid Kiro authentication store locator."})
@@ -259,7 +292,8 @@ mod tests {
             &runtime(dir.path()),
             &json!({"authFile":path.to_str().unwrap()}),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         assert_eq!(
             serde_json::to_value(report).unwrap(),
             json!({"status":"error","error":LOGIN_UNAVAILABLE})
@@ -274,7 +308,9 @@ mod tests {
         let path = dir.path().join("missing.db");
         let mut rt = runtime(dir.path());
         rt.cancel = token.clone();
-        let report = fetch(&rt, &json!({"authFile":path.to_str().unwrap()})).await.unwrap();
+        let report = fetch(&rt, &json!({"authFile":path.to_str().unwrap()}))
+            .await
+            .unwrap();
         assert_eq!(
             serde_json::to_value(report).unwrap(),
             json!({"status":"error","error":CANCELLED})
@@ -319,16 +355,24 @@ mod tests {
         store(&session, "github", "2099-01-01T00:00:00Z");
         store(&default_global, "google", "2099-01-01T00:00:00Z");
         let mut rt = runtime(&global_home);
-        rt.env.insert("OMP_KIRO_AUTH_FILE".into(), daemon.to_str().unwrap().into());
+        rt.env
+            .insert("OMP_KIRO_AUTH_FILE".into(), daemon.to_str().unwrap().into());
         let global_accounts = discover(&rt, &global()).await.unwrap();
-        assert_eq!(global_accounts[0].input["authFile"], daemon.canonicalize().unwrap().to_str().unwrap());
+        assert_eq!(
+            global_accounts[0].input["authFile"],
+            daemon.canonicalize().unwrap().to_str().unwrap()
+        );
         let scope = UsageScope {
-            provider: Some("omp".into()), model: Some("kiro-http/auto".into()),
+            provider: Some("omp".into()),
+            model: Some("kiro-http/auto".into()),
             env: BTreeMap::from([("HOME".into(), session_home.to_str().unwrap().into())]),
         };
         let accounts = discover(&rt, &scope).await.unwrap();
         assert_eq!(accounts.len(), 1);
-        assert_eq!(accounts[0].input["authFile"], session.canonicalize().unwrap().to_str().unwrap());
+        assert_eq!(
+            accounts[0].input["authFile"],
+            session.canonicalize().unwrap().to_str().unwrap()
+        );
         rt.env.clear();
         assert_eq!(
             discover(&rt, &global()).await.unwrap()[0].input["authFile"],
@@ -354,7 +398,10 @@ mod tests {
         let cancel = rt.cancel.clone();
         let input = json!({"authFile":path.to_str().unwrap()});
         let fetch_task = tokio::spawn(async move { fetch(&rt, &input).await.unwrap() });
-        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept()).await.unwrap().unwrap();
+        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
         let mut bytes = Vec::new();
         loop {
             let mut buffer = [0; 4096];
@@ -365,9 +412,15 @@ mod tests {
                 break;
             }
         }
-        socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n{\r\n").await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n{\r\n")
+            .await
+            .unwrap();
         cancel.cancel();
-        let report = tokio::time::timeout(Duration::from_secs(1), fetch_task).await.unwrap().unwrap();
+        let report = tokio::time::timeout(Duration::from_secs(1), fetch_task)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(report, transport::error(CANCELLED));
     }
 }

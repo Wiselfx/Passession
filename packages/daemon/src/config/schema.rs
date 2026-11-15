@@ -29,9 +29,10 @@ pub fn normalize_persisted(mut value: Value) -> Result<Value> {
     }
     visit(Node::Write(&mut value), Kind::Persisted).context("Invalid persisted config")?;
     if let Some(daemon) = value.get_mut("daemon").and_then(Value::as_object_mut)
-        && let Some(allowed_hosts) = daemon.remove("allowedHosts") {
-            daemon.entry("hostnames").or_insert(allowed_hosts);
-        }
+        && let Some(allowed_hosts) = daemon.remove("allowedHosts")
+    {
+        daemon.entry("hostnames").or_insert(allowed_hosts);
+    }
     Ok(value)
 }
 
@@ -605,12 +606,13 @@ fn visit(mut node: Node<'_>, kind: Kind) -> Result<()> {
         _ => {
             validate_leaf(node.value(), kind)?;
             if matches!(kind, Trimmed | PortRange)
-                && let Node::Write(Value::String(text)) = node {
-                    let trimmed = js_trim(text);
-                    if trimmed.len() != text.len() {
-                        *text = trimmed.to_owned();
-                    }
+                && let Node::Write(Value::String(text)) = node
+            {
+                let trimmed = js_trim(text);
+                if trimmed.len() != text.len() {
+                    *text = trimmed.to_owned();
                 }
+            }
         }
     }
     Ok(())
@@ -813,7 +815,8 @@ mod tests {
         let value = normalize_persisted(json!({
             "daemon": {"allowedHosts": ["localhost"], "browserTools": null},
             "features": {"webUi": "obsolete"},
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(
             value,
             json!({

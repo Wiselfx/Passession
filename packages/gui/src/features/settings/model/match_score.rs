@@ -41,7 +41,11 @@ fn substring_match(query: &[char], text: &[char]) -> Option<MatchScore> {
         if text[found..found + query.len()] != *query {
             continue;
         }
-        let before = if found > 0 { Some(text[found - 1]) } else { None };
+        let before = if found > 0 {
+            Some(text[found - 1])
+        } else {
+            None
+        };
         let end = found + query.len();
         let after = text.get(end).copied();
         let starts = found == 0 || is_boundary(before);
@@ -55,8 +59,15 @@ fn substring_match(query: &[char], text: &[char]) -> Option<MatchScore> {
         } else {
             TIER_SUBSTRING
         };
-        let score = MatchScore { tier, offset: found as i64, spread: None };
-        if best.map(|b| tier < b.tier || (tier == b.tier && (found as i64) < b.offset)).unwrap_or(true) {
+        let score = MatchScore {
+            tier,
+            offset: found as i64,
+            spread: None,
+        };
+        if best
+            .map(|b| tier < b.tier || (tier == b.tier && (found as i64) < b.offset))
+            .unwrap_or(true)
+        {
             best = Some(score);
         }
     }
@@ -90,17 +101,29 @@ fn subsequence_match(query: &[char], text: &[char]) -> Option<MatchScore> {
     if qi != query.len() || first == -1 {
         return None;
     }
-    Some(MatchScore { tier: TIER_SUBSEQUENCE, offset: first, spread: Some(last - first + 1) })
+    Some(MatchScore {
+        tier: TIER_SUBSEQUENCE,
+        offset: first,
+        spread: Some(last - first + 1),
+    })
 }
 
 fn score_match(query: &str, text: &str) -> Option<MatchScore> {
     if query.is_empty() {
-        return Some(MatchScore { tier: TIER_EXACT, offset: 0, spread: None });
+        return Some(MatchScore {
+            tier: TIER_EXACT,
+            offset: 0,
+            spread: None,
+        });
     }
     let q: Vec<char> = query.to_lowercase().chars().collect();
     let t: Vec<char> = text.to_lowercase().chars().collect();
     if q == t {
-        return Some(MatchScore { tier: TIER_EXACT, offset: 0, spread: None });
+        return Some(MatchScore {
+            tier: TIER_EXACT,
+            offset: 0,
+            spread: None,
+        });
     }
     substring_match(&q, &t).or_else(|| subsequence_match(&q, &t))
 }
@@ -108,16 +131,27 @@ fn score_match(query: &str, text: &str) -> Option<MatchScore> {
 /// Every whitespace token must land in some field; the result sums each
 /// token's best tier, offset and spread. `None` filters the row out.
 pub fn score_text_fields(query: &str, fields: &[&str]) -> Option<MatchScore> {
-    let tokens: Vec<String> = query.trim().to_lowercase().split_whitespace().map(String::from).collect();
+    let tokens: Vec<String> = query
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(String::from)
+        .collect();
     if tokens.is_empty() {
-        return Some(MatchScore { tier: TIER_EXACT, offset: 0, spread: Some(0) });
+        return Some(MatchScore {
+            tier: TIER_EXACT,
+            offset: 0,
+            spread: Some(0),
+        });
     }
     let (mut tier, mut offset, mut spread) = (0, 0, 0);
     for token in tokens {
         let mut best: Option<MatchScore> = None;
         for field in fields {
             if let Some(score) = score_match(&token, field)
-                && best.map(|b| compare(&score, &b) == Ordering::Less).unwrap_or(true)
+                && best
+                    .map(|b| compare(&score, &b) == Ordering::Less)
+                    .unwrap_or(true)
             {
                 best = Some(score);
             }
@@ -127,7 +161,11 @@ pub fn score_text_fields(query: &str, fields: &[&str]) -> Option<MatchScore> {
         offset += best.offset;
         spread += best.spread.unwrap_or(token.chars().count() as i64);
     }
-    Some(MatchScore { tier, offset, spread: Some(spread) })
+    Some(MatchScore {
+        tier,
+        offset,
+        spread: Some(spread),
+    })
 }
 
 /// Input order without a query, else best match first (stable for ties).
@@ -144,5 +182,8 @@ pub fn rank<T: Clone>(items: &[T], query: &str, fields: impl Fn(&T) -> Vec<Strin
         }
     }
     scored.sort_by(|a, b| compare(&a.1, &b.1).then(a.0.cmp(&b.0)));
-    scored.into_iter().map(|(index, _)| items[index].clone()).collect()
+    scored
+        .into_iter()
+        .map(|(index, _)| items[index].clone())
+        .collect()
 }

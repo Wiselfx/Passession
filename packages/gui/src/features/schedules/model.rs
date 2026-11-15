@@ -2,7 +2,7 @@
 //! `schedule-cadence-options.ts` as ported in Flutter `schedules_screen.dart`.
 
 use chrono::{DateTime, Datelike, Local, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::features::workspace::host::Host;
 use crate::features::workspace::i18n::{l, lf, t, ta};
@@ -14,11 +14,19 @@ const MS_PER_DAY: i64 = 86_400_000;
 
 /// `Heartbeat` for agent targets, else `Schedule`.
 pub fn product_name(schedule: &Value) -> &'static str {
-    if str_of(object_of(schedule, "target"), "type") == "agent" { l("Heartbeat") } else { l("Schedule") }
+    if str_of(object_of(schedule, "target"), "type") == "agent" {
+        l("Heartbeat")
+    } else {
+        l("Schedule")
+    }
 }
 
 pub fn product_name_lower(schedule: &Value) -> &'static str {
-    if str_of(object_of(schedule, "target"), "type") == "agent" { l("heartbeat") } else { l("schedule") }
+    if str_of(object_of(schedule, "target"), "type") == "agent" {
+        l("heartbeat")
+    } else {
+        l("schedule")
+    }
 }
 
 /// `resolveScheduleTitle`.
@@ -39,7 +47,12 @@ pub fn schedule_title(schedule: &Value) -> String {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_owned)
-        .unwrap_or_else(|| lf("Untitled {product}", &[("product", product_name_lower(schedule))]))
+        .unwrap_or_else(|| {
+            lf(
+                "Untitled {product}",
+                &[("product", product_name_lower(schedule))],
+            )
+        })
 }
 
 /// `shortenPath`: the home directory as `~`.
@@ -57,7 +70,9 @@ pub fn shorten_path(path: &str) -> String {
 
 /// `everyMsToParts`: (value, unit noun).
 pub fn every_ms_to_parts(ms: Option<f64>) -> (i64, &'static str) {
-    let Some(ms) = ms.filter(|m| m.is_finite() && *m > 0.0) else { return (1, "hour") };
+    let Some(ms) = ms.filter(|m| m.is_finite() && *m > 0.0) else {
+        return (1, "hour");
+    };
     let whole = ms.round() as i64;
     if ms == whole as f64 && whole % MS_PER_DAY == 0 {
         return (whole / MS_PER_DAY, "day");
@@ -77,7 +92,10 @@ pub fn format_cadence(cadence: &Value) -> String {
         return if value == 1 {
             lf("Every 1 {unit}", &[("unit", unit)])
         } else {
-            lf("Every {n} {unit}s", &[("n", &value.to_string()), ("unit", unit)])
+            lf(
+                "Every {n} {unit}s",
+                &[("n", &value.to_string()), ("unit", unit)],
+            )
         };
     }
     let expression = str_of(cadence, "expression");
@@ -97,8 +115,13 @@ pub fn describe_cron(expression: &str, timezone: Option<&str>) -> Option<String>
         return None;
     }
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    let [minute, hour, day_of_month, month, day_of_week] = parts[..] else { return None };
-    if [minute, hour, month, day_of_month, day_of_week].iter().all(|p| *p == "*") {
+    let [minute, hour, day_of_month, month, day_of_week] = parts[..] else {
+        return None;
+    };
+    if [minute, hour, month, day_of_month, day_of_week]
+        .iter()
+        .all(|p| *p == "*")
+    {
         return Some(l("Every minute").to_owned());
     }
     if !digits(minute) || month != "*" || day_of_month != "*" {
@@ -112,18 +135,31 @@ pub fn describe_cron(expression: &str, timezone: Option<&str>) -> Option<String>
         return Some(if minute_num == 0 {
             l("Every hour").to_owned()
         } else {
-            lf("Every hour at :{minute}", &[("minute", &format!("{minute_num:02}"))])
+            lf(
+                "Every hour at :{minute}",
+                &[("minute", &format!("{minute_num:02}"))],
+            )
         });
     }
     if !digits(hour) {
         return None;
     }
-    const DAYS: [&str; 7] = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+    const DAYS: [&str; 7] = [
+        "Sundays",
+        "Mondays",
+        "Tuesdays",
+        "Wednesdays",
+        "Thursdays",
+        "Fridays",
+        "Saturdays",
+    ];
     let day_label = match day_of_week {
         "*" => l("Daily"),
         "1-5" => l("Weekdays"),
         "0,6" | "6,0" => l("Weekends"),
-        day if day.len() == 1 && digits(day) && day.parse::<usize>().ok()? < 7 => l(DAYS[day.parse::<usize>().ok()?]),
+        day if day.len() == 1 && digits(day) && day.parse::<usize>().ok()? < 7 => {
+            l(DAYS[day.parse::<usize>().ok()?])
+        }
         _ => return None,
     };
     let time = format!("{:02}:{minute_num:02}", hour.parse::<u32>().ok()?);
@@ -200,12 +236,16 @@ fn cron_field_error(source: &str, min: u32, max: u32, name: &str) -> Option<Stri
 
 fn parse_time(value: Option<&Value>) -> Option<DateTime<Utc>> {
     let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text).ok().map(|t| t.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 /// `formatNextRun`: "soon", "in 5m", "in 3h", "in 2d".
 pub fn format_next_run(iso: Option<&Value>, now: DateTime<Utc>) -> String {
-    let Some(target) = parse_time(iso) else { return String::new() };
+    let Some(target) = parse_time(iso) else {
+        return String::new();
+    };
     let diff = (target - now).num_milliseconds();
     let round = |value: i64, unit: i64| ((value as f64) / unit as f64).round() as i64;
     if diff < MS_PER_MINUTE {
@@ -222,7 +262,9 @@ pub fn format_next_run(iso: Option<&Value>, now: DateTime<Utc>) -> String {
 /// `describeTimeAgo`: "just now", "5m ago", "2h ago", "3d ago", then the local date
 /// ("Jan 15", "1월 15일").
 pub fn time_ago(iso: Option<&Value>, now: DateTime<Utc>) -> String {
-    let Some(time) = parse_time(iso) else { return String::new() };
+    let Some(time) = parse_time(iso) else {
+        return String::new();
+    };
     let elapsed = (now - time).num_milliseconds();
     if elapsed < MS_PER_MINUTE {
         return l("just now").to_owned();
@@ -236,10 +278,19 @@ pub fn time_ago(iso: Option<&Value>, now: DateTime<Utc>) -> String {
     if elapsed < 7 * MS_PER_DAY {
         return lf("{n}d ago", &[("n", &(elapsed / MS_PER_DAY).to_string())]);
     }
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let local = time.with_timezone(&Local);
-    let (month, number, day) = (MONTHS[local.month0() as usize], local.month().to_string(), local.day().to_string());
-    ta("workspace.schedules.monthDay", &[("month", month), ("monthNumber", &number), ("day", &day)])
+    let (month, number, day) = (
+        MONTHS[local.month0() as usize],
+        local.month().to_string(),
+        local.day().to_string(),
+    );
+    ta(
+        "workspace.schedules.monthDay",
+        &[("month", month), ("monthNumber", &number), ("day", &day)],
+    )
 }
 
 /// Cadence presets (`schedule-cadence-options.ts`): (id, English label, expression).
@@ -299,12 +350,20 @@ impl ScheduleState {
 
 /// Expired, target gone, finished, paused, active. A missing agent only counts as gone once
 /// the host's agent directory has loaded.
-pub fn schedule_state(schedule: &Value, host: Option<Host<'_>>, now: DateTime<Utc>) -> ScheduleState {
+pub fn schedule_state(
+    schedule: &Value,
+    host: Option<Host<'_>>,
+    now: DateTime<Utc>,
+) -> ScheduleState {
     if parse_time(schedule.get("expiresAt")).is_some_and(|expiry| expiry <= now) {
         return ScheduleState::Expired;
     }
     let target = object_of(schedule, "target");
-    if str_of(target, "type") == "agent" && let Some(host) = host && host.agents_loaded() && host.agent(str_of(target, "agentId")).is_none() {
+    if str_of(target, "type") == "agent"
+        && let Some(host) = host
+        && host.agents_loaded()
+        && host.agent(str_of(target, "agentId")).is_none()
+    {
         return ScheduleState::TargetGone;
     }
     match str_of(schedule, "status") {
@@ -324,28 +383,47 @@ pub fn target_label(schedule: &Value, host: Option<Host<'_>>) -> (String, Option
         let title = str_of(agent, "title").trim();
         let provider = str_of(agent, "provider");
         return (
-            if title.is_empty() { l("Untitled agent").into() } else { title.into() },
+            if title.is_empty() {
+                l("Untitled agent").into()
+            } else {
+                title.into()
+            },
             (!provider.is_empty()).then(|| provider.to_owned()),
         );
     }
     let config = object_of(target, "config");
     let cwd = str_of(config, "cwd").trim();
-    let name = host.and_then(|h| h.project_by_root(cwd)).map(|p| str_of(p, "projectDisplayName").to_owned()).unwrap_or_default();
+    let name = host
+        .and_then(|h| h.project_by_root(cwd))
+        .map(|p| str_of(p, "projectDisplayName").to_owned())
+        .unwrap_or_default();
     let provider = str_of(config, "provider");
     (
-        if name.is_empty() { shorten_path(cwd) } else { name },
+        if name.is_empty() {
+            shorten_path(cwd)
+        } else {
+            name
+        },
         (!provider.is_empty()).then(|| provider.to_owned()),
     )
 }
 
 /// `buildMeta`: host (multi-host only), cadence, created, last run, next run while active.
-pub fn meta(schedule: &Value, state: ScheduleState, host_label: Option<&str>, now: DateTime<Utc>) -> String {
+pub fn meta(
+    schedule: &Value,
+    state: ScheduleState,
+    host_label: Option<&str>,
+    now: DateTime<Utc>,
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(label) = host_label {
         parts.push(label.to_owned());
     }
     parts.push(format_cadence(object_of(schedule, "cadence")));
-    parts.push(lf("Created {time}", &[("time", &time_ago(schedule.get("createdAt"), now))]));
+    parts.push(lf(
+        "Created {time}",
+        &[("time", &time_ago(schedule.get("createdAt"), now))],
+    ));
     parts.push(match schedule.get("lastRunAt").filter(|v| !v.is_null()) {
         None => l("Never run").to_owned(),
         Some(value) => lf("Last run {time}", &[("time", &time_ago(Some(value), now))]),
@@ -364,7 +442,11 @@ pub fn optimistic_status(schedule: &Value, action: &str, now: DateTime<Utc>) -> 
     let mut next = schedule.clone();
     let paused = action == "pause";
     next["status"] = json!(if paused { "paused" } else { "active" });
-    next["pausedAt"] = if paused { json!(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)) } else { Value::Null };
+    next["pausedAt"] = if paused {
+        json!(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    } else {
+        Value::Null
+    };
     next
 }
 
@@ -381,8 +463,14 @@ mod tests {
     #[test]
     fn titles_and_paths() {
         assert_eq!(schedule_title(&json!({"name": " Daily "})), "Daily");
-        assert_eq!(schedule_title(&json!({"target": {"type": "new-agent", "config": {"title": "T"}}})), "T");
-        assert_eq!(schedule_title(&json!({"prompt": "\n  first\nsecond"})), "first");
+        assert_eq!(
+            schedule_title(&json!({"target": {"type": "new-agent", "config": {"title": "T"}}})),
+            "T"
+        );
+        assert_eq!(
+            schedule_title(&json!({"prompt": "\n  first\nsecond"})),
+            "first"
+        );
         assert_eq!(shorten_path("/home/me/code"), "~/code");
         assert_eq!(shorten_path("/srv/x"), "/srv/x");
     }
@@ -392,38 +480,87 @@ mod tests {
         pin("en");
         assert_eq!(every_ms_to_parts(Some(7_200_000.0)), (2, "hour"));
         assert_eq!(every_ms_to_parts(Some(90_000.0)), (2, "minute"));
-        assert_eq!(cron_expression_for(&json!({"type": "every", "everyMs": 3_600_000})), "0 * * * *");
-        assert_eq!(cron_expression_for(&json!({"type": "every", "everyMs": 172_800_000})), "0 9 */2 * *");
-        assert_eq!(describe_cron("0 9 * * 1-5", Some("UTC")).as_deref(), Some("Weekdays at 09:00 UTC"));
-        assert_eq!(describe_cron("5 * * * *", None).as_deref(), Some("Every hour at :05"));
+        assert_eq!(
+            cron_expression_for(&json!({"type": "every", "everyMs": 3_600_000})),
+            "0 * * * *"
+        );
+        assert_eq!(
+            cron_expression_for(&json!({"type": "every", "everyMs": 172_800_000})),
+            "0 9 */2 * *"
+        );
+        assert_eq!(
+            describe_cron("0 9 * * 1-5", Some("UTC")).as_deref(),
+            Some("Weekdays at 09:00 UTC")
+        );
+        assert_eq!(
+            describe_cron("5 * * * *", None).as_deref(),
+            Some("Every hour at :05")
+        );
         assert_eq!(describe_cron("*/5 * * * *", None), None);
-        assert_eq!(validate_cron("* * *").as_deref(), Some("Cron expressions must have 5 fields"));
-        assert_eq!(validate_cron("60 * * * *").as_deref(), Some("Invalid minute value"));
-        assert_eq!(validate_cron("*/0 * * * *").as_deref(), Some("Invalid minute step"));
-        assert_eq!(validate_cron("1-70 * * * *").as_deref(), Some("Invalid minute range"));
+        assert_eq!(
+            validate_cron("* * *").as_deref(),
+            Some("Cron expressions must have 5 fields")
+        );
+        assert_eq!(
+            validate_cron("60 * * * *").as_deref(),
+            Some("Invalid minute value")
+        );
+        assert_eq!(
+            validate_cron("*/0 * * * *").as_deref(),
+            Some("Invalid minute step")
+        );
+        assert_eq!(
+            validate_cron("1-70 * * * *").as_deref(),
+            Some("Invalid minute range")
+        );
         assert!(validate_cron("0 9 * * 1-5").is_none());
     }
 
     #[test]
     fn relative_times() {
         pin("en");
-        let now = DateTime::parse_from_rfc3339("2026-01-10T12:00:00Z").unwrap().with_timezone(&Utc);
-        assert_eq!(time_ago(Some(&json!("2026-01-10T11:58:00Z")), now), "2m ago");
-        assert_eq!(format_next_run(Some(&json!("2026-01-10T15:00:00Z")), now), "in 3h");
-        assert_eq!(format_next_run(Some(&json!("2026-01-10T12:00:30Z")), now), "soon");
+        let now = DateTime::parse_from_rfc3339("2026-01-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            time_ago(Some(&json!("2026-01-10T11:58:00Z")), now),
+            "2m ago"
+        );
+        assert_eq!(
+            format_next_run(Some(&json!("2026-01-10T15:00:00Z")), now),
+            "in 3h"
+        );
+        assert_eq!(
+            format_next_run(Some(&json!("2026-01-10T12:00:30Z")), now),
+            "soon"
+        );
     }
 
     #[test]
     fn korean_literals() {
         pin("ko");
-        let now = DateTime::parse_from_rfc3339("2026-01-10T12:00:00Z").unwrap().with_timezone(&Utc);
-        assert_eq!(describe_cron("0 9 * * 1-5", Some("UTC")).as_deref(), Some("평일 09:00 UTC"));
-        assert_eq!(time_ago(Some(&json!("2026-01-10T11:58:00Z")), now), "2분 전");
+        let now = DateTime::parse_from_rfc3339("2026-01-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            describe_cron("0 9 * * 1-5", Some("UTC")).as_deref(),
+            Some("평일 09:00 UTC")
+        );
+        assert_eq!(
+            time_ago(Some(&json!("2026-01-10T11:58:00Z")), now),
+            "2분 전"
+        );
         assert_eq!(validate_cron("60 * * * *").as_deref(), Some("잘못된 분 값"));
         assert_eq!(validate_cron("0 9 * 13 *").as_deref(), Some("잘못된 월 값"));
-        assert_eq!(time_ago(Some(&json!("2025-12-01T12:00:00Z")), now), "12월 1일");
+        assert_eq!(
+            time_ago(Some(&json!("2025-12-01T12:00:00Z")), now),
+            "12월 1일"
+        );
         pin("en");
-        assert_eq!(time_ago(Some(&json!("2026-01-10T11:58:00Z")), now), "2m ago");
+        assert_eq!(
+            time_ago(Some(&json!("2026-01-10T11:58:00Z")), now),
+            "2m ago"
+        );
         assert_eq!(time_ago(Some(&json!("2025-12-01T12:00:00Z")), now), "Dec 1");
     }
 

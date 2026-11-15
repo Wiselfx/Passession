@@ -159,9 +159,10 @@ impl GitService {
                     released = Some(key.clone());
                 }
                 if demand.count == 0
-                    && let Some(demand) = demands.remove(&key) {
-                        demand.lifetime.cancel();
-                    }
+                    && let Some(demand) = demands.remove(&key)
+                {
+                    demand.lifetime.cancel();
+                }
                 if demands.is_empty() {
                     empty.push(common.clone());
                 } else {
@@ -749,9 +750,9 @@ impl Actor {
                     }
                     if changed
                         && let Err(error) = app.git.publish_checkout_snapshot(&cwd, &snapshot).await
-                        {
-                            tracing::debug!(%error,"Checkout update publication failed");
-                        }
+                    {
+                        tracing::debug!(%error,"Checkout update publication failed");
+                    }
                 }
                 Err(error) => tracing::debug!(%error,"Checkout observation refresh failed"),
             }
@@ -1108,7 +1109,8 @@ async fn forge_loop(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .filter(|&(_cwd, d)| d.next <= Instant::now() ).map(|(cwd, _d)| cwd.clone())
+            .filter(|&(_cwd, d)| d.next <= Instant::now())
+            .map(|(cwd, _d)| cwd.clone())
             .collect();
         let Some(app) = app.upgrade() else { return };
         let Ok(env) = app.git.environment() else {
@@ -1154,9 +1156,9 @@ async fn forge_loop(
                     .git
                     .apply_forge_payload_at(&cwd, &payload, generations.get(&cwd).copied())
                     .await
-                {
-                    tracing::debug!(%error,"Forge observation publication failed");
-                }
+            {
+                tracing::debug!(%error,"Forge observation publication failed");
+            }
         }
     }
 }

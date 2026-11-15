@@ -117,12 +117,19 @@ pub(super) struct SplitSizes {
 }
 
 impl SplitSizes {
-    const KEYS: [(Split, &'static str); 3] = [(Split::Branches, "branchesWidth"), (Split::Side, "detailsWidth"), (Split::Stacked, "detailsHeight")];
+    const KEYS: [(Split, &'static str); 3] = [
+        (Split::Branches, "branchesWidth"),
+        (Split::Side, "detailsWidth"),
+        (Split::Stacked, "detailsHeight"),
+    ];
 
     fn read(value: Option<&Value>) -> Self {
         let mut sizes = Self::default();
         for (split, key) in Self::KEYS {
-            let size = value.and_then(|v| v.get(key)).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
+            let size = value
+                .and_then(|v| v.get(key))
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v > 0.0);
             *sizes.slot(split) = size;
         }
         sizes
@@ -146,7 +153,10 @@ impl SplitSizes {
 
     /// `previous` with these sizes (unknown keys kept).
     fn merged(&self, previous: Option<&Value>) -> Value {
-        let mut map = previous.and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut map = previous
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         for (split, key) in Self::KEYS {
             if let Some(size) = self.get(split) {
                 map.insert(key.to_owned(), json!(size.round()));
@@ -180,8 +190,14 @@ pub(super) enum LogHit {
     SearchClear,
     BranchSearchClear,
     Section(String),
-    Ref { kind: RefKind, name: String },
-    RefMenu { kind: RefKind, name: String },
+    Ref {
+        kind: RefKind,
+        name: String,
+    },
+    RefMenu {
+        kind: RefKind,
+        name: String,
+    },
     Row(usize),
     /// The relative date of a row (absolute date tooltip).
     Date(usize),
@@ -202,9 +218,15 @@ pub(super) enum LogHit {
 pub(super) enum Purpose {
     Branch,
     Author,
-    RefMenu { kind: RefKind, name: String },
+    RefMenu {
+        kind: RefKind,
+        name: String,
+    },
     RowMenu(String),
-    FileMenu { sha: String, path: String },
+    FileMenu {
+        sha: String,
+        path: String,
+    },
     /// The checkout of this branch failed on uncommitted changes.
     StashAndSwitch(String),
 }
@@ -309,7 +331,10 @@ fn parse_ref_value(value: &str) -> Option<RefFilter> {
         "tag" => RefKind::Tag,
         _ => return None,
     };
-    Some(RefFilter { name: name.to_owned(), kind: Some(kind) })
+    Some(RefFilter {
+        name: name.to_owned(),
+        kind: Some(kind),
+    })
 }
 
 pub(super) fn ahead_behind(ahead: Option<i64>, behind: Option<i64>) -> Option<String> {
@@ -409,7 +434,14 @@ impl LogView {
     }
 
     /// Applies a core batch, store change or timer; returns true when a redraw is due.
-    pub fn process(&mut self, cx: &mut Cx, event: &Event, ui: &mut UiContext, store: &mut GitStore, visible: bool) -> bool {
+    pub fn process(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &mut UiContext,
+        store: &mut GitStore,
+        visible: bool,
+    ) -> bool {
         if visible && !self.was_visible {
             self.want_focus = true;
         }
@@ -429,9 +461,12 @@ impl LogView {
             .events
             .iter()
             .filter_map(|event| match event {
-                CoreEvent::Response { request_id, result, .. } => {
-                    self.flows.remove(request_id).map(|flow| (flow, wire::git_result(result)))
-                }
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => self
+                    .flows
+                    .remove(request_id)
+                    .map(|flow| (flow, wire::git_result(result))),
                 _ => None,
             })
             .collect();
@@ -478,7 +513,10 @@ impl LogView {
         }
         let index = (self.list.offset / self.row_height).floor() as usize;
         let commit = self.state.commits.get(index)?;
-        Some((commit.sha.clone(), self.list.offset - index as f64 * self.row_height))
+        Some((
+            commit.sha.clone(),
+            self.list.offset - index as f64 * self.row_height,
+        ))
     }
 
     /// The first load of a filter selects HEAD (else the first row) so the
@@ -487,7 +525,10 @@ impl LogView {
         if !self.state.auto_select || !self.state.loaded {
             return false;
         }
-        if self.state.selected.is_some() || self.state.commits.is_empty() || self.reveal_after_load.is_some() {
+        if self.state.selected.is_some()
+            || self.state.commits.is_empty()
+            || self.reveal_after_load.is_some()
+        {
             self.state.auto_select = false;
             return false;
         }
@@ -522,7 +563,10 @@ impl LogView {
             self.state.goto(ui, &query, explicit);
             return;
         }
-        let filters = Filters { text: query, ..self.state.filters.clone() };
+        let filters = Filters {
+            text: query,
+            ..self.state.filters.clone()
+        };
         self.apply_filters(ui, filters);
     }
 
@@ -533,14 +577,20 @@ impl LogView {
                     self.go_to_commit(cx, ui, &sha, explicit);
                 } else {
                     // The message filter hides it: list everything, then select.
-                    let filters = Filters { text: String::new(), ..self.state.filters.clone() };
+                    let filters = Filters {
+                        text: String::new(),
+                        ..self.state.filters.clone()
+                    };
                     self.apply_filters(ui, filters);
                     self.reveal_after_load = Some((sha, explicit));
                 }
             }
             Goto::NotFound { query } => {
                 if self.search_text.trim() == query {
-                    let filters = Filters { text: query, ..self.state.filters.clone() };
+                    let filters = Filters {
+                        text: query,
+                        ..self.state.filters.clone()
+                    };
                     self.apply_filters(ui, filters);
                 }
             }
@@ -594,7 +644,13 @@ impl LogView {
     // Text fields.
 
     /// Routes an event to the search fields; returns true when a redraw is due.
-    pub fn handle_inputs(&mut self, cx: &mut Cx, event: &Event, ui: &UiContext, inputs: &mut LogInputs<'_>) -> bool {
+    pub fn handle_inputs(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        ui: &UiContext,
+        inputs: &mut LogInputs<'_>,
+    ) -> bool {
         let mut redraw = false;
         if std::mem::take(&mut self.retargeted) {
             let filters = Filters::from_target(&self.target.data);
@@ -625,7 +681,9 @@ impl LogView {
             inputs.branch.handle_event(cx, event, &mut Scope::empty());
         });
         for action in &actions {
-            let Some(action) = action.as_widget_action() else { continue };
+            let Some(action) = action.as_widget_action() else {
+                continue;
+            };
             let search = action.widget_uid == search_uid;
             if !search && action.widget_uid != branch_uid {
                 continue;
@@ -695,7 +753,9 @@ impl LogView {
     /// Selects row `index`. Keyboard moves (`debounce`) load details after a
     /// pause so holding an arrow key does not ask for every commit passed.
     pub(super) fn select(&mut self, cx: &mut Cx, ui: &UiContext, index: usize, debounce: bool) {
-        let Some(commit) = self.state.commits.get(index) else { return };
+        let Some(commit) = self.state.commits.get(index) else {
+            return;
+        };
         let sha = commit.sha.clone();
         if self.state.selected.as_deref() != Some(sha.as_str()) {
             self.state.selected = Some(sha.clone());
@@ -703,7 +763,8 @@ impl LogView {
             self.files.offset = 0.0;
             self.info.offset = 0.0;
         }
-        self.list.reveal(index as f64 * self.row_height, self.row_height);
+        self.list
+            .reveal(index as f64 * self.row_height, self.row_height);
         if self.phone {
             return;
         }
@@ -753,26 +814,43 @@ impl LogView {
             data["focusPath"] = json!(path);
             data["focusRequestId"] = json!(now_ms());
         }
-        let target = PanelTarget::new("commit_diff", self.host(), &self.target.workspace_id, &self.state.cwd)
-            .with_id(sha)
-            .with_title(self.subject_of(sha))
-            .with_data(data);
-        ui.push(UiEffect::OpenTab { target, placement: TabPlacement::Main });
+        let target = PanelTarget::new(
+            "commit_diff",
+            self.host(),
+            &self.target.workspace_id,
+            &self.state.cwd,
+        )
+        .with_id(sha)
+        .with_title(self.subject_of(sha))
+        .with_data(data);
+        ui.push(UiEffect::OpenTab {
+            target,
+            placement: TabPlacement::Main,
+        });
     }
 
     fn copy(ui: &mut UiContext, text: String, toast: &str) {
-        ui.push(UiEffect::CopyText { text, toast: Some(t(toast)) });
+        ui.push(UiEffect::CopyText {
+            text,
+            toast: Some(t(toast)),
+        });
     }
 
     fn filter_ref(&mut self, ui: &UiContext, filter: Option<RefFilter>) {
-        let filters = Filters { revision: filter, ..self.state.filters.clone() };
+        let filters = Filters {
+            revision: filter,
+            ..self.state.filters.clone()
+        };
         self.apply_filters(ui, filters);
     }
 
     /// Limits the log to the history of `path`.
     fn show_history(&mut self, ui: &UiContext, path: String) {
         self.screen = Screen::Log;
-        let filters = Filters { path: Some(path), ..self.state.filters.clone() };
+        let filters = Filters {
+            path: Some(path),
+            ..self.state.filters.clone()
+        };
         self.apply_filters(ui, filters);
     }
 
@@ -817,13 +895,23 @@ impl LogView {
     }
 
     /// Original branch switcher: uncommitted changes offer stash-and-switch.
-    fn on_flow(&mut self, cx: &mut Cx, ui: &mut UiContext, store: &mut GitStore, flow: Flow, result: Result<serde_json::Value, wire::Failure>) {
+    fn on_flow(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        store: &mut GitStore,
+        flow: Flow,
+        result: Result<serde_json::Value, wire::Failure>,
+    ) {
         let (host, cwd) = (self.target.server_id.clone(), self.state.cwd.clone());
         match flow {
             Flow::Switch(branch) | Flow::SwitchAfterStash(branch) if result.is_ok() => {
                 self.switching = None;
                 store.invalidate(cx, &host, &cwd);
-                ui.toast(tr("workspace.git.log.checkedOut", &[("name", branch)]), false);
+                ui.toast(
+                    tr("workspace.git.log.checkedOut", &[("name", branch)]),
+                    false,
+                );
             }
             Flow::Switch(branch) => {
                 self.switching = None;
@@ -839,19 +927,28 @@ impl LogView {
                         },
                     });
                 } else {
-                    ui.toast(wire::message_or(&failure, t("workspace.git.log.checkoutFailed")), true);
+                    ui.toast(
+                        wire::message_or(&failure, t("workspace.git.log.checkoutFailed")),
+                        true,
+                    );
                 }
             }
             Flow::SwitchAfterStash(_) => {
                 self.switching = None;
                 if let Err(failure) = result {
-                    ui.toast(wire::message_or(&failure, t("workspace.git.log.checkoutFailed")), true);
+                    ui.toast(
+                        wire::message_or(&failure, t("workspace.git.log.checkoutFailed")),
+                        true,
+                    );
                 }
             }
             Flow::StashSave(branch) => match result {
                 Err(failure) => {
                     self.switching = None;
-                    ui.toast(wire::message_or(&failure, t("branchSwitcher.failedToStash")), true);
+                    ui.toast(
+                        wire::message_or(&failure, t("branchSwitcher.failedToStash")),
+                        true,
+                    );
                 }
                 Ok(_) => {
                     store.invalidate(cx, &host, &cwd);
@@ -862,7 +959,11 @@ impl LogView {
     }
 
     fn current_branch(&self) -> Option<&str> {
-        self.state.refs.as_ref().and_then(|refs| refs.local.iter().find(|b| b.current)).map(|b| b.name.as_str())
+        self.state
+            .refs
+            .as_ref()
+            .and_then(|refs| refs.local.iter().find(|b| b.current))
+            .map(|b| b.name.as_str())
     }
 
     fn ref_menu(&mut self, kind: RefKind, name: &str, anchor: Rect) {
@@ -870,73 +971,146 @@ impl LogView {
         let current = kind == RefKind::Local && self.current_branch() == Some(name);
         if matches!(kind, RefKind::Local | RefKind::Remote) && !current {
             entries.push(MenuEntry::Item(
-                MenuItem::new("checkout", t("workspace.git.log.menu.checkout")).icon("git-branch").enabled(self.switching.is_none()),
+                MenuItem::new("checkout", t("workspace.git.log.menu.checkout"))
+                    .icon("git-branch")
+                    .enabled(self.switching.is_none()),
             ));
         }
-        entries.push(MenuEntry::Item(MenuItem::new("show", t("workspace.git.log.menu.showOnly")).icon("list-filter")));
+        entries.push(MenuEntry::Item(
+            MenuItem::new("show", t("workspace.git.log.menu.showOnly")).icon("list-filter"),
+        ));
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::Item(MenuItem::new("copy", t("workspace.git.log.menu.copyName")).icon("copy")));
+        entries.push(MenuEntry::Item(
+            MenuItem::new("copy", t("workspace.git.log.menu.copyName")).icon("copy"),
+        ));
         self.overlay.open(Overlay {
-            purpose: Purpose::RefMenu { kind, name: name.to_owned() },
-            kind: OverlayKind::Menu { title: Some(name.to_owned()), anchor, align_end: false, width: None, entries },
+            purpose: Purpose::RefMenu {
+                kind,
+                name: name.to_owned(),
+            },
+            kind: OverlayKind::Menu {
+                title: Some(name.to_owned()),
+                anchor,
+                align_end: false,
+                width: None,
+                entries,
+            },
         });
     }
 
     /// Copy and open actions, then Checkout / Show only / Copy name for each
     /// branch or tag decorating the commit (phones reach these by long-press).
     fn row_menu(&mut self, index: usize, anchor: Rect) {
-        let Some(commit) = self.state.commits.get(index) else { return };
+        let Some(commit) = self.state.commits.get(index) else {
+            return;
+        };
         let mut entries = vec![
-            MenuEntry::Item(MenuItem::new("copy-hash", t("workspace.git.log.menu.copyRevision")).icon("copy")),
-            MenuEntry::Item(MenuItem::new("copy-subject", t("workspace.git.log.menu.copySubject")).icon("copy")),
+            MenuEntry::Item(
+                MenuItem::new("copy-hash", t("workspace.git.log.menu.copyRevision")).icon("copy"),
+            ),
+            MenuEntry::Item(
+                MenuItem::new("copy-subject", t("workspace.git.log.menu.copySubject")).icon("copy"),
+            ),
             MenuEntry::Separator,
-            MenuEntry::Item(MenuItem::new("open-diff", t("workspace.git.log.menu.openDiff")).icon("file-diff")),
+            MenuEntry::Item(
+                MenuItem::new("open-diff", t("workspace.git.log.menu.openDiff")).icon("file-diff"),
+            ),
         ];
         let current = self.current_branch();
-        for label in commit.refs.iter().filter(|label| label.kind != RefKind::Head) {
+        for label in commit
+            .refs
+            .iter()
+            .filter(|label| label.kind != RefKind::Head)
+        {
             let value = ref_value(label.kind, &label.name);
             let name = vec![("name", label.name.clone())];
             entries.push(MenuEntry::Separator);
             let is_current = label.kind == RefKind::Local && current == Some(label.name.as_str());
             if matches!(label.kind, RefKind::Local | RefKind::Remote) && !is_current {
                 entries.push(MenuEntry::Item(
-                    MenuItem::new(format!("checkout|{value}"), tr("workspace.git.log.menu.checkoutRef", &name))
-                        .icon("git-branch")
-                        .enabled(self.switching.is_none()),
+                    MenuItem::new(
+                        format!("checkout|{value}"),
+                        tr("workspace.git.log.menu.checkoutRef", &name),
+                    )
+                    .icon("git-branch")
+                    .enabled(self.switching.is_none()),
                 ));
             }
-            entries.push(MenuEntry::Item(MenuItem::new(format!("show|{value}"), tr("workspace.git.log.menu.showOnlyRef", &name)).icon("list-filter")));
-            entries.push(MenuEntry::Item(MenuItem::new(format!("copy|{value}"), tr("workspace.git.log.menu.copyRefName", &name)).icon("copy")));
+            entries.push(MenuEntry::Item(
+                MenuItem::new(
+                    format!("show|{value}"),
+                    tr("workspace.git.log.menu.showOnlyRef", &name),
+                )
+                .icon("list-filter"),
+            ));
+            entries.push(MenuEntry::Item(
+                MenuItem::new(
+                    format!("copy|{value}"),
+                    tr("workspace.git.log.menu.copyRefName", &name),
+                )
+                .icon("copy"),
+            ));
         }
         let title = super::log_draw::short(&commit.sha);
         self.overlay.open(Overlay {
             purpose: Purpose::RowMenu(commit.sha.clone()),
-            kind: OverlayKind::Menu { title: Some(title), anchor, align_end: false, width: None, entries },
+            kind: OverlayKind::Menu {
+                title: Some(title),
+                anchor,
+                align_end: false,
+                width: None,
+                entries,
+            },
         });
     }
 
     fn file_menu(&mut self, path: &str, anchor: Rect) {
-        let Some(sha) = self.shown_commit() else { return };
+        let Some(sha) = self.shown_commit() else {
+            return;
+        };
         let entries = vec![
-            MenuEntry::Item(MenuItem::new("open", t("workspace.git.log.menu.openDiff")).icon("file-diff")),
-            MenuEntry::Item(MenuItem::new("history", t("workspace.git.log.menu.showHistory")).icon("history")),
+            MenuEntry::Item(
+                MenuItem::new("open", t("workspace.git.log.menu.openDiff")).icon("file-diff"),
+            ),
+            MenuEntry::Item(
+                MenuItem::new("history", t("workspace.git.log.menu.showHistory")).icon("history"),
+            ),
             MenuEntry::Separator,
-            MenuEntry::Item(MenuItem::new("copy", t("workspace.git.log.menu.copyPath")).icon("copy")),
+            MenuEntry::Item(
+                MenuItem::new("copy", t("workspace.git.log.menu.copyPath")).icon("copy"),
+            ),
         ];
         self.overlay.open(Overlay {
-            purpose: Purpose::FileMenu { sha, path: path.to_owned() },
-            kind: OverlayKind::Menu { title: Some(basename(path).to_owned()), anchor, align_end: false, width: None, entries },
+            purpose: Purpose::FileMenu {
+                sha,
+                path: path.to_owned(),
+            },
+            kind: OverlayKind::Menu {
+                title: Some(basename(path).to_owned()),
+                anchor,
+                align_end: false,
+                width: None,
+                entries,
+            },
         });
     }
 
     fn branch_select(&mut self, anchor: Rect) {
-        let mut options = vec![SelectOption::new("all", t("workspace.git.log.filters.allBranches")).icon("git-graph")];
+        let mut options = vec![
+            SelectOption::new("all", t("workspace.git.log.filters.allBranches")).icon("git-graph"),
+        ];
         if let Some(error) = &self.state.refs_error {
             options.push(
-                SelectOption::new("refs-error", tr("workspace.git.log.states.refsFailed", &[("error", error.clone())]))
-                    .icon("circle-alert")
-                    .enabled(false)
-                    .separator_before(true),
+                SelectOption::new(
+                    "refs-error",
+                    tr(
+                        "workspace.git.log.states.refsFailed",
+                        &[("error", error.clone())],
+                    ),
+                )
+                .icon("circle-alert")
+                .enabled(false)
+                .separator_before(true),
             );
         }
         if let Some(refs) = &self.state.refs {
@@ -945,11 +1119,20 @@ impl LogView {
                 (_, Some(sha)) => format!("HEAD ({})", sha.chars().take(7).collect::<String>()),
                 _ => "HEAD".to_owned(),
             };
-            options.push(SelectOption::new(ref_value(RefKind::Head, "HEAD"), head).icon("crosshair").separator_before(true));
+            options.push(
+                SelectOption::new(ref_value(RefKind::Head, "HEAD"), head)
+                    .icon("crosshair")
+                    .separator_before(true),
+            );
             for (index, branch) in refs.local.iter().enumerate() {
-                let mut option = SelectOption::new(ref_value(RefKind::Local, &branch.name), branch.name.clone())
-                    .icon(if branch.current { "circle-dot" } else { "git-branch" })
-                    .separator_before(index == 0);
+                let mut option =
+                    SelectOption::new(ref_value(RefKind::Local, &branch.name), branch.name.clone())
+                        .icon(if branch.current {
+                            "circle-dot"
+                        } else {
+                            "git-branch"
+                        })
+                        .separator_before(index == 0);
                 let mut trailing = ahead_behind(branch.ahead, branch.behind);
                 if branch.gone {
                     trailing = Some(t("workspace.git.log.branches.gone"));
@@ -961,18 +1144,28 @@ impl LogView {
             }
             for (index, branch) in refs.remote.iter().enumerate() {
                 options.push(
-                    SelectOption::new(ref_value(RefKind::Remote, &branch.name), branch.name.clone())
-                        .icon("cloud")
-                        .separator_before(index == 0),
+                    SelectOption::new(
+                        ref_value(RefKind::Remote, &branch.name),
+                        branch.name.clone(),
+                    )
+                    .icon("cloud")
+                    .separator_before(index == 0),
                 );
             }
             for (index, tag) in refs.tags.iter().enumerate() {
-                options.push(SelectOption::new(ref_value(RefKind::Tag, tag), tag.clone()).icon("tag").separator_before(index == 0));
+                options.push(
+                    SelectOption::new(ref_value(RefKind::Tag, tag), tag.clone())
+                        .icon("tag")
+                        .separator_before(index == 0),
+                );
             }
         }
         let selected = match &self.state.filters.revision {
             None => Some("all".to_owned()),
-            Some(RefFilter { name, kind: Some(kind) }) => Some(ref_value(*kind, name)),
+            Some(RefFilter {
+                name,
+                kind: Some(kind),
+            }) => Some(ref_value(*kind, name)),
             Some(_) => None,
         };
         self.overlay.open(Overlay {
@@ -990,11 +1183,23 @@ impl LogView {
     }
 
     fn author_select(&mut self, anchor: Rect) {
-        let mut options = vec![SelectOption::new("", t("workspace.git.log.filters.allUsers")).icon("users")];
+        let mut options =
+            vec![SelectOption::new("", t("workspace.git.log.filters.allUsers")).icon("users")];
         for (index, author) in self.state.authors.iter().enumerate() {
-            options.push(SelectOption::new(format!("author:{author}"), author.clone()).icon("user").separator_before(index == 0));
+            options.push(
+                SelectOption::new(format!("author:{author}"), author.clone())
+                    .icon("user")
+                    .separator_before(index == 0),
+            );
         }
-        let selected = Some(self.state.filters.author.as_ref().map(|a| format!("author:{a}")).unwrap_or_default());
+        let selected = Some(
+            self.state
+                .filters
+                .author
+                .as_ref()
+                .map(|a| format!("author:{a}"))
+                .unwrap_or_default(),
+        );
         self.overlay.open(Overlay {
             purpose: Purpose::Author,
             kind: OverlayKind::Select {
@@ -1011,25 +1216,42 @@ impl LogView {
 
     /// Applies a menu / select answer; returns true when one arrived.
     pub fn handle_overlay(&mut self, ui: &mut UiContext) -> bool {
-        let Some(result) = self.overlay.poll() else { return false };
+        let Some(result) = self.overlay.poll() else {
+            return false;
+        };
         match result {
             OverlayResult::Chose(Purpose::Branch, value) => {
-                let filter = if value == "all" { None } else { parse_ref_value(&value) };
+                let filter = if value == "all" {
+                    None
+                } else {
+                    parse_ref_value(&value)
+                };
                 if value == "all" || filter.is_some() {
                     self.filter_ref(ui, filter);
                 }
             }
             OverlayResult::Chose(Purpose::Author, value) => {
                 let author = value.strip_prefix("author:").map(str::to_owned);
-                let filters = Filters { author, ..self.state.filters.clone() };
+                let filters = Filters {
+                    author,
+                    ..self.state.filters.clone()
+                };
                 self.apply_filters(ui, filters);
             }
-            OverlayResult::Chose(Purpose::RefMenu { kind, name }, action) => match action.as_str() {
-                "checkout" => self.checkout(ui, kind, &name),
-                "show" => self.filter_ref(ui, Some(RefFilter { name, kind: Some(kind) })),
-                "copy" => Self::copy(ui, name, "workspace.git.log.toasts.nameCopied"),
-                _ => {}
-            },
+            OverlayResult::Chose(Purpose::RefMenu { kind, name }, action) => {
+                match action.as_str() {
+                    "checkout" => self.checkout(ui, kind, &name),
+                    "show" => self.filter_ref(
+                        ui,
+                        Some(RefFilter {
+                            name,
+                            kind: Some(kind),
+                        }),
+                    ),
+                    "copy" => Self::copy(ui, name, "workspace.git.log.toasts.nameCopied"),
+                    _ => {}
+                }
+            }
             OverlayResult::Chose(Purpose::RowMenu(sha), action) => match action.as_str() {
                 "copy-hash" => Self::copy(ui, sha, "workspace.git.log.toasts.revisionCopied"),
                 "copy-subject" => {
@@ -1038,25 +1260,41 @@ impl LogView {
                 }
                 "open-diff" => self.open_diff(ui, &sha, None),
                 other => {
-                    let Some((verb, value)) = other.split_once('|') else { return true };
-                    let Some(RefFilter { name, kind: Some(kind) }) = parse_ref_value(value) else { return true };
+                    let Some((verb, value)) = other.split_once('|') else {
+                        return true;
+                    };
+                    let Some(RefFilter {
+                        name,
+                        kind: Some(kind),
+                    }) = parse_ref_value(value)
+                    else {
+                        return true;
+                    };
                     match verb {
                         "checkout" => self.checkout(ui, kind, &name),
                         "show" => {
                             self.screen = Screen::Log;
-                            self.filter_ref(ui, Some(RefFilter { name, kind: Some(kind) }));
+                            self.filter_ref(
+                                ui,
+                                Some(RefFilter {
+                                    name,
+                                    kind: Some(kind),
+                                }),
+                            );
                         }
                         "copy" => Self::copy(ui, name, "workspace.git.log.toasts.nameCopied"),
                         _ => {}
                     }
                 }
             },
-            OverlayResult::Chose(Purpose::FileMenu { sha, path }, action) => match action.as_str() {
-                "open" => self.open_diff(ui, &sha, Some(&path)),
-                "history" => self.show_history(ui, path),
-                "copy" => Self::copy(ui, path, "workspace.git.log.toasts.pathCopied"),
-                _ => {}
-            },
+            OverlayResult::Chose(Purpose::FileMenu { sha, path }, action) => {
+                match action.as_str() {
+                    "open" => self.open_diff(ui, &sha, Some(&path)),
+                    "history" => self.show_history(ui, path),
+                    "copy" => Self::copy(ui, path, "workspace.git.log.toasts.pathCopied"),
+                    _ => {}
+                }
+            }
             OverlayResult::Confirmed(Purpose::StashAndSwitch(branch)) => {
                 let mut fields = json!({ "cwd": self.state.cwd });
                 if let Some(current) = self.current_branch() {
@@ -1071,7 +1309,15 @@ impl LogView {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn activate(&mut self, cx: &mut Cx, ui: &mut UiContext, hit: LogHit, anchor: Rect, secondary: bool, inputs: &mut LogInputs<'_>) {
+    fn activate(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        hit: LogHit,
+        anchor: Rect,
+        secondary: bool,
+        inputs: &mut LogInputs<'_>,
+    ) {
         match hit {
             LogHit::BranchesToggle => {
                 if self.wide {
@@ -1086,11 +1332,17 @@ impl LogView {
             LogHit::PathChip(_) | LogHit::Drawer | LogHit::Splitter(_) => {}
             LogHit::ClearBranch | LogHit::ShowAllBranches => self.filter_ref(ui, None),
             LogHit::ClearAuthor => {
-                let filters = Filters { author: None, ..self.state.filters.clone() };
+                let filters = Filters {
+                    author: None,
+                    ..self.state.filters.clone()
+                };
                 self.apply_filters(ui, filters);
             }
             LogHit::ClearPath => {
-                let filters = Filters { path: None, ..self.state.filters.clone() };
+                let filters = Filters {
+                    path: None,
+                    ..self.state.filters.clone()
+                };
                 self.apply_filters(ui, filters);
             }
             LogHit::ClearFilters => self.clear_filters(cx, ui, inputs.search),
@@ -1128,7 +1380,13 @@ impl LogView {
                     self.filter_ref(ui, None);
                 } else {
                     self.drawer_open = false;
-                    self.filter_ref(ui, Some(RefFilter { name, kind: Some(kind) }));
+                    self.filter_ref(
+                        ui,
+                        Some(RefFilter {
+                            name,
+                            kind: Some(kind),
+                        }),
+                    );
                 }
             }
             LogHit::RefMenu { kind, name } => self.ref_menu(kind, &name, anchor),
@@ -1184,14 +1442,28 @@ impl LogView {
     fn tooltip_for(&self, hit: &LogHit) -> Option<String> {
         Some(match hit {
             LogHit::BranchesToggle => {
-                let open = if self.wide { self.branches_open } else { self.drawer_open };
-                t(if open { "workspace.git.log.toolbar.hideBranches" } else { "workspace.git.log.toolbar.showBranches" })
+                let open = if self.wide {
+                    self.branches_open
+                } else {
+                    self.drawer_open
+                };
+                t(if open {
+                    "workspace.git.log.toolbar.hideBranches"
+                } else {
+                    "workspace.git.log.toolbar.showBranches"
+                })
             }
             LogHit::Refresh => t("workspace.git.log.toolbar.refresh"),
-            LogHit::SearchToggle => t(if self.search_open { "workspace.git.log.toolbar.closeSearch" } else { "workspace.git.log.toolbar.search" }),
+            LogHit::SearchToggle => t(if self.search_open {
+                "workspace.git.log.toolbar.closeSearch"
+            } else {
+                "workspace.git.log.toolbar.search"
+            }),
             LogHit::Back => t("workspace.git.log.toolbar.back"),
             LogHit::SearchClear | LogHit::BranchSearchClear => t("workspace.git.log.toolbar.clear"),
-            LogHit::ClearBranch | LogHit::ClearAuthor | LogHit::ClearPath => t("workspace.git.log.filters.clear"),
+            LogHit::ClearBranch | LogHit::ClearAuthor | LogHit::ClearPath => {
+                t("workspace.git.log.filters.clear")
+            }
             LogHit::ClearFilters => t("workspace.git.log.filters.clearAll"),
             LogHit::CopyHash(_) => t("workspace.git.log.details.copyHash"),
             LogHit::RefMenu { .. } => t("workspace.git.log.menu.more"),
@@ -1239,12 +1511,20 @@ impl LogView {
 
     /// The files of the shown commit are listed (keyboard moves through them).
     fn files_listed(&self) -> bool {
-        !self.listed_files.is_empty() && self.listed_for.is_some() && self.listed_for == self.shown_commit()
+        !self.listed_files.is_empty()
+            && self.listed_for.is_some()
+            && self.listed_for == self.shown_commit()
     }
 
     /// Keyboard: find, Escape, area switching, and moves through the commit
     /// table or the changed files.
-    fn handle_key(&mut self, cx: &mut Cx, ui: &mut UiContext, key: &KeyEvent, inputs: &mut LogInputs<'_>) -> bool {
+    fn handle_key(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        key: &KeyEvent,
+        inputs: &mut LogInputs<'_>,
+    ) -> bool {
         if key.key_code == KeyCode::KeyF && key.modifiers.is_primary() {
             if self.phone {
                 self.screen = Screen::Log;
@@ -1271,7 +1551,12 @@ impl LogView {
         if self.phone && matches!(self.screen, Screen::Commit(_)) {
             return false;
         }
-        if !self.phone && matches!(key.key_code, KeyCode::Tab | KeyCode::ArrowLeft | KeyCode::ArrowRight) {
+        if !self.phone
+            && matches!(
+                key.key_code,
+                KeyCode::Tab | KeyCode::ArrowLeft | KeyCode::ArrowRight
+            )
+        {
             let next = match key.key_code {
                 KeyCode::ArrowLeft => Focus::List,
                 KeyCode::ArrowRight => Focus::Files,
@@ -1281,7 +1566,12 @@ impl LogView {
             if next == Focus::Files && !self.files_listed() {
                 return false;
             }
-            if next == Focus::Files && self.selected_file.as_ref().is_none_or(|p| !self.listed_files.contains(p)) {
+            if next == Focus::Files
+                && self
+                    .selected_file
+                    .as_ref()
+                    .is_none_or(|p| !self.listed_files.contains(p))
+            {
                 self.selected_file = self.listed_files.first().cloned();
                 self.files.offset = 0.0;
             }
@@ -1290,7 +1580,10 @@ impl LogView {
             return changed;
         }
         if self.focus == Focus::Files && self.files_listed() {
-            let current = self.selected_file.as_ref().and_then(|p| self.listed_files.iter().position(|f| f == p));
+            let current = self
+                .selected_file
+                .as_ref()
+                .and_then(|p| self.listed_files.iter().position(|f| f == p));
             let last = self.listed_files.len() - 1;
             let next = match key.key_code {
                 KeyCode::ArrowUp => current.map_or(0, |i| i.saturating_sub(1)),
@@ -1298,7 +1591,9 @@ impl LogView {
                 KeyCode::Home => 0,
                 KeyCode::End => last,
                 KeyCode::ReturnKey | KeyCode::NumpadEnter => {
-                    if let (Some(path), Some(sha)) = (self.selected_file.clone(), self.shown_commit()) {
+                    if let (Some(path), Some(sha)) =
+                        (self.selected_file.clone(), self.shown_commit())
+                    {
                         self.open_diff(ui, &sha, Some(&path));
                     }
                     return false;
@@ -1306,14 +1601,19 @@ impl LogView {
                 _ => return false,
             };
             self.selected_file = Some(self.listed_files[next].clone());
-            self.files.reveal(next as f64 * self.file_row_height, self.file_row_height);
+            self.files
+                .reveal(next as f64 * self.file_row_height, self.file_row_height);
             return true;
         }
         let count = self.state.commits.len();
         if count == 0 {
             return false;
         }
-        let current = self.state.selected.as_ref().and_then(|sha| self.state.index_of(sha));
+        let current = self
+            .state
+            .selected
+            .as_ref()
+            .and_then(|sha| self.state.index_of(sha));
         let page = ((self.list.area.size.y / self.row_height).floor() as usize).max(1);
         let next = match key.key_code {
             KeyCode::ArrowUp => current.map_or(0, |i| i.saturating_sub(1)),
@@ -1342,11 +1642,21 @@ impl LogView {
     /// Saves the dragged split sizes.
     fn save_sizes(&self, ui: &mut UiContext) {
         let value = self.shown_sizes.merged(ui.preference(LAYOUT_PREF));
-        ui.push(UiEffect::SetPreference { key: LAYOUT_PREF.into(), value });
+        ui.push(UiEffect::SetPreference {
+            key: LAYOUT_PREF.into(),
+            value,
+        });
     }
 
     /// Pointer and keyboard input outside overlays; returns true when a redraw is due.
-    pub fn handle_pointer(&mut self, cx: &mut Cx, event: &Event, area: Area, ui: &mut UiContext, inputs: &mut LogInputs<'_>) -> bool {
+    pub fn handle_pointer(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        area: Area,
+        ui: &mut UiContext,
+        inputs: &mut LogInputs<'_>,
+    ) -> bool {
         if let Event::BackPressed { handled } = event
             && !handled.get()
             && self.back()
@@ -1398,7 +1708,11 @@ impl LogView {
         }
         match hit {
             Pointer::FingerHoverIn(e) | Pointer::FingerHoverOver(e) => {
-                let (anchor, hovered) = self.hits.find(e.abs).map(|(anchor, hit)| (anchor, Some(hit))).unwrap_or_default();
+                let (anchor, hovered) = self
+                    .hits
+                    .find(e.abs)
+                    .map(|(anchor, hit)| (anchor, Some(hit)))
+                    .unwrap_or_default();
                 cx.set_cursor(Self::cursor_for(hovered.as_ref()));
                 if hovered != self.hovered {
                     let tip = hovered.as_ref().and_then(|hit| self.tooltip_for(hit));
@@ -1414,7 +1728,11 @@ impl LogView {
                 }
             }
             Pointer::FingerScroll(e) => {
-                let delta = if e.modifiers.shift { e.scroll.x } else { e.scroll.y };
+                let delta = if e.modifiers.shift {
+                    e.scroll.x
+                } else {
+                    e.scroll.y
+                };
                 if let Some(region) = self.region_at(e.abs) {
                     return self.scroller(region).scroll_by(delta) || redraw;
                 }
@@ -1424,9 +1742,17 @@ impl LogView {
                 self.pressed = self.hits.find(e.abs).map(|(_, hit)| hit);
                 if let Some(LogHit::Splitter(split)) = self.pressed {
                     self.pressed = None;
-                    let origin = if split == Split::Stacked { e.abs.y } else { e.abs.x };
+                    let origin = if split == Split::Stacked {
+                        e.abs.y
+                    } else {
+                        e.abs.x
+                    };
                     let start = self.shown_sizes.get(split).unwrap_or_default();
-                    self.drag = Some(Drag { split, origin, start });
+                    self.drag = Some(Drag {
+                        split,
+                        origin,
+                        start,
+                    });
                     return true;
                 }
                 if self.region_at(e.abs).is_some() {
@@ -1446,11 +1772,14 @@ impl LogView {
             }
             Pointer::FingerUp(e) => {
                 let pressed = self.pressed.take();
-                if !e.is_over || e.has_long_press_occurred || (e.device.is_touch() && !e.was_tap()) {
+                if !e.is_over || e.has_long_press_occurred || (e.device.is_touch() && !e.was_tap())
+                {
                     return redraw;
                 }
                 let secondary = e.mouse_button().is_some_and(|b| b.is_secondary());
-                let Some((rect, hit)) = self.hits.find(e.abs) else { return redraw };
+                let Some((rect, hit)) = self.hits.find(e.abs) else {
+                    return redraw;
+                };
                 if pressed.as_ref() != Some(&hit) {
                     return redraw;
                 }
@@ -1464,7 +1793,8 @@ impl LogView {
                             return true;
                         }
                         LogHit::Row(index) | LogHit::Date(index) => {
-                            if let Some(sha) = self.state.commits.get(*index).map(|c| c.sha.clone()) {
+                            if let Some(sha) = self.state.commits.get(*index).map(|c| c.sha.clone())
+                            {
                                 self.open_diff(ui, &sha, None);
                             }
                             return true;
@@ -1490,8 +1820,19 @@ mod tests {
     fn split_sizes_round_trip_and_keep_unknown_keys() {
         let stored = json!({ "branchesWidth": 300.4, "detailsHeight": -5, "other": true });
         let sizes = SplitSizes::read(Some(&stored));
-        assert_eq!(sizes, SplitSizes { branches: Some(300.4), side: None, stacked: None });
-        let next = SplitSizes { side: Some(410.6), ..sizes }.merged(Some(&stored));
+        assert_eq!(
+            sizes,
+            SplitSizes {
+                branches: Some(300.4),
+                side: None,
+                stacked: None
+            }
+        );
+        let next = SplitSizes {
+            side: Some(410.6),
+            ..sizes
+        }
+        .merged(Some(&stored));
         assert_eq!(next["branchesWidth"], json!(300.0));
         assert_eq!(next["detailsWidth"], json!(411.0));
         assert_eq!(next["other"], json!(true));
@@ -1500,7 +1841,13 @@ mod tests {
     #[test]
     fn ref_values_round_trip() {
         let value = ref_value(RefKind::Remote, "origin/feature:x");
-        assert_eq!(parse_ref_value(&value), Some(RefFilter { name: "origin/feature:x".to_owned(), kind: Some(RefKind::Remote) }));
+        assert_eq!(
+            parse_ref_value(&value),
+            Some(RefFilter {
+                name: "origin/feature:x".to_owned(),
+                kind: Some(RefKind::Remote)
+            })
+        );
         assert_eq!(parse_ref_value("bogus:x"), None);
     }
 }

@@ -153,9 +153,10 @@ async fn refresh_once(core: &Rc<Core>, host: &Rc<Host>) {
     *host.error.borrow_mut() = None;
     core.touch();
     if let Err(error) = hydrate(core, host).await
-        && core.contains(host) {
-            *host.error.borrow_mut() = Some(error);
-        }
+        && core.contains(host)
+    {
+        *host.error.borrow_mut() = Some(error);
+    }
     {
         let mut dir = host.dir.borrow_mut();
         dir.hydrating.clear();
@@ -184,7 +185,9 @@ async fn hydrate(core: &Rc<Core>, host: &Rc<Host>) -> Result<(), CoreError> {
             false,
         ));
     }
-    let expected = host.config.borrow()["expectedServerId"].as_str().map(str::to_owned);
+    let expected = host.config.borrow()["expectedServerId"]
+        .as_str()
+        .map(str::to_owned);
     match expected {
         Some(expected) if expected != actual => {
             return Err(CoreError::new(
@@ -431,8 +434,14 @@ async fn observed_pages(
             message["includeBackground"] = true.into();
         }
         let next = require_success(
-            conn.request(message, response, Some(requests::REQUEST_TIMEOUT), None, None)
-                .await?,
+            conn.request(
+                message,
+                response,
+                Some(requests::REQUEST_TIMEOUT),
+                None,
+                None,
+            )
+            .await?,
             request,
         )?;
         if host.client_epoch.get() != client {
@@ -504,14 +513,22 @@ pub(crate) fn on_message(core: &Rc<Core>, host: &Rc<Host>, _conn: &Rc<Conn>, mes
             }
         }
         "status" if payload["status"] == "server_info" => {
-            if payload["serverId"].as_str().is_some_and(|id| !id.is_empty()) {
+            if payload["serverId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+            {
                 *host.server_info.borrow_mut() = payload.clone();
             }
             sync_maintenance(core, host, payload);
             core.touch();
         }
-        "agent_update" | "workspace_update" | "project.update" | "script_status_update"
-        | "agent_status" | "agent_permission_request" | "agent_permission_resolved" => directory_event(core, host, message),
+        "agent_update"
+        | "workspace_update"
+        | "project.update"
+        | "script_status_update"
+        | "agent_status"
+        | "agent_permission_request"
+        | "agent_permission_resolved" => directory_event(core, host, message),
         _ => {}
     }
 }
@@ -523,7 +540,12 @@ pub(crate) fn sync_maintenance(core: &Rc<Core>, host: &Rc<Host>, info: &Value) {
     }
     let update = &info["daemonUpdate"];
     let next = (update["active"] == true)
-        .then(|| update["operationId"].as_str().unwrap_or_default().to_owned())
+        .then(|| {
+            update["operationId"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
         .filter(|id| !id.is_empty());
     let changed = {
         let mut dir = host.dir.borrow_mut();
@@ -564,11 +586,12 @@ fn directory_event(core: &Rc<Core>, host: &Rc<Host>, message: &Value) {
         let generation = payload["generation"].as_str();
         let seq = payload["seq"].as_f64().map(|s| s as i64).unwrap_or(0);
         if let (Some(generation), Some(known)) = (generation, dir.generations.get(kind))
-            && generation != known.as_str() {
-                drop(dir);
-                schedule_resync(core, host);
-                return;
-            }
+            && generation != known.as_str()
+        {
+            drop(dir);
+            schedule_resync(core, host);
+            return;
+        }
         if seq > 0 && seq <= dir.sequences.get(kind).copied().unwrap_or(0) {
             return;
         }
@@ -589,9 +612,10 @@ fn directory_event(core: &Rc<Core>, host: &Rc<Host>, message: &Value) {
                 } else {
                     let mut row = agent_row(payload);
                     if row["project"].is_null()
-                        && let Some(old) = dir.agents.iter().find(|a| a["id"] == row["id"]) {
-                            row["project"] = old["project"].clone();
-                        }
+                        && let Some(old) = dir.agents.iter().find(|a| a["id"] == row["id"])
+                    {
+                        row["project"] = old["project"].clone();
+                    }
                     upsert(&mut dir.agents, row, "id")
                 }
             }
@@ -600,7 +624,9 @@ fn directory_event(core: &Rc<Core>, host: &Rc<Host>, message: &Value) {
                 let existing = dir.agents.iter().find(|a| a["id"] == info["id"]).cloned();
                 match existing {
                     Some(mut merged) => {
-                        if let (Some(target), Some(source)) = (merged.as_object_mut(), info.as_object()) {
+                        if let (Some(target), Some(source)) =
+                            (merged.as_object_mut(), info.as_object())
+                        {
                             for (key, value) in source {
                                 target.insert(key.clone(), value.clone());
                             }
@@ -614,10 +640,16 @@ fn directory_event(core: &Rc<Core>, host: &Rc<Host>, message: &Value) {
                 if payload["kind"] == "remove" {
                     let mut changed = remove(&mut dir.workspaces, |w| w["id"] == payload["id"]);
                     if payload["emptyProject"].is_object() {
-                        changed |= upsert(&mut dir.projects, payload["emptyProject"].clone(), "projectId");
+                        changed |= upsert(
+                            &mut dir.projects,
+                            payload["emptyProject"].clone(),
+                            "projectId",
+                        );
                     }
                     if !payload["removedProjectId"].is_null() {
-                        changed |= remove(&mut dir.projects, |p| p["projectId"] == payload["removedProjectId"]);
+                        changed |= remove(&mut dir.projects, |p| {
+                            p["projectId"] == payload["removedProjectId"]
+                        });
                     }
                     changed
                 } else {
@@ -626,25 +658,37 @@ fn directory_event(core: &Rc<Core>, host: &Rc<Host>, message: &Value) {
             }
             "project.update" => {
                 if payload["kind"] == "remove" {
-                    remove(&mut dir.projects, |p| p["projectId"] == payload["projectId"])
+                    remove(&mut dir.projects, |p| {
+                        p["projectId"] == payload["projectId"]
+                    })
                 } else {
                     upsert(&mut dir.projects, payload["project"].clone(), "projectId")
                 }
             }
             // The list rows carry `pendingPermissions` (sidebar status, attention, badges); the
             // daemon announces requests and resolutions separately from agent snapshots.
-            "agent_permission_request" => match dir.agents.iter_mut().find(|a| a["id"] == payload["agentId"]) {
+            "agent_permission_request" => match dir
+                .agents
+                .iter_mut()
+                .find(|a| a["id"] == payload["agentId"])
+            {
                 Some(agent) => add_permission(agent, &payload["request"]),
                 None => false,
             },
-            "agent_permission_resolved" => match dir.agents.iter_mut().find(|a| a["id"] == payload["agentId"]) {
+            "agent_permission_resolved" => match dir
+                .agents
+                .iter_mut()
+                .find(|a| a["id"] == payload["agentId"])
+            {
                 Some(agent) => remove_permission(agent, &payload["requestId"]),
                 None => false,
             },
             "script_status_update" => {
                 let mut changed = false;
                 for workspace in dir.workspaces.iter_mut() {
-                    if workspace["id"] == payload["workspaceId"] && workspace["scripts"] != payload["scripts"] {
+                    if workspace["id"] == payload["workspaceId"]
+                        && workspace["scripts"] != payload["scripts"]
+                    {
                         workspace["scripts"] = payload["scripts"].clone();
                         changed = true;
                     }
@@ -677,7 +721,9 @@ fn add_permission(agent: &mut Value, request: &Value) -> bool {
     if !agent["pendingPermissions"].is_array() {
         agent["pendingPermissions"] = json!([]);
     }
-    let Some(pending) = agent["pendingPermissions"].as_array_mut() else { return false };
+    let Some(pending) = agent["pendingPermissions"].as_array_mut() else {
+        return false;
+    };
     if !request["id"].is_null() && pending.iter().any(|p| p["id"] == request["id"]) {
         return false;
     }
@@ -687,7 +733,9 @@ fn add_permission(agent: &mut Value, request: &Value) -> bool {
 
 /// Drops a resolved request from an agent row; false when it was not pending.
 fn remove_permission(agent: &mut Value, request_id: &Value) -> bool {
-    let Some(pending) = agent["pendingPermissions"].as_array_mut() else { return false };
+    let Some(pending) = agent["pendingPermissions"].as_array_mut() else {
+        return false;
+    };
     let before = pending.len();
     pending.retain(|p| p["id"] != *request_id);
     pending.len() != before
@@ -767,11 +815,15 @@ fn mark_child_tabs(core: &Rc<Core>, host: &Rc<Host>, conn: &Rc<Conn>) {
     for agent_id in targets {
         let needs_label = {
             let dir = host.dir.borrow();
-            dir.agents.iter().find(|a| a["id"] == agent_id.as_str()).is_some_and(|agent| {
-                let labels = &agent["labels"];
-                (!agent["parentAgentId"].is_null() || !labels["paseo.parent-agent-id"].is_null())
-                    && labels[&label] != "true"
-            })
+            dir.agents
+                .iter()
+                .find(|a| a["id"] == agent_id.as_str())
+                .is_some_and(|agent| {
+                    let labels = &agent["labels"];
+                    (!agent["parentAgentId"].is_null()
+                        || !labels["paseo.parent-agent-id"].is_null())
+                        && labels[&label] != "true"
+                })
         };
         if !needs_label {
             continue;
@@ -825,7 +877,10 @@ mod tests {
         let mut agent = json!({"id":"a","status":"running"});
         let request = json!({"id":"r1","kind":"question"});
         assert!(add_permission(&mut agent, &request));
-        assert!(!add_permission(&mut agent, &request), "a repeated announcement is not a second request");
+        assert!(
+            !add_permission(&mut agent, &request),
+            "a repeated announcement is not a second request"
+        );
         assert!(add_permission(&mut agent, &json!({"id":"r2"})));
         assert!(!add_permission(&mut agent, &Value::Null));
         assert!(remove_permission(&mut agent, &json!("r1")));

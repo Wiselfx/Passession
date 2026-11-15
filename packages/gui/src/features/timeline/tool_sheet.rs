@@ -16,7 +16,7 @@ use super::i18n::t;
 use super::paint::{Draw, Look, MOBILE, RowState, now_seconds};
 use super::rows::{SheetHeader, paint_glyph};
 use super::tools::{self, detail_blocks, detail_is_full_bleed};
-use crate::common::overlay::{take_dismissal, TapTarget};
+use crate::common::overlay::{TapTarget, take_dismissal};
 use makepad_widgets::*;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -46,53 +46,146 @@ pub fn paint_detail_sheet(
 ) -> Rect {
     let p = d.look.palette;
     let eased = 1.0 - (1.0 - progress.clamp(0.0, 1.0)).powi(3);
-    d.kit.rect(cx, rect, with_alpha(rgba(0xff000000), (0.5 * eased) as f32), 0.0);
+    d.kit.rect(
+        cx,
+        rect,
+        with_alpha(rgba(0xff000000), (0.5 * eased) as f32),
+        0.0,
+    );
     d.canvas.add_hit(rect, HitTarget::Chrome("scrim".into()));
     // DraggableScrollableSheet: laid out at 95%, resting at the 60% snap.
     let full = rect.size.y * 0.95;
     let rest = rect.size.y * 0.6;
     let top = rect.pos.y + rect.size.y - rest * eased;
     let sheet = rect_xywh(rect.pos.x, top, rect.size.x, full);
-    d.kit.rect_full(cx, sheet, p.surface2, vec4(16.0, 16.0, 0.0, 0.0), TRANSPARENT, 0.0);
-    d.canvas.add_hit(sheet, HitTarget::Chrome("sheet:body".into()));
+    d.kit.rect_full(
+        cx,
+        sheet,
+        p.surface2,
+        vec4(16.0, 16.0, 0.0, 0.0),
+        TRANSPARENT,
+        0.0,
+    );
+    d.canvas
+        .add_hit(sheet, HitTarget::Chrome("sheet:body".into()));
     // Gorhom handle: 32x4 zinc-600 with 10px insets.
-    d.kit.rect(cx, rect_xywh(sheet.center().x - 16.0, sheet.pos.y + 10.0, 32.0, 4.0), rgba(0xff52525b), 2.0);
+    d.kit.rect(
+        cx,
+        rect_xywh(sheet.center().x - 16.0, sheet.pos.y + 10.0, 32.0, 4.0),
+        rgba(0xff52525b),
+        2.0,
+    );
     let header_y = sheet.pos.y + 24.0;
-    let measurement = crate::common::widgets::RowMetrics::new(0.0, 0.0, 0.0)
-        .layout(sheet, 16.0, 20.0, 36.0, 8.0);
+    let measurement =
+        crate::common::widgets::RowMetrics::new(0.0, 0.0, 0.0).layout(sheet, 16.0, 20.0, 36.0, 8.0);
     let size = d.look.ui(14.0);
-    let font = if header.semibold { Font::Semibold } else { Font::Medium };
-    let laid = d.kit.layout_clamped(cx, font, size, 1.3, &header.title, measurement.title.size.x, header.max_lines);
+    let font = if header.semibold {
+        Font::Semibold
+    } else {
+        Font::Medium
+    };
+    let laid = d.kit.layout_clamped(
+        cx,
+        font,
+        size,
+        1.3,
+        &header.title,
+        measurement.title.size.x,
+        header.max_lines,
+    );
     let metrics = crate::common::widgets::RowMetrics::new(laidout_size(&laid).y, 0.0, 0.0);
     let header_height = metrics.height(60.0, 12.0, 36.0);
-    let slots = metrics.layout(rect_xywh(sheet.pos.x, header_y, sheet.size.x, header_height), 16.0, 20.0, 36.0, 8.0);
-    paint_glyph(cx, d, header.glyph, rect_xywh(slots.leading.pos.x, header_y + (header_height - 36.0) * 0.5, 20.0, 36.0), 20.0, p.foreground);
-    d.kit.draw_laidout(cx, font, p.foreground, slots.title.pos, &laid);
-    let close = rect_xywh(slots.trailing.pos.x, header_y + (header_height - 36.0) * 0.5, 36.0, 36.0);
+    let slots = metrics.layout(
+        rect_xywh(sheet.pos.x, header_y, sheet.size.x, header_height),
+        16.0,
+        20.0,
+        36.0,
+        8.0,
+    );
+    paint_glyph(
+        cx,
+        d,
+        header.glyph,
+        rect_xywh(
+            slots.leading.pos.x,
+            header_y + (header_height - 36.0) * 0.5,
+            20.0,
+            36.0,
+        ),
+        20.0,
+        p.foreground,
+    );
+    d.kit
+        .draw_laidout(cx, font, p.foreground, slots.title.pos, &laid);
+    let close = rect_xywh(
+        slots.trailing.pos.x,
+        header_y + (header_height - 36.0) * 0.5,
+        36.0,
+        36.0,
+    );
     d.kit.icon(cx, "x", close, 20.0, p.muted);
-    d.canvas.add_hit(close, HitTarget::Chrome("sheet:close".into()));
-    d.kit.rect(cx, rect_xywh(sheet.pos.x, header_y + header_height, sheet.size.x, 1.0), p.border, 0.0);
+    d.canvas
+        .add_hit(close, HitTarget::Chrome("sheet:close".into()));
+    d.kit.rect(
+        cx,
+        rect_xywh(sheet.pos.x, header_y + header_height, sheet.size.x, 1.0),
+        p.border,
+        0.0,
+    );
     // The body scrolls inside the visible part of the 95% layout.
     let body_top = header_y + header_height + 1.0;
-    let view = rect_xywh(sheet.pos.x, body_top, sheet.size.x, (rect.pos.y + rect.size.y - bottom_inset - body_top).max(1.0));
+    let view = rect_xywh(
+        sheet.pos.x,
+        body_top,
+        sheet.size.x,
+        (rect.pos.y + rect.size.y - bottom_inset - body_top).max(1.0),
+    );
     let fill = (full - 24.0 - header_height - 1.0).max(0.0);
     let content = d.measure(|d| body(cx, d, view.pos.x, 0.0, view.size.x, fill));
     let key = "sheet:y".to_owned();
     let max_y = (content - view.size.y).max(0.0);
     d.state.extent_y.insert(key.clone(), max_y);
     let pinned = pin_to_end && d.state.expanded.get("sheet:detached").copied() != Some(true);
-    let sy = if pinned { max_y } else { d.state.scroll_y.get(&key).copied().unwrap_or(0.0).clamp(0.0, max_y) };
+    let sy = if pinned {
+        max_y
+    } else {
+        d.state
+            .scroll_y
+            .get(&key)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_y)
+    };
     d.state.scroll_y.insert(key.clone(), sy);
     // Enclosing regions register before their content: the deepest one wins.
     if max_y > 0.0 {
         d.canvas.add_hit(view, HitTarget::ScrollY(key.clone()));
     }
-    cx.begin_turtle(Walk { abs_pos: Some(view.pos), margin: Margin::default(), width: Size::Fixed(view.size.x), height: Size::Fixed(view.size.y) }, Layout::default());
+    cx.begin_turtle(
+        Walk {
+            abs_pos: Some(view.pos),
+            margin: Margin::default(),
+            width: Size::Fixed(view.size.x),
+            height: Size::Fixed(view.size.y),
+        },
+        Layout::default(),
+    );
     d.canvas.push_clip(view);
     body(cx, d, view.pos.x, view.pos.y - sy, view.size.x, fill);
     d.canvas.pop_clip();
     cx.end_turtle();
-    super::scrollbar::draw(cx, d, view, None, None, Some(super::scrollbar::Axis { key: &key, offset: sy, max: max_y }));
+    super::scrollbar::draw(
+        cx,
+        d,
+        view,
+        None,
+        None,
+        Some(super::scrollbar::Axis {
+            key: &key,
+            offset: sy,
+            max: max_y,
+        }),
+    );
     if progress < 1.0 {
         d.animating = true;
     }
@@ -102,6 +195,17 @@ pub fn paint_detail_sheet(
 /// Scrolls the sheet body; returns true when it moved.
 pub fn scroll_sheet(state: &mut RowState, canvas: &Canvas, abs: DVec2, delta: DVec2) -> bool {
     let rel = abs - canvas.origin;
+    if delta.x.abs() > delta.y.abs() {
+        for key in canvas.scroll_regions_at(rel, false) {
+            let max = state.extent_x.get(key).copied().unwrap_or(0.0);
+            let current = state.scroll_x.get(key).copied().unwrap_or(0.0);
+            let next = (current + delta.x).clamp(0.0, max);
+            if (next - current).abs() >= 0.01 {
+                state.scroll_x.insert(key.to_owned(), next);
+                return true;
+            }
+        }
+    }
     // The deepest region that can still move takes the delta.
     for key in canvas.scroll_regions_at(rel, true) {
         let max = state.extent_y.get(key).copied().unwrap_or(0.0);
@@ -130,6 +234,7 @@ struct Standalone {
     settled: bool,
     state: RowState,
     touch_scroll: makepad_widgets::scroll_bars::TouchScroll,
+    bar_drag: Option<super::scrollbar::BarDrag>,
     tap: TapTarget<HitTarget>,
 }
 
@@ -151,12 +256,19 @@ thread_local! {
 /// Opens the tool-call detail sheet for `display_name` / `detail` over the
 /// window `window_id` (Flutter `showToolCallSheet` with the tool's glyph).
 /// Returns its id.
-pub fn show_tool_call_sheet(cx: &mut Cx, window_id: &str, display_name: &str, detail: &Value) -> u64 {
+pub fn show_tool_call_sheet(
+    cx: &mut Cx,
+    window_id: &str,
+    display_name: &str,
+    detail: &Value,
+) -> u64 {
     let id = LAYER.with(|layer| {
         let mut layers = layer.borrow_mut();
         let layer = layers.entry(window_id.to_owned()).or_default();
         if let Some(parent) = layer.sheets.last_mut() {
             parent.touch_scroll.reset();
+            parent.bar_drag = None;
+            parent.state.dragging_bar = None;
             parent.tap.cancel();
         }
         let id = crate::common::overlay::next_id();
@@ -168,6 +280,7 @@ pub fn show_tool_call_sheet(cx: &mut Cx, window_id: &str, display_name: &str, de
             settled: false,
             state: RowState::default(),
             touch_scroll: Default::default(),
+            bar_drag: None,
             tap: TapTarget::default(),
         });
         id
@@ -178,7 +291,12 @@ pub fn show_tool_call_sheet(cx: &mut Cx, window_id: &str, display_name: &str, de
 
 /// Whether the sheet finished opening and was drawn fully open.
 pub fn tool_call_sheet_settled(id: u64) -> bool {
-    LAYER.with(|layers| layers.borrow().values().any(|layer| layer.sheets.iter().any(|s| s.id == id && s.settled)))
+    LAYER.with(|layers| {
+        layers
+            .borrow()
+            .values()
+            .any(|layer| layer.sheets.iter().any(|s| s.id == id && s.settled))
+    })
 }
 
 pub fn close_tool_call_sheet(cx: &mut Cx, id: u64) {
@@ -200,23 +318,38 @@ fn top_index(layer: &Layer) -> Option<usize> {
 pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> bool {
     LAYER.with(|cell| {
         let mut layers = cell.borrow_mut();
-        let Some(layer) = layers.get_mut(window_id) else { return false };
+        let Some(layer) = layers.get_mut(window_id) else {
+            return false;
+        };
         if layer.next_frame.is_event(event).is_some() {
             cx.redraw_area(layer.area);
         }
-        let Some(index) = top_index(layer) else { return false };
+        let Some(index) = top_index(layer) else {
+            return false;
+        };
         if take_dismissal(event) {
             layer.sheets.remove(index);
             cx.redraw_all();
             return true;
         }
-        if matches!(event, Event::BackPressed { .. } | Event::KeyDown(KeyEvent { key_code: KeyCode::Escape, .. })) {
+        if matches!(
+            event,
+            Event::BackPressed { .. }
+                | Event::KeyDown(KeyEvent {
+                    key_code: KeyCode::Escape,
+                    ..
+                })
+        ) {
             return true;
         }
-        if matches!(event, Event::TextHandle(_) | Event::Pause | Event::AppLostFocus)
-            || matches!(event, Event::TouchUpdate(update) if update.cancelled)
+        if matches!(
+            event,
+            Event::TextHandle(_) | Event::Pause | Event::AppLostFocus
+        ) || matches!(event, Event::TouchUpdate(update) if update.cancelled)
         {
             layer.sheets[index].touch_scroll.reset();
+            layer.sheets[index].bar_drag = None;
+            layer.sheets[index].state.dragging_bar = None;
             layer.sheets[index].tap.cancel();
         }
         // A newly pushed/revealed owner cannot reuse the previous owner's hit map.
@@ -227,22 +360,77 @@ pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> b
         if let Event::Scroll(se) = event {
             layer.sheets[index].touch_scroll.reset();
             layer.sheets[index].tap.cancel();
-            if scroll_sheet(&mut layer.sheets[index].state, &layer.canvas, se.abs, se.scroll) {
+            if scroll_sheet(
+                &mut layer.sheets[index].state,
+                &layer.canvas,
+                se.abs,
+                se.scroll,
+            ) {
                 cx.redraw_area(layer.area);
             }
         }
         let hit = event.hits(cx, layer.area);
+        // A diagram's bars remain usable in this standalone surface, including
+        // on phones where the enclosing sheet otherwise owns vertical drags.
+        if let Hit::FingerDown(e) = &hit {
+            let rel = e.abs - layer.canvas.origin;
+            if let Some(target) = layer.canvas.hit_at(rel).cloned()
+                && let Some(drag) =
+                    super::scrollbar::BarDrag::press(&target, rel, &mut layer.sheets[index].state)
+            {
+                let sheet = &mut layer.sheets[index];
+                sheet.bar_drag = Some(drag);
+                sheet.touch_scroll.reset();
+                sheet.tap.cancel();
+                cx.redraw_area(layer.area);
+                return true;
+            }
+        }
+        if let Some(drag) = layer.sheets[index].bar_drag.clone() {
+            match &hit {
+                Hit::FingerMove(e) => {
+                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) =
+                        (&e.device, event)
+                        && let Some(touch) = update.touches.iter().find(|touch| touch.uid == *uid)
+                    {
+                        touch.handled.set(layer.area);
+                    }
+                    drag.drag_to(e.abs - layer.canvas.origin, &mut layer.sheets[index].state);
+                    cx.redraw_area(layer.area);
+                    return true;
+                }
+                Hit::FingerUp(_) => {
+                    layer.sheets[index].bar_drag = None;
+                    layer.sheets[index].state.dragging_bar = None;
+                    cx.redraw_area(layer.area);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         let scroll_start = match &hit {
-            Hit::FingerDown(e) => layer.canvas.scroll_region_at(e.abs - layer.canvas.origin, true).is_some(),
+            Hit::FingerDown(e) => layer
+                .canvas
+                .scroll_region_at(e.abs - layer.canvas.origin, true)
+                .is_some(),
             _ => true,
         };
         if !scroll_start {
             layer.sheets[index].touch_scroll.reset();
         }
-        if scroll_start && let Some(delta) = layer.sheets[index].touch_scroll.handle_event(cx, event, &hit) {
+        if scroll_start
+            && let Some(delta) = layer.sheets[index]
+                .touch_scroll
+                .handle_event(cx, event, &hit)
+        {
             layer.sheets[index].tap.cancel();
             let origin = layer.sheets[index].touch_scroll.origin();
-            if scroll_sheet(&mut layer.sheets[index].state, &layer.canvas, origin, dvec2(0.0, delta)) {
+            if scroll_sheet(
+                &mut layer.sheets[index].state,
+                &layer.canvas,
+                origin,
+                dvec2(0.0, delta),
+            ) {
                 cx.redraw_area(layer.area);
             } else {
                 layer.sheets[index].touch_scroll.stop_at_edge();
@@ -250,23 +438,41 @@ pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> b
         }
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
-                let hit = layer.canvas.hit_at(e.abs - layer.canvas.origin).map(super::chat_row::hover_key);
+                let hit = layer
+                    .canvas
+                    .hit_at(e.abs - layer.canvas.origin)
+                    .map(super::chat_row::hover_key);
                 let state = &mut layer.sheets[index].state;
                 if state.hover_hit != hit {
                     state.hover_hit = hit.clone();
                     cx.redraw_area(layer.area);
                 }
-                cx.set_cursor(if matches!(hit.as_deref(), Some("sheet:close")) { MouseCursor::Hand } else { MouseCursor::Default });
+                cx.set_cursor(if matches!(hit.as_deref(), Some("sheet:close")) {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
             }
             Hit::FingerDown(e) => {
-                layer.sheets[index].tap.press(layer.canvas.hit_at(e.abs - layer.canvas.origin).cloned());
+                layer.sheets[index]
+                    .tap
+                    .press(layer.canvas.hit_at(e.abs - layer.canvas.origin).cloned());
             }
             Hit::FingerLongPress(_) => layer.sheets[index].tap.cancel(),
             Hit::FingerUp(e) => {
                 let target = layer.canvas.hit_at(e.abs - layer.canvas.origin).cloned();
-                let released = layer.sheets[index].tap.release(target, e.is_over && e.was_tap() && !e.has_long_press_occurred);
+                let released = layer.sheets[index].tap.release(
+                    target,
+                    e.is_over && e.was_tap() && !e.has_long_press_occurred,
+                );
                 match released {
-                    Some(HitTarget::Chrome(id)) if id == "sheet:close" || id == "scrim" => close = true,
+                    Some(HitTarget::Chrome(id)) if id == "sheet:close" || id == "scrim" => {
+                        close = true
+                    }
+                    Some(target @ HitTarget::MermaidExport { .. }) => {
+                        super::mermaid::tap(&mut layer.sheets[index].state, &target);
+                        cx.redraw_area(layer.area);
+                    }
                     Some(HitTarget::Copy { key, text }) => {
                         cx.copy_to_clipboard(&text);
                         layer.sheets[index].state.copied.insert(key, now_seconds());
@@ -293,7 +499,9 @@ pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> b
 pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
     LAYER.with(|cell| {
         let mut layers = cell.borrow_mut();
-        let Some(layer) = layers.get_mut(window_id) else { return };
+        let Some(layer) = layers.get_mut(window_id) else {
+            return;
+        };
         if top_index(layer).is_none() {
             return;
         }
@@ -305,7 +513,9 @@ pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
         if layer.list.is_none() {
             layer.list = Some(DrawList2d::new(cx));
         }
-        let (Some(kit), Some(list)) = (layer.kit.as_mut(), layer.list.as_mut()) else { return };
+        let (Some(kit), Some(list)) = (layer.kit.as_mut(), layer.list.as_mut()) else {
+            return;
+        };
         let palette = crate::theme::current_palette();
         let typo = crate::theme::current_typography();
         let look = Look {
@@ -328,17 +538,52 @@ pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
             layer.canvas.begin(window.pos);
             let progress = ((now - sheet.opened) / OPEN_SECS).clamp(0.0, 1.0);
             let glyph = tools::resolve_tool_call_icon(&sheet.title, Some(&sheet.detail), false);
-            let header = SheetHeader { glyph, title: sheet.title.clone(), max_lines: 1, semibold: true };
+            let header = SheetHeader {
+                glyph,
+                title: sheet.title.clone(),
+                max_lines: 1,
+                semibold: true,
+            };
             let detail = sheet.detail.clone();
             let tool_name = sheet.title.clone();
-            let mut d = Draw { kit: &mut *kit, canvas: &mut layer.canvas, look, state: &mut sheet.state, now, area: layer.area, animating: false };
+            let mut d = Draw {
+                kit: &mut *kit,
+                canvas: &mut layer.canvas,
+                look,
+                state: &mut sheet.state,
+                now,
+                area: layer.area,
+                animating: false,
+            };
             // An overlay root: it reaches the window's bottom edge and owns the system-bar padding.
             let bottom_inset = crate::shell::platform::safe_insets().bottom;
-            paint_detail_sheet(cx, &mut d, window, bottom_inset, &header, progress, false, &|cx, d, x, y, w, fill| {
-                let blocks = detail_blocks(&detail, Some(&tool_name), None, &|k| t(k));
-                let skeleton = tools::is_pending_tool_call_detail(&detail, "completed", &Value::Null);
-                draw_details(cx, d, &blocks, detail_is_full_bleed(&detail), skeleton, "standalone:sheet:detail", x, y, w, None, Some(fill))
-            });
+            paint_detail_sheet(
+                cx,
+                &mut d,
+                window,
+                bottom_inset,
+                &header,
+                progress,
+                false,
+                &|cx, d, x, y, w, fill| {
+                    let blocks = detail_blocks(&detail, Some(&tool_name), None, &|k| t(k));
+                    let skeleton =
+                        tools::is_pending_tool_call_detail(&detail, "completed", &Value::Null);
+                    draw_details(
+                        cx,
+                        d,
+                        &blocks,
+                        detail_is_full_bleed(&detail),
+                        skeleton,
+                        "standalone:sheet:detail",
+                        x,
+                        y,
+                        w,
+                        None,
+                        Some(fill),
+                    )
+                },
+            );
             animating |= d.animating;
             // Settled once a frame was drawn with the open animation finished.
             if progress >= 1.0 {
@@ -358,11 +603,35 @@ pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    #[test]
+    fn diagram_horizontal_wheel_moves_inner_region_not_sheet() {
+        let mut state = RowState::default();
+        state.extent_x.insert("diagram".into(), 200.0);
+        state.extent_y.insert("sheet:y".into(), 400.0);
+        let mut canvas = Canvas::default();
+        let rect = rect_xywh(0.0, 0.0, 300.0, 200.0);
+        canvas.add_hit(rect, HitTarget::ScrollY("sheet:y".into()));
+        canvas.add_hit(rect, HitTarget::ScrollX("diagram".into()));
+        assert!(scroll_sheet(
+            &mut state,
+            &canvas,
+            dvec2(20.0, 20.0),
+            dvec2(45.0, 0.0)
+        ));
+        assert_eq!(state.scroll_x.get("diagram"), Some(&45.0));
+        assert!(!state.scroll_y.contains_key("sheet:y"));
+    }
 
     fn sheet(id: u64) -> Standalone {
         Standalone {
-            id, title: String::new(), detail: Value::Null, opened: 0.0,
-            settled: false, state: RowState::default(), touch_scroll: Default::default(),
+            id,
+            title: String::new(),
+            detail: Value::Null,
+            opened: 0.0,
+            settled: false,
+            state: RowState::default(),
+            touch_scroll: Default::default(),
+            bar_drag: None,
             tap: TapTarget::default(),
         }
     }
@@ -371,20 +640,62 @@ mod tests {
     fn dismissal_closes_only_top_sheet_in_its_window_and_ignores_repeats() {
         LAYER.with(|layers| {
             *layers.borrow_mut() = HashMap::from([
-                ("main".into(), Layer { sheets: vec![sheet(1), sheet(2)], ..Default::default() }),
-                ("other".into(), Layer { sheets: vec![sheet(3)], ..Default::default() }),
+                (
+                    "main".into(),
+                    Layer {
+                        sheets: vec![sheet(1), sheet(2)],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "other".into(),
+                    Layer {
+                        sheets: vec![sheet(3)],
+                        ..Default::default()
+                    },
+                ),
             ]);
         });
         let mut cx = Cx::new(Box::new(|_, _| {}));
-        let escape = KeyEvent { key_code: KeyCode::Escape, ..Default::default() };
-        assert!(handle_tool_call_sheets(&mut cx, &Event::KeyDown(escape), "main"));
-        assert!(handle_tool_call_sheets(&mut cx, &Event::KeyDown(KeyEvent { is_repeat: true, ..escape }), "main"));
+        let escape = KeyEvent {
+            key_code: KeyCode::Escape,
+            ..Default::default()
+        };
+        assert!(handle_tool_call_sheets(
+            &mut cx,
+            &Event::KeyDown(escape),
+            "main"
+        ));
+        assert!(handle_tool_call_sheets(
+            &mut cx,
+            &Event::KeyDown(KeyEvent {
+                is_repeat: true,
+                ..escape
+            }),
+            "main"
+        ));
         LAYER.with(|layers| {
             let layers = layers.borrow();
-            assert_eq!(layers["main"].sheets.iter().map(|sheet| sheet.id).collect::<Vec<_>>(), vec![1]);
-            assert_eq!(layers["other"].sheets.iter().map(|sheet| sheet.id).collect::<Vec<_>>(), vec![3]);
+            assert_eq!(
+                layers["main"]
+                    .sheets
+                    .iter()
+                    .map(|sheet| sheet.id)
+                    .collect::<Vec<_>>(),
+                vec![1]
+            );
+            assert_eq!(
+                layers["other"]
+                    .sheets
+                    .iter()
+                    .map(|sheet| sheet.id)
+                    .collect::<Vec<_>>(),
+                vec![3]
+            );
         });
-        let back = Event::BackPressed { handled: Cell::new(false) };
+        let back = Event::BackPressed {
+            handled: Cell::new(false),
+        };
         assert!(handle_tool_call_sheets(&mut cx, &back, "main"));
         assert!(!handle_tool_call_sheets(&mut cx, &back, "main"));
         assert!(!take_dismissal(&back));

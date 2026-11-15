@@ -7,13 +7,18 @@
 use super::blobs::read_blob;
 use base64::Engine;
 use paseo_client::{ClientError, DaemonClient, RequestOptions};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// SDK codes whose outcome is unknown once the request was submitted.
 fn outcome_unknown(error: &ClientError) -> bool {
-    if let Some(flag) = error.details.as_ref().and_then(|d| d.get("outcomeUnknown")).and_then(Value::as_bool) {
+    if let Some(flag) = error
+        .details
+        .as_ref()
+        .and_then(|d| d.get("outcomeUnknown"))
+        .and_then(Value::as_bool)
+    {
         return flag;
     }
     matches!(
@@ -104,7 +109,9 @@ pub async fn rpc_with_images(
                     .and_then(Value::as_str)
                     .unwrap_or("The daemon rejected this operation")
                     .to_owned();
-                return Ok(json!({"ok": false, "error": {"code": "DAEMON_RPC_ERROR", "message": message, "details": payload, "outcomeUnknown": false}}));
+                return Ok(
+                    json!({"ok": false, "error": {"code": "DAEMON_RPC_ERROR", "message": message, "details": payload, "outcomeUnknown": false}}),
+                );
             }
             Ok(json!({"ok": true, "payload": payload}))
         }
@@ -114,7 +121,10 @@ pub async fn rpc_with_images(
 
 /// actions.ts uploadFileAttachments: upload each file in order; the uploaded files attach
 /// together once all succeed. Files are read here, off the GUI thread.
-pub async fn upload_files(client: Arc<DaemonClient>, files: Vec<(PathBuf, String, String)>) -> anyhow::Result<Value> {
+pub async fn upload_files(
+    client: Arc<DaemonClient>,
+    files: Vec<(PathBuf, String, String)>,
+) -> anyhow::Result<Value> {
     let mut uploaded = Vec::with_capacity(files.len());
     for (path, name, mime) in files {
         let read_path = path.clone();
@@ -132,11 +142,18 @@ pub async fn upload_files(client: Arc<DaemonClient>, files: Vec<(PathBuf, String
             Ok(Err(error)) => return Ok(local_error(format!("{name}: {error}"))),
             Err(error) => return Ok(local_error(error.to_string())),
         };
-        let modified = modified.unwrap_or_else(|| chrono_like_rfc3339(std::time::SystemTime::now()));
+        let modified =
+            modified.unwrap_or_else(|| chrono_like_rfc3339(std::time::SystemTime::now()));
         // Uploads have no deadline (Flutter streamed until the host answered or the
         // connection dropped); cancel_request drops this future.
-        let options = RequestOptions { timeout: std::time::Duration::ZERO, ..RequestOptions::default() };
-        match client.upload_file(&name, &mime, &modified, &bytes, options).await {
+        let options = RequestOptions {
+            timeout: std::time::Duration::ZERO,
+            ..RequestOptions::default()
+        };
+        match client
+            .upload_file(&name, &mime, &modified, &bytes, options)
+            .await
+        {
             Ok(response) => {
                 let file = response.get("file").cloned().unwrap_or(Value::Null);
                 if response.get("error").is_some_and(|e| !e.is_null()) || file.is_null() {
@@ -157,7 +174,10 @@ pub async fn upload_files(client: Arc<DaemonClient>, files: Vec<(PathBuf, String
 
 /// RFC 3339 UTC timestamp without pulling a date crate into the composer.
 fn chrono_like_rfc3339(time: std::time::SystemTime) -> String {
-    let secs = time.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -184,6 +204,9 @@ pub fn open_envelope(value: &Value) -> Result<Value, Value> {
     if value.get("ok") == Some(&Value::Bool(true)) {
         Ok(value.get("payload").cloned().unwrap_or(Value::Null))
     } else {
-        Err(value.get("error").cloned().unwrap_or_else(|| json!({"message": "Operation failed"})))
+        Err(value
+            .get("error")
+            .cloned()
+            .unwrap_or_else(|| json!({"message": "Operation failed"})))
     }
 }

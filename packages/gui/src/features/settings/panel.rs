@@ -8,9 +8,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use makepad_widgets::*;
 use makepad_widgets::makepad_draw::event::TouchState;
 use makepad_widgets::scroll_bars::TouchScroll;
+use makepad_widgets::*;
 use serde_json::Value;
 
 use super::host::{self, HostView, Status};
@@ -24,9 +24,9 @@ use super::ui::field::{FieldHost, Layer};
 use super::ui::kit::{Ui, Zone};
 use super::ui::overlay::{self, Menu, item};
 use super::ui::theme::{Palette, palette};
-use crate::common::{Route, UiContext, UiEffect};
 use crate::common::overlay::WindowModal;
 use crate::common::widgets::RowMetrics;
+use crate::common::{Route, UiContext, UiEffect};
 use crate::features::workspace::{WorkspacePanelWidgetRefExt, WorkspaceTarget};
 
 const SIDEBAR_W: f64 = 320.0;
@@ -34,8 +34,15 @@ const DETAIL_MAX: f64 = 720.0;
 
 /// What another feature asked Settings to open (see [`open_profile_editor`]).
 pub enum Intent {
-    ProfileEditor { host: String, seed: Option<Value>, profile: Option<Value> },
-    ProviderSheet { host: String, provider: String },
+    ProfileEditor {
+        host: String,
+        seed: Option<Value>,
+        profile: Option<Value>,
+    },
+    ProviderSheet {
+        host: String,
+        provider: String,
+    },
 }
 
 thread_local! {
@@ -51,31 +58,77 @@ fn take_intents() -> Vec<Intent> {
 }
 
 const APP_SECTIONS: &[(&str, &str, Icon, bool)] = &[
-    ("general", "settings.sections.general", Icon::Settings, false),
-    ("appearance", "settings.sections.appearance", Icon::Palette, false),
-    ("sidebar", "settings.sections.sidebar", Icon::PanelLeft, false),
+    (
+        "general",
+        "settings.sections.general",
+        Icon::Settings,
+        false,
+    ),
+    (
+        "appearance",
+        "settings.sections.appearance",
+        Icon::Palette,
+        false,
+    ),
+    (
+        "sidebar",
+        "settings.sections.sidebar",
+        Icon::PanelLeft,
+        false,
+    ),
     ("chat", "settings.sections.chat", Icon::MessageSquare, false),
     ("files", "settings.sections.files", Icon::Files, false),
-    ("shortcuts", "settings.sections.shortcuts", Icon::Keyboard, true),
-    ("notifications", "settings.sections.notifications", Icon::Bell, true),
-    ("diagnostics", "settings.sections.diagnostics", Icon::Stethoscope, false),
+    (
+        "shortcuts",
+        "settings.sections.shortcuts",
+        Icon::Keyboard,
+        true,
+    ),
+    (
+        "notifications",
+        "settings.sections.notifications",
+        Icon::Bell,
+        true,
+    ),
+    ("tailscale", "tailnet.title", Icon::Network, false),
+    (
+        "diagnostics",
+        "settings.sections.diagnostics",
+        Icon::Stethoscope,
+        false,
+    ),
     ("about", "settings.sections.about", Icon::Info, false),
 ];
 
 const HOST_SECTIONS: &[(&str, &str, Icon)] = &[
     ("host", "settings.hostSections.host", Icon::Server),
-    ("projects", "settings.hostSections.projects", Icon::FolderGit),
-    ("connections", "settings.hostSections.connections", Icon::Network),
+    (
+        "projects",
+        "settings.hostSections.projects",
+        Icon::FolderGit,
+    ),
+    (
+        "connections",
+        "settings.hostSections.connections",
+        Icon::Network,
+    ),
     ("agents", "settings.hostSections.agents", Icon::Bot),
     ("metadata", "settings.hostSections.metadata", Icon::Sparkles),
     ("providers", "settings.hostSections.providers", Icon::Boxes),
     ("usage", "settings.hostSections.usage", Icon::Gauge),
-    ("terminals", "settings.hostSections.terminals", Icon::SquareTerminal),
+    (
+        "terminals",
+        "settings.hostSections.terminals",
+        Icon::SquareTerminal,
+    ),
     ("plugins", "settings.hostSections.plugins", Icon::Plug),
+    ("version", "settings.hostSections.version", Icon::Info),
 ];
 
 fn app_sections() -> impl Iterator<Item = &'static (&'static str, &'static str, Icon, bool)> {
-    APP_SECTIONS.iter().filter(|(_, _, _, desktop_only)| !desktop_only || DESKTOP)
+    APP_SECTIONS
+        .iter()
+        .filter(|(_, _, _, desktop_only)| !desktop_only || DESKTOP)
 }
 
 live_design! {
@@ -154,7 +207,9 @@ enum OverlayLayer {
 pub enum SettingsPanelAction {
     /// The editor opened by [`SettingsPanelRef::open_profile_editor`] closed;
     /// `saved_on_host` is the host whose `agentProfiles` were written, if any.
-    EditorClosed { saved_on_host: Option<String> },
+    EditorClosed {
+        saved_on_host: Option<String>,
+    },
     None,
 }
 
@@ -246,7 +301,13 @@ impl SettingsPanel {
     fn view(&self, ui: &UiContext) -> View {
         let hosts = host::hosts(&ui.state);
         let prefs = self.st.prefs(&host::preferences(&ui.state));
-        View { hosts, prefs, compact: ui.compact, desktop: DESKTOP }
+        View {
+            hosts,
+            prefs,
+            tailnet: ui.state.get("tailnet").cloned().unwrap_or(Value::Null),
+            compact: ui.compact,
+            desktop: DESKTOP,
+        }
     }
 
     /// The layer and depth whose fields take pointer input: the menu over
@@ -255,7 +316,10 @@ impl SettingsPanel {
         if !self.overlay_open() {
             return (Layer::Page, 0);
         }
-        (Layer::Overlay, self.st.sheets.len() + usize::from(self.st.menu.is_some()))
+        (
+            Layer::Overlay,
+            self.st.sheets.len() + usize::from(self.st.menu.is_some()),
+        )
     }
 
     fn redraw_overlays(&mut self, cx: &mut Cx) {
@@ -284,8 +348,18 @@ impl SettingsPanel {
         }
     }
 
-    fn with_env<R>(&mut self, cx: &mut Cx, ui: &mut UiContext, f: impl FnOnce(&mut Settings, &mut Env) -> R) -> R {
-        let mut env = Env { cx, ctx: ui, fields: &mut self.fields, bridge: &mut self.bridge };
+    fn with_env<R>(
+        &mut self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        f: impl FnOnce(&mut Settings, &mut Env) -> R,
+    ) -> R {
+        let mut env = Env {
+            cx,
+            ctx: ui,
+            fields: &mut self.fields,
+            bridge: &mut self.bridge,
+        };
         f(&mut self.st, &mut env)
     }
 
@@ -294,8 +368,15 @@ impl SettingsPanel {
     }
 
     fn zone_at(&self, pos: DVec2) -> Option<&Zone> {
-        let layer = if self.overlay_open() { Layer::Overlay } else { Layer::Page };
-        self.zones.iter().rev().find(|z| z.layer == layer && z.rect.contains(pos))
+        let layer = if self.overlay_open() {
+            Layer::Overlay
+        } else {
+            Layer::Page
+        };
+        self.zones
+            .iter()
+            .rev()
+            .find(|z| z.layer == layer && z.rect.contains(pos))
     }
 
     /// Whether `region` takes scrolling now: the open menu over everything,
@@ -312,7 +393,11 @@ impl SettingsPanel {
 
     /// The scrollable region under `pos` that takes scrolling now.
     fn region_at(&self, pos: DVec2) -> Option<(Region, Rect)> {
-        self.regions.iter().rev().find(|(region, rect)| self.scrolls(*region) && rect.contains(pos)).copied()
+        self.regions
+            .iter()
+            .rev()
+            .find(|(region, rect)| self.scrolls(*region) && rect.contains(pos))
+            .copied()
     }
 
     /// Scrolls the region under `pos`. A touch gesture stays with the region it
@@ -333,12 +418,19 @@ impl SettingsPanel {
             Region::Content => (&mut self.st.scroll, self.st.content_h - rect.size.y),
             Region::Menu => {
                 let (content, visible) = self.menu_height;
-                let Some(menu) = &mut self.st.menu else { return };
+                let Some(menu) = &mut self.st.menu else {
+                    return;
+                };
                 (&mut menu.scroll, content - visible)
             }
             Region::Sheet(id) => {
-                let Some(sheet) = self.st.sheets.iter_mut().find(|s| s.id == id) else { return };
-                (&mut sheet.scroll, self.sheet_heights.get(&id).copied().unwrap_or(0.0) - rect.size.y)
+                let Some(sheet) = self.st.sheets.iter_mut().find(|s| s.id == id) else {
+                    return;
+                };
+                (
+                    &mut sheet.scroll,
+                    self.sheet_heights.get(&id).copied().unwrap_or(0.0) - rect.size.y,
+                )
             }
         };
         self.touch_scroll.apply_delta(scroll, dy, max);
@@ -351,17 +443,29 @@ impl SettingsPanel {
         let events = std::mem::take(&mut ui.events);
         for event in &events {
             match event {
-                paseo_gui_core::CoreEvent::Response { request_id, result, .. } if self.st.owns_request(request_id) => {
+                paseo_gui_core::CoreEvent::Response {
+                    request_id, result, ..
+                } if self.st.owns_request(request_id) => {
                     let result = result.clone().map_err(|e| ReqError::from_core(&e));
                     let id = request_id.clone();
                     self.with_env(cx, ui, |s, env| s.on_response(env, &id, result));
                     dirty |= !closed_editor || self.overlay_open();
                 }
                 paseo_gui_core::CoreEvent::HostEvent { host_id, event }
-                    if !closed_editor && matches!(event.get("type").and_then(Value::as_str),
-                        Some("status" | "providers_snapshot_update" | "usage.list_reports.update" | "daemon.update.progress")) =>
+                    if !closed_editor
+                        && matches!(
+                            event.get("type").and_then(Value::as_str),
+                            Some(
+                                "status"
+                                    | "providers_snapshot_update"
+                                    | "usage.list_reports.update"
+                                    | "daemon.update.progress"
+                            )
+                        ) =>
                 {
-                    self.with_env(cx, ui, |s, env| pages::on_host_event(s, env, host_id, event));
+                    self.with_env(cx, ui, |s, env| {
+                        pages::on_host_event(s, env, host_id, event)
+                    });
                     dirty = true;
                 }
                 // Events during a reconnect are not replayed: every admitted
@@ -402,12 +506,22 @@ impl SettingsPanel {
         let prefs = host::preferences(&ui.state);
         self.st.settle_prefs(&prefs);
         // An embedded editor never takes the Settings page's queued intents.
-        let intents = if self.sheet_only { Vec::new() } else { take_intents() };
+        let intents = if self.sheet_only {
+            Vec::new()
+        } else {
+            take_intents()
+        };
         for intent in intents {
             match intent {
-                Intent::ProfileEditor { host, seed, profile } => {
+                Intent::ProfileEditor {
+                    host,
+                    seed,
+                    profile,
+                } => {
                     self.st.host = Some(host.clone());
-                    self.with_env(cx, ui, |s, env| pages::profiles::open_editor(s, env, &host, profile, seed));
+                    self.with_env(cx, ui, |s, env| {
+                        pages::profiles::open_editor(s, env, &host, profile, seed)
+                    });
                 }
                 Intent::ProviderSheet { host, provider } => {
                     self.st.host = Some(host.clone());
@@ -432,7 +546,10 @@ impl SettingsPanel {
         s.section = section.clone();
         s.project_root = None;
         s.scroll = 0.0;
-        let route = Route::Settings { host_id: s.host.clone(), page: section.clone().unwrap_or_default() };
+        let route = Route::Settings {
+            host_id: s.host.clone(),
+            page: section.clone().unwrap_or_default(),
+        };
         s.route_seen = Some((s.host.clone(), section.unwrap_or_default()));
         env.navigate(route);
     }
@@ -463,7 +580,9 @@ fn nav_host(section: &'static str) -> Handler {
 
 impl Widget for SettingsPanel {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        let Some(ui) = scope.data.get_mut::<UiContext>() else { return };
+        let Some(ui) = scope.data.get_mut::<UiContext>() else {
+            return;
+        };
         self.compact = ui.compact;
         if !self.sheet_only {
             self.sync_route(ui);
@@ -482,7 +601,10 @@ impl Widget for SettingsPanel {
         for (token, result) in replies {
             self.with_env(cx, ui, |s, env| s.on_bridge(env, token, result));
         }
-        if matches!(event, Event::Foreground | Event::Resume | Event::AppGotFocus) {
+        if matches!(
+            event,
+            Event::Foreground | Event::Resume | Event::AppGotFocus
+        ) {
             self.with_env(cx, ui, pages::system::refresh_notification_permission);
             dirty |= self.st.notifications.checking;
         }
@@ -511,7 +633,9 @@ impl Widget for SettingsPanel {
             let widget = widget.clone();
             widget.handle_event(cx, event, scope);
         }
-        let Some(ui) = scope.data.get_mut::<UiContext>() else { return };
+        let Some(ui) = scope.data.get_mut::<UiContext>() else {
+            return;
+        };
 
         // Fields first so they capture their own clicks.
         let outcome = self.fields.handle_event(cx, event, self.field_layer());
@@ -534,18 +658,32 @@ impl Widget for SettingsPanel {
             cx.clear_key_focus_if(self.area);
             dirty = true;
         }
-        if self.st.shortcuts.capturing.is_none() && std::mem::take(&mut self.st.shortcuts.focus_scope_active) {
-            ui.push(UiEffect::SetFocusScope { owner: self.widget_uid(), scope: None });
+        if self.st.shortcuts.capturing.is_none()
+            && std::mem::take(&mut self.st.shortcuts.focus_scope_active)
+        {
+            ui.push(UiEffect::SetFocusScope {
+                owner: self.widget_uid(),
+                scope: None,
+            });
         }
         if let Event::KeyDown(ke) = event
-            && self.st.shortcuts.capturing.is_some() && !self.overlay_open()
-            && cx.has_key_focus(self.area) && self.area.is_valid(cx)
+            && self.st.shortcuts.capturing.is_some()
+            && !self.overlay_open()
+            && cx.has_key_focus(self.area)
+            && self.area.is_valid(cx)
             && pages::shortcuts::on_key(&mut self.st, ke.key_code, ke.modifiers)
         {
             dirty = true;
         }
         if self.overlay_open()
-            && (event.back_pressed() || matches!(event, Event::KeyDown(KeyEvent { key_code: KeyCode::Escape, .. })))
+            && (event.back_pressed()
+                || matches!(
+                    event,
+                    Event::KeyDown(KeyEvent {
+                        key_code: KeyCode::Escape,
+                        ..
+                    })
+                ))
         {
             if self.st.menu.is_some() {
                 self.st.menu = None;
@@ -558,7 +696,8 @@ impl Widget for SettingsPanel {
                 handled.set(true);
             }
             dirty = true;
-        } else if self.compact && !self.sheet_only
+        } else if self.compact
+            && !self.sheet_only
             && (self.st.section.is_some() || self.st.project_root.is_some())
             && event.back_pressed()
         {
@@ -571,13 +710,23 @@ impl Widget for SettingsPanel {
         if std::mem::take(&mut self.st.shortcuts.want_focus) {
             cx.set_key_focus(self.area);
             self.st.shortcuts.focus_scope_active = true;
-            ui.push(UiEffect::SetFocusScope { owner: self.widget_uid(), scope: Some("shortcut-capture".into()) });
+            ui.push(UiEffect::SetFocusScope {
+                owner: self.widget_uid(),
+                scope: Some("shortcut-capture".into()),
+            });
         }
 
-        let area = if self.overlay_open() { self.overlay_area } else { self.area };
-        let hit = event.hits_with_capture_overload(cx, area, matches!(event, Event::TouchUpdate(_)));
+        let area = if self.overlay_open() {
+            self.overlay_area
+        } else {
+            self.area
+        };
+        let hit =
+            event.hits_with_capture_overload(cx, area, matches!(event, Event::TouchUpdate(_)));
         if let Event::TouchUpdate(e) = event
-            && e.touches.iter().any(|t| matches!(t.state, TouchState::Move) && !t.handled.get().is_empty())
+            && e.touches
+                .iter()
+                .any(|t| matches!(t.state, TouchState::Move) && !t.handled.get().is_empty())
         {
             // An embedded project's ScrollYView owns this gesture.
             self.touch_scroll.reset();
@@ -592,9 +741,15 @@ impl Widget for SettingsPanel {
         }
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
-                let zone = self.zone_at(e.abs).map(|z| (z.key, z.on.is_some(), z.tip.clone(), z.rect));
+                let zone = self
+                    .zone_at(e.abs)
+                    .map(|z| (z.key, z.on.is_some(), z.tip.clone(), z.rect));
                 let hovered = zone.as_ref().map(|(k, ..)| *k);
-                if zone.as_ref().map(|(_, active, ..)| *active).unwrap_or(false) {
+                if zone
+                    .as_ref()
+                    .map(|(_, active, ..)| *active)
+                    .unwrap_or(false)
+                {
                     cx.set_cursor(MouseCursor::Hand);
                 } else {
                     cx.set_cursor(MouseCursor::Default);
@@ -608,11 +763,19 @@ impl Widget for SettingsPanel {
                     match zone {
                         Some((_, _, Some((text, false)), rect)) => {
                             cx.stop_timer(self.tip_timer);
-                            self.st.tip = Some(Tip { text, anchor: rect, tapped: false });
+                            self.st.tip = Some(Tip {
+                                text,
+                                anchor: rect,
+                                tapped: false,
+                            });
                         }
                         Some((_, _, Some((text, true)), rect)) => {
                             // `TooltipThemeData(waitDuration: 500ms)`.
-                            self.tip_pending = Some(Tip { text, anchor: rect, tapped: false });
+                            self.tip_pending = Some(Tip {
+                                text,
+                                anchor: rect,
+                                tapped: false,
+                            });
                             self.tip_show_timer = cx.start_timeout(0.5);
                             if self.st.tip.is_some() {
                                 self.tip_timer = cx.start_timeout(0.1);
@@ -636,8 +799,15 @@ impl Widget for SettingsPanel {
             }
             Hit::FingerLongPress(e) => {
                 // Touch: Flutter tooltips show on long press for 1.5 s.
-                if let Some((text, rect)) = self.zone_at(e.abs).and_then(|z| z.tip.clone().map(|(text, _)| (text, z.rect))) {
-                    self.st.tip = Some(Tip { text, anchor: rect, tapped: true });
+                if let Some((text, rect)) = self
+                    .zone_at(e.abs)
+                    .and_then(|z| z.tip.clone().map(|(text, _)| (text, z.rect)))
+                {
+                    self.st.tip = Some(Tip {
+                        text,
+                        anchor: rect,
+                        tapped: true,
+                    });
                     self.tip_timer = cx.start_timeout(1.5);
                     dirty = true;
                 }
@@ -657,7 +827,8 @@ impl Widget for SettingsPanel {
                 let pressed = self.pressed.take();
                 if e.is_over
                     && e.was_tap()
-                    && let Some((k, on, rect)) = self.zone_at(e.abs).map(|z| (z.key, z.on.clone(), z.rect))
+                    && let Some((k, on, rect)) =
+                        self.zone_at(e.abs).map(|z| (z.key, z.on.clone(), z.rect))
                     && Some(k) == pressed
                     && let Some(on) = on
                 {
@@ -694,7 +865,13 @@ impl Widget for SettingsPanel {
         crate::common::overlay::WindowModal::sync(&mut self.window_modal, ui, owner, open);
         if self.sheet_only && was_open && !self.overlay_open() {
             let saved = std::mem::take(&mut self.st.saved_profile_host);
-            cx.widget_action(self.widget_uid(), &scope.path, SettingsPanelAction::EditorClosed { saved_on_host: saved });
+            cx.widget_action(
+                self.widget_uid(),
+                &scope.path,
+                SettingsPanelAction::EditorClosed {
+                    saved_on_host: saved,
+                },
+            );
         }
     }
 
@@ -712,7 +889,14 @@ impl Widget for SettingsPanel {
         self.compact = ui.compact;
         let view = self.view(ui);
         let pal = palette();
-        self.fields.set_templates(self.field_template, [self.selectable_regular, self.selectable_medium, self.selectable_code]);
+        self.fields.set_templates(
+            self.field_template,
+            [
+                self.selectable_regular,
+                self.selectable_medium,
+                self.selectable_code,
+            ],
+        );
         self.fields.begin_frame();
         self.zones.clear();
         self.regions.clear();
@@ -730,39 +914,104 @@ impl Widget for SettingsPanel {
         // An embedded editor draws no page, only its sheets.
         if !self.sheet_only {
             {
-                let mut kit = Ui::new(cx, &mut self.draws, &mut self.zones, &mut self.fields, Layer::Page, pal, self.hovered, self.pressed, compact);
+                let mut kit = Ui::new(
+                    cx,
+                    &mut self.draws,
+                    &mut self.zones,
+                    &mut self.fields,
+                    Layer::Page,
+                    pal,
+                    self.hovered,
+                    self.pressed,
+                    compact,
+                );
                 kit.rect(rect, pal.surface0, None, 0.0);
                 if compact && self.st.section.is_none() && self.st.project_root.is_none() {
                     // Compact root: back header over the sidebar islands.
-                    draw_compact_header(&mut kit, rect, &t("settings.title"), handler(|_, env| env.ctx.effects.push(UiEffect::CloseSettings)));
-                    let body = Rect { pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h), size: dvec2(rect.size.x, rect.size.y - compact_header_h) };
-                    sidebar_h = scrolled(&mut kit, body, self.st.sidebar_scroll, 8.0, |kit| draw_sidebar_body(kit, &self.st, &view, true));
+                    draw_compact_header(
+                        &mut kit,
+                        rect,
+                        &t("settings.title"),
+                        handler(|_, env| env.ctx.effects.push(UiEffect::CloseSettings)),
+                    );
+                    let body = Rect {
+                        pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h),
+                        size: dvec2(rect.size.x, rect.size.y - compact_header_h),
+                    };
+                    sidebar_h = scrolled(&mut kit, body, self.st.sidebar_scroll, 8.0, |kit| {
+                        draw_sidebar_body(kit, &self.st, &view, true)
+                    });
                     self.regions.push((Region::Sidebar, body));
                 } else if compact {
                     let title = page_title(&self.st, &view);
                     let back = handler(SettingsPanel::back_to_parent);
                     draw_compact_header(&mut kit, rect, &title.unwrap_or_default(), back);
-                    let body = Rect { pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h), size: dvec2(rect.size.x, rect.size.y - compact_header_h) };
+                    let body = Rect {
+                        pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h),
+                        size: dvec2(rect.size.x, rect.size.y - compact_header_h),
+                    };
                     if self.st.project_root.is_none() {
-                        content_h = scrolled(&mut kit, body, self.st.scroll, 16.0, |kit| draw_detail(kit, &self.st, &view, None));
+                        content_h = scrolled(&mut kit, body, self.st.scroll, 16.0, |kit| {
+                            draw_detail(kit, &self.st, &view, None)
+                        });
                         self.regions.push((Region::Content, body));
                     }
                 } else {
                     // Wide: sidebar + detail column.
-                    let sidebar = Rect { pos: rect.pos, size: dvec2(SIDEBAR_W.min(rect.size.x * 0.5), rect.size.y) };
+                    let sidebar = Rect {
+                        pos: rect.pos,
+                        size: dvec2(SIDEBAR_W.min(rect.size.x * 0.5), rect.size.y),
+                    };
                     kit.rect(sidebar, pal.sidebar, None, 0.0);
-                    kit.rect(Rect { pos: dvec2(sidebar.pos.x + sidebar.size.x - 1.0, rect.pos.y), size: dvec2(1.0, rect.size.y) }, pal.border, None, 0.0);
+                    kit.rect(
+                        Rect {
+                            pos: dvec2(sidebar.pos.x + sidebar.size.x - 1.0, rect.pos.y),
+                            size: dvec2(1.0, rect.size.y),
+                        },
+                        pal.border,
+                        None,
+                        0.0,
+                    );
                     // Back row in a 36px header strip.
-                    let header = Rect { pos: sidebar.pos, size: dvec2(sidebar.size.x - 1.0, wide_header_h) };
-                    kit.hline(header.pos.x, header.pos.y + wide_header_h - 1.0, header.size.x);
-                    sidebar_item(&mut kit, Rect { pos: dvec2(header.pos.x + 8.0, header.pos.y + 4.0), size: dvec2(header.size.x - 16.0, wide_header_h - 8.0) }, "settings.back", Icon::ArrowLeft, &t("settings.backToWorkspace"), false, false, handler(|_, env| env.ctx.effects.push(UiEffect::CloseSettings)));
-                    let list = Rect { pos: dvec2(sidebar.pos.x, sidebar.pos.y + wide_header_h), size: dvec2(sidebar.size.x - 1.0, sidebar.size.y - wide_header_h) };
-                    sidebar_h = scrolled(&mut kit, list, self.st.sidebar_scroll, 0.0, |kit| draw_sidebar_body(kit, &self.st, &view, false));
+                    let header = Rect {
+                        pos: sidebar.pos,
+                        size: dvec2(sidebar.size.x - 1.0, wide_header_h),
+                    };
+                    kit.hline(
+                        header.pos.x,
+                        header.pos.y + wide_header_h - 1.0,
+                        header.size.x,
+                    );
+                    sidebar_item(
+                        &mut kit,
+                        Rect {
+                            pos: dvec2(header.pos.x + 8.0, header.pos.y + 4.0),
+                            size: dvec2(header.size.x - 16.0, wide_header_h - 8.0),
+                        },
+                        "settings.back",
+                        Icon::ArrowLeft,
+                        &t("settings.backToWorkspace"),
+                        false,
+                        false,
+                        handler(|_, env| env.ctx.effects.push(UiEffect::CloseSettings)),
+                    );
+                    let list = Rect {
+                        pos: dvec2(sidebar.pos.x, sidebar.pos.y + wide_header_h),
+                        size: dvec2(sidebar.size.x - 1.0, sidebar.size.y - wide_header_h),
+                    };
+                    sidebar_h = scrolled(&mut kit, list, self.st.sidebar_scroll, 0.0, |kit| {
+                        draw_sidebar_body(kit, &self.st, &view, false)
+                    });
                     self.regions.push((Region::Sidebar, list));
-                    let detail = Rect { pos: dvec2(sidebar.pos.x + sidebar.size.x, rect.pos.y + wide_header_h), size: dvec2(rect.size.x - sidebar.size.x, rect.size.y - wide_header_h) };
+                    let detail = Rect {
+                        pos: dvec2(sidebar.pos.x + sidebar.size.x, rect.pos.y + wide_header_h),
+                        size: dvec2(rect.size.x - sidebar.size.x, rect.size.y - wide_header_h),
+                    };
                     if self.st.project_root.is_none() {
                         let title = page_title(&self.st, &view);
-                        content_h = scrolled(&mut kit, detail, self.st.scroll, 0.0, |kit| draw_detail(kit, &self.st, &view, title));
+                        content_h = scrolled(&mut kit, detail, self.st.scroll, 0.0, |kit| {
+                            draw_detail(kit, &self.st, &view, title)
+                        });
                         self.regions.push((Region::Content, detail));
                     }
                 }
@@ -770,25 +1019,62 @@ impl Widget for SettingsPanel {
             }
             self.st.content_h = content_h;
             self.st.sidebar_h = sidebar_h;
-            clamp_scroll(&mut self.st.scroll, content_h, self.regions.iter().find(|(r, _)| *r == Region::Content).map(|(_, r)| r.size.y));
-            clamp_scroll(&mut self.st.sidebar_scroll, sidebar_h, self.regions.iter().find(|(r, _)| *r == Region::Sidebar).map(|(_, r)| r.size.y));
+            clamp_scroll(
+                &mut self.st.scroll,
+                content_h,
+                self.regions
+                    .iter()
+                    .find(|(r, _)| *r == Region::Content)
+                    .map(|(_, r)| r.size.y),
+            );
+            clamp_scroll(
+                &mut self.st.sidebar_scroll,
+                sidebar_h,
+                self.regions
+                    .iter()
+                    .find(|(r, _)| *r == Region::Sidebar)
+                    .map(|(_, r)| r.size.y),
+            );
 
             // Embedded project settings.
-            if let (Some(root), Some(host)) = (self.st.project_root.clone(), view.active_host(&self.st).map(|h| h.server_id.clone())) {
+            if let (Some(root), Some(host)) = (
+                self.st.project_root.clone(),
+                view.active_host(&self.st).map(|h| h.server_id.clone()),
+            ) {
                 let detail = if compact {
-                    Rect { pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h), size: dvec2(rect.size.x, rect.size.y - compact_header_h) }
+                    Rect {
+                        pos: dvec2(rect.pos.x, rect.pos.y + compact_header_h),
+                        size: dvec2(rect.size.x, rect.size.y - compact_header_h),
+                    }
                 } else {
                     let sx = SIDEBAR_W.min(rect.size.x * 0.5);
-                    Rect { pos: dvec2(rect.pos.x + sx, rect.pos.y + wide_header_h), size: dvec2(rect.size.x - sx, rect.size.y - wide_header_h) }
+                    Rect {
+                        pos: dvec2(rect.pos.x + sx, rect.pos.y + wide_header_h),
+                        size: dvec2(rect.size.x - sx, rect.size.y - wide_header_h),
+                    }
                 };
-                let stale = self.project.as_ref().map(|(_, h, r)| *h != host || *r != root).unwrap_or(true);
+                let stale = self
+                    .project
+                    .as_ref()
+                    .map(|(_, h, r)| *h != host || *r != root)
+                    .unwrap_or(true);
                 if stale {
                     let widget = WidgetRef::new_from_ptr(cx, self.project_template);
-                    widget.as_workspace_panel().set_target(cx, WorkspaceTarget::ProjectSettings { host_id: host.clone(), project_key: root.clone() });
+                    widget.as_workspace_panel().set_target(
+                        cx,
+                        WorkspaceTarget::ProjectSettings {
+                            host_id: host.clone(),
+                            project_key: root.clone(),
+                        },
+                    );
                     self.project = Some((widget, host, root));
                 }
                 if let Some((widget, _, _)) = &self.project {
-                    widget.draw_walk_all(cx, scope, Walk::fixed(detail.size.x, detail.size.y).with_abs_pos(detail.pos));
+                    widget.draw_walk_all(
+                        cx,
+                        scope,
+                        Walk::fixed(detail.size.x, detail.size.y).with_abs_pos(detail.pos),
+                    );
                 }
             } else {
                 self.project = None;
@@ -796,13 +1082,20 @@ impl Widget for SettingsPanel {
         }
 
         // Overlay: menus and sheets.
-        let Some(ui) = scope.data.get_mut::<UiContext>() else { return DrawStep::done() };
+        let Some(ui) = scope.data.get_mut::<UiContext>() else {
+            return DrawStep::done();
+        };
         let view = self.view(ui);
         if self.overlay_open() || self.st.tip.is_some() {
             // One draw list per stacked layer: a list keeps every primitive of
             // its layer (boxes, text, glyphs and native text fields) above the
             // layers before it, which batching inside one list cannot.
-            let mut layers: Vec<OverlayLayer> = self.st.sheets.iter().map(|s| OverlayLayer::Sheet(s.id)).collect();
+            let mut layers: Vec<OverlayLayer> = self
+                .st
+                .sheets
+                .iter()
+                .map(|s| OverlayLayer::Sheet(s.id))
+                .collect();
             if self.st.menu.is_some() {
                 layers.push(OverlayLayer::Menu);
             }
@@ -813,13 +1106,19 @@ impl Widget for SettingsPanel {
                 self.layer_lists.push(DrawList2d::new(cx));
             }
             let size = cx.current_pass_size();
-            let screen = Rect { pos: dvec2(0.0, 0.0), size };
+            let screen = Rect {
+                pos: dvec2(0.0, 0.0),
+                size,
+            };
             // Sheets, menus and tips lie inside the safe area above the keyboard;
             // barriers still cover the whole window.
             let insets = crate::shell::platform::safe_insets();
             let viewport = Rect {
                 pos: dvec2(insets.left, insets.top),
-                size: dvec2((size.x - insets.left - insets.right).max(0.0), (size.y - insets.top - insets.bottom_occlusion()).max(0.0)),
+                size: dvec2(
+                    (size.x - insets.left - insets.right).max(0.0),
+                    (size.y - insets.top - insets.bottom_occlusion()).max(0.0),
+                ),
             };
             let mut remeasure = false;
             for (index, layer) in layers.into_iter().enumerate() {
@@ -830,7 +1129,17 @@ impl Widget for SettingsPanel {
                 if index == 0 && self.overlay_open() {
                     cx.add_aligned_rect_area(&mut self.overlay_area, screen);
                 }
-                let mut kit = Ui::new(cx, &mut self.overlay_draws, &mut self.zones, &mut self.fields, Layer::Overlay, pal, self.hovered, self.pressed, compact);
+                let mut kit = Ui::new(
+                    cx,
+                    &mut self.overlay_draws,
+                    &mut self.zones,
+                    &mut self.fields,
+                    Layer::Overlay,
+                    pal,
+                    self.hovered,
+                    self.pressed,
+                    compact,
+                );
                 kit.depth = index + 1;
                 match layer {
                     OverlayLayer::Sheet(id) => {
@@ -840,14 +1149,23 @@ impl Widget for SettingsPanel {
                                 overlay::draw_alert(&mut kit, screen, viewport, id, confirm);
                             } else {
                                 let head = pages::sheet_head(&self.st, &view, sheet);
-                                let measured = self.sheet_heights.get(&id).copied().unwrap_or(200.0);
+                                let measured =
+                                    self.sheet_heights.get(&id).copied().unwrap_or(200.0);
                                 let busy = pages::sheet_busy(sheet);
-                                let (frame, body) = overlay::sheet_frame(&mut kit, screen, viewport, sheet, &head, measured, busy);
+                                let (frame, body) = overlay::sheet_frame(
+                                    &mut kit, screen, viewport, sheet, &head, measured, busy,
+                                );
                                 let scroll = sheet.scroll;
-                                let h = scrolled(&mut kit, body, scroll, 24.0, |kit| pages::sheet_body(kit, &self.st, &view, sheet));
+                                let h = scrolled(&mut kit, body, scroll, 24.0, |kit| {
+                                    pages::sheet_body(kit, &self.st, &view, sheet)
+                                });
                                 // The frame is sized from last frame's content height: draw
                                 // again once it changes so the sheet fits its content.
-                                if self.sheet_heights.insert(id, h).is_none_or(|old| (old - h).abs() > 0.5) {
+                                if self
+                                    .sheet_heights
+                                    .insert(id, h)
+                                    .is_none_or(|old| (old - h).abs() > 0.5)
+                                {
                                     remeasure = true;
                                 }
                                 self.regions.push((Region::Sheet(id), body));
@@ -876,11 +1194,16 @@ impl Widget for SettingsPanel {
             animating |= remeasure;
         }
         for sheet in self.st.sheets.iter_mut() {
-            let visible = self.regions.iter().find(|(r, _)| *r == Region::Sheet(sheet.id)).map(|(_, r)| r.size.y);
+            let visible = self
+                .regions
+                .iter()
+                .find(|(r, _)| *r == Region::Sheet(sheet.id))
+                .map(|(_, r)| r.size.y);
             let h = self.sheet_heights.get(&sheet.id).copied().unwrap_or(0.0);
             clamp_scroll(&mut sheet.scroll, h, visible);
         }
-        self.sheet_heights.retain(|id, _| self.st.sheets.iter().any(|s| s.id == *id));
+        self.sheet_heights
+            .retain(|id, _| self.st.sheets.iter().any(|s| s.id == *id));
         self.fields.end_frame(cx);
         // Spinners animate only while one is on screen; a resized sheet re-lays once.
         if animating {
@@ -897,7 +1220,10 @@ fn clamp_scroll(scroll: &mut f64, content: f64, visible: Option<f64>) {
 
 /// Draws `body` inside a clipped region scrolled by `scroll`; returns the content height.
 fn scrolled(kit: &mut Ui, region: Rect, scroll: f64, pad: f64, body: impl FnOnce(&mut Ui)) -> f64 {
-    kit.cx.begin_turtle(Walk::fixed(region.size.x, region.size.y).with_abs_pos(region.pos), Layout::flow_overlay().with_clip(true, true));
+    kit.cx.begin_turtle(
+        Walk::fixed(region.size.x, region.size.y).with_abs_pos(region.pos),
+        Layout::flow_overlay().with_clip(true, true),
+    );
     kit.set_clip(Some(region));
     kit.x = region.pos.x + pad;
     kit.w = region.size.x - pad * 2.0;
@@ -914,14 +1240,36 @@ fn scrolled(kit: &mut Ui, region: Rect, scroll: f64, pad: f64, body: impl FnOnce
 fn draw_compact_header(kit: &mut Ui, rect: Rect, title: &str, back: Handler) {
     let pal = kit.pal;
     let y = rect.pos.y + 8.0;
-    let button = Rect { pos: dvec2(rect.pos.x + 12.0, y + 12.0), size: dvec2(32.0, 32.0) };
+    let button = Rect {
+        pos: dvec2(rect.pos.x + 12.0, y + 12.0),
+        size: dvec2(32.0, 32.0),
+    };
     let (hovered, pressed) = kit.state("settings.compactBack");
     if hovered || pressed {
         kit.rect(button, pal.interaction, None, 16.0);
     }
-    kit.icon(Icon::ArrowLeft, dvec2(button.pos.x + 8.0, button.pos.y + 8.0), 16.0, pal.muted);
-    kit.zone("settings.compactBack", Rect { pos: dvec2(button.pos.x, button.pos.y - 8.0), size: dvec2(32.0, 48.0) }, Some(back));
-    kit.text_line(Font::Medium, 16.0, pal.foreground, dvec2(button.pos.x + 40.0, y + 18.0), rect.size.x - 100.0, title);
+    kit.icon(
+        Icon::ArrowLeft,
+        dvec2(button.pos.x + 8.0, button.pos.y + 8.0),
+        16.0,
+        pal.muted,
+    );
+    kit.zone(
+        "settings.compactBack",
+        Rect {
+            pos: dvec2(button.pos.x, button.pos.y - 8.0),
+            size: dvec2(32.0, 48.0),
+        },
+        Some(back),
+    );
+    kit.text_line(
+        Font::Medium,
+        16.0,
+        pal.foreground,
+        dvec2(button.pos.x + 40.0, y + 18.0),
+        rect.size.x - 100.0,
+        title,
+    );
 }
 
 /// The detail title (Flutter `title()`).
@@ -934,9 +1282,14 @@ fn page_title(s: &Settings, _v: &View) -> Option<String> {
         return Some(t("desktop.daemon.title"));
     }
     if let Some(section) = current.strip_prefix("host/") {
-        return HOST_SECTIONS.iter().find(|(id, _, _)| *id == section).map(|(_, key, _)| t(key));
+        return HOST_SECTIONS
+            .iter()
+            .find(|(id, _, _)| *id == section)
+            .map(|(_, key, _)| t(key));
     }
-    app_sections().find(|(id, _, _, _)| *id == current).map(|(_, key, _, _)| t(key))
+    app_sections()
+        .find(|(id, _, _, _)| *id == current)
+        .map(|(_, key, _, _)| t(key))
 }
 
 /// Original `PageLayout`: centered 720px column with a 26px title on wide.
@@ -949,7 +1302,14 @@ fn draw_detail(kit: &mut Ui, s: &Settings, v: &View, title: Option<String>) {
     kit.y += 24.0;
     if let Some(title) = title {
         let pal = kit.pal;
-        let size = kit.text(Font::Medium, 26.0, pal.foreground, dvec2(kit.x + 4.0, kit.y), Some(w - 4.0), &title);
+        let size = kit.text(
+            Font::Medium,
+            26.0,
+            pal.foreground,
+            dvec2(kit.x + 4.0, kit.y),
+            Some(w - 4.0),
+            &title,
+        );
         kit.y += size.y + 24.0;
     }
     let section = s.section.clone().unwrap_or_else(|| "general".into());
@@ -965,7 +1325,16 @@ fn status_color(pal: &Palette, h: &HostView) -> Vec4 {
 
 /// Original settings sidebar item: 52/28px rows, md icon, lg/base label.
 #[allow(clippy::too_many_arguments)]
-fn sidebar_item(kit: &mut Ui, r: Rect, key_text: &str, icon: Icon, label: &str, selected: bool, mobile: bool, on: Handler) {
+fn sidebar_item(
+    kit: &mut Ui,
+    r: Rect,
+    key_text: &str,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    mobile: bool,
+    on: Handler,
+) {
     let pal = kit.pal;
     let (hovered, pressed) = kit.state(key_text);
     let fill = if pressed {
@@ -985,9 +1354,24 @@ fn sidebar_item(kit: &mut Ui, r: Rect, key_text: &str, icon: Icon, label: &str, 
     let metrics = RowMetrics::new(kit.measure(Font::Regular, font, "Ag", None).y, 0.0, 0.0);
     let gap = if mobile { 12.0 } else { 8.0 };
     let slots = metrics.layout(r, pad, icon_size, 0.0, gap);
-    kit.icon(icon, dvec2(slots.leading.pos.x, slots.leading.pos.y + (slots.leading.size.y - icon_size) * 0.5), icon_size, color);
+    kit.icon(
+        icon,
+        dvec2(
+            slots.leading.pos.x,
+            slots.leading.pos.y + (slots.leading.size.y - icon_size) * 0.5,
+        ),
+        icon_size,
+        color,
+    );
     if slots.title.size.x > 0.0 {
-        kit.text_line(Font::Regular, font, color, slots.title.pos, slots.title.size.x, label);
+        kit.text_line(
+            Font::Regular,
+            font,
+            color,
+            slots.title.pos,
+            slots.title.size.x,
+            label,
+        );
     }
     kit.zone(key_text, slots.bounds, Some(on));
 }
@@ -996,14 +1380,29 @@ fn sidebar_item(kit: &mut Ui, r: Rect, key_text: &str, icon: Icon, label: &str, 
 /// sections) or Add host / Enable built-in daemon.
 fn draw_sidebar_body(kit: &mut Ui, s: &Settings, v: &View, mobile: bool) {
     let pal = kit.pal;
-    let current = s.section.clone().or_else(|| (!mobile).then(|| "general".to_string()));
+    let current = s
+        .section
+        .clone()
+        .or_else(|| (!mobile).then(|| "general".to_string()));
     let host_section = if s.project_root.is_some() {
         Some("projects".to_string())
     } else {
-        current.as_deref().and_then(|c| c.strip_prefix("host/")).map(String::from)
+        current
+            .as_deref()
+            .and_then(|c| c.strip_prefix("host/"))
+            .map(String::from)
     };
-    let metrics = RowMetrics::new(kit.measure(Font::Regular, if mobile { 16.0 } else { 14.0 }, "Ag", None).y, 0.0, 0.0);
-    let row_h = metrics.height(if mobile { 52.0 } else { 28.0 }, 4.0, if mobile { 18.0 } else { 16.0 });
+    let metrics = RowMetrics::new(
+        kit.measure(Font::Regular, if mobile { 16.0 } else { 14.0 }, "Ag", None)
+            .y,
+        0.0,
+        0.0,
+    );
+    let row_h = metrics.height(
+        if mobile { 52.0 } else { 28.0 },
+        4.0,
+        if mobile { 18.0 } else { 16.0 },
+    );
     let gap = 2.0;
     let no_local = DESKTOP && !v.hosts.iter().any(|h| h.local);
     let x = kit.x + 8.0;
@@ -1011,15 +1410,34 @@ fn draw_sidebar_body(kit: &mut Ui, s: &Settings, v: &View, mobile: bool) {
     let group = |kit: &mut Ui, label: Option<&str>| {
         kit.y += 8.0;
         if let Some(label) = label {
-            let size = kit.text(Font::Regular, 14.0, pal.extra_muted, dvec2(x + if mobile { 16.0 } else { 8.0 }, kit.y + 4.0), None, label);
+            let size = kit.text(
+                Font::Regular,
+                14.0,
+                pal.extra_muted,
+                dvec2(x + if mobile { 16.0 } else { 8.0 }, kit.y + 4.0),
+                None,
+                label,
+            );
             kit.y += size.y + 8.0 + if mobile { 4.0 } else { 2.0 };
         }
     };
     group(kit, Some(&t("settings.groups.app")));
     for (id, label, icon, _) in app_sections() {
-        let r = Rect { pos: dvec2(x, kit.y), size: dvec2(w, row_h) };
+        let r = Rect {
+            pos: dvec2(x, kit.y),
+            size: dvec2(w, row_h),
+        };
         let selected = !mobile && host_section.is_none() && current.as_deref() == Some(*id);
-        sidebar_item(kit, r, &format!("side.app.{id}"), *icon, &t(label), selected, mobile, nav(id));
+        sidebar_item(
+            kit,
+            r,
+            &format!("side.app.{id}"),
+            *icon,
+            &t(label),
+            selected,
+            mobile,
+            nav(id),
+        );
         kit.y += row_h + gap;
     }
     kit.y += 8.0;
@@ -1027,22 +1445,61 @@ fn draw_sidebar_body(kit: &mut Ui, s: &Settings, v: &View, mobile: bool) {
         group(kit, Some(&t("settings.groups.host")));
         // Host picker row (status dot, label, chevron).
         let active = v.active_host(s);
-        let r = Rect { pos: dvec2(x, kit.y), size: dvec2(w, row_h) };
-        let label = active.map(|h| h.label.clone()).unwrap_or_else(|| t("settings.groups.host"));
+        let r = Rect {
+            pos: dvec2(x, kit.y),
+            size: dvec2(w, row_h),
+        };
+        let label = active
+            .map(|h| h.label.clone())
+            .unwrap_or_else(|| t("settings.groups.host"));
         let (hovered, pressed) = kit.state("side.hostPicker");
-        let fill = if pressed { pal.surface2 } else if hovered { pal.sidebar_hover } else if mobile { pal.surface1 } else { pal.transparent };
+        let fill = if pressed {
+            pal.surface2
+        } else if hovered {
+            pal.sidebar_hover
+        } else if mobile {
+            pal.surface1
+        } else {
+            pal.transparent
+        };
         kit.rect(r, fill, None, if mobile { 0.0 } else { 8.0 });
         let pad = if mobile { 16.0 } else { 8.0 };
         let slots = metrics.layout(r, pad, 16.0, 14.0, 8.0);
         if let Some(h) = active {
             let color = status_color(&pal, h);
-            kit.rect(Rect { pos: dvec2(slots.leading.pos.x + 4.0, slots.leading.pos.y + (row_h - 8.0) * 0.5), size: dvec2(8.0, 8.0) }, color, None, 4.0);
+            kit.rect(
+                Rect {
+                    pos: dvec2(
+                        slots.leading.pos.x + 4.0,
+                        slots.leading.pos.y + (row_h - 8.0) * 0.5,
+                    ),
+                    size: dvec2(8.0, 8.0),
+                },
+                color,
+                None,
+                4.0,
+            );
         }
         let font = if mobile { 16.0 } else { 14.0 };
         if slots.title.size.x > 0.0 {
-            kit.text_line(Font::Regular, font, pal.foreground, slots.title.pos, slots.title.size.x, &label);
+            kit.text_line(
+                Font::Regular,
+                font,
+                pal.foreground,
+                slots.title.pos,
+                slots.title.size.x,
+                &label,
+            );
         }
-        kit.icon(Icon::ChevronDown, dvec2(slots.trailing.pos.x, slots.trailing.pos.y + (row_h - 14.0) * 0.5 + 1.0), 14.0, pal.muted);
+        kit.icon(
+            Icon::ChevronDown,
+            dvec2(
+                slots.trailing.pos.x,
+                slots.trailing.pos.y + (row_h - 14.0) * 0.5 + 1.0,
+            ),
+            14.0,
+            pal.muted,
+        );
         let hosts = v.hosts.clone();
         let active_id = active.map(|h| h.server_id.clone());
         let picker = handler(move |s, _| {
@@ -1051,46 +1508,97 @@ fn draw_sidebar_body(kit: &mut Ui, s: &Settings, v: &View, mobile: bool) {
             for h in &hosts {
                 let id = h.server_id.clone();
                 items.push(
-                    item(h.label.clone(), handler(move |s, env| {
-                        s.host = Some(id.clone());
-                        if s.project_root.take().is_some() {
-                            s.section = Some("host/projects".into());
-                        }
-                        let page = s.section.clone().unwrap_or_default();
-                        s.route_seen = Some((s.host.clone(), page.clone()));
-                        env.navigate(Route::Settings { host_id: s.host.clone(), page });
-                    }))
+                    item(
+                        h.label.clone(),
+                        handler(move |s, env| {
+                            s.host = Some(id.clone());
+                            if s.project_root.take().is_some() {
+                                s.section = Some("host/projects".into());
+                            }
+                            let page = s.section.clone().unwrap_or_default();
+                            s.route_seen = Some((s.host.clone(), page.clone()));
+                            env.navigate(Route::Settings {
+                                host_id: s.host.clone(),
+                                page,
+                            });
+                        }),
+                    )
                     .hint(pages::host::picker_hint(h))
                     .lead(super::ui::kit::Lead::Dot(status_color(&dark, h)))
                     .selected(active_id.as_deref() == Some(h.server_id.as_str())),
                 );
             }
-            let mut add = item(t("settings.addHost"), handler(|_, env| env.ctx.effects.push(UiEffect::OpenHostDialog))).lead(super::ui::kit::Lead::Icon(Icon::Plus, None));
+            let mut add = item(
+                t("settings.addHost"),
+                handler(|_, env| env.ctx.effects.push(UiEffect::OpenHostDialog)),
+            )
+            .lead(super::ui::kit::Lead::Icon(Icon::Plus, None));
             add.separator_before = true;
             items.push(add);
             if no_local {
-                items.push(item(t("settings.enableBuiltInDaemon"), nav("local-daemon")).lead(super::ui::kit::Lead::Icon(Icon::Server, None)));
+                items.push(
+                    item(t("settings.enableBuiltInDaemon"), nav("local-daemon"))
+                        .lead(super::ui::kit::Lead::Icon(Icon::Server, None)),
+                );
             }
-            let menu = Menu::new(s, t("settings.hostPicker.switchHost"), items).width(240.0).align_start();
+            let menu = Menu::new(s, t("settings.hostPicker.switchHost"), items)
+                .width(240.0)
+                .align_start();
             s.open_menu(menu);
         });
         kit.zone("side.hostPicker", r, Some(picker));
         kit.y += row_h + gap;
         for (id, label, icon) in HOST_SECTIONS {
-            let r = Rect { pos: dvec2(x, kit.y), size: dvec2(w, row_h) };
+            let r = Rect {
+                pos: dvec2(x, kit.y),
+                size: dvec2(w, row_h),
+            };
             let selected = !mobile && host_section.as_deref() == Some(*id);
-            sidebar_item(kit, r, &format!("side.host.{id}"), *icon, &t(label), selected, mobile, nav_host(id));
+            sidebar_item(
+                kit,
+                r,
+                &format!("side.host.{id}"),
+                *icon,
+                &t(label),
+                selected,
+                mobile,
+                nav_host(id),
+            );
             kit.y += row_h + gap;
         }
     } else {
         group(kit, None);
-        let r = Rect { pos: dvec2(x, kit.y), size: dvec2(w, row_h) };
-        sidebar_item(kit, r, "side.addHost", Icon::Plus, &t("settings.addHost"), false, mobile, handler(|_, env| env.ctx.effects.push(UiEffect::OpenHostDialog)));
+        let r = Rect {
+            pos: dvec2(x, kit.y),
+            size: dvec2(w, row_h),
+        };
+        sidebar_item(
+            kit,
+            r,
+            "side.addHost",
+            Icon::Plus,
+            &t("settings.addHost"),
+            false,
+            mobile,
+            handler(|_, env| env.ctx.effects.push(UiEffect::OpenHostDialog)),
+        );
         kit.y += row_h + gap;
         if no_local {
-            let r = Rect { pos: dvec2(x, kit.y), size: dvec2(w, row_h) };
+            let r = Rect {
+                pos: dvec2(x, kit.y),
+                size: dvec2(w, row_h),
+            };
             let selected = !mobile && current.as_deref() == Some("local-daemon");
-            sidebar_item(kit, r, "side.builtIn", Icon::Server, &t("settings.enableBuiltInDaemon"), selected, mobile, nav("local-daemon"));
+            sidebar_item(
+                kit,
+                r,
+                "side.builtIn",
+                Icon::Server,
+                &t("settings.enableBuiltInDaemon"),
+                selected,
+                mobile,
+                nav("local-daemon"),
+            );
             kit.y += row_h + gap;
         }
     }
@@ -1104,17 +1612,30 @@ impl SettingsPanelRef {
     /// [`SettingsPanelAction::EditorClosed`] when it closes. `seed` pre-fills
     /// a new profile (`{provider, model|modelId, name}`), `profile` edits a
     /// stored one.
-    pub fn open_profile_editor(&self, cx: &mut Cx, ui: &mut UiContext, host_id: &str, seed: Option<Value>, profile: Option<Value>) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+    pub fn open_profile_editor(
+        &self,
+        cx: &mut Cx,
+        ui: &mut UiContext,
+        host_id: &str,
+        seed: Option<Value>,
+        profile: Option<Value>,
+    ) {
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.st.host = Some(host_id.to_string());
-        inner.with_env(cx, ui, |s, env| pages::profiles::open_editor(s, env, host_id, profile, seed));
+        inner.with_env(cx, ui, |s, env| {
+            pages::profiles::open_editor(s, env, host_id, profile, seed)
+        });
         inner.area.redraw(cx);
         inner.redraw_overlays(cx);
     }
 
     /// Dismiss a hidden retained owner's layers; pending replies remain routable.
     pub fn hide(&self, cx: &mut Cx, ui: &mut UiContext) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.st.menu = None;
         inner.with_env(cx, ui, |s, env| {
             while !s.sheets.is_empty() {
@@ -1124,7 +1645,10 @@ impl SettingsPanelRef {
         inner.fields.forget_prefix(cx, "");
         pages::shortcuts::cancel_capture(&mut inner.st);
         if std::mem::take(&mut inner.st.shortcuts.focus_scope_active) {
-            ui.push(UiEffect::SetFocusScope { owner: inner.widget_uid(), scope: None });
+            ui.push(UiEffect::SetFocusScope {
+                owner: inner.widget_uid(),
+                scope: None,
+            });
         }
         cx.clear_key_focus_if(inner.area);
         inner.redraw_overlays(cx);

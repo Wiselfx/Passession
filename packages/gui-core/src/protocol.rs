@@ -40,7 +40,11 @@ pub(crate) fn server_outcome_unknown(body: &Value) -> bool {
             "agent_request_outcome_unknown",
             "workspace_request_outcome_unknown",
         ];
-        let coded = |key: &str| value[key].as_str().is_some_and(|code| CODES.contains(&code));
+        let coded = |key: &str| {
+            value[key]
+                .as_str()
+                .is_some_and(|code| CODES.contains(&code))
+        };
         value["outcomeUnknown"] == true || coded("errorCode") || coded("code") || coded("error")
     }
     if !body.is_object() {
@@ -57,8 +61,8 @@ pub(crate) fn server_outcome_unknown(body: &Value) -> bool {
 /// converts one into the error the Flutter client would have thrown.
 pub fn response_error(payload: &Value, request_type: &str) -> Option<CoreError> {
     let result = &payload["result"];
-    let result_failed = result.is_object()
-        && matches!(result["status"].as_str(), Some("conflict") | Some("error"));
+    let result_failed =
+        result.is_object() && matches!(result["status"].as_str(), Some("conflict") | Some("error"));
     let rejected = !payload["error"].is_null()
         || payload["accepted"] == false
         || payload["success"] == false
@@ -193,7 +197,10 @@ pub(crate) fn validate_response(
         }
         "subscribe_terminal_response" => {
             require("terminalId", body["terminalId"].is_string())?;
-            require("slot", body["slot"].as_u64().is_some_and(|slot| slot <= 255))?;
+            require(
+                "slot",
+                body["slot"].as_u64().is_some_and(|slot| slot <= 255),
+            )?;
         }
         "send_agent_message_response" => require("accepted", body["accepted"].is_boolean())?,
         "file.upload.response" => {

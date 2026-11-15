@@ -132,11 +132,12 @@ pub fn is_commit(value: &str) -> bool {
 
 pub fn redact(remote: &str) -> String {
     if let Ok(mut url) = url::Url::parse(remote)
-        && matches!(url.scheme(), "http" | "https" | "ssh" | "git" | "file") {
-            let _ = url.set_username("");
-            let _ = url.set_password(None);
-            return url.into();
-        }
+        && matches!(url.scheme(), "http" | "https" | "ssh" | "git" | "file")
+    {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        return url.into();
+    }
     remote.to_owned()
 }
 
@@ -146,11 +147,19 @@ pub fn links(current: &Value, target: &Value) -> Vec<String> {
     if identity["kind"] == "cargo" && target["kind"] == "cargo" {
         return [revision, target["version"].as_str().unwrap_or_default()]
             .iter()
-            .map(|version| format!("https://crates.io/crates/{}/{version}", identity["crateName"].as_str().unwrap_or_default()))
+            .map(|version| {
+                format!(
+                    "https://crates.io/crates/{}/{version}",
+                    identity["crateName"].as_str().unwrap_or_default()
+                )
+            })
             .collect();
     }
     if identity["kind"] == "release" && target["kind"] == "release" {
-        return target["url"].as_str().map(|url| vec![url.to_owned()]).unwrap_or_default();
+        return target["url"]
+            .as_str()
+            .map(|url| vec![url.to_owned()])
+            .unwrap_or_default();
     }
     if identity["kind"] == "git" && target["kind"] == "git" {
         let remote = identity["remote"].as_str().unwrap_or_default();

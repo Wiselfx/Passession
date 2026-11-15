@@ -1,7 +1,7 @@
 use super::{CreateTerminal, scripts::config};
-use paseo_client::process::{CommandSpec, ManagedProcess};
-use crate::{ state::AppState, };
+use crate::state::AppState;
 use anyhow::{Result, anyhow, bail};
+use paseo_client::process::{CommandSpec, ManagedProcess};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -184,10 +184,9 @@ impl Setup {
                 .transport
                 .publish_event(json!({"type":"workspace_setup_progress","payload":payload}))
                 .await;
-            if status_changed
-                && let Err(error) = app.projects.publish_workspace(id).await {
-                    tracing::warn!(%error,workspace_id=id,"Failed to publish workspace setup status");
-                }
+            if status_changed && let Err(error) = app.projects.publish_workspace(id).await {
+                tracing::warn!(%error,workspace_id=id,"Failed to publish workspace setup status");
+            }
         }
     }
     pub async fn start(&self, id: &str) -> Result<Value> {
@@ -370,7 +369,12 @@ impl Setup {
             None
         };
         self.execute_commands(
-            CommandEnvironment { observation, directory: &directory, env, kind },
+            CommandEnvironment {
+                observation,
+                directory: &directory,
+                env,
+                kind,
+            },
             authored_commands,
             cancel,
             commands,
@@ -387,7 +391,12 @@ impl Setup {
         commands: &mut Vec<Value>,
         truncated: &mut bool,
     ) -> Result<()> {
-        let CommandEnvironment { observation, directory, env, kind } = environment;
+        let CommandEnvironment {
+            observation,
+            directory,
+            env,
+            kind,
+        } = environment;
         for (index, command) in authored_commands.into_iter().enumerate() {
             if cancel.is_cancelled() {
                 bail!("Worktree {kind} cancelled");
@@ -520,7 +529,12 @@ impl Setup {
         drop(app);
         sanitize_environment(&mut env);
         self.execute_commands(
-            CommandEnvironment { observation: None, directory, env, kind: "teardown" },
+            CommandEnvironment {
+                observation: None,
+                directory,
+                env,
+                kind: "teardown",
+            },
             commands,
             &cancel,
             &mut Vec::new(),
@@ -678,7 +692,10 @@ mod tests {
         let result = setup
             .execute_commands(
                 CommandEnvironment {
-                    observation: None, directory: directory.path(), env, kind: "teardown",
+                    observation: None,
+                    directory: directory.path(),
+                    env,
+                    kind: "teardown",
                 },
                 vec![
                     "printf 'out\\n'; printf 'err\\n' >&2; exit 7".into(),
@@ -715,7 +732,10 @@ mod tests {
             setup
                 .execute_commands(
                     CommandEnvironment {
-                        observation: None, directory: directory.path(), env, kind: "teardown",
+                        observation: None,
+                        directory: directory.path(),
+                        env,
+                        kind: "teardown",
                     },
                     vec!["kill -TERM $$".into()],
                     &CancellationToken::new(),

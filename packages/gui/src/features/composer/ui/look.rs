@@ -81,6 +81,10 @@ impl Look {
     }
 
     pub fn shadow(&self) -> Vec4 {
-        if self.p.is_dark { vec4(0.0, 0.0, 0.0, 0.2) } else { vec4(0.0, 0.0, 0.0, 0.04) }
+        if self.p.is_dark {
+            vec4(0.0, 0.0, 0.0, 0.2)
+        } else {
+            vec4(0.0, 0.0, 0.0, 0.04)
+        }
     }
 }

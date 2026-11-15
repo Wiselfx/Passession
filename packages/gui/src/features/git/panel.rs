@@ -85,7 +85,9 @@ impl GitPanel {
         if self.view.is_some() {
             return;
         }
-        let Some(target) = self.target.clone() else { return };
+        let Some(target) = self.target.clone() else {
+            return;
+        };
         let view = with_store(|store| {
             if target.kind == "pull_request" {
                 View::Pr(Box::new(PrView::new(cx, ui, store, target)))
@@ -135,7 +137,10 @@ impl Widget for GitPanel {
         }
         // Decoded file icons and avatar images bump their caches' revisions
         // (on Signal, possibly after this widget saw it), so compare on every event.
-        let revision = (crate::features::files::revision(), crate::features::timeline::images::version());
+        let revision = (
+            crate::features::files::revision(),
+            crate::features::timeline::images::version(),
+        );
         if revision != self.media_revision {
             self.media_revision = revision;
             let pending = match &self.view {
@@ -153,17 +158,32 @@ impl Widget for GitPanel {
         let visible = self.visible;
         let process = processes(event, ui) || self.applied_visible != Some(visible);
         self.applied_visible = Some(visible);
-        let Self { view, overlay_list, overlay_bg, input, search_input, branch_input, commit_input, area, .. } = self;
+        let Self {
+            view,
+            overlay_list,
+            overlay_bg,
+            input,
+            search_input,
+            branch_input,
+            commit_input,
+            area,
+            ..
+        } = self;
         let Some(view) = view.as_mut() else { return };
         let area = *area;
-        let mut parts = OverlayParts { list: overlay_list, bg: overlay_bg, input };
+        let mut parts = OverlayParts {
+            list: overlay_list,
+            bg: overlay_bg,
+            input,
+        };
         let redraw = with_store(|store| match view {
             View::Changes(changes) => {
                 let mut redraw = process && changes.process(cx, ui, store, visible);
                 if changes.handle_overlay(cx, event, ui, &mut parts, store, compact) {
                     redraw = true;
                 } else if visible {
-                    redraw |= changes.handle_pointer(cx, event, area, ui, &mut parts, store, compact);
+                    redraw |=
+                        changes.handle_pointer(cx, event, area, ui, &mut parts, store, compact);
                 }
                 // Menus, confirmations and selects opened above go to the shell.
                 changes.flush_overlay(ui);
@@ -178,7 +198,10 @@ impl Widget for GitPanel {
                 redraw
             }
             View::Log(log) => {
-                let mut inputs = LogInputs { search: search_input, branch: branch_input };
+                let mut inputs = LogInputs {
+                    search: search_input,
+                    branch: branch_input,
+                };
                 let mut redraw = process && log.process(cx, event, ui, store, visible);
                 redraw |= log.handle_overlay(ui);
                 if visible {
@@ -211,9 +234,26 @@ impl Widget for GitPanel {
         self.ensure_view(cx, ui);
         let rect = cx.walk_turtle_with_area(&mut self.area, walk);
         let compact = is_compact_layout(cx);
-        let Self { view, overlay_list, overlay_bg, input, search_input, branch_input, commit_input, paint, chat_kit, .. } = self;
-        let Some(view) = view.as_mut() else { return DrawStep::done() };
-        let mut parts = OverlayParts { list: overlay_list, bg: overlay_bg, input };
+        let Self {
+            view,
+            overlay_list,
+            overlay_bg,
+            input,
+            search_input,
+            branch_input,
+            commit_input,
+            paint,
+            chat_kit,
+            ..
+        } = self;
+        let Some(view) = view.as_mut() else {
+            return DrawStep::done();
+        };
+        let mut parts = OverlayParts {
+            list: overlay_list,
+            bg: overlay_bg,
+            input,
+        };
         paint.begin_clip(cx, rect);
         let spinning = with_store(|store| match view {
             View::Changes(changes) => {
@@ -225,7 +265,10 @@ impl Widget for GitPanel {
                 pr.spinning
             }
             View::Log(log) => {
-                let mut inputs = LogInputs { search: search_input, branch: branch_input };
+                let mut inputs = LogInputs {
+                    search: search_input,
+                    branch: branch_input,
+                };
                 log.draw(cx, ui, paint, &mut inputs, rect, compact);
                 log.spinning
             }
@@ -247,7 +290,9 @@ impl GitPanelRef {
     /// Binds the panel to a tab target. Reopening a tab replaces its target
     /// under the same key; another checkout directory or commit is another view.
     pub fn set_target(&self, cx: &mut Cx, target: PanelTarget) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         let sha = |t: &PanelTarget| {
             t.data
                 .get("sha")
@@ -285,11 +330,15 @@ impl GitPanelRef {
 
     /// The tab became shown or hidden (original `PanelActivity.visible`).
     pub fn set_visible(&self, cx: &mut Cx, visible: bool) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         if inner.visible != visible {
             inner.visible = visible;
             if !visible {
-                if matches!(inner.view.as_ref(), Some(View::Commit(_))) && cx.has_key_focus(inner.commit_input.area()) {
+                if matches!(inner.view.as_ref(), Some(View::Commit(_)))
+                    && cx.has_key_focus(inner.commit_input.area())
+                {
                     cx.revert_key_focus();
                 }
                 match inner.view.as_mut() {

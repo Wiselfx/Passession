@@ -88,16 +88,16 @@ pub(super) async fn wait_ready(
                 }
                 if require_bridge
                     && let Some(bridge) = plugins.iter().find(|plugin| plugin["id"] == "paseo")
-                    {
-                        match bridge.pointer("/state/status").and_then(Value::as_str) {
-                            Some("active") => return Ok(()),
-                            Some("failed") => bail!(
-                                "OpenCode Paseo tool bridge plugin failed: {}",
-                                bridge["state"]["error"]
-                            ),
-                            _ => {}
-                        }
+                {
+                    match bridge.pointer("/state/status").and_then(Value::as_str) {
+                        Some("active") => return Ok(()),
+                        Some("failed") => bail!(
+                            "OpenCode Paseo tool bridge plugin failed: {}",
+                            bridge["state"]["error"]
+                        ),
+                        _ => {}
                     }
+                }
             }
             tokio::select! {
                 _ = cancel.cancelled() => bail!("OpenCode location activation canceled"),

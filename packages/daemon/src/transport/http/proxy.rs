@@ -70,10 +70,11 @@ fn forwarded_headers(
     }
     if let Ok(host_text) = host.to_str()
         && let Some((_, port)) = host_text.rsplit_once(':')
-            && port.parse::<u16>().is_ok_and(|port| port > 0)
-                && let Ok(value) = HeaderValue::from_str(port) {
-                    headers.insert("x-forwarded-port", value);
-                }
+        && port.parse::<u16>().is_ok_and(|port| port > 0)
+        && let Ok(value) = HeaderValue::from_str(port)
+    {
+        headers.insert("x-forwarded-port", value);
+    }
     headers.insert("x-forwarded-host", host);
     if upgrade {
         headers.insert("connection", HeaderValue::from_static("Upgrade"));

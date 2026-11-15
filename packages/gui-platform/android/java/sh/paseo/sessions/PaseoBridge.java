@@ -18,6 +18,12 @@ import android.graphics.Rect;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import android.net.RouteInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -49,6 +55,10 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.Inet4Address;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -74,6 +84,7 @@ final class PaseoBridge {
 
     static native void nativeResult(long id, String reply);
     static native void nativeEvent(String kind, String payload);
+    static native String nativeTailnetNetwork(String snapshot);
 
     /** Foreground state for the messaging service (silent foreground presentation). */
     static volatile boolean foreground = false;
@@ -85,16 +96,210 @@ final class PaseoBridge {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Map<Integer, Long> activityRequests = new HashMap<>();
     private final Map<Integer, Long> permissionRequests = new HashMap<>();
-    private int nextRequestCode = 0x5000;
+    // Do not reuse a destroyed activity's codes: Android may still deliver its
+    // outstanding result to the replacement activity.
+    private static int nextRequestCode = 0x5000;
     private PaseoAudio audio;
     private String lastInsets = "";
     private boolean systemBarsConfigured;
     private boolean systemBarsDark;
     private int systemBarsBackground;
+    private boolean destroyed;
+    // Main-thread owned, including completion after an IO task. Keep the request
+    // alive while copying so native callers retain the generated source.
+    private SaveRequest pendingSave;
+
+    private static final class SaveRequest {
+        final long id;
+        final File source;
+        int requestCode = -1;
+        boolean copying;
+        boolean preparing = true;
+
+        SaveRequest(long id, File source) {
+            this.id = id;
+            this.source = source;
+        }
+    }
 
     PaseoBridge(MainActivity activity) {
         this.activity = activity;
         current = this;
+    }
+
+    /**
+     * App-only observation, not a VpnService. Android's supported Java interface
+     * API can enumerate app-visible addresses where Go's RTM_GETLINK is denied.
+     * Keep one application-context observer across activity recreation, and
+     * unregister both callbacks when the embedded node closes.
+     */
+    private static final class TailnetNetworkMonitor {
+        private static TailnetNetworkMonitor current;
+        private final ConnectivityManager manager;
+        private boolean running;
+        private boolean defaultRegistered;
+        private boolean interfacesRegistered;
+        private Network defaultNetwork;
+        private LinkProperties defaultProperties;
+
+        private final ConnectivityManager.NetworkCallback defaultCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                synchronized (TailnetNetworkMonitor.this) {
+                    if (!running) return;
+                    if (!network.equals(defaultNetwork)) defaultProperties = null;
+                    defaultNetwork = network;
+                    changed();
+                }
+            }
+            @Override public void onLost(Network network) {
+                synchronized (TailnetNetworkMonitor.this) {
+                    if (!running || !network.equals(defaultNetwork)) return;
+                    defaultNetwork = null;
+                    defaultProperties = null;
+                    changed();
+                }
+            }
+            @Override public void onLinkPropertiesChanged(Network network, LinkProperties properties) {
+                synchronized (TailnetNetworkMonitor.this) {
+                    if (!running || !network.equals(defaultNetwork)) return;
+                    // Consume callback data, not racy synchronous CM queries
+                    // from inside onAvailable/onLinkPropertiesChanged.
+                    defaultProperties = properties;
+                    changed();
+                }
+            }
+            @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) { changed(); }
+        };
+        private final ConnectivityManager.NetworkCallback interfacesCallback = callback();
+
+        private ConnectivityManager.NetworkCallback callback() {
+            return new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { changed(); }
+                @Override public void onLost(Network network) { changed(); }
+                @Override public void onLinkPropertiesChanged(Network network, LinkProperties properties) { changed(); }
+                @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) { changed(); }
+            };
+        }
+
+        private TailnetNetworkMonitor(Context context) {
+            manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) throw new IllegalStateException("Android ConnectivityManager is unavailable");
+        }
+
+        static synchronized void setEnabled(Context context, boolean enabled) throws Exception {
+            if (!enabled) {
+                if (current != null) {
+                    current.stop();
+                    current = null;
+                }
+                return;
+            }
+            if (current == null) current = new TailnetNetworkMonitor(context);
+            try {
+                current.start();
+            } catch (Exception error) {
+                try { current.stop(); } catch (Exception cleanup) { error.addSuppressed(cleanup); }
+                current = null;
+                throw error;
+            }
+        }
+
+        private synchronized void start() throws Exception {
+            if (!running) {
+                running = true;
+                defaultNetwork = manager.getActiveNetwork();
+                defaultProperties = defaultNetwork == null ? null : manager.getLinkProperties(defaultNetwork);
+                manager.registerDefaultNetworkCallback(defaultCallback);
+                defaultRegistered = true;
+                // Observe address/interface changes on non-default networks too.
+                manager.registerNetworkCallback(new NetworkRequest.Builder().clearCapabilities().build(), interfacesCallback);
+                interfacesRegistered = true;
+            }
+            publish();
+        }
+
+        private synchronized void stop() {
+            running = false;
+            try {
+                if (defaultRegistered) {
+                    manager.unregisterNetworkCallback(defaultCallback);
+                    defaultRegistered = false;
+                }
+            } finally {
+                if (interfacesRegistered) {
+                    manager.unregisterNetworkCallback(interfacesCallback);
+                    interfacesRegistered = false;
+                }
+            }
+        }
+
+        private synchronized void changed() {
+            if (!running) return;
+            try {
+                publish();
+            } catch (Exception error) {
+                // publish also forwards the failure to Go: startup/status must
+                // fail rather than quietly retaining a stale or empty snapshot.
+                Log.e(TAG, "Embedded Tailnet network observation failed", error);
+            }
+        }
+
+        private void publish() throws Exception {
+            String snapshot;
+            try {
+                snapshot = snapshot().toString();
+            } catch (Exception error) {
+                nativeTailnetNetwork(new JSONObject().put("error", error.toString()).toString());
+                throw error;
+            }
+            String error = nativeTailnetNetwork(snapshot);
+            if (error != null) throw new IllegalStateException(error);
+        }
+
+        private JSONObject snapshot() throws Exception {
+            JSONArray interfaces = new JSONArray();
+            Enumeration<NetworkInterface> all = NetworkInterface.getNetworkInterfaces();
+            while (all != null && all.hasMoreElements()) {
+                NetworkInterface network = all.nextElement();
+                JSONArray addresses = new JSONArray();
+                boolean broadcast = false;
+                for (InterfaceAddress address : network.getInterfaceAddresses()) {
+                    // IPv6 scope belongs to the interface, not the CIDR parser.
+                    String ip = address.getAddress().getHostAddress();
+                    int scope = ip.indexOf('%');
+                    if (scope >= 0) ip = ip.substring(0, scope);
+                    addresses.put(ip + "/" + address.getNetworkPrefixLength());
+                    broadcast |= address.getBroadcast() != null;
+                }
+                interfaces.put(new JSONObject()
+                        .put("name", network.getName())
+                        .put("index", network.getIndex())
+                        .put("mtu", network.getMTU())
+                        .put("up", network.isUp())
+                        .put("loopback", network.isLoopback())
+                        .put("point_to_point", network.isPointToPoint())
+                        .put("multicast", network.supportsMulticast())
+                        .put("broadcast", broadcast)
+                        .put("addresses", addresses));
+            }
+            String defaultInterface = "";
+            String defaultGateway = "";
+            LinkProperties properties = defaultProperties;
+            if (properties != null) {
+                String name = properties.getInterfaceName();
+                if (name != null) defaultInterface = name;
+                for (RouteInfo route : properties.getRoutes()) {
+                    if (route.isDefaultRoute() && route.getGateway() instanceof Inet4Address
+                            && !route.getGateway().isAnyLocalAddress()) {
+                        defaultGateway = route.getGateway().getHostAddress();
+                        break;
+                    }
+                }
+            }
+            return new JSONObject().put("interfaces", interfaces)
+                    .put("default_interface", defaultInterface)
+                    .put("default_gateway", defaultGateway);
+        }
     }
 
     synchronized PaseoAudio audio() {
@@ -127,6 +332,12 @@ final class PaseoBridge {
     }
 
     void onDestroy() {
+        destroyed = true;
+        if (pendingSave != null && !pendingSave.preparing && !pendingSave.copying) {
+            finishSave(pendingSave, error("native", "The activity closed before the document was saved."));
+        }
+        // Preparation and an already-started write own their completion until
+        // streams close, even if this activity is destroyed in the meantime.
         if (current == this) current = null;
         if (audio != null) audio.release();
     }
@@ -233,6 +444,9 @@ final class PaseoBridge {
         try {
             JSONObject args = new JSONObject(argsJson == null || argsJson.isEmpty() ? "{}" : argsJson);
             switch (method) {
+                case "tailnetNetworkMonitor":
+                    TailnetNetworkMonitor.setEnabled(activity.getApplicationContext(), args.getBoolean("enabled"));
+                    return ok(null);
                 case "paths":
                     return ok(new JSONObject()
                             .put("files", activity.getFilesDir().getAbsolutePath())
@@ -331,20 +545,20 @@ final class PaseoBridge {
 
     /**
      * The font families declared in {@code /system/etc/fonts.xml}: named families
-     * with their faces, aliases, and the faces of Korean ({@code lang="ko"}) fallback
-     * families. Paths are absolute; weights, italic flags, collection indices and
+     * with their faces, aliases, and all fallback families. Paths are absolute;
+     * weights, italic flags, collection indices and
      * {@code <axis>} values are copied as declared.
      */
     static JSONObject systemFonts() throws Exception {
         JSONObject families = new JSONObject();
         JSONObject aliases = new JSONObject();
-        JSONArray hangul = new JSONArray();
+        JSONArray fallbacks = new JSONArray();
         try (InputStream input = new FileInputStream("/system/etc/fonts.xml")) {
             XmlPullParser parser = Xml.newPullParser();
             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false);
             parser.setInput(input, null);
             String familyName = null;
-            boolean korean = false;
+            String languages = null;
             JSONArray fonts = null;
             JSONObject font = null;
             StringBuilder file = null;
@@ -353,7 +567,7 @@ final class PaseoBridge {
                     switch (parser.getName()) {
                         case "family":
                             familyName = parser.getAttributeValue(null, "name");
-                            korean = isKoreanLang(parser.getAttributeValue(null, "lang"));
+                            languages = parser.getAttributeValue(null, "lang");
                             fonts = new JSONArray();
                             break;
                         case "font":
@@ -399,26 +613,19 @@ final class PaseoBridge {
                         file = null;
                     } else if ("family".equals(parser.getName()) && fonts != null) {
                         if (familyName != null && !families.has(familyName)) families.put(familyName, fonts);
-                        if (korean) {
-                            for (int i = 0; i < fonts.length(); i++) hangul.put(fonts.get(i));
+                        for (int i = 0; i < fonts.length(); i++) {
+                            fallbacks.put(fonts.getJSONObject(i).put("languages", languages));
                         }
                         familyName = null;
-                        korean = false;
+                        languages = null;
                         fonts = null;
                     }
                 }
             }
         }
-        return new JSONObject().put("families", families).put("aliases", aliases).put("hangul", hangul);
+        return new JSONObject().put("families", families).put("aliases", aliases).put("fallbacks", fallbacks);
     }
 
-    static boolean isKoreanLang(String lang) {
-        if (lang == null) return false;
-        for (String tag : lang.split("[ ,]+")) {
-            if (tag.equals("ko") || tag.startsWith("ko-") || tag.equals("und-Kore") || tag.equals("und-Hang")) return true;
-        }
-        return false;
-    }
 
     static int parseIntOr(String text, int fallback) {
         if (text == null) return fallback;
@@ -516,6 +723,9 @@ final class PaseoBridge {
                     case "pickFiles":
                         pickFiles(id, args.optBoolean("multiple"), args.optBoolean("imagesOnly"));
                         break;
+                    case "saveFile":
+                        saveFile(id, new File(args.getString("path")), args.getString("mime"), args.getString("name"));
+                        break;
                     case "share":
                         share(id, new File(args.getString("path")), args.optString("mime", "application/octet-stream"), args.optString("name"));
                         break;
@@ -538,10 +748,15 @@ final class PaseoBridge {
     }
 
     private int requestCode() {
+        if (nextRequestCode > 0xffff) throw new IllegalStateException("No activity request codes remain.");
         return nextRequestCode++;
     }
 
     private void pickFiles(long id, boolean multiple, boolean imagesOnly) {
+        if (pendingSave != null) {
+            nativeResult(id, error("busy", "A document save is already in progress."));
+            return;
+        }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType(imagesOnly ? "image/*" : "*/*");
@@ -557,6 +772,21 @@ final class PaseoBridge {
     }
 
     void onActivityResult(int requestCode, int resultCode, Intent data) {
+        SaveRequest save = pendingSave;
+        if (save != null && save.requestCode == requestCode) {
+            // Consume the picker result before starting IO; duplicate results
+            // must not start another write or report a second completion.
+            save.requestCode = -1;
+            if (resultCode == Activity.RESULT_CANCELED) {
+                finishSave(save, ok(false));
+            } else if (resultCode != Activity.RESULT_OK || data == null
+                    || data.getData() == null || !"content".equals(data.getData().getScheme())) {
+                finishSave(save, error("native", "The document picker did not return a writable content URI."));
+            } else {
+                writeDocument(save, data.getData());
+            }
+            return;
+        }
         Long id = activityRequests.remove(requestCode);
         if (id == null) return;
         if (resultCode != Activity.RESULT_OK || data == null) {
@@ -607,6 +837,99 @@ final class PaseoBridge {
                 .put("name", name)
                 .put("mimeType", activity.getContentResolver().getType(uri))
                 .put("size", size >= 0 ? size : out.length());
+    }
+
+    private void saveFile(long id, File source, String mime, String name) {
+        if (destroyed || activity.isFinishing() || activity.isDestroyed()) {
+            nativeResult(id, error("native", "The activity is not available for a document save."));
+            return;
+        }
+        if (pendingSave != null || !activityRequests.isEmpty()) {
+            nativeResult(id, error("busy", "Another document request is already in progress."));
+            return;
+        }
+        SaveRequest save = new SaveRequest(id, source);
+        pendingSave = save;
+        try {
+            io.execute(() -> {
+                String failure = null;
+                try {
+                    requireSaveSource(source);
+                    // Check that the file can actually be opened before asking
+                    // the user to create a destination.
+                    try (InputStream input = new FileInputStream(source)) {
+                        // Opening the source is the readability check.
+                    }
+                } catch (Exception e) {
+                    failure = error("io", "Cannot read the document source: " + e.getMessage());
+                }
+                final String reply = failure;
+                main.post(() -> {
+                    if (pendingSave != save) return;
+                    save.preparing = false;
+                    if (reply != null) {
+                        finishSave(save, reply);
+                        return;
+                    }
+                    if (destroyed || activity.isFinishing() || activity.isDestroyed()) {
+                        finishSave(save, error("native", "The activity closed before the document could be saved."));
+                        return;
+                    }
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType(mime);
+                        intent.putExtra(Intent.EXTRA_TITLE, name);
+                        save.requestCode = requestCode();
+                        activity.startActivityForResult(intent, save.requestCode);
+                    } catch (Exception e) {
+                        finishSave(save, error("native", "Cannot open the document save dialog: " + e.getMessage()));
+                    }
+                });
+            });
+        } catch (Exception e) {
+            finishSave(save, error("io", "Cannot prepare the document save: " + e.getMessage()));
+        }
+    }
+
+    private static void requireSaveSource(File source) throws java.io.IOException {
+        if (!source.isFile()) {
+            throw new java.io.IOException("The source is not a regular file.");
+        }
+    }
+
+    private void writeDocument(SaveRequest save, Uri destination) {
+        save.copying = true;
+        try {
+            io.execute(() -> {
+                String reply;
+                try {
+                    requireSaveSource(save.source);
+                    try (InputStream input = new FileInputStream(save.source);
+                         OutputStream output = activity.getApplicationContext().getContentResolver()
+                                 .openOutputStream(destination, "wt")) {
+                        if (output == null) throw new java.io.IOException("The document provider could not open the destination.");
+                        copy(input, output);
+                        output.flush();
+                    }
+                    // Close errors (including provider failures) are caught
+                    // above; dispatch success only after both streams close.
+                    reply = ok(true);
+                } catch (Exception e) {
+                    reply = error("io", "Cannot save the document: " + e.getMessage());
+                }
+                final String result = reply;
+                main.post(() -> finishSave(save, result));
+            });
+        } catch (Exception e) {
+            finishSave(save, error("io", "Cannot start the document write: " + e.getMessage()));
+        }
+    }
+
+    private void finishSave(SaveRequest save, String reply) {
+        if (pendingSave != save) return;
+        pendingSave = null;
+        nativeResult(save.id, reply);
     }
 
     private void share(long id, File file, String mime, String name) {

@@ -2,11 +2,11 @@
 
 use std::{os::windows::ffi::OsStringExt as _, path::PathBuf};
 use windows::{
-    core::{HSTRING, PCWSTR},
     Win32::{
         System::Com::CoTaskMemFree,
-        UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT},
+        UI::Shell::{FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
     },
+    core::{HSTRING, PCWSTR},
 };
 
 /// FOLDERID_RoamingAppData (what path_provider_windows used).

@@ -7,7 +7,10 @@ pub mod panel;
 pub mod session;
 pub mod view;
 
-pub use panel::{ExecutionLogPanel, ExecutionLogPanelRef, ExecutionLogPanelWidgetExt, ExecutionLogPanelWidgetRefExt, LogTarget};
+pub use panel::{
+    ExecutionLogPanel, ExecutionLogPanelRef, ExecutionLogPanelWidgetExt,
+    ExecutionLogPanelWidgetRefExt, LogTarget,
+};
 
 pub fn live_design(cx: &mut makepad_widgets::Cx) {
     view::live_design(cx);

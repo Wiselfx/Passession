@@ -43,7 +43,11 @@ impl Message {
         let later_emitted = self.later_emitted(index);
         let block = self.blocks.entry(index).or_default();
         if later_emitted || (!block.text.is_empty() && block.thinking != thinking) {
-            let reason = if later_emitted { "append_after_later_block" } else { "block_type_changed" };
+            let reason = if later_emitted {
+                "append_after_later_block"
+            } else {
+                "block_type_changed"
+            };
             block.mismatch(&self.id, index, reason, None);
             return Vec::new();
         }
@@ -92,13 +96,7 @@ impl Message {
         items
     }
 
-    fn reconcile(
-        &mut self,
-        index: usize,
-        thinking: bool,
-        text: &str,
-        authoritative: bool,
-    ) {
+    fn reconcile(&mut self, index: usize, thinking: bool, text: &str, authoritative: bool) {
         let later_emitted = self.later_emitted(index);
         let block = self.blocks.entry(index).or_default();
         if authoritative {
@@ -178,11 +176,22 @@ fn text_item(id: &str, thinking: bool, text: &str) -> Value {
 }
 
 impl Block {
-    fn mismatch(&mut self, message: &str, index: usize, reason: &'static str, authority: Option<&str>) {
+    fn mismatch(
+        &mut self,
+        message: &str,
+        index: usize,
+        reason: &'static str,
+        authority: Option<&str>,
+    ) {
         if self.conflict.is_none() {
             let emitted = &self.text[..self.emitted];
-            let first_difference = authority.map(|text| emitted.bytes().zip(text.bytes())
-                .position(|(a, b)| a != b).unwrap_or(emitted.len().min(text.len())));
+            let first_difference = authority.map(|text| {
+                emitted
+                    .bytes()
+                    .zip(text.bytes())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(emitted.len().min(text.len()))
+            });
             let diagnostic = json!({
                 "block": index, "reason": reason, "emittedBytes": self.emitted,
                 "authoritativeBytes": authority.map(str::len), "firstDifference": first_difference,
@@ -252,7 +261,10 @@ impl Streams {
                 // Delta-mode end events may omit content. Only a supplied body,
                 // including an explicit empty string, is authoritative.
                 message.reconcile(
-                    index, thinking, text.unwrap_or_default(), complete && text.is_some(),
+                    index,
+                    thinking,
+                    text.unwrap_or_default(),
+                    complete && text.is_some(),
                 );
                 if complete {
                     message.blocks.get_mut(&index).unwrap().closed = true;
@@ -265,24 +277,38 @@ impl Streams {
     pub(super) fn finish(&mut self, frame: &Value) -> Vec<Value> {
         let message = self.message(frame);
         let mut items = message.snapshot(&frame["message"], true);
-        if message.blocks.values().any(|block| block.conflict.is_some()) {
+        if message
+            .blocks
+            .values()
+            .any(|block| block.conflict.is_some())
+        {
             let content = frame["message"]["content"].as_array();
-            let valid = content.is_some_and(|blocks| blocks.iter().all(|block| match string(&block["type"]) {
-                "thinking" => block["thinking"].is_string(),
-                "text" => block["text"].is_string(),
-                _ => true,
-            }));
+            let valid = content.is_some_and(|blocks| {
+                blocks.iter().all(|block| match string(&block["type"]) {
+                    "thinking" => block["thinking"].is_string(),
+                    "text" => block["text"].is_string(),
+                    _ => true,
+                })
+            });
             if valid {
-                let authoritative: Vec<Value> = content.unwrap().iter().filter_map(|block| {
-                    let (thinking, text) = match string(&block["type"]) {
-                        "thinking" => (true, string(&block["thinking"])),
-                        "text" => (false, string(&block["text"])),
-                        _ => return None,
-                    };
-                    (!text.is_empty()).then(|| text_item(&message.id, thinking, text))
-                }).collect();
-                let conflicts: Vec<_> = message.blocks.values()
-                    .filter_map(|block| block.conflict.as_ref()).take(8).collect();
+                let authoritative: Vec<Value> = content
+                    .unwrap()
+                    .iter()
+                    .filter_map(|block| {
+                        let (thinking, text) = match string(&block["type"]) {
+                            "thinking" => (true, string(&block["thinking"])),
+                            "text" => (false, string(&block["text"])),
+                            _ => return None,
+                        };
+                        (!text.is_empty()).then(|| text_item(&message.id, thinking, text))
+                    })
+                    .collect();
+                let conflicts: Vec<_> = message
+                    .blocks
+                    .values()
+                    .filter_map(|block| block.conflict.as_ref())
+                    .take(8)
+                    .collect();
                 items.push(json!({
                     "type":"omp_authoritative_message", "messageId":message.id,
                     "items":authoritative,
@@ -485,9 +511,11 @@ mod tests {
         );
         let events = mapper.map(&message);
         let replay = Mapper::new("omp", "omp").replay_message(&message["message"], None);
-        let contents = |rows: &[Value]| rows.iter()
-            .map(|row| (row["item"]["type"].clone(), row["item"]["text"].clone()))
-            .collect::<Vec<_>>();
+        let contents = |rows: &[Value]| {
+            rows.iter()
+                .map(|row| (row["item"]["type"].clone(), row["item"]["text"].clone()))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(contents(&events), contents(&replay));
 
         mapper.map(&start("msg-3", json!([])));
@@ -555,26 +583,50 @@ mod tests {
         let summary = "**합동식을 대입해 최소해를 계산합니다**";
         let mut mapper = Mapper::new("omp", "omp");
         mapper.map(&start("msg-2", json!([{"type":"thinking","thinking":""}])));
-        assert!(mapper.map(&json!({"type":"message_update","messageId":"msg-2",
+        assert!(
+            mapper
+                .map(&json!({"type":"message_update","messageId":"msg-2",
             "message":{"role":"assistant"},
             "assistantMessageEvent":{"type":"thinking_start","contentIndex":0,
-                "block":{"type":"thinking","thinking":""}}})).is_empty());
+                "block":{"type":"thinking","thinking":""}}}))
+                .is_empty()
+        );
         let mut events = mapper.map(&json!({"type":"message_update","messageId":"msg-2",
             "message":{"role":"assistant"},
             "assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":summary}}));
         assert_eq!(rendered(&events, "reasoning"), summary);
-        assert!(mapper.map(&json!({"type":"message_update","messageId":"msg-2",
+        assert!(
+            mapper
+                .map(&json!({"type":"message_update","messageId":"msg-2",
             "message":{"role":"assistant"},
-            "assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"\n\n"}})).is_empty());
-        assert!(mapper.map(&json!({"type":"message_update","messageId":"msg-2",
+            "assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"\n\n"}}))
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(&json!({"type":"message_update","messageId":"msg-2",
             "message":{"role":"assistant"},
             "assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":summary,
-                "block":{"type":"thinking","summary":true}}})).is_empty());
-        events.extend(mapper.map(&update("msg-2", 1, "text_delta", "가장 작은 양의 정수는 **423**입니다.")));
-        assert!(mapper.map(&end("msg-2", json!([
-            {"type":"thinking","thinking":summary,"summary":true},
-            {"type":"text","text":"가장 작은 양의 정수는 **423**입니다."}
-        ]))).is_empty());
+                "block":{"type":"thinking","summary":true}}}))
+                .is_empty()
+        );
+        events.extend(mapper.map(&update(
+            "msg-2",
+            1,
+            "text_delta",
+            "가장 작은 양의 정수는 **423**입니다.",
+        )));
+        assert!(
+            mapper
+                .map(&end(
+                    "msg-2",
+                    json!([
+                        {"type":"thinking","thinking":summary,"summary":true},
+                        {"type":"text","text":"가장 작은 양의 정수는 **423**입니다."}
+                    ])
+                ))
+                .is_empty()
+        );
         assert_eq!(events.len(), 2);
         assert_eq!(events[0]["item"]["type"], "reasoning");
         assert_eq!(events[1]["item"]["type"], "assistant_message");
@@ -584,49 +636,101 @@ mod tests {
     fn omp_multiple_thinking_blocks_keep_summary_boundaries_in_order() {
         let mut mapper = Mapper::new("omp", "omp");
         let mut events = Vec::new();
-        for (index, summary) in ["첫 요약🙂", "두 번째\n\n요약", "마지막 요약"].iter().enumerate() {
+        for (index, summary) in ["첫 요약🙂", "두 번째\n\n요약", "마지막 요약"]
+            .iter()
+            .enumerate()
+        {
             events.extend(mapper.map(&update("msg-2", index, "thinking_delta", summary)));
-            assert!(mapper.map(&update("msg-2", index, "thinking_delta", "\n\n")).is_empty());
-            assert!(mapper.map(&update("msg-2", index, "thinking_end", summary)).is_empty());
+            assert!(
+                mapper
+                    .map(&update("msg-2", index, "thinking_delta", "\n\n"))
+                    .is_empty()
+            );
+            assert!(
+                mapper
+                    .map(&update("msg-2", index, "thinking_end", summary))
+                    .is_empty()
+            );
         }
         events.extend(mapper.map(&update("msg-2", 3, "text_delta", "답변")));
-        assert!(mapper.map(&end("msg-2", json!([
-            {"type":"thinking","thinking":"첫 요약🙂"},
-            {"type":"thinking","thinking":"두 번째\n\n요약"},
-            {"type":"thinking","thinking":"마지막 요약"},
-            {"type":"text","text":"답변"}
-        ]))).is_empty());
-        let chunks: Vec<_> = events.iter().map(|event| (
-            event["item"]["type"].as_str().unwrap(),
-            event["item"]["text"].as_str().unwrap(),
-        )).collect();
-        assert_eq!(chunks, [
-            ("reasoning", "첫 요약🙂"),
-            ("reasoning", "두 번째\n\n요약"),
-            ("reasoning", "마지막 요약"),
-            ("assistant_message", "답변"),
-        ]);
+        assert!(
+            mapper
+                .map(&end(
+                    "msg-2",
+                    json!([
+                        {"type":"thinking","thinking":"첫 요약🙂"},
+                        {"type":"thinking","thinking":"두 번째\n\n요약"},
+                        {"type":"thinking","thinking":"마지막 요약"},
+                        {"type":"text","text":"답변"}
+                    ])
+                ))
+                .is_empty()
+        );
+        let chunks: Vec<_> = events
+            .iter()
+            .map(|event| {
+                (
+                    event["item"]["type"].as_str().unwrap(),
+                    event["item"]["text"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            chunks,
+            [
+                ("reasoning", "첫 요약🙂"),
+                ("reasoning", "두 번째\n\n요약"),
+                ("reasoning", "마지막 요약"),
+                ("assistant_message", "답변"),
+            ]
+        );
     }
 
     #[test]
     fn omp_thinking_preserves_internal_and_authoritative_unicode_whitespace() {
         let mut mapper = Mapper::new("omp", "omp");
         let mut events = Vec::new();
-        assert!(mapper.map(&update("msg-2", 0, "thinking_delta", "\u{2003}")).is_empty());
+        assert!(
+            mapper
+                .map(&update("msg-2", 0, "thinking_delta", "\u{2003}"))
+                .is_empty()
+        );
         events.extend(mapper.map(&update("msg-2", 0, "thinking_delta", "원본🙂e\u{301}")));
         let separator = "\n\t\u{2003}\u{3000}\u{a0}";
-        assert!(mapper.map(&update("msg-2", 0, "thinking_delta", separator)).is_empty());
+        assert!(
+            mapper
+                .map(&update("msg-2", 0, "thinking_delta", separator))
+                .is_empty()
+        );
         events.extend(mapper.map(&update("msg-2", 0, "thinking_delta", "다음\u{200b}")));
-        assert_eq!(events[1]["item"]["text"], format!("{separator}다음\u{200b}"));
-        assert!(mapper.map(&update("msg-2", 0, "thinking_delta", "\n\n")).is_empty());
+        assert_eq!(
+            events[1]["item"]["text"],
+            format!("{separator}다음\u{200b}")
+        );
+        assert!(
+            mapper
+                .map(&update("msg-2", 0, "thinking_delta", "\n\n"))
+                .is_empty()
+        );
         let final_body = format!("\u{2003}원본🙂e\u{301}{separator}다음\u{200b}\n\n");
         events.extend(mapper.map(&update("msg-2", 0, "thinking_end", &final_body)));
         assert_eq!(events[2]["item"]["text"], "\n\n");
-        assert!(mapper.map(&end("msg-2", json!([
-            {"type":"thinking","thinking":final_body}
-        ]))).is_empty());
+        assert!(
+            mapper
+                .map(&end(
+                    "msg-2",
+                    json!([
+                        {"type":"thinking","thinking":final_body}
+                    ])
+                ))
+                .is_empty()
+        );
         assert_eq!(rendered(&events, "reasoning"), final_body);
-        assert!(events.iter().all(|event| event["item"]["type"] == "reasoning"));
+        assert!(
+            events
+                .iter()
+                .all(|event| event["item"]["type"] == "reasoning")
+        );
     }
 
     #[test]
@@ -634,22 +738,33 @@ mod tests {
         for full_snapshot in [false, true] {
             let mut mapper = Mapper::new("omp", "omp");
             let mut events = mapper.map(&update("msg-2", 0, "thinking_delta", "첫🙂"));
-            assert!(mapper.map(&update("msg-2", 0, "thinking_delta", "\n\n")).is_empty());
+            assert!(
+                mapper
+                    .map(&update("msg-2", 0, "thinking_delta", "\n\n"))
+                    .is_empty()
+            );
             let frame = if full_snapshot {
                 json!({"type":"message_update","messageId":"msg-2",
                     "message":{"role":"assistant","content":[
                         {"type":"thinking","thinking":"첫🙂\n\n"},{"type":"text","text":"답변"}
                     ]},"assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"답변"}})
             } else {
-                assert!(mapper.map(&update("msg-2", 1, "text_delta", "답변")).is_empty());
+                assert!(
+                    mapper
+                        .map(&update("msg-2", 1, "text_delta", "답변"))
+                        .is_empty()
+                );
                 json!({"type":"message_update","messageId":"msg-2",
                     "message":{"role":"assistant"},
                     "assistantMessageEvent":{"type":"thinking_end","contentIndex":0}})
             };
             assert!(mapper.map(&frame).is_empty());
-            events.extend(mapper.map(&end("msg-2", json!([
-                {"type":"thinking","thinking":"첫🙂"},{"type":"text","text":"답변 끝"}
-            ]))));
+            events.extend(mapper.map(&end(
+                "msg-2",
+                json!([
+                    {"type":"thinking","thinking":"첫🙂"},{"type":"text","text":"답변 끝"}
+                ]),
+            )));
             assert_eq!(rendered(&events, "reasoning"), "첫🙂");
             assert_eq!(rendered(&events, "assistant_message"), "답변 끝");
             assert_eq!(events.len(), 2);
@@ -663,8 +778,12 @@ mod tests {
         for kind in ["thinking", "text"] {
             let mut mapper = Mapper::new("omp", "omp");
             mapper.map(&start("msg-2", json!([])));
-            let mut events =
-                mapper.map(&update("msg-2", 0, &format!("{kind}_delta"), "생각🙂e\u{301}"));
+            let mut events = mapper.map(&update(
+                "msg-2",
+                0,
+                &format!("{kind}_delta"),
+                "생각🙂e\u{301}",
+            ));
             let block_end = json!({"type":"message_update","messageId":"msg-2",
                 "message":{"role":"assistant"},
                 "assistantMessageEvent":{"type":format!("{kind}_end"),"contentIndex":0}});
@@ -681,7 +800,11 @@ mod tests {
                 "assistant_message"
             };
             assert_eq!(rendered(&events, item_type), "생각🙂e\u{301} 끝");
-            assert!(events.iter().all(|event| event["item"]["type"] == item_type));
+            assert!(
+                events
+                    .iter()
+                    .all(|event| event["item"]["type"] == item_type)
+            );
         }
     }
 
@@ -691,20 +814,38 @@ mod tests {
             for final_body in ["", "다른 내용", "원"] {
                 let mut mapper = Mapper::new("omp", "omp");
                 mapper.map(&update("msg-2", 0, "thinking_delta", "원본"));
-                assert!(mapper.map(&update("msg-2", 0, "thinking_delta", "\n\n")).is_empty());
+                assert!(
+                    mapper
+                        .map(&update("msg-2", 0, "thinking_delta", "\n\n"))
+                        .is_empty()
+                );
                 let mut events = if terminal_only {
                     Vec::new()
                 } else {
                     mapper.map(&update("msg-2", 0, "thinking_end", final_body))
                 };
-                events.extend(mapper.map(&end("msg-2", json!([
-                    {"type":"thinking","thinking":final_body}
-                ]))));
+                events.extend(mapper.map(&end(
+                    "msg-2",
+                    json!([
+                        {"type":"thinking","thinking":final_body}
+                    ]),
+                )));
                 assert_eq!(events.len(), 1);
                 assert_eq!(events[0]["type"], "timeline_reconcile");
-                let expected = if final_body.is_empty() { Vec::new() } else { vec![final_body] };
-                assert_eq!(events[0]["items"].as_array().unwrap().iter()
-                    .map(|item| item["text"].as_str().unwrap()).collect::<Vec<_>>(), expected);
+                let expected = if final_body.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![final_body]
+                };
+                assert_eq!(
+                    events[0]["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|item| item["text"].as_str().unwrap())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
             }
         }
     }
@@ -816,17 +957,23 @@ mod reconciliation_tests {
     fn omp_summary_heading_revision_reconciles_only_after_complete_message() {
         let mut mapper = Mapper::new("omp", "omp");
         mapper.begin_turn("turn");
-        let update = |kind, content| json!({"type":"message_update","messageId":"rpc-message",
+        let update = |kind, content| {
+            json!({"type":"message_update","messageId":"rpc-message",
             "message":{"role":"assistant"},
-            "assistantMessageEvent":{"type":kind,"contentIndex":0,"delta":content,"content":content}});
+            "assistantMessageEvent":{"type":kind,"contentIndex":0,"delta":content,"content":content}})
+        };
         let first = mapper.map(&update("thinking_delta", "**임시 제목**\n\n확정된 본문🙂"));
         let marker = first[0]["item"]["metadata"]["ompStreamMessageId"].clone();
-        assert!(mapper.map(&update("thinking_end", "확정된 본문🙂")).is_empty());
+        assert!(
+            mapper
+                .map(&update("thinking_end", "확정된 본문🙂"))
+                .is_empty()
+        );
         let finished = mapper.map(&json!({"type":"message_end","messageId":"rpc-message",
-            "message":{"role":"assistant","responseId":"native-response","content":[
-                {"type":"thinking","thinking":"확정된 본문🙂","summary":true},
-                {"type":"text","text":"최종 답변"}
-            ]}}));
+        "message":{"role":"assistant","responseId":"native-response","content":[
+            {"type":"thinking","thinking":"확정된 본문🙂","summary":true},
+            {"type":"text","text":"최종 답변"}
+        ]}}));
         assert_eq!(finished.len(), 1);
         let repair = &finished[0];
         assert_eq!(repair["type"], "timeline_reconcile");
@@ -834,11 +981,19 @@ mod reconciliation_tests {
         assert_eq!(repair["turnId"], "turn");
         assert_eq!(repair["items"][0]["text"], "확정된 본문🙂");
         assert_eq!(repair["items"][1]["text"], "최종 답변");
-        assert!(repair["items"].as_array().unwrap().iter()
-            .all(|item| item["metadata"]["ompStreamMessageId"] == marker));
+        assert!(
+            repair["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["metadata"]["ompStreamMessageId"] == marker)
+        );
         assert_eq!(repair["diagnostic"]["rpcMessageId"], "rpc-message");
         assert_eq!(repair["diagnostic"]["responseId"], "native-response");
-        assert_eq!(repair["diagnostic"]["conflicts"][0]["reason"], "published_prefix_changed");
+        assert_eq!(
+            repair["diagnostic"]["conflicts"][0]["reason"],
+            "published_prefix_changed"
+        );
         assert_eq!(repair["diagnostic"]["conflicts"][0]["firstDifference"], 0);
         assert!(!repair["diagnostic"].to_string().contains("확정된 본문"));
     }
@@ -854,6 +1009,9 @@ mod reconciliation_tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["type"], "timeline");
         assert_eq!(events[0]["item"]["type"], "error");
-        assert_eq!(events[0]["item"]["metadata"]["reason"], "invalid_authoritative_message");
+        assert_eq!(
+            events[0]["item"]["metadata"]["reason"],
+            "invalid_authoritative_message"
+        );
     }
 }

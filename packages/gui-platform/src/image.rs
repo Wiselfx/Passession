@@ -46,8 +46,14 @@ pub fn decode_png_rgba(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     buffer.truncate(info.buffer_size());
     let rgba = match info.color_type {
         png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buffer.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::Rgb => buffer
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buffer
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
         png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => anyhow::bail!("Indexed PNG was not expanded."),
     };

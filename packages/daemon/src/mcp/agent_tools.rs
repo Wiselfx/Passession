@@ -47,7 +47,11 @@ pub(crate) fn definitions(agent_scope: bool) -> Vec<Value> {
                 "cwd":{"type":"string","minLength":1,"description":"Existing local directory on the destination host. Defaults to the caller's directory for local agent-scoped calls; required for top-level or remote calls."},
                 "notifyOnFinish":{"type":"boolean","default":agent_scope,"description":if agent_scope { "Get notified when the created agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback." } else { "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission." }}
             }),
-            if agent_scope { &["title", "provider", "initialPrompt"] } else { &["title", "provider", "initialPrompt", "cwd"] },
+            if agent_scope {
+                &["title", "provider", "initialPrompt"]
+            } else {
+                &["title", "provider", "initialPrompt", "cwd"]
+            },
         ),
         definition(
             "send_agent_prompt",
@@ -428,8 +432,22 @@ pub(crate) async fn execute(
 }
 
 fn prepare_create(input: &mut Value, caller: Option<&str>) -> Result<()> {
-    strict_keys(input, &["title", "provider", "labels", "settings", "initialPrompt", "notifyOnFinish", "cwd"])?;
-    if input.get("cwd").is_some_and(|value| value.as_str().is_none_or(|cwd| cwd.trim().is_empty())) {
+    strict_keys(
+        input,
+        &[
+            "title",
+            "provider",
+            "labels",
+            "settings",
+            "initialPrompt",
+            "notifyOnFinish",
+            "cwd",
+        ],
+    )?;
+    if input
+        .get("cwd")
+        .is_some_and(|value| value.as_str().is_none_or(|cwd| cwd.trim().is_empty()))
+    {
         bail!("cwd must be a nonempty string");
     }
     if caller.is_none() && input.get("cwd").is_none() {
@@ -501,7 +519,12 @@ async fn resolve_create(
         ),
         None => None,
     };
-    let cwd = super::workspace_tools::resolve_scoped_cwd(app, caller, input.get("cwd").and_then(Value::as_str)).await?;
+    let cwd = super::workspace_tools::resolve_scoped_cwd(
+        app,
+        caller,
+        input.get("cwd").and_then(Value::as_str),
+    )
+    .await?;
     let selected_provider = provider_model(string(&input, "provider")?, true)?.0;
     let inherited = parent
         .as_ref()
@@ -722,4 +745,3 @@ mod creation_tests {
         assert!(!input_directory_inherited(&parent, &json!("/other")));
     }
 }
-

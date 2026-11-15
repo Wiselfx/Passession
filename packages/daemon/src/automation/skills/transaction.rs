@@ -264,9 +264,10 @@ fn restore_entry(live: &Path, backup: Option<&Path>, rel: &Path) -> Result<()> {
     files::safe_paths(live, [rel.to_owned()])?;
     files::remove(&target)?;
     if let Some(source) = backup.map(|p| p.join(rel))
-        && files::metadata(&source)?.is_some() {
-            copy_entry(&source, &target)?;
-        }
+        && files::metadata(&source)?.is_some()
+    {
+        copy_entry(&source, &target)?;
+    }
     Ok(())
 }
 
@@ -279,18 +280,17 @@ fn restore(targets: &Targets, transaction: &Path, manifest: &Manifest) -> Result
     for entry in &manifest.entries {
         let backup = backup_path(transaction, &entry.backup_path);
         if let Some(backup) = backup.as_deref()
-            && files::metadata(backup)?.is_none() {
-                if entry.kind == "delete" {
-                    continue;
-                }
-                if let Some(path) =
-                    find_quarantine(transaction, &entry.live_path, backup, &claimed)?
-                {
-                    claimed.insert(path);
-                    continue;
-                }
-                bail!("Skills transaction backup is missing: {}", backup.display());
+            && files::metadata(backup)?.is_none()
+        {
+            if entry.kind == "delete" {
+                continue;
             }
+            if let Some(path) = find_quarantine(transaction, &entry.live_path, backup, &claimed)? {
+                claimed.insert(path);
+                continue;
+            }
+            bail!("Skills transaction backup is missing: {}", backup.display());
+        }
         if entry.kind == "delete" {
             restore_deleted(transaction, &entry.live_path, backup.as_deref())?;
             continue;
@@ -303,14 +303,15 @@ fn restore(targets: &Targets, transaction: &Path, manifest: &Manifest) -> Result
             continue;
         }
         if let Some(backup) = backup.as_deref()
-            && !fs::symlink_metadata(backup)?.is_dir() {
-                if live_info.is_some() && is_directory(&entry.live_path) {
-                    quarantine(transaction, &entry.live_path, backup)?;
-                } else {
-                    restore_entry(&entry.live_path, Some(backup), Path::new("."))?;
-                }
-                continue;
+            && !fs::symlink_metadata(backup)?.is_dir()
+        {
+            if live_info.is_some() && is_directory(&entry.live_path) {
+                quarantine(transaction, &entry.live_path, backup)?;
+            } else {
+                restore_entry(&entry.live_path, Some(backup), Path::new("."))?;
             }
+            continue;
+        }
         let name = entry
             .live_path
             .file_name()
@@ -337,9 +338,10 @@ fn restore(targets: &Targets, transaction: &Path, manifest: &Manifest) -> Result
             }
         }
         if merge_backup(&entry.live_path, backup.as_deref())?
-            && let Some(backup) = backup.as_deref() {
-                quarantine(transaction, &entry.live_path, backup)?;
-            }
+            && let Some(backup) = backup.as_deref()
+        {
+            quarantine(transaction, &entry.live_path, backup)?;
+        }
         if fs::read_dir(&entry.live_path)
             .map(|mut entries| entries.next().is_none())
             .unwrap_or(false)
@@ -428,9 +430,10 @@ pub(super) fn recover(targets: &Targets, committed: &Value) -> Result<()> {
     let mut parents = Vec::new();
     for root in &targets.roots {
         if let Some(parent) = root.parent()
-            && !parents.contains(&parent) {
-                parents.push(parent);
-            }
+            && !parents.contains(&parent)
+        {
+            parents.push(parent);
+        }
     }
     for parent in parents {
         let Ok(entries) = fs::read_dir(parent) else {

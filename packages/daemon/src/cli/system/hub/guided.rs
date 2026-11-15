@@ -18,10 +18,12 @@ enum Connection {
     Connect,
 }
 fn connection(status: &Value, origin: &str) -> Connection {
-    if status["state"] == "connected" && status["hubOrigin"] == origin
-        && let Some(id) = status["daemonId"].as_str() {
-            return Connection::Connected(id.into());
-        }
+    if status["state"] == "connected"
+        && status["hubOrigin"] == origin
+        && let Some(id) = status["daemonId"].as_str()
+    {
+        return Connection::Connected(id.into());
+    }
     if matches!(
         status["state"].as_str(),
         Some("connecting" | "reconnecting")
@@ -30,9 +32,10 @@ fn connection(status: &Value, origin: &str) -> Connection {
         return Connection::Pending;
     }
     if let Some(other) = status["hubOrigin"].as_str()
-        && !matches!(status["state"].as_str(), Some("not_connected" | "revoked")) {
-            return Connection::Conflict(other.into());
-        }
+        && !matches!(status["state"].as_str(), Some("not_connected" | "revoked"))
+    {
+        return Connection::Conflict(other.into());
+    }
     Connection::Connect
 }
 async fn wait_connected(origin: &str, ctx: &Context) -> Result<String> {
@@ -180,7 +183,8 @@ pub(super) async fn run(ctx: &Context) -> Result<Output> {
     let result = run_inner(ctx).await;
     match result {
         Err(error)
-            if error.downcast_ref::<paseo_client::ClientError>()
+            if error
+                .downcast_ref::<paseo_client::ClientError>()
                 .is_some_and(|e| e.code == "PROMPT_CANCELLED") =>
         {
             eprintln!("{error}");
@@ -350,21 +354,22 @@ struct TriggerConnection {
 fn connections(resources: &Value, repository: Option<&str>) -> Vec<TriggerConnection> {
     let mut results = Vec::new();
     if let Some(repository) = repository
-        && let Some(items) = resources["github"].as_array() {
-            for item in items {
-                if item["repositories"]
-                    .as_array()
-                    .is_some_and(|a| a.iter().any(|r| r == repository))
-                {
-                    results.push(TriggerConnection {
-                        label: format!("GitHub — {repository}"),
-                        provider: "github",
-                        slug: item["slug"].as_str().unwrap().into(),
-                        repository: Some(repository.into()),
-                    });
-                }
+        && let Some(items) = resources["github"].as_array()
+    {
+        for item in items {
+            if item["repositories"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|r| r == repository))
+            {
+                results.push(TriggerConnection {
+                    label: format!("GitHub — {repository}"),
+                    provider: "github",
+                    slug: item["slug"].as_str().unwrap().into(),
+                    repository: Some(repository.into()),
+                });
             }
         }
+    }
     for (provider, key) in [("slack", "teamName"), ("discord", "guildName")] {
         if let Some(items) = resources[provider].as_array() {
             for item in items {

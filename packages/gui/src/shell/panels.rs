@@ -5,15 +5,17 @@
 use makepad_widgets::*;
 
 use crate::common::{PanelTarget, UiContext, json as j};
-use crate::features::{command_center, composer, files, logs, terminal, timeline, workspace};
-use crate::features::git::{GitActionsButtonWidgetRefExt, GitPanelWidgetRefExt, OpenInButtonWidgetRefExt};
 use crate::features::command_center::CommandCenterPanelWidgetRefExt;
 use crate::features::composer::CreationPanelWidgetRefExt;
 use crate::features::files::FilesPanelWidgetRefExt;
+use crate::features::git::{
+    GitActionsButtonWidgetRefExt, GitPanelWidgetRefExt, OpenInButtonWidgetRefExt,
+};
 use crate::features::logs::ExecutionLogPanelWidgetRefExt;
 use crate::features::terminal::TerminalPanelWidgetRefExt;
 use crate::features::timeline::ChatPanelWidgetRefExt;
 use crate::features::workspace::WorkspacePanelWidgetRefExt;
+use crate::features::{command_center, composer, files, logs, terminal, timeline, workspace};
 
 live_design! {
     use link::theme::*;
@@ -113,7 +115,11 @@ fn chat_target(target: &PanelTarget) -> timeline::ChatTarget {
     let subagent = target.kind == "provider_subagent";
     timeline::ChatTarget {
         host_id: target.server_id.clone(),
-        agent_id: if subagent { j::text(&target.data, "parentAgentId").to_string() } else { target.id.clone().unwrap_or_default() },
+        agent_id: if subagent {
+            j::text(&target.data, "parentAgentId").to_string()
+        } else {
+            target.id.clone().unwrap_or_default()
+        },
         subagent_id: if subagent { target.id.clone() } else { None },
         workspace_id: target.workspace_id.clone(),
         cwd: (!target.cwd.is_empty()).then(|| target.cwd.clone()),
@@ -145,7 +151,11 @@ fn workspace_target(target: &PanelTarget) -> workspace::WorkspaceTarget {
             host_id: target.server_id.clone(),
             project_key: {
                 let root = j::text(j::object(&target.data, "project"), "projectRootPath");
-                if root.is_empty() { target.cwd.clone() } else { root.to_string() }
+                if root.is_empty() {
+                    target.cwd.clone()
+                } else {
+                    root.to_string()
+                }
             },
         },
         _ => workspace::WorkspaceTarget::NewTab {
@@ -153,7 +163,11 @@ fn workspace_target(target: &PanelTarget) -> workspace::WorkspaceTarget {
             workspace_id: (!target.workspace_id.is_empty()).then(|| target.workspace_id.clone()),
             cwd: (!target.cwd.is_empty()).then(|| target.cwd.clone()),
             tab_id: target.key(),
-            source: target.data.get("source").and_then(|v| v.as_str()).map(str::to_string),
+            source: target
+                .data
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
         },
     }
 }
@@ -191,7 +205,13 @@ pub fn mount(cx: &mut Cx, templates: &PanelTemplates, target: &PanelTarget) -> O
         RootKind::Workspace => templates.workspace,
     };
     let widget = WidgetRef::new_from_ptr(cx, ptr);
-    let panel = Panel { widget, kind, target: target.clone(), visible: false, focused: false };
+    let panel = Panel {
+        widget,
+        kind,
+        target: target.clone(),
+        visible: false,
+        focused: false,
+    };
     retarget(cx, &panel);
     Some(panel)
 }
@@ -200,13 +220,31 @@ pub fn mount(cx: &mut Cx, templates: &PanelTemplates, target: &PanelTarget) -> O
 pub fn retarget(cx: &mut Cx, panel: &Panel) {
     let target = &panel.target;
     match panel.kind {
-        RootKind::Chat => panel.widget.as_chat_panel().set_target(cx, chat_target(target)),
-        RootKind::Creation => panel.widget.as_creation_panel().set_target(cx, composer_target(target)),
-        RootKind::Files => panel.widget.as_files_panel().set_target(cx, files::FilesTarget::from_panel(target)),
+        RootKind::Chat => panel
+            .widget
+            .as_chat_panel()
+            .set_target(cx, chat_target(target)),
+        RootKind::Creation => panel
+            .widget
+            .as_creation_panel()
+            .set_target(cx, composer_target(target)),
+        RootKind::Files => panel
+            .widget
+            .as_files_panel()
+            .set_target(cx, files::FilesTarget::from_panel(target)),
         RootKind::Git => panel.widget.as_git_panel().set_target(cx, target.clone()),
-        RootKind::Logs => panel.widget.as_execution_log_panel().set_target(cx, log_target(target)),
-        RootKind::Terminal => panel.widget.as_terminal_panel().set_target(cx, terminal_target(target)),
-        RootKind::Workspace => panel.widget.as_workspace_panel().set_target(cx, workspace_target(target)),
+        RootKind::Logs => panel
+            .widget
+            .as_execution_log_panel()
+            .set_target(cx, log_target(target)),
+        RootKind::Terminal => panel
+            .widget
+            .as_terminal_panel()
+            .set_target(cx, terminal_target(target)),
+        RootKind::Workspace => panel
+            .widget
+            .as_workspace_panel()
+            .set_target(cx, workspace_target(target)),
     }
 }
 
@@ -217,8 +255,14 @@ pub fn set_activity(cx: &mut Cx, panel: &mut Panel, visible: bool, focused: bool
         match panel.kind {
             RootKind::Chat => panel.widget.as_chat_panel().set_visible(cx, visible),
             RootKind::Files => panel.widget.as_files_panel().set_visible(cx, visible),
-            RootKind::Logs => panel.widget.as_execution_log_panel().set_visible_log(cx, visible),
-            RootKind::Terminal => panel.widget.as_terminal_panel().set_visible_terminal(cx, visible),
+            RootKind::Logs => panel
+                .widget
+                .as_execution_log_panel()
+                .set_visible_log(cx, visible),
+            RootKind::Terminal => panel
+                .widget
+                .as_terminal_panel()
+                .set_visible_terminal(cx, visible),
             RootKind::Git => panel.widget.as_git_panel().set_visible(cx, visible),
             RootKind::Creation | RootKind::Workspace => {}
         }
@@ -227,7 +271,10 @@ pub fn set_activity(cx: &mut Cx, panel: &mut Panel, visible: bool, focused: bool
         panel.focused = focused;
         match panel.kind {
             RootKind::Chat => panel.widget.as_chat_panel().set_focused(cx, focused),
-            RootKind::Terminal => panel.widget.as_terminal_panel().set_focused_terminal(cx, focused),
+            RootKind::Terminal => panel
+                .widget
+                .as_terminal_panel()
+                .set_focused_terminal(cx, focused),
             _ => {}
         }
     }
@@ -241,7 +288,13 @@ pub fn release(cx: &mut Cx, ui: &UiContext, panel: &Panel) {
     }
     let id = target.id.clone().unwrap_or_default();
     if target.kind == "provider_subagent" {
-        timeline::release_subagent(cx, ui, &target.server_id, j::text(&target.data, "parentAgentId"), &id);
+        timeline::release_subagent(
+            cx,
+            ui,
+            &target.server_id,
+            j::text(&target.data, "parentAgentId"),
+            &id,
+        );
     } else {
         timeline::release_session(cx, ui, &target.server_id, &id);
     }
@@ -258,7 +311,10 @@ pub fn conversation_actions(target: &PanelTarget) -> Vec<(String, String)> {
 /// Forwards a picked conversation action to the mounted chat root.
 pub fn run_conversation_action(cx: &mut Cx, panel: &Panel, action: &str) {
     if panel.kind == RootKind::Chat {
-        panel.widget.as_chat_panel().run_conversation_action(cx, action);
+        panel
+            .widget
+            .as_chat_panel()
+            .run_conversation_action(cx, action);
     }
 }
 
@@ -284,16 +340,35 @@ pub fn file_close_cancelled(tab_key: &str) {
 
 /// Shell header git widgets (`WorkspaceOpenInButton`, `WorkspaceGitActionsButton`).
 pub fn header_widgets(cx: &mut Cx, templates: &PanelTemplates) -> (WidgetRef, WidgetRef) {
-    (WidgetRef::new_from_ptr(cx, templates.git_actions), WidgetRef::new_from_ptr(cx, templates.open_in))
+    (
+        WidgetRef::new_from_ptr(cx, templates.git_actions),
+        WidgetRef::new_from_ptr(cx, templates.open_in),
+    )
 }
 
-pub fn set_header_target(cx: &mut Cx, git_actions: &WidgetRef, open_in: &WidgetRef, target: &PanelTarget) {
+pub fn set_header_target(
+    cx: &mut Cx,
+    git_actions: &WidgetRef,
+    open_in: &WidgetRef,
+    target: &PanelTarget,
+) {
     let file = (target.kind == "file").then(|| {
         let path = j::text(&target.data, "path");
-        if path.is_empty() { target.id.clone().unwrap_or_default() } else { path.to_string() }
+        if path.is_empty() {
+            target.id.clone().unwrap_or_default()
+        } else {
+            path.to_string()
+        }
     });
-    git_actions.as_git_actions_button().set_workspace(cx, &target.server_id, &target.workspace_id, &target.cwd);
-    open_in.as_open_in_button().set_workspace(cx, &target.server_id, &target.cwd, file.as_deref());
+    git_actions.as_git_actions_button().set_workspace(
+        cx,
+        &target.server_id,
+        &target.workspace_id,
+        &target.cwd,
+    );
+    open_in
+        .as_open_in_button()
+        .set_workspace(cx, &target.server_id, &target.cwd, file.as_deref());
 }
 
 pub fn page_widget(cx: &mut Cx, templates: &PanelTemplates, page: &super::Page) -> WidgetRef {
@@ -325,9 +400,13 @@ pub fn command_center_commands(actions: &Actions) -> Vec<(String, serde_json::Va
     actions
         .iter()
         .filter_map(|action| action.as_widget_action())
-        .filter_map(|action| match action.cast_ref::<command_center::CommandCenterAction>() {
-            command_center::CommandCenterAction::Command { action, args } => Some((action.clone(), args.clone())),
-            _ => None,
-        })
+        .filter_map(
+            |action| match action.cast_ref::<command_center::CommandCenterAction>() {
+                command_center::CommandCenterAction::Command { action, args } => {
+                    Some((action.clone(), args.clone()))
+                }
+                _ => None,
+            },
+        )
         .collect()
 }

@@ -270,9 +270,10 @@ impl<T: Clone> ClientEvents<T> {
 impl DaemonClient {
     pub async fn connect(options: ConnectOptions, cancel: CancellationToken) -> Result<Self> {
         if let DaemonTarget::Endpoint { host } = &options.target
-            && is_registration(host) {
-                return Self::connect_registration(options, cancel).await;
-            }
+            && is_registration(host)
+        {
+            return Self::connect_registration(options, cancel).await;
+        }
         Self::connect_direct(options, cancel).await
     }
     async fn connect_direct(options: ConnectOptions, cancel: CancellationToken) -> Result<Self> {

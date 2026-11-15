@@ -480,25 +480,25 @@ async fn development(args: &[String], cancel: &CancellationToken) -> Result<()> 
                     .spawn()?,
             );
         }
-        if let Some(active) = child.as_mut() {
-            if let Some(status) = active.try_wait()? {
-                child = None;
-                if status.code() == Some(75) {
-                    child = Some(
-                        Command::new(&executable)
-                            .args(&command)
-                            .current_dir(&root)
-                            .env_clear()
-                            .envs(&env)
-                            .kill_on_drop(true)
-                            .spawn()?,
-                    );
-                } else if !watch {
-                    ensure!(status.success(), "Daemon exited {status}");
-                    return Ok(());
-                } else {
-                    eprintln!("Daemon exited {status}; watching for source changes");
-                }
+        if let Some(active) = child.as_mut()
+            && let Some(status) = active.try_wait()?
+        {
+            child = None;
+            if status.code() == Some(75) {
+                child = Some(
+                    Command::new(&executable)
+                        .args(&command)
+                        .current_dir(&root)
+                        .env_clear()
+                        .envs(&env)
+                        .kill_on_drop(true)
+                        .spawn()?,
+                );
+            } else if !watch {
+                ensure!(status.success(), "Daemon exited {status}");
+                return Ok(());
+            } else {
+                eprintln!("Daemon exited {status}; watching for source changes");
             }
         }
         tokio::select! { _ = cancel.cancelled() => {}, _ = tokio::time::sleep(Duration::from_millis(250)) => {} }

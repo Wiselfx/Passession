@@ -205,9 +205,10 @@ impl Bridge {
         if bindings
             .get(id)
             .is_some_and(|binding| binding.agent_id == agent_id)
-            && let Some(binding) = bindings.remove(id) {
-                binding.cancel.cancel();
-            }
+            && let Some(binding) = bindings.remove(id)
+        {
+            binding.cancel.cancel();
+        }
     }
 
     pub fn close(&self) {
@@ -528,14 +529,18 @@ mod tests {
         });
         let mut result = add_model_visible_structured_content(input.clone()).unwrap();
         let text = result["content"][0]["text"].as_str().unwrap();
-        assert_eq!(serde_json::from_str::<Value>(text).unwrap(), input["structuredContent"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(text).unwrap(),
+            input["structuredContent"]
+        );
         result["content"] = json!([]);
         assert_eq!(result, input);
-        let explicit_null = add_model_visible_structured_content(
-            json!({"content":[],"structuredContent":null})
-        ).unwrap();
+        let explicit_null =
+            add_model_visible_structured_content(json!({"content":[],"structuredContent":null}))
+                .unwrap();
         assert_eq!(
-            serde_json::from_str::<Value>(explicit_null["content"][0]["text"].as_str().unwrap()).unwrap(),
+            serde_json::from_str::<Value>(explicit_null["content"][0]["text"].as_str().unwrap())
+                .unwrap(),
             Value::Null
         );
     }
@@ -548,8 +553,14 @@ mod tests {
             "structuredContent":{"privatePresentation":"unchanged"},
             "isError":false
         });
-        assert_eq!(add_model_visible_structured_content(input.clone()).unwrap(), input);
+        assert_eq!(
+            add_model_visible_structured_content(input.clone()).unwrap(),
+            input
+        );
         let empty = json!({"content":[]});
-        assert_eq!(add_model_visible_structured_content(empty.clone()).unwrap(), empty);
+        assert_eq!(
+            add_model_visible_structured_content(empty.clone()).unwrap(),
+            empty
+        );
     }
 }

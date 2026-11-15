@@ -249,7 +249,9 @@ async fn save_once(core: &Rc<Core>) -> Result<(), CoreError> {
                 files.push((path, contents));
             }
         }
-        let layout_keys: Vec<String> = std::mem::take(&mut store.dirty_layouts).into_iter().collect();
+        let layout_keys: Vec<String> = std::mem::take(&mut store.dirty_layouts)
+            .into_iter()
+            .collect();
         for window in &layout_keys {
             if let Some(layout) = store.layouts.get(window) {
                 let path = store.paths.layout(window);

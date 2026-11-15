@@ -126,7 +126,8 @@ impl ForgeEngine {
                     }
                 }
             }
-            if s(&target, "headRef") == branch && s(&target, "headRepositoryOwner").is_empty()
+            if s(&target, "headRef") == branch
+                && s(&target, "headRepositoryOwner").is_empty()
                 && let Some(remote) = self
                     .optional_git(
                         cwd,
@@ -135,53 +136,53 @@ impl ForgeEngine {
                         &["config", "--get", &format!("branch.{branch}.pushRemote")],
                     )
                     .await?
-                {
-                    let spec = self
-                        .optional_git(
-                            cwd,
-                            env,
-                            &cancel,
-                            &["config", "--get", &format!("remote.{remote}.push")],
-                        )
+            {
+                let spec = self
+                    .optional_git(
+                        cwd,
+                        env,
+                        &cancel,
+                        &["config", "--get", &format!("remote.{remote}.push")],
+                    )
+                    .await?;
+                // `parseHeadPushRefspec`: only `[+]HEAD:refs/heads/<name>` names a head.
+                let pushed = spec
+                    .as_deref()
+                    .map(|v| v.trim())
+                    .map(|v| v.strip_prefix('+').unwrap_or(v))
+                    .and_then(|v| v.strip_prefix("HEAD:refs/heads/"))
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty());
+                if let Some(pushed) = pushed.filter(|p| *p != branch) {
+                    let url = self
+                        .optional_git(cwd, env, &cancel, &["remote", "get-url", &remote])
                         .await?;
-                    // `parseHeadPushRefspec`: only `[+]HEAD:refs/heads/<name>` names a head.
-                    let pushed = spec
+                    let remote_repo = url
                         .as_deref()
-                        .map(|v| v.trim())
-                        .map(|v| v.strip_prefix('+').unwrap_or(v))
-                        .and_then(|v| v.strip_prefix("HEAD:refs/heads/"))
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty());
-                    if let Some(pushed) = pushed.filter(|p| *p != branch) {
-                        let url = self
-                            .optional_git(cwd, env, &cancel, &["remote", "get-url", &remote])
-                            .await?;
-                        let remote_repo = url
-                            .as_deref()
-                            .and_then(parse_remote)
-                            .filter(|r| cloud_forge(&r.host) == Some("github"))
-                            .map(|r| r.path);
-                        let origin_repo = origin
-                            .as_deref()
-                            .and_then(parse_remote)
-                            .filter(|r| cloud_forge(&r.host) == Some("github"))
-                            .map(|r| r.path);
-                        let same = remote_repo
-                            .as_ref()
-                            .zip(origin_repo.as_ref())
-                            .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
-                        let owner = remote_repo
-                            .as_deref()
-                            .filter(|_| !same)
-                            .and_then(|v| v.split('/').next());
-                        if Some(pushed) != base || owner.is_some() {
-                            target["headRef"] = pushed.into();
-                            if let Some(owner) = owner {
-                                target["headRepositoryOwner"] = owner.into();
-                            }
+                        .and_then(parse_remote)
+                        .filter(|r| cloud_forge(&r.host) == Some("github"))
+                        .map(|r| r.path);
+                    let origin_repo = origin
+                        .as_deref()
+                        .and_then(parse_remote)
+                        .filter(|r| cloud_forge(&r.host) == Some("github"))
+                        .map(|r| r.path);
+                    let same = remote_repo
+                        .as_ref()
+                        .zip(origin_repo.as_ref())
+                        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+                    let owner = remote_repo
+                        .as_deref()
+                        .filter(|_| !same)
+                        .and_then(|v| v.split('/').next());
+                    if Some(pushed) != base || owner.is_some() {
+                        target["headRef"] = pushed.into();
+                        if let Some(owner) = owner {
+                            target["headRepositoryOwner"] = owner.into();
                         }
                     }
                 }
+            }
         }
         if let Some(sha) = self
             .optional_git(cwd, env, &cancel, &["rev-parse", "HEAD"])

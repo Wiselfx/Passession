@@ -5,10 +5,10 @@ pub mod output;
 mod services;
 pub(crate) mod system;
 use crate::client::ConnectOptions;
-use paseo_client::{DaemonClient, DaemonTarget};
 use anyhow::{Result, anyhow, bail, ensure};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use output::{Format, Output, OutputOptions};
+use paseo_client::{DaemonClient, DaemonTarget};
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
@@ -163,7 +163,7 @@ pub fn provider_model(
 pub fn build_command() -> Command {
     let mut command = Command::new("paseo")
         .about("Paseo CLI - control your AI coding agents from the command line")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(crate::VERSION)
         .disable_version_flag(true)
         .arg(
             Arg::new("version")
@@ -191,7 +191,7 @@ pub fn build_command() -> Command {
     {
         if child.get_name() != "plugin" {
             child = child
-                .version(env!("CARGO_PKG_VERSION"))
+                .version(crate::VERSION)
                 .disable_version_flag(true)
                 .arg(
                     Arg::new("version")
@@ -238,6 +238,11 @@ pub async fn run_args(mut args: Vec<String>) -> Result<i32> {
     ) {
         return crate::daemon_control::run_internal(&args[0], &args[1..]).await;
     }
+    if args.first().is_some_and(|s| s == "component-identity") {
+        ensure!(args.len() == 1, "component-identity accepts no arguments");
+        println!("{}", serde_json::json!({"schemaVersion":1,"id":"daemon","identity":crate::component_identity()}));
+        return Ok(0);
+    }
     if args.first().is_some_and(|s| s == "desktop-host") {
         ensure!(
             args.len() == 1,
@@ -252,13 +257,15 @@ pub async fn run_args(mut args: Vec<String>) -> Result<i32> {
     let command = build_command();
     let known: Vec<_> = command.get_subcommands().map(|c| c.get_name()).collect();
     if let Some(first) = args.first()
-        && !first.starts_with('-') && !known.contains(&first.as_str()) {
-            let path = paseo_client::resolve_home(Some(first))?;
-            if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
-                open_desktop(&[path.to_string_lossy().into_owned()]).await?;
-                return Ok(0);
-            }
+        && !first.starts_with('-')
+        && !known.contains(&first.as_str())
+    {
+        let path = paseo_client::resolve_home(Some(first))?;
+        if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
+            open_desktop(&[path.to_string_lossy().into_owned()]).await?;
+            return Ok(0);
         }
+    }
     if args
         .first()
         .is_some_and(|s| s == "--relay" || s == "--no-relay")
@@ -434,16 +441,17 @@ fn desktop_application() -> Result<PathBuf> {
             &["paseo-sessions", "paseo_sessions"]
         };
         if runtime.file_name().is_some_and(|name| name == "runtime")
-            && let Some(parent) = runtime.parent() {
-                let bundled = parent.join(if cfg!(windows) {
-                    "paseo_sessions.exe"
-                } else {
-                    "paseo_sessions"
-                });
-                if bundled.is_file() {
-                    return Ok(bundled);
-                }
+            && let Some(parent) = runtime.parent()
+        {
+            let bundled = parent.join(if cfg!(windows) {
+                "paseo_sessions.exe"
+            } else {
+                "paseo_sessions"
+            });
+            if bundled.is_file() {
+                return Ok(bundled);
             }
+        }
         if let Some(search) = std::env::var_os("PATH") {
             for directory in std::env::split_paths(&search) {
                 for name in names {
@@ -475,7 +483,10 @@ fn desktop_application() -> Result<PathBuf> {
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             // Upgrades keep the pre-rename "Paseo Sessions" folder; new installs use Passession.
             for folder in ["Passession", "Paseo Sessions"] {
-                let installed = PathBuf::from(&local).join("Programs").join(folder).join("paseo_sessions.exe");
+                let installed = PathBuf::from(&local)
+                    .join("Programs")
+                    .join(folder)
+                    .join("paseo_sessions.exe");
                 if installed.is_file() {
                     return Ok(installed);
                 }

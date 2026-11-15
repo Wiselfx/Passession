@@ -16,7 +16,11 @@ pub fn supports_usage(server_info: &Value) -> bool {
 
 /// Original `laterFetched`: a copy fetched after the arriving one stays.
 fn later_fetched(shown: &Value, arriving: &Value) -> Value {
-    if is_after(str_of(shown, "fetchedAt"), str_of(arriving, "fetchedAt")) { shown.clone() } else { arriving.clone() }
+    if is_after(str_of(shown, "fetchedAt"), str_of(arriving, "fetchedAt")) {
+        shown.clone()
+    } else {
+        arriving.clone()
+    }
 }
 
 /// Original `upsertReport`.
@@ -33,7 +37,10 @@ pub fn settle(shown: Option<&[Value]>, finished: Vec<Value>) -> Vec<Value> {
     let mut remaining = finished;
     let mut settled = Vec::new();
     for report in shown.unwrap_or(&[]) {
-        if let Some(index) = remaining.iter().position(|r| r.get("id") == report.get("id")) {
+        if let Some(index) = remaining
+            .iter()
+            .position(|r| r.get("id") == report.get("id"))
+        {
             let arriving = remaining.remove(index);
             settled.push(later_fetched(report, &arriving));
         }
@@ -83,9 +90,20 @@ pub fn effective_pins(preferences: &Value, reports: &[Value]) -> Vec<Value> {
         if str_of(report, "status") != "available" {
             continue;
         }
-        let with_percent: Vec<&Value> = arr(report, "windows").iter().filter(|w| display_percent(w, remaining).is_some()).collect();
-        let marked: Vec<&Value> = with_percent.iter().copied().filter(|w| w.get("summary").and_then(Value::as_bool) == Some(true)).collect();
-        let chosen: Vec<&Value> = if marked.is_empty() { with_percent.into_iter().take(1).collect() } else { marked };
+        let with_percent: Vec<&Value> = arr(report, "windows")
+            .iter()
+            .filter(|w| display_percent(w, remaining).is_some())
+            .collect();
+        let marked: Vec<&Value> = with_percent
+            .iter()
+            .copied()
+            .filter(|w| w.get("summary").and_then(Value::as_bool) == Some(true))
+            .collect();
+        let chosen: Vec<&Value> = if marked.is_empty() {
+            with_percent.into_iter().take(1).collect()
+        } else {
+            marked
+        };
         for window in chosen {
             let candidate = pin(get(entry, "sourceId"), get(window, "id"));
             if !pins.contains(&candidate) {
@@ -97,7 +115,12 @@ pub fn effective_pins(preferences: &Value, reports: &[Value]) -> Vec<Value> {
 }
 
 /// Original `toggleUsagePin`: the first edit snapshots the shown defaults.
-pub fn toggle_pin(preferences: &Value, source_id: &Value, window_id: &Value, reports: &[Value]) -> Value {
+pub fn toggle_pin(
+    preferences: &Value,
+    source_id: &Value,
+    window_id: &Value,
+    reports: &[Value],
+) -> Value {
     let target = pin(source_id, window_id);
     let selected = effective_pins(preferences, reports);
     let next: Vec<Value> = if selected.contains(&target) {
@@ -149,8 +172,14 @@ pub fn legacy_reports(payload: &Value) -> Vec<Value> {
 /// standard windows are translated; any other label shows as sent.
 pub fn usage_label(id: &str, label: &str) -> String {
     const REVIEW: &str = "Code review · ";
-    if let (Some(rest_id), Some(rest_label)) = (id.strip_prefix("code_review:"), label.strip_prefix(REVIEW)) {
-        return format!("{} · {}", t("providerUsage.labels.codeReview"), usage_label(rest_id, rest_label));
+    if let (Some(rest_id), Some(rest_label)) =
+        (id.strip_prefix("code_review:"), label.strip_prefix(REVIEW))
+    {
+        return format!(
+            "{} · {}",
+            t("providerUsage.labels.codeReview"),
+            usage_label(rest_id, rest_label)
+        );
     }
     let standard = match id {
         "session" | "five_hour" => Some(("Session", "session")),
@@ -186,10 +215,16 @@ pub fn problem_text(report: &Value) -> String {
     };
     if str_of(problem, "kind") == "rejected" {
         let status = crate::features::settings::json::scalar_text(get(problem, "status"));
-        return ta("providerUsage.loginRejected", &[("status", &status), ("remedy", &remedy)]);
+        return ta(
+            "providerUsage.loginRejected",
+            &[("status", &status), ("remedy", &remedy)],
+        );
     }
     let when = relative(problem.get("expiresAt").and_then(Value::as_str), true).unwrap_or_default();
-    ta("providerUsage.loginExpired", &[("relativeTime", &when), ("remedy", &remedy)])
+    ta(
+        "providerUsage.loginExpired",
+        &[("relativeTime", &when), ("remedy", &remedy)],
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -201,7 +236,12 @@ pub enum UsageView {
 }
 
 /// Original `resolveUsageView`.
-pub fn resolve_view(connected: bool, supported: bool, has_data: bool, has_error: bool) -> UsageView {
+pub fn resolve_view(
+    connected: bool,
+    supported: bool,
+    has_data: bool,
+    has_error: bool,
+) -> UsageView {
     if !connected || !supported {
         UsageView::Unavailable
     } else if has_data {
@@ -223,10 +263,20 @@ mod tests {
             json!({"id": "a", "fetchedAt": "2026-01-01T00:00:05Z", "v": 1}),
             json!({"id": "b", "fetchedAt": "2026-01-01T00:00:00Z"}),
         ];
-        let finished = vec![json!({"id": "c"}), json!({"id": "a", "fetchedAt": "2026-01-01T00:00:01Z", "v": 2})];
+        let finished = vec![
+            json!({"id": "c"}),
+            json!({"id": "a", "fetchedAt": "2026-01-01T00:00:01Z", "v": 2}),
+        ];
         let settled = settle(Some(&shown), finished);
-        assert_eq!(settled.iter().map(|r| str_of(r, "id")).collect::<Vec<_>>(), vec!["a", "c"]);
-        assert_eq!(settled[0]["v"], json!(1), "the later-fetched shown copy stays");
+        assert_eq!(
+            settled.iter().map(|r| str_of(r, "id")).collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+        assert_eq!(
+            settled[0]["v"],
+            json!(1),
+            "the later-fetched shown copy stays"
+        );
     }
 
     #[test]
@@ -239,16 +289,25 @@ mod tests {
             ]}
         })];
         let preferences = json!({"displayAs": "used"});
-        assert_eq!(effective_pins(&preferences, &reports), vec![json!({"sourceId": "claude", "windowId": "weekly"})]);
+        assert_eq!(
+            effective_pins(&preferences, &reports),
+            vec![json!({"sourceId": "claude", "windowId": "weekly"})]
+        );
         let next = toggle_pin(&preferences, &json!("claude"), &json!("session"), &reports);
-        assert_eq!(next["pins"], json!([{"sourceId": "claude", "windowId": "weekly"}, {"sourceId": "claude", "windowId": "session"}]));
+        assert_eq!(
+            next["pins"],
+            json!([{"sourceId": "claude", "windowId": "weekly"}, {"sourceId": "claude", "windowId": "session"}])
+        );
         assert_eq!(next["displayAs"], json!("used"));
     }
 
     #[test]
     fn remaining_display_derives_from_used() {
         assert_eq!(display_percent(&json!({"usedPct": 30.0}), true), Some(70.0));
-        assert_eq!(display_percent(&json!({"remainingPct": 25.0}), false), Some(75.0));
+        assert_eq!(
+            display_percent(&json!({"remainingPct": 25.0}), false),
+            Some(75.0)
+        );
         assert_eq!(display_percent(&json!({}), false), None);
     }
 }

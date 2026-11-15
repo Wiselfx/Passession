@@ -251,17 +251,30 @@ fn list_summary(mut value: Value) -> Value {
         runs.iter().filter(|run| run["status"] != "running").count()
     });
     let detail = json!({"tool":"inspect_schedule","arguments":{"id":value["id"]}});
-    if let Some(config) = value.pointer_mut("/target/config").and_then(Value::as_object_mut) {
+    if let Some(config) = value
+        .pointer_mut("/target/config")
+        .and_then(Value::as_object_mut)
+    {
         config.retain(|key, _| {
-            matches!(key.as_str(), "provider" | "model" | "cwd" | "modeId" | "isolation")
+            matches!(
+                key.as_str(),
+                "provider" | "model" | "cwd" | "modeId" | "isolation"
+            )
         });
     }
     if let Some(obj) = value.as_object_mut() {
         obj.retain(|key, _| {
             matches!(
                 key.as_str(),
-                "id" | "name" | "status" | "cadence" | "nextRunAt" | "lastRunAt"
-                    | "pausedAt" | "expiresAt" | "maxRuns" | "target"
+                "id" | "name"
+                    | "status"
+                    | "cadence"
+                    | "nextRunAt"
+                    | "lastRunAt"
+                    | "pausedAt"
+                    | "expiresAt"
+                    | "maxRuns"
+                    | "target"
             )
         });
         obj.insert("runCount".into(), json!(run_count));
@@ -355,9 +368,10 @@ pub(crate) async fn execute(
             if let Some(m) = model {
                 config["model"] = json!(m);
             } else if input.get("provider").is_none()
-                && let Some(m) = parent_config.get("model").filter(|v| truthy(v)) {
-                    config["model"] = m.clone();
-                }
+                && let Some(m) = parent_config.get("model").filter(|v| truthy(v))
+            {
+                config["model"] = m.clone();
+            }
             if parent_provider == Some(provider) {
                 if let Some(mode) = parent
                     .as_ref()
@@ -457,9 +471,10 @@ pub(crate) async fn execute(
                         return Err(input_error("provider specifies a model but model is null"));
                     }
                     if let Some(other) = text(&input, "model")
-                        && other.trim() != m {
-                            return Err(input_error("Conflicting model values provided"));
-                        }
+                        && other.trim() != m
+                    {
+                        return Err(input_error("Conflicting model values provided"));
+                    }
                     config["model"] = json!(m);
                 }
             }
@@ -502,20 +517,33 @@ mod tests {
         });
         let compact = list_summary(full.clone());
         for key in [
-            "id", "name", "status", "cadence", "nextRunAt", "lastRunAt",
-            "pausedAt", "expiresAt", "maxRuns",
+            "id",
+            "name",
+            "status",
+            "cadence",
+            "nextRunAt",
+            "lastRunAt",
+            "pausedAt",
+            "expiresAt",
+            "maxRuns",
         ] {
             assert_eq!(compact[key], full[key], "{key}");
         }
         assert_eq!(compact["runCount"], 3);
         assert_eq!(compact["completedRunCount"], 2);
-        assert_eq!(compact["detail"], json!({
-            "tool":"inspect_schedule","arguments":{"id":"abcd1234"}
-        }));
-        assert_eq!(compact["target"]["config"], json!({
-            "provider":"codex","model":"gpt-5.4","cwd":"/project",
-            "modeId":"default","isolation":"local"
-        }));
+        assert_eq!(
+            compact["detail"],
+            json!({
+                "tool":"inspect_schedule","arguments":{"id":"abcd1234"}
+            })
+        );
+        assert_eq!(
+            compact["target"]["config"],
+            json!({
+                "provider":"codex","model":"gpt-5.4","cwd":"/project",
+                "modeId":"default","isolation":"local"
+            })
+        );
         assert!(compact.get("prompt").is_none());
         assert!(compact.get("runs").is_none());
         // Creation still returns all configuration and the prompt, minus run history.

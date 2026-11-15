@@ -210,41 +210,18 @@ pub(super) fn set_version(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let root = common::root()?;
-    let manifest = root.join("Cargo.toml");
-    let mut doc = fs::read_to_string(&manifest)?.parse::<toml_edit::DocumentMut>()?;
+    let metadata_path = root.join("packaging/release.json");
+    let metadata = common::read_json(&metadata_path)?;
     ensure!(
-        doc["workspace"]["package"]["version"].as_str() == Some(current.as_str()),
-        "Workspace version missing"
+        metadata["version"] == current,
+        "Collection version changed while planning"
     );
-    doc["workspace"]["package"]["version"] = toml_edit::value(next.as_str());
-    let lock_path = root.join("Cargo.lock");
-    let mut lock = fs::read_to_string(&lock_path)?.parse::<toml_edit::DocumentMut>()?;
-    let packages = lock["package"]
-        .as_array_of_tables_mut()
-        .context("Missing Cargo.lock packages")?;
-    let mut count = 0;
-    for package in packages.iter_mut() {
-        if package.get("source").is_none()
-            && package
-                .get("name")
-                .and_then(|v| v.as_str())
-                .is_some_and(|n| n.starts_with("paseo-"))
-        {
-            ensure!(
-                package["version"].as_str() == Some(current.as_str()),
-                "Local package version disagrees with workspace"
-            );
-            package["version"] = toml_edit::value(next.as_str());
-            count += 1;
-        }
-    }
-    ensure!(count > 0, "No native workspace packages in Cargo.lock");
-    let build = build_number()?;
-    // Resolve F-Droid content before writing any version file, so a missing
-    // changelog cannot leave a version bump half-applied.
+    let recorded = common::recorded_build_number()?;
+    let build = build_number()?.max(recorded.checked_add(1).context("Build number overflow")?);
+    ensure!(build <= 2_100_000_000, "Android build number overflow");
+    // Resolve every fallible input before modifying the collection metadata.
     let fdroid = fdroid_output(&root, &next, "en-US", build)?;
-    fs::write(manifest, doc.to_string())?;
-    fs::write(lock_path, lock.to_string())?;
+    common::write_json(&metadata_path, &json!({"version":next}))?;
     fs::write(
         root.join(common::VERSION_PROPERTIES),
         format!("versionCode={build}\n"),
@@ -389,12 +366,13 @@ fn fdroid_text(body: &str) -> String {
     while kept.last().is_some_and(|s| !s.starts_with("- ")) {
         kept.pop();
     }
-    if kept.is_empty() && note_text.is_empty() {
-        if let Some(bullet) = sections.first().and_then(|s| s.1.first()) {
-            let text = fit(&format!("- {bullet}"), section_budget);
-            if !text.is_empty() {
-                kept.push(text);
-            }
+    if kept.is_empty()
+        && note_text.is_empty()
+        && let Some(bullet) = sections.first().and_then(|s| s.1.first())
+    {
+        let text = fit(&format!("- {bullet}"), section_budget);
+        if !text.is_empty() {
+            kept.push(text);
         }
     }
     let content = [note_text, kept.join("\n")]

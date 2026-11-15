@@ -111,6 +111,7 @@ pub(crate) struct Selector {
     cycle_running: Cell<bool>,
     ticker: RefCell<Option<tokio::task::AbortHandle>>,
     stopped: Cell<bool>,
+    sockets: RefCell<tokio_util::sync::CancellationToken>,
 }
 
 impl Selector {
@@ -129,6 +130,7 @@ impl Selector {
             cycle_running: Cell::new(false),
             ticker: RefCell::new(None),
             stopped: Cell::new(false),
+            sockets: RefCell::new(core.cancel.child_token()),
         })
     }
 
@@ -155,7 +157,15 @@ impl Selector {
     fn connections(&self) -> Vec<Value> {
         self.host
             .upgrade()
-            .map(|host| host.connections.borrow().clone())
+            .map(|host| {
+                let tailnet = host_config::uses_tailnet(&host.config.borrow());
+                host.connections
+                    .borrow()
+                    .iter()
+                    .filter(|connection| host_config::uses_tailnet(connection) == tailnet)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -181,6 +191,7 @@ impl Selector {
     }
 
     pub fn stop(&self) {
+        self.sockets.borrow().cancel();
         self.stopped.set(true);
         self.probe_version.set(self.probe_version.get() + 1);
         if let Some(ticker) = self.ticker.borrow_mut().take() {
@@ -191,6 +202,10 @@ impl Selector {
     /// Original `updateHost`: edits restart first-seen tracking; a changed password forgets
     /// credential rejections and reprobes everything.
     pub fn connections_changed(self: &Rc<Self>, credentials_changed: bool) {
+        self.sockets.borrow().cancel();
+        *self.sockets.borrow_mut() = tokio_util::sync::CancellationToken::new();
+        self.probe_version.set(self.probe_version.get() + 1);
+        self.cycle_running.set(false);
         if credentials_changed {
             self.probe_version.set(self.probe_version.get() + 1);
             self.auth_rejected.borrow_mut().clear();
@@ -208,7 +223,9 @@ impl Selector {
         if !error.is_auth_failure() || self.stopped.get() {
             return;
         }
-        self.auth_rejected.borrow_mut().insert(connection_id.to_owned());
+        self.auth_rejected
+            .borrow_mut()
+            .insert(connection_id.to_owned());
         self.set_probe(connection_id, Probe::UNAVAILABLE);
         let connections = self.connections();
         let rejected = self.auth_rejected.borrow().clone();
@@ -317,7 +334,9 @@ impl Selector {
                 .insert(id.clone(), self.clock.elapsed());
             let preserve = online
                 && id == active_id
-                && probes.get(&id).is_some_and(|p| p.status == ProbeStatus::Available);
+                && probes
+                    .get(&id)
+                    .is_some_and(|p| p.status == ProbeStatus::Available);
             if !preserve {
                 probes.insert(id, Probe::PENDING);
             }
@@ -334,7 +353,10 @@ impl Selector {
                 let outcome = if active {
                     selector.probe_active(&host)
                 } else {
-                    selector.probe_other(&core, &host, &connection).await.map(Some)
+                    selector
+                        .probe_other(&core, &host, &connection)
+                        .await
+                        .map(Some)
                 };
                 (id, outcome)
             }));
@@ -376,7 +398,12 @@ impl Selector {
         Ok(host.rtt().map(Probe::available))
     }
 
-    async fn probe_other(&self, core: &Rc<Core>, host: &Rc<Host>, connection: &Value) -> Result<Probe, CoreError> {
+    async fn probe_other(
+        &self,
+        core: &Rc<Core>,
+        host: &Rc<Host>,
+        connection: &Value,
+    ) -> Result<Probe, CoreError> {
         let request = OpenRequest {
             client_id: core.client_id.borrow().clone(),
             // Original `_connectProbe`: the host's expected identity, not the connection's.
@@ -386,16 +413,21 @@ impl Selector {
             protected_known: hosts::protected_known(core, connection),
             timeout: host_config::probe_connect_timeout(connection),
         };
-        let opened =
-            connection::open_direct(connection, request, core.buffers.clone(), &core.cancel).await?;
+        let selector_cancel = self.sockets.borrow().clone();
+        let (proxy, tailnet_cancel) = super::tailnet::route(core, connection)?;
+        let opened = tokio::select! { biased;
+            _ = selector_cancel.cancelled() => return Err(CoreError::new("CONNECTION_CHANGED", "Host connection changed", false)),
+            _ = tailnet_cancel.cancelled() => return Err(CoreError::new("TAILNET_CHANGED", "Embedded Tailscale configuration changed", false)),
+            result = connection::open_direct(connection, request, core.buffers.clone(), &selector_cancel, proxy) => result?,
+        };
         let (reply, answered) = oneshot::channel();
         let started = Instant::now();
         let measured = if opened.control.send(Control::Ping(reply)).is_ok() {
-            tokio::time::timeout(PROBE_LATENCY_TIMEOUT, answered)
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .map(|_| started.elapsed())
+            tokio::select! { biased;
+                _ = tailnet_cancel.cancelled() => None,
+                _ = selector_cancel.cancelled() => None,
+                result = tokio::time::timeout(PROBE_LATENCY_TIMEOUT, answered) => result.ok().and_then(Result::ok).map(|_| started.elapsed()),
+            }
         } else {
             None
         };
@@ -461,7 +493,7 @@ impl Selector {
         };
         let fastest = probes
             .iter()
-            .filter(|(_, p)| p.status == ProbeStatus::Available)
+            .filter(|(id, p)| p.status == ProbeStatus::Available && candidates.contains(id))
             .filter_map(|(id, p)| p.latency.map(|l| (id.clone(), l)))
             .min_by_key(|(_, latency)| *latency);
         let Some((fastest, latency)) = fastest.filter(|(id, _)| *id != active_id) else {
@@ -507,11 +539,26 @@ mod tests {
     #[test]
     fn probe_intervals_follow_the_original_backoff() {
         assert_eq!(probe_interval(Duration::ZERO, true, true), PROBE_STEADY);
-        assert_eq!(probe_interval(Duration::ZERO, false, true), PROBE_INACTIVE_WHILE_ONLINE);
-        assert_eq!(probe_interval(Duration::from_secs(5), false, false), Duration::from_secs(2));
-        assert_eq!(probe_interval(Duration::from_secs(20), false, false), Duration::from_secs(5));
-        assert_eq!(probe_interval(Duration::from_secs(45), false, false), PROBE_STEADY);
-        assert_eq!(probe_interval(Duration::from_secs(90), false, false), PROBE_MAX_BACKOFF);
+        assert_eq!(
+            probe_interval(Duration::ZERO, false, true),
+            PROBE_INACTIVE_WHILE_ONLINE
+        );
+        assert_eq!(
+            probe_interval(Duration::from_secs(5), false, false),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            probe_interval(Duration::from_secs(20), false, false),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            probe_interval(Duration::from_secs(45), false, false),
+            PROBE_STEADY
+        );
+        assert_eq!(
+            probe_interval(Duration::from_secs(90), false, false),
+            PROBE_MAX_BACKOFF
+        );
     }
 
     #[test]
@@ -525,5 +572,47 @@ mod tests {
         probes.insert("b".into(), Probe::available(Duration::from_millis(5)));
         assert_eq!(select_best(&ids, &probes).as_deref(), Some("b"));
         assert_eq!(select_best(&ids[2..], &probes), None);
+    }
+
+    #[test]
+    fn tailnet_selector_never_probes_or_selects_normal_alternates() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(
+            crate::CoreConfig {
+                state_dir: dir.path().to_owned(),
+                daemon_home: None,
+                default_endpoint: None,
+                tailnet_key_store: None,
+            },
+            std::sync::Arc::new(crate::events::EventQueue::new(std::sync::Arc::new(|| {}))),
+        );
+        let tailnet = json!({"id":"tail","endpoint":"ws://peer:6767/ws","networkMode":"tailnet"});
+        let normal = json!({"id":"direct","endpoint":"ws://peer:6767/ws"});
+        let host = Host::new(
+            1,
+            tailnet.clone(),
+            "server".into(),
+            None,
+            vec![normal.clone(), tailnet],
+            None,
+        );
+        let selector = Selector::new(&core, &host);
+        assert_eq!(
+            selector
+                .connections()
+                .iter()
+                .map(|c| c["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["tail"]
+        );
+        *host.config.borrow_mut() = normal;
+        assert_eq!(
+            selector
+                .connections()
+                .iter()
+                .map(|c| c["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["direct"]
+        );
     }
 }

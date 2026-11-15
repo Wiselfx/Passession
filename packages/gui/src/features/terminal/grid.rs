@@ -59,7 +59,10 @@ pub struct GridPaint<'a> {
 
 impl<'a> GridPaint<'a> {
     pub fn new(palette: &'a Palette) -> Self {
-        Self { ansi: ansi(palette), palette }
+        Self {
+            ansi: ansi(palette),
+            palette,
+        }
     }
 
     /// Foreground and optional background of a styled cell (`_TerminalPalette`): inverse
@@ -79,7 +82,11 @@ impl<'a> GridPaint<'a> {
     }
 
     pub fn selection(&self) -> Vec4 {
-        if self.palette.is_dark { vec4(1.0, 1.0, 1.0, 0.2) } else { vec4(0.0, 0.0, 0.0, 0.15) }
+        if self.palette.is_dark {
+            vec4(1.0, 1.0, 1.0, 0.2)
+        } else {
+            vec4(0.0, 0.0, 0.0, 0.15)
+        }
     }
 }
 
@@ -88,13 +95,41 @@ fn ansi(palette: &Palette) -> [Vec4; 16] {
     let h = crate::features::workspace::identity::rgb;
     if palette.is_dark {
         [
-            palette.sidebar, h(0xe07070), h(0x5dba80), h(0xd4a44a), h(0x6a9de0), h(0xb07ad0), h(0x4aabb8), h(0xd4d4d8),
-            palette.surface3, h(0xe89090), h(0x7ecf9a), h(0xe0be6e), h(0x8ab4e8), h(0xc49ae0), h(0x6ec2cc), h(0xf0f0f2),
+            palette.sidebar,
+            h(0xe07070),
+            h(0x5dba80),
+            h(0xd4a44a),
+            h(0x6a9de0),
+            h(0xb07ad0),
+            h(0x4aabb8),
+            h(0xd4d4d8),
+            palette.surface3,
+            h(0xe89090),
+            h(0x7ecf9a),
+            h(0xe0be6e),
+            h(0x8ab4e8),
+            h(0xc49ae0),
+            h(0x6ec2cc),
+            h(0xf0f0f2),
         ]
     } else {
         [
-            h(0x1a1a1e), h(0xdc2626), h(0x16a34a), h(0xca8a04), h(0x2563eb), h(0x9333ea), h(0x0891b2), h(0xffffff),
-            h(0x3f3f46), h(0xef4444), h(0x22c55e), h(0xf59e0b), h(0x3b82f6), h(0xa855f7), h(0x06b6d4), h(0xfafafa),
+            h(0x1a1a1e),
+            h(0xdc2626),
+            h(0x16a34a),
+            h(0xca8a04),
+            h(0x2563eb),
+            h(0x9333ea),
+            h(0x0891b2),
+            h(0xffffff),
+            h(0x3f3f46),
+            h(0xef4444),
+            h(0x22c55e),
+            h(0xf59e0b),
+            h(0x3b82f6),
+            h(0xa855f7),
+            h(0x06b6d4),
+            h(0xfafafa),
         ]
     }
 }
@@ -111,13 +146,23 @@ fn color(ansi: &[Vec4; 16], color: Color, bold: bool) -> Option<Vec4> {
         Color::Indexed(index) if index < 232 => {
             const STEPS: [f32; 6] = [0.0, 95.0, 135.0, 175.0, 215.0, 255.0];
             let cube = usize::from(index - 16);
-            Some(vec4(STEPS[cube / 36] / 255.0, STEPS[(cube / 6) % 6] / 255.0, STEPS[cube % 6] / 255.0, 1.0))
+            Some(vec4(
+                STEPS[cube / 36] / 255.0,
+                STEPS[(cube / 6) % 6] / 255.0,
+                STEPS[cube % 6] / 255.0,
+                1.0,
+            ))
         }
         Color::Indexed(index) => {
             let gray = (8 + usize::from(index - 232) * 10) as f32 / 255.0;
             Some(vec4(gray, gray, gray, 1.0))
         }
-        Color::Rgb(r, g, b) => Some(vec4(f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0)),
+        Color::Rgb(r, g, b) => Some(vec4(
+            f32::from(r) / 255.0,
+            f32::from(g) / 255.0,
+            f32::from(b) / 255.0,
+            1.0,
+        )),
     }
 }
 
@@ -148,10 +193,16 @@ impl CellGrid {
         {
             return (width, height);
         }
-        for drawer in [&mut self.draw_text, &mut self.draw_text_bold, &mut self.draw_text_italic] {
+        for drawer in [
+            &mut self.draw_text,
+            &mut self.draw_text_bold,
+            &mut self.draw_text_italic,
+        ] {
             drawer.text_style.font_size = Typography::pt(px);
         }
-        let laid = self.draw_text.layout(cx, 0.0, 0.0, None, false, Align::default(), "MMMMMMMMMM");
+        let laid = self
+            .draw_text
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), "MMMMMMMMMM");
         let width = (f64::from(laid.size_in_lpxs.width) / 10.0).max(4.0);
         // xterm `lineHeight: 1.0`: rows are exactly one cell tall.
         let height = f64::from(laid.size_in_lpxs.height).ceil().max(8.0);
@@ -168,7 +219,13 @@ impl CellGrid {
     /// any text, or a background on a later row can cover that row's glyphs.
     pub fn begin(&mut self, cx: &mut Cx2d, origin: DVec2) {
         self.draw_cell.color = Vec4::default();
-        self.draw_cell.draw_abs(cx, Rect { pos: origin, size: dvec2(1.0, 1.0) });
+        self.draw_cell.draw_abs(
+            cx,
+            Rect {
+                pos: origin,
+                size: dvec2(1.0, 1.0),
+            },
+        );
     }
 
     pub fn fill(&mut self, cx: &mut Cx2d, rect: Rect, color: Vec4) {
@@ -190,7 +247,10 @@ impl CellGrid {
     ) -> Option<Rect> {
         let (width, height) = self.cell().unwrap_or((8.0, 14.0));
         let y = origin.y;
-        let cells = |from: usize, count: usize| Rect { pos: dvec2(origin.x + from as f64 * width, y), size: dvec2(count as f64 * width, height) };
+        let cells = |from: usize, count: usize| Rect {
+            pos: dvec2(origin.x + from as f64 * width, y),
+            size: dvec2(count as f64 * width, height),
+        };
         // Backgrounds first.
         let mut col = 0usize;
         for run in &line.runs {
@@ -202,9 +262,18 @@ impl CellGrid {
         // Find highlights in char offsets, painted under the glyphs.
         for &(start, end, active) in highlights {
             let from = line.columns.get(start).copied().unwrap_or(0);
-            let to = line.columns.get(end - 1).copied().map(|c| c + 1).unwrap_or(from + 1);
+            let to = line
+                .columns
+                .get(end - 1)
+                .copied()
+                .map(|c| c + 1)
+                .unwrap_or(from + 1);
             let base = if active { paint.ansi[4] } else { paint.ansi[3] };
-            self.fill(cx, cells(from, to - from), vec4(base.x, base.y, base.z, if active { 0.45 } else { 0.35 }));
+            self.fill(
+                cx,
+                cells(from, to - from),
+                vec4(base.x, base.y, base.z, if active { 0.45 } else { 0.35 }),
+            );
         }
         let mut selected = None;
         if let Some((from, to)) = selection
@@ -243,11 +312,25 @@ impl CellGrid {
                 }
             }
             if style.underline {
-                self.fill(cx, Rect { pos: dvec2(pos.x, y + height - 1.0), size: dvec2(run.cells as f64 * width, 1.0) }, fg);
+                self.fill(
+                    cx,
+                    Rect {
+                        pos: dvec2(pos.x, y + height - 1.0),
+                        size: dvec2(run.cells as f64 * width, 1.0),
+                    },
+                    fg,
+                );
             }
             // SGR 9 (`TextDecoration.lineThrough`) at the middle of the row.
             if style.strike {
-                self.fill(cx, Rect { pos: dvec2(pos.x, (y + height * 0.5).floor()), size: dvec2(run.cells as f64 * width, 1.0) }, fg);
+                self.fill(
+                    cx,
+                    Rect {
+                        pos: dvec2(pos.x, (y + height * 0.5).floor()),
+                        size: dvec2(run.cells as f64 * width, 1.0),
+                    },
+                    fg,
+                );
             }
             col += run.cells;
         }
@@ -255,7 +338,14 @@ impl CellGrid {
     }
 
     /// Draws `text` (one grapheme) in `style`'s weight at a cell position with `color`.
-    pub fn draw_glyph(&mut self, cx: &mut Cx2d, pos: DVec2, text: &str, style: &CellStyle, color: Vec4) {
+    pub fn draw_glyph(
+        &mut self,
+        cx: &mut Cx2d,
+        pos: DVec2,
+        text: &str,
+        style: &CellStyle,
+        color: Vec4,
+    ) {
         let drawer = if style.italic {
             &mut self.draw_text_italic
         } else if style.bold {
@@ -282,7 +372,11 @@ pub fn grapheme_column(line: &Line, col: usize, next: bool) -> usize {
         chars += grapheme.chars().count();
         let end = line.columns.get(chars).copied().unwrap_or(cells);
         if col < end {
-            return if next || col.saturating_sub(start) > end.saturating_sub(col) { end } else { start };
+            return if next || col.saturating_sub(start) > end.saturating_sub(col) {
+                end
+            } else {
+                start
+            };
         }
     }
     cells
@@ -299,7 +393,13 @@ pub fn selected_text(lines: &[&Line], start: CellPos, end: CellPos) -> String {
         }
         let from = if row == start.row { start.col } else { 0 };
         let to = if row == end.row { end.col } else { usize::MAX };
-        out.extend(line.text.chars().zip(line.columns.iter()).filter(|(_, col)| **col >= from && **col < to).map(|(ch, _)| ch));
+        out.extend(
+            line.text
+                .chars()
+                .zip(line.columns.iter())
+                .filter(|(_, col)| **col >= from && **col < to)
+                .map(|(ch, _)| ch),
+        );
         if row != end.row && !line.wraps_next {
             out.push('\n');
         }
@@ -321,7 +421,14 @@ pub struct GridSelection {
 
 impl GridSelection {
     pub fn new(cx: &mut Cx) -> Self {
-        Self { range: None, dragging: false, touch: false, show_actions: false, action_anchor: None, handles: TextSelectionHandles::new(cx) }
+        Self {
+            range: None,
+            dragging: false,
+            touch: false,
+            show_actions: false,
+            action_anchor: None,
+            handles: TextSelectionHandles::new(cx),
+        }
     }
 
     pub fn range(&self) -> Option<(CellPos, CellPos)> {
@@ -334,7 +441,8 @@ impl GridSelection {
 
     /// Start and end in reading order.
     pub fn ordered(&self) -> Option<(CellPos, CellPos)> {
-        self.range.map(|(a, b)| if a <= b { (a, b) } else { (b, a) })
+        self.range
+            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) })
     }
 
     /// A non-empty range is selected.
@@ -349,7 +457,11 @@ impl GridSelection {
             return None;
         }
         let from = if row == start.row { start.col } else { 0 };
-        let to = if row == end.row { end.col.min(cells.max(1)) } else { cells.max(1) };
+        let to = if row == end.row {
+            end.col.min(cells.max(1))
+        } else {
+            cells.max(1)
+        };
         (to > from).then_some((from, to))
     }
 
@@ -365,7 +477,12 @@ impl GridSelection {
 
     /// Routes handle drags; returns the action for the owner to scroll and resolve the
     /// dragged endpoint with [`GridSelection::move_endpoint`].
-    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event, owner: Area) -> Option<TextHandleAction> {
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        owner: Area,
+    ) -> Option<TextHandleAction> {
         let action = self.handles.handle_event(cx, event, owner)?;
         self.dragging = false;
         self.show_actions = false;
@@ -400,17 +517,46 @@ impl GridSelection {
     }
 
     /// Draws the touch handles and requests the floating text actions after the rows.
-    pub fn draw_overlays(&mut self, cx: &mut Cx2d, owner: Area, origin: DVec2, cell: (f64, f64), paste: bool) {
+    pub fn draw_overlays(
+        &mut self,
+        cx: &mut Cx2d,
+        owner: Area,
+        origin: DVec2,
+        cell: (f64, f64),
+        paste: bool,
+    ) {
         let (width, height) = cell;
         let viewport = owner.rect(cx);
-        if self.touch && let Some((anchor, cursor)) = self.range {
-            let caret = |point: CellPos| Rect { pos: origin + dvec2(point.col as f64 * width, point.row as f64 * height), size: dvec2(1.0, height) };
-            self.handles.draw(cx, owner, viewport, caret(anchor), caret(cursor), anchor == cursor, false);
+        if self.touch
+            && let Some((anchor, cursor)) = self.range
+        {
+            let caret = |point: CellPos| Rect {
+                pos: origin + dvec2(point.col as f64 * width, point.row as f64 * height),
+                size: dvec2(1.0, height),
+            };
+            self.handles.draw(
+                cx,
+                owner,
+                viewport,
+                caret(anchor),
+                caret(cursor),
+                anchor == cursor,
+                false,
+            );
         }
         if !self.handles.is_dragging() && (self.show_actions || cx.text_actions_active(owner)) {
             self.show_actions = false;
             if let Some(anchor) = self.action_anchor {
-                cx.show_text_actions(owner, anchor, TextActionCapabilities { copy: true, select_all: true, paste, ..Default::default() });
+                cx.show_text_actions(
+                    owner,
+                    anchor,
+                    TextActionCapabilities {
+                        copy: true,
+                        select_all: true,
+                        paste,
+                        ..Default::default()
+                    },
+                );
             } else {
                 cx.clear_text_selection(owner);
                 cx.claim_text_selection(owner);
@@ -428,7 +574,11 @@ mod tests {
         Line {
             text: text.to_owned(),
             columns: columns.to_vec(),
-            runs: vec![Run { text: text.to_owned(), cells, style: CellStyle::default() }],
+            runs: vec![Run {
+                text: text.to_owned(),
+                cells,
+                style: CellStyle::default(),
+            }],
             wraps_next: false,
         }
     }
@@ -459,7 +609,11 @@ mod tests {
         let second = line("ef", &[0, 1], 2);
         let third = line("gh", &[0, 1], 2);
         let lines = [&first, &second, &third];
-        let text = selected_text(&lines, CellPos { row: 0, col: 2 }, CellPos { row: 2, col: 1 });
+        let text = selected_text(
+            &lines,
+            CellPos { row: 0, col: 2 },
+            CellPos { row: 2, col: 1 },
+        );
         assert_eq!(text, "cdef\ng");
     }
 
@@ -467,11 +621,25 @@ mod tests {
     fn colors_follow_bold_brightening_inverse_and_dim() {
         let palette = theme::current_palette();
         let paint = GridPaint::new(&palette);
-        let bold = CellStyle { fg: Color::Indexed(1), bold: true, ..CellStyle::default() };
+        let bold = CellStyle {
+            fg: Color::Indexed(1),
+            bold: true,
+            ..CellStyle::default()
+        };
         assert_eq!(paint.colors(&bold).0, paint.ansi[9]);
-        let inverse = CellStyle { inverse: true, ..CellStyle::default() };
-        assert_eq!(paint.colors(&inverse), (palette.surface0, Some(palette.foreground)));
-        let dim = CellStyle { fg: Color::Rgb(255, 0, 0), dim: true, ..CellStyle::default() };
+        let inverse = CellStyle {
+            inverse: true,
+            ..CellStyle::default()
+        };
+        assert_eq!(
+            paint.colors(&inverse),
+            (palette.surface0, Some(palette.foreground))
+        );
+        let dim = CellStyle {
+            fg: Color::Rgb(255, 0, 0),
+            dim: true,
+            ..CellStyle::default()
+        };
         assert_eq!(paint.colors(&dim).0.w, 0.5);
     }
 }

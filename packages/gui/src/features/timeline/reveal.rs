@@ -43,15 +43,24 @@ pub fn clamp_to_safe_reveal_boundary(text: &str, index: usize) -> usize {
         cut -= 1;
     }
     let mut cursor = GraphemeCursor::new(cut, text.len(), true);
-    if cursor.is_boundary(text, 0).expect("complete grapheme context") {
+    if cursor
+        .is_boundary(text, 0)
+        .expect("complete grapheme context")
+    {
         cut
     } else {
-        cursor.prev_boundary(text, 0).expect("complete grapheme context").unwrap_or(0)
+        cursor
+            .prev_boundary(text, 0)
+            .expect("complete grapheme context")
+            .unwrap_or(0)
     }
 }
 
 fn trailing_regional_indicators(text: &str) -> usize {
-    text.chars().rev().take_while(|c| ('\u{1F1E6}'..='\u{1F1FF}').contains(c)).count()
+    text.chars()
+        .rev()
+        .take_while(|c| ('\u{1F1E6}'..='\u{1F1FF}').contains(c))
+        .count()
 }
 
 /// Holds back a trailing fragment that is certainly waiting on more input.
@@ -78,7 +87,11 @@ pub struct Reveal {
 
 impl Reveal {
     pub fn new(text: &str) -> Self {
-        Self { target_len: text.len(), revealed: text.len(), last_step: None }
+        Self {
+            target_len: text.len(),
+            revealed: text.len(),
+            last_step: None,
+        }
     }
 
     /// Syncs with the latest text; returns whether pacing needs another frame.
@@ -103,7 +116,10 @@ impl Reveal {
         let Some(previous) = self.last_step.replace(now) else {
             return false;
         };
-        let step = compute_reveal_step(self.target_len.saturating_sub(self.revealed), (now - previous) * 1000.0);
+        let step = compute_reveal_step(
+            self.target_len.saturating_sub(self.revealed),
+            (now - previous) * 1000.0,
+        );
         if step == 0 {
             return false;
         }
@@ -117,7 +133,11 @@ impl Reveal {
 
     pub fn visible<'a>(&self, text: &'a str, streaming: bool) -> &'a str {
         if self.revealed >= text.len() {
-            return if streaming { trim_incomplete_trailing_cluster(text) } else { text };
+            return if streaming {
+                trim_incomplete_trailing_cluster(text)
+            } else {
+                text
+            };
         }
         &text[..clamp_to_safe_reveal_boundary(text, self.revealed)]
     }
@@ -145,10 +165,22 @@ mod tests {
             "क्\u{200d}ष",
             "a\r\nb",
         ] {
-            let boundaries: Vec<_> = text.grapheme_indices(true).map(|(offset, _)| offset).collect();
+            let boundaries: Vec<_> = text
+                .grapheme_indices(true)
+                .map(|(offset, _)| offset)
+                .collect();
             for cut in 0..text.len() {
-                let expected = boundaries.iter().copied().take_while(|offset| *offset <= cut).last().unwrap_or(0);
-                assert_eq!(clamp_to_safe_reveal_boundary(text, cut), expected, "{text:?} at {cut}");
+                let expected = boundaries
+                    .iter()
+                    .copied()
+                    .take_while(|offset| *offset <= cut)
+                    .last()
+                    .unwrap_or(0);
+                assert_eq!(
+                    clamp_to_safe_reveal_boundary(text, cut),
+                    expected,
+                    "{text:?} at {cut}"
+                );
             }
             assert_eq!(clamp_to_safe_reveal_boundary(text, text.len()), text.len());
         }
@@ -190,7 +222,10 @@ mod tests {
             if !frame(&mut reveal, &grown, now) {
                 break;
             }
-            assert!(frames < 70, "10 kB must not trail the stream for more than about 1.1s");
+            assert!(
+                frames < 70,
+                "10 kB must not trail the stream for more than about 1.1s"
+            );
         }
         assert_eq!(reveal.visible(&grown, true), grown);
     }
@@ -201,7 +236,11 @@ mod tests {
         let mut reveal = Reveal::new("a");
         assert!(frame(&mut reveal, &grown, 10.0));
         // No frame for longer than the horizon (hidden tab, busy UI thread).
-        assert!(!frame(&mut reveal, &grown, 10.0 + 2.0 * TEXT_REVEAL_HORIZON_MS / 1000.0));
+        assert!(!frame(
+            &mut reveal,
+            &grown,
+            10.0 + 2.0 * TEXT_REVEAL_HORIZON_MS / 1000.0
+        ));
     }
 
     #[test]

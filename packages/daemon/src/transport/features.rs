@@ -27,6 +27,9 @@ pub fn features(config: &Value, hoplite: bool) -> Value {
         "forgeSearch",
         "daemonConfigReload",
         "durableDaemonUpdates",
+        "daemonUpdateCheck",
+        "desktopAppUpdates",
+        "desktopComponentUpdates",
         "pushTokenRevocation",
         "plugins",
         "pluginManagement",
@@ -113,6 +116,13 @@ pub fn features(config: &Value, hoplite: bool) -> Value {
 mod tests {
     #[test]
     fn selected_commit_capability_is_advertised() {
-        assert_eq!(super::features(&serde_json::json!({}), false)["gitSelectedCommit"], true);
+        assert_eq!(
+            super::features(&serde_json::json!({}), false)["desktopAppUpdates"],
+            true
+        );
+        assert_eq!(
+            super::features(&serde_json::json!({}), false)["gitSelectedCommit"],
+            true
+        );
     }
 }

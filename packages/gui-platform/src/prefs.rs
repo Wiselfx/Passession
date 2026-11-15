@@ -13,7 +13,9 @@ pub(crate) struct PlatformPrefs {
 impl PlatformPrefs {
     pub fn new() -> Self {
         Self {
-            file: crate::paths::app_paths().support_dir.join("platform-preferences.json"),
+            file: crate::paths::app_paths()
+                .support_dir
+                .join("platform-preferences.json"),
             values: Mutex::new(None),
         }
     }
@@ -74,7 +76,9 @@ impl PlatformPrefs {
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let temporary = self.file.with_extension(format!("{}.tmp", std::process::id()));
+        let temporary = self
+            .file
+            .with_extension(format!("{}.tmp", std::process::id()));
         std::fs::write(&temporary, serde_json::to_vec(values)?)?;
         std::fs::rename(&temporary, &self.file)
     }

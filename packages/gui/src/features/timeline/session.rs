@@ -100,14 +100,23 @@ pub fn pending_permission_key(request: &Value) -> String {
         Value::Null => "null".into(),
         other => other.to_string(),
     };
-    format!("{kind}:{}", serde_json::to_string(&input).unwrap_or_default())
+    format!(
+        "{kind}:{}",
+        serde_json::to_string(&input).unwrap_or_default()
+    )
 }
 
 /// What a session asked the host for; the store routes the response back.
 #[derive(Clone, Debug)]
 pub enum Pending {
-    Membership { generation: u64 },
-    Fetch { direction: &'static str, force_replace: bool, generation: u64 },
+    Membership {
+        generation: u64,
+    },
+    Fetch {
+        direction: &'static str,
+        force_replace: bool,
+        generation: u64,
+    },
     Subagents,
     /// `ChatController.action` callers; the outcome lands in `completions`.
     Action(ActionKind),
@@ -116,7 +125,9 @@ pub enum Pending {
 /// Mutations whose result a view reacts to.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ActionKind {
-    Permission { key: String },
+    Permission {
+        key: String,
+    },
     Rename,
     Refresh,
     Unarchive,
@@ -125,21 +136,42 @@ pub enum ActionKind {
     Detach,
     Cancel,
     Fork,
-    Rewind { mode: String, text: String },
-    ListPrompts { request: u64 },
+    Rewind {
+        mode: String,
+        text: String,
+    },
+    ListPrompts {
+        request: u64,
+    },
     OutlineMenu,
-    Search { token: u64 },
+    Search {
+        token: u64,
+    },
     ClearAttention,
-    ArchiveSubagent { key: String },
-    DetachSubagent { host_id: String, agent_id: String },
+    ArchiveSubagent {
+        key: String,
+    },
+    DetachSubagent {
+        host_id: String,
+        agent_id: String,
+    },
     /// "Delete finished subagents": one managed child (`delete_agent_request`).
-    DeleteFinished { key: String },
+    DeleteFinished {
+        key: String,
+    },
     /// "Delete finished subagents": this agent's finished provider children.
-    DeleteProviderSubagents { ids: Vec<String> },
-    LookupFile { token: String, target: Value },
-    ProbeFolder { generation: u64, target: Value },
+    DeleteProviderSubagents {
+        ids: Vec<String>,
+    },
+    LookupFile {
+        token: String,
+        target: Value,
+    },
+    ProbeFolder {
+        generation: u64,
+        target: Value,
+    },
 }
-
 
 #[derive(Clone, Debug)]
 pub struct Completion {
@@ -406,18 +438,39 @@ impl ChatSession {
 
     // ── host plumbing ───────────────────────────────────────────────────
 
-    fn send(&mut self, io: &mut Io, pending: Pending, ty: &str, response: &str, mut fields: Value) -> RequestId {
+    fn send(
+        &mut self,
+        io: &mut Io,
+        pending: Pending,
+        ty: &str,
+        response: &str,
+        mut fields: Value,
+    ) -> RequestId {
         if let Some(obj) = fields.as_object_mut() {
             obj.insert("type".into(), Value::String(ty.to_owned()));
         }
         let id = io.core.request(&self.key.host_id, fields, response);
-        io.requests.insert(id.clone(), RequestRoute { key: self.key.clone(), pending, request_type: ty.to_owned() });
+        io.requests.insert(
+            id.clone(),
+            RequestRoute {
+                key: self.key.clone(),
+                pending,
+                request_type: ty.to_owned(),
+            },
+        );
         id
     }
 
     /// `ChatController.action`: the agent-scoped mutation; its result lands
     /// in [completions] (and its `notice` becomes a toast).
-    pub fn action(&mut self, io: &mut Io, kind: ActionKind, ty: &str, response: &str, fields: Value) -> RequestId {
+    pub fn action(
+        &mut self,
+        io: &mut Io,
+        kind: ActionKind,
+        ty: &str,
+        response: &str,
+        fields: Value,
+    ) -> RequestId {
         let mut body = json!({"agentId": self.key.agent_id});
         if let (Some(target), Some(source)) = (body.as_object_mut(), fields.as_object()) {
             for (k, v) in source {
@@ -429,7 +482,14 @@ impl ChatSession {
 
     /// Requests that are not scoped to this agent (subagent archive/detach,
     /// file lookups); the outcome still lands in [completions].
-    pub fn host_request(&mut self, io: &mut Io, kind: ActionKind, ty: &str, response: &str, fields: Value) -> RequestId {
+    pub fn host_request(
+        &mut self,
+        io: &mut Io,
+        kind: ActionKind,
+        ty: &str,
+        response: &str,
+        fields: Value,
+    ) -> RequestId {
         self.send(io, Pending::Action(kind), ty, response, fields)
     }
 
@@ -437,14 +497,21 @@ impl ChatSession {
     /// (daemon feature `providerSubagentDelete`).
     pub fn delete_subagents(&mut self, io: &mut Io, ids: Vec<String>) -> RequestId {
         let fields = json!({"parentAgentId": self.key.agent_id, "subagentIds": ids});
-        self.send(io, Pending::Action(ActionKind::DeleteProviderSubagents { ids }), "agent.provider_subagents.delete.request", "agent.provider_subagents.delete.response", fields)
+        self.send(
+            io,
+            Pending::Action(ActionKind::DeleteProviderSubagents { ids }),
+            "agent.provider_subagents.delete.request",
+            "agent.provider_subagents.delete.response",
+            fields,
+        )
     }
 
     /// Drops deleted children at once; the daemon's `remove` updates that
     /// follow are then no-ops.
     pub fn drop_subagents(&mut self, ids: &[String]) {
         let before = self.subagents.len();
-        self.subagents.retain(|s| !ids.iter().any(|id| get(s, "id") == id.as_str()));
+        self.subagents
+            .retain(|s| !ids.iter().any(|id| get(s, "id") == id.as_str()));
         if self.subagents.len() != before {
             self.notify();
         }
@@ -452,26 +519,58 @@ impl ChatSession {
 
     /// [host_request] sent to another host (a managed child that lives on a
     /// different host); the outcome still lands in [completions] here.
-    pub fn request_on_host(&mut self, io: &mut Io, host_id: &str, kind: ActionKind, ty: &str, response: &str, mut fields: Value) -> RequestId {
+    pub fn request_on_host(
+        &mut self,
+        io: &mut Io,
+        host_id: &str,
+        kind: ActionKind,
+        ty: &str,
+        response: &str,
+        mut fields: Value,
+    ) -> RequestId {
         if let Some(obj) = fields.as_object_mut() {
             obj.insert("type".into(), Value::String(ty.to_owned()));
         }
         let id = io.core.request(host_id, fields, response);
-        io.requests.insert(id.clone(), RequestRoute { key: self.key.clone(), pending: Pending::Action(kind), request_type: ty.to_owned() });
+        io.requests.insert(
+            id.clone(),
+            RequestRoute {
+                key: self.key.clone(),
+                pending: Pending::Action(kind),
+                request_type: ty.to_owned(),
+            },
+        );
         id
     }
 
     /// [action] with an explicit deadline (permission responses: 15s,
     /// agent-panel.tsx respondToPermission timeoutMs).
-    pub fn action_with_timeout(&mut self, io: &mut Io, kind: ActionKind, ty: &str, response: &str, fields: Value, timeout: std::time::Duration) -> RequestId {
+    pub fn action_with_timeout(
+        &mut self,
+        io: &mut Io,
+        kind: ActionKind,
+        ty: &str,
+        response: &str,
+        fields: Value,
+        timeout: std::time::Duration,
+    ) -> RequestId {
         let mut body = json!({"agentId": self.key.agent_id, "type": ty});
         if let (Some(target), Some(source)) = (body.as_object_mut(), fields.as_object()) {
             for (k, v) in source {
                 target.insert(k.clone(), v.clone());
             }
         }
-        let id = io.core.request_with_timeout(&self.key.host_id, body, response, Some(timeout));
-        io.requests.insert(id.clone(), RequestRoute { key: self.key.clone(), pending: Pending::Action(kind), request_type: ty.to_owned() });
+        let id = io
+            .core
+            .request_with_timeout(&self.key.host_id, body, response, Some(timeout));
+        io.requests.insert(
+            id.clone(),
+            RequestRoute {
+                key: self.key.clone(),
+                pending: Pending::Action(kind),
+                request_type: ty.to_owned(),
+            },
+        );
         id
     }
 
@@ -519,8 +618,17 @@ impl ChatSession {
     }
 
     /// The observation's first snapshot (or its failure).
-    pub fn on_membership_response(&mut self, io: &mut Io, request: &RequestId, generation: u64, result: Result<Value, CoreError>) {
-        if self.disposed || generation != self.membership_generation || self.observation.as_ref() != Some(request) {
+    pub fn on_membership_response(
+        &mut self,
+        io: &mut Io,
+        request: &RequestId,
+        generation: u64,
+        result: Result<Value, CoreError>,
+    ) {
+        if self.disposed
+            || generation != self.membership_generation
+            || self.observation.as_ref() != Some(request)
+        {
             if result.is_ok() {
                 io.core.cancel_request(request);
             }
@@ -541,7 +649,9 @@ impl ChatSession {
     /// `subscription.restored` / `subscription.error` for this chat's observation.
     pub fn on_subscription_event(&mut self, io: &mut Io, message: &Value) -> bool {
         let payload = get(message, "payload");
-        let Some(observation) = self.observation.clone() else { return false };
+        let Some(observation) = self.observation.clone() else {
+            return false;
+        };
         if get(payload, "observationId") != observation.as_str() || self.disposed {
             return false;
         }
@@ -636,7 +746,10 @@ impl ChatSession {
                 ops.insert(0, active.op);
             }
             for op in ops {
-                if let LoadOp::Older { reveal: Some((_, token)) } = op {
+                if let LoadOp::Older {
+                    reveal: Some((_, token)),
+                } = op
+                {
                     self.reveals.push(RevealDone { token, ok: false });
                 }
             }
@@ -819,7 +932,12 @@ impl ChatSession {
 
     /// timeline-replacement.ts requestTimelineReplacement: one latest tail.
     pub fn refresh_tail(&mut self, io: &mut Io) {
-        self.enqueue(io, LoadOp::Tail { force_replace: false });
+        self.enqueue(
+            io,
+            LoadOp::Tail {
+                force_replace: false,
+            },
+        );
     }
 
     /// use-load-older-agent-history.ts: one `before` page.
@@ -829,7 +947,12 @@ impl ChatSession {
 
     /// Page older history until [seq] is loaded (chat find, outline jumps).
     pub fn reveal(&mut self, io: &mut Io, seq: i64, token: u64) {
-        self.enqueue(io, LoadOp::Older { reveal: Some((seq, token)) });
+        self.enqueue(
+            io,
+            LoadOp::Older {
+                reveal: Some((seq, token)),
+            },
+        );
     }
 
     fn enqueue(&mut self, io: &mut Io, op: LoadOp) {
@@ -841,7 +964,9 @@ impl ChatSession {
     /// it runs and replay when it settles.
     fn pump(&mut self, io: &mut Io) {
         while self.active.is_none() {
-            let Some(op) = self.queue.pop_front() else { return };
+            let Some(op) = self.queue.pop_front() else {
+                return;
+            };
             if self.disposed {
                 self.queue.clear();
                 return;
@@ -864,7 +989,11 @@ impl ChatSession {
                         continue;
                     }
                     active.fallback_to_latest_tail = !gap && self.end_cursor.is_some();
-                    let direction = if self.end_cursor.is_none() { "tail" } else { "after" };
+                    let direction = if self.end_cursor.is_none() {
+                        "tail"
+                    } else {
+                        "after"
+                    };
                     active.request = Some(self.fetch(io, direction, false));
                 }
                 LoadOp::Tail { force_replace } => {
@@ -874,8 +1003,7 @@ impl ChatSession {
                     let wanted = match reveal {
                         None => self.start_cursor.is_some() && self.has_older,
                         Some((seq, _)) => {
-                            self.has_older
-                                && self.start_cursor.as_ref().is_none_or(|c| c.seq > seq)
+                            self.has_older && self.start_cursor.as_ref().is_none_or(|c| c.seq > seq)
                         }
                     };
                     if !wanted {
@@ -895,7 +1023,11 @@ impl ChatSession {
 
     fn fetch(&mut self, io: &mut Io, direction: &'static str, force_replace: bool) -> RequestId {
         let generation = self.generation;
-        let cursor = if direction == "before" { self.start_cursor.clone() } else { self.end_cursor.clone() };
+        let cursor = if direction == "before" {
+            self.start_cursor.clone()
+        } else {
+            self.end_cursor.clone()
+        };
         let mut fields = if let Some(subagent) = self.key.subagent_id.clone() {
             json!({"parentAgentId": self.key.agent_id, "subagentId": subagent})
         } else {
@@ -910,16 +1042,42 @@ impl ChatSession {
             obj.insert("cursor".into(), cursor.to_json());
         }
         let (ty, response) = if self.is_subagent() {
-            ("agent.provider_subagents.timeline.get.request", "agent.provider_subagents.timeline.get.response")
+            (
+                "agent.provider_subagents.timeline.get.request",
+                "agent.provider_subagents.timeline.get.response",
+            )
         } else {
-            ("fetch_agent_timeline_request", "fetch_agent_timeline_response")
+            (
+                "fetch_agent_timeline_request",
+                "fetch_agent_timeline_response",
+            )
         };
-        self.send(io, Pending::Fetch { direction, force_replace, generation }, ty, response, fields)
+        self.send(
+            io,
+            Pending::Fetch {
+                direction,
+                force_replace,
+                generation,
+            },
+            ty,
+            response,
+            fields,
+        )
     }
 
     /// A fetch response for the active load.
-    pub fn on_fetch(&mut self, io: &mut Io, request: &RequestId, direction: &'static str, force_replace: bool, generation: u64, result: Result<Value, CoreError>) {
-        let Some(mut active) = self.active.take() else { return };
+    pub fn on_fetch(
+        &mut self,
+        io: &mut Io,
+        request: &RequestId,
+        direction: &'static str,
+        force_replace: bool,
+        generation: u64,
+        result: Result<Value, CoreError>,
+    ) {
+        let Some(mut active) = self.active.take() else {
+            return;
+        };
         if active.request.as_ref() != Some(request) {
             self.active = Some(active);
             return;
@@ -938,7 +1096,9 @@ impl ChatSession {
             }
         };
         match active.op.clone() {
-            LoadOp::CatchUp { generation: owner, .. } => {
+            LoadOp::CatchUp {
+                generation: owner, ..
+            } => {
                 if !self.owns_catch_up(owner) {
                     self.finish_load(io);
                     return;
@@ -961,7 +1121,10 @@ impl ChatSession {
                     return;
                 }
                 if has_newer {
-                    let message = format!("Timeline page for {} hasNewer without an end cursor", self.key.agent_id);
+                    let message = format!(
+                        "Timeline page for {} hasNewer without an end cursor",
+                        self.key.agent_id
+                    );
                     self.load_failed(io, active, message);
                     return;
                 }
@@ -1023,7 +1186,10 @@ impl ChatSession {
             let generation = self.catch_up_generation + 1;
             self.catch_up_generation = generation;
             self.catch_up = Some(CatchUp::Running);
-            self.queue.push_back(LoadOp::CatchUp { generation, gap: true });
+            self.queue.push_back(LoadOp::CatchUp {
+                generation,
+                gap: true,
+            });
             return;
         }
         self.pending = false;
@@ -1038,7 +1204,10 @@ impl ChatSession {
             let generation = self.catch_up_generation;
             self.catch_up = Some(CatchUp::Running);
             self.catch_up_delay = None;
-            self.queue.push_back(LoadOp::CatchUp { generation, gap: false });
+            self.queue.push_back(LoadOp::CatchUp {
+                generation,
+                gap: false,
+            });
         }
         let _ = io;
     }
@@ -1078,7 +1247,11 @@ impl ChatSession {
         if get(result, "agent").is_object() {
             self.set_agent(get(result, "agent").clone());
         }
-        let source = if self.is_subagent() { get(result, "rows") } else { get(result, "entries") };
+        let source = if self.is_subagent() {
+            get(result, "rows")
+        } else {
+            get(result, "entries")
+        };
         let incoming: Vec<Value> = list(source)
             .iter()
             .filter(|row| row.is_object())
@@ -1094,7 +1267,10 @@ impl ChatSession {
         let page_start = if get(result, "startCursor").is_object() {
             Some(int_of(get(get(result, "startCursor"), "seq")))
         } else {
-            incoming.iter().map(|row| int_of(get(row, "seqStart"))).min()
+            incoming
+                .iter()
+                .map(|row| int_of(get(row, "seqStart")))
+                .min()
         };
         let page_end = if get(result, "endCursor").is_object() {
             Some(int_of(get(get(result, "endCursor"), "seq")))
@@ -1117,7 +1293,12 @@ impl ChatSession {
             // deriveBootstrapTailTimelinePolicy / deriveResumeTailPolicy.
             let window_max = int_of(get(get(result, "window"), "maxSeq"));
             match local_end {
-                _ if !self.synced || self.epoch.is_none() || self.epoch.as_deref() != Some(next_epoch.as_str()) => Mode::Replace,
+                _ if !self.synced
+                    || self.epoch.is_none()
+                    || self.epoch.as_deref() != Some(next_epoch.as_str()) =>
+                {
+                    Mode::Replace
+                }
                 None => Mode::Replace,
                 Some(end) if window_max == end => Mode::Discard,
                 Some(end) if window_max < end => Mode::Replace,
@@ -1132,7 +1313,11 @@ impl ChatSession {
             match (page_start, page_end, local_end) {
                 (None, _, _) | (_, None, _) => Mode::Discard,
                 (_, _, None) => {
-                    if self.synced { Mode::Append } else { Mode::Replace }
+                    if self.synced {
+                        Mode::Append
+                    } else {
+                        Mode::Replace
+                    }
                 }
                 (Some(start), Some(end), Some(local)) => {
                     if self.epoch.as_deref() != Some(next_epoch.as_str()) || end <= local {
@@ -1148,7 +1333,11 @@ impl ChatSession {
         } else {
             // acceptOlderTimelineUnits: only a page adjacent to the history start.
             match (local_start, page_end) {
-                (Some(start), Some(end)) if self.epoch.as_deref() == Some(next_epoch.as_str()) && end == start - 1 => Mode::Prepend,
+                (Some(start), Some(end))
+                    if self.epoch.as_deref() == Some(next_epoch.as_str()) && end == start - 1 =>
+                {
+                    Mode::Prepend
+                }
                 _ => Mode::Discard,
             }
         };
@@ -1161,8 +1350,14 @@ impl ChatSession {
                     self.turns.clear();
                 }
                 self.epoch = Some(next_epoch.clone());
-                self.start_cursor = page_start.map(|seq| Cursor { epoch: next_epoch.clone(), seq });
-                self.end_cursor = page_end.map(|seq| Cursor { epoch: next_epoch.clone(), seq });
+                self.start_cursor = page_start.map(|seq| Cursor {
+                    epoch: next_epoch.clone(),
+                    seq,
+                });
+                self.end_cursor = page_end.map(|seq| Cursor {
+                    epoch: next_epoch.clone(),
+                    seq,
+                });
                 self.has_older = is_true(get(result, "hasOlder"));
             }
             Mode::Append => {
@@ -1171,19 +1366,28 @@ impl ChatSession {
                 if let Some(end) = page_end
                     && local_end.is_none_or(|local| end > local)
                 {
-                    self.end_cursor = Some(Cursor { epoch: next_epoch.clone(), seq: end });
+                    self.end_cursor = Some(Cursor {
+                        epoch: next_epoch.clone(),
+                        seq: end,
+                    });
                 }
                 if self.start_cursor.is_none()
                     && let Some(start) = page_start
                 {
-                    self.start_cursor = Some(Cursor { epoch: next_epoch.clone(), seq: start });
+                    self.start_cursor = Some(Cursor {
+                        epoch: next_epoch.clone(),
+                        seq: start,
+                    });
                     self.has_older = is_true(get(result, "hasOlder"));
                 }
             }
             Mode::Prepend => {
                 self.merge(units);
                 let seq = page_start.or(local_start).unwrap_or_default();
-                self.start_cursor = Some(Cursor { epoch: next_epoch.clone(), seq });
+                self.start_cursor = Some(Cursor {
+                    epoch: next_epoch.clone(),
+                    seq,
+                });
                 self.has_older = is_true(get(result, "hasOlder"));
             }
             Mode::Discard => {}
@@ -1306,7 +1510,8 @@ impl ChatSession {
                     }
                 }
             } else if get(p, "parentAgentId") == id.as_str() && kind == "remove" {
-                self.subagents.retain(|s| get(s, "id") != get(p, "subagentId"));
+                self.subagents
+                    .retain(|s| get(s, "id") != get(p, "subagentId"));
             }
             if let Some(sub) = self.key.subagent_id.clone()
                 && get(p, "parentAgentId") == id.as_str()
@@ -1327,7 +1532,9 @@ impl ChatSession {
                 if let Some(io) = io.as_deref_mut() {
                     self.refresh_tail(io);
                 } else {
-                    self.queue.push_back(LoadOp::Tail { force_replace: false });
+                    self.queue.push_back(LoadOp::Tail {
+                        force_replace: false,
+                    });
                 }
             }
             return;
@@ -1352,7 +1559,10 @@ impl ChatSession {
             let as_key = value_key(request_id);
             self.permissions.retain(|(k, _)| *k != as_key);
             if self.permissions.len() == before
-                && let Some(index) = self.permissions.iter().position(|(_, v)| get(v, "id") == request_id)
+                && let Some(index) = self
+                    .permissions
+                    .iter()
+                    .position(|(_, v)| get(v, "id") == request_id)
             {
                 self.permissions.remove(index);
             }
@@ -1412,7 +1622,9 @@ impl ChatSession {
         self.child_resync_epoch = Some(announced.to_owned());
         match io {
             Some(io) => self.refresh_tail(io),
-            None => self.queue.push_back(LoadOp::Tail { force_replace: false }),
+            None => self.queue.push_back(LoadOp::Tail {
+                force_replace: false,
+            }),
         }
     }
 
@@ -1449,7 +1661,10 @@ impl ChatSession {
                 None => {
                     self.epoch = Some(event_epoch.to_owned());
                     if self.start_cursor.is_none() {
-                        self.start_cursor = Some(Cursor { epoch: event_epoch.to_owned(), seq });
+                        self.start_cursor = Some(Cursor {
+                            epoch: event_epoch.to_owned(),
+                            seq,
+                        });
                     }
                 }
                 Some(_) if self.epoch.as_deref() != Some(event_epoch) => {
@@ -1465,7 +1680,10 @@ impl ChatSession {
                     self.fold.reset();
                     self.turns.clear();
                     self.epoch = Some(event_epoch.to_owned());
-                    self.start_cursor = Some(Cursor { epoch: event_epoch.to_owned(), seq });
+                    self.start_cursor = Some(Cursor {
+                        epoch: event_epoch.to_owned(),
+                        seq,
+                    });
                     self.has_older = false;
                 }
                 Some(end) => {
@@ -1484,7 +1702,10 @@ impl ChatSession {
                 }
             }
             self.rows.push(row(seq));
-            self.end_cursor = Some(Cursor { epoch: event_epoch.to_owned(), seq });
+            self.end_cursor = Some(Cursor {
+                epoch: event_epoch.to_owned(),
+                seq,
+            });
         } else if ty == "turn_started" {
             let turn_id = get(event, "turnId").as_str().map(str::to_owned);
             let active = get(&self.agent, "activeTurn").clone();
@@ -1501,7 +1722,10 @@ impl ChatSession {
             };
             if let Some(obj) = self.agent.as_object_mut() {
                 obj.insert("status".into(), json!("running"));
-                obj.insert("activeTurn".into(), json!({"turnId": turn_id, "startedAt": started_at}));
+                obj.insert(
+                    "activeTurn".into(),
+                    json!({"turnId": turn_id, "startedAt": started_at}),
+                );
             }
             if let Some(turn_id) = turn_id {
                 let first = self
@@ -1518,11 +1742,18 @@ impl ChatSession {
             // An identified terminal never closes a different identified turn.
             let turn_id = get(event, "turnId");
             let active_id = get(get(&self.agent, "activeTurn"), "turnId");
-            if self.running(false) && turn_id.is_string() && active_id.is_string() && turn_id != active_id {
+            if self.running(false)
+                && turn_id.is_string()
+                && active_id.is_string()
+                && turn_id != active_id
+            {
                 return;
             }
             if let Some(obj) = self.agent.as_object_mut() {
-                obj.insert("status".into(), json!(if ty == "turn_failed" { "error" } else { "idle" }));
+                obj.insert(
+                    "status".into(),
+                    json!(if ty == "turn_failed" { "error" } else { "idle" }),
+                );
                 obj.insert("activeTurn".into(), Value::Null);
                 if !get(event, "usage").is_null() {
                     obj.insert("lastUsage".into(), get(event, "usage").clone());
@@ -1546,7 +1777,9 @@ impl ChatSession {
         if self.fold.consumed > self.rows.len() {
             self.fold.reset();
         }
-        if self.fold.consumed < self.rows.len() || (self.rows.is_empty() && !self.timeline.is_empty()) {
+        if self.fold.consumed < self.rows.len()
+            || (self.rows.is_empty() && !self.timeline.is_empty())
+        {
             let refold = self.fold.consumed == 0;
             let agent_id = self.key.agent_id.clone();
             for row in &self.rows[self.fold.consumed..] {
@@ -1633,7 +1866,11 @@ fn value_key(value: &Value) -> String {
 }
 
 fn log_sync_failure(key: &SessionKey, message: &str) {
-    makepad_widgets::log!("[ChatSession {}] timeline synchronization failed: {}", key.agent_id, message);
+    makepad_widgets::log!(
+        "[ChatSession {}] timeline synchronization failed: {}",
+        key.agent_id,
+        message
+    );
 }
 
 #[cfg(test)]
@@ -1649,7 +1886,12 @@ mod timer_ownership_tests {
             subagent_id: None,
         };
         let mut session = ChatSession::new(key, true);
-        let tick = |timer_id| Event::Timer(TimerEvent { time: None, timer_id });
+        let tick = |timer_id| {
+            Event::Timer(TimerEvent {
+                time: None,
+                timer_id,
+            })
+        };
         assert!(!session.owns_timer(&tick(0)));
         assert!(!session.owns_timer(&Event::Signal));
         session.membership_retry = Timer(41);
@@ -1671,18 +1913,35 @@ mod provider_subagent_removal_tests {
     /// response and from the daemon's `remove` update alike; others stay.
     #[test]
     fn deleted_provider_subagents_leave_the_list() {
-        let key = SessionKey { host_id: "host".into(), agent_id: "parent".into(), subagent_id: None };
+        let key = SessionKey {
+            host_id: "host".into(),
+            agent_id: "parent".into(),
+            subagent_id: None,
+        };
         let mut session = ChatSession::new(key, true);
-        session.subagents = ["a", "b", "c"].iter().map(|id| json!({"id": id, "parentAgentId": "parent", "status": "completed"})).collect();
+        session.subagents = ["a", "b", "c"]
+            .iter()
+            .map(|id| json!({"id": id, "parentAgentId": "parent", "status": "completed"}))
+            .collect();
         let version = session.version;
         session.drop_subagents(&["a".to_owned()]);
         assert!(session.version > version);
-        session.apply_event_inner(None, &json!({"type": "agent.provider_subagents.update",
-            "payload": {"kind": "remove", "parentAgentId": "parent", "subagentId": "b"}}));
-        let ids: Vec<&str> = session.subagents.iter().map(|s| str_of(get(s, "id"))).collect();
+        session.apply_event_inner(
+            None,
+            &json!({"type": "agent.provider_subagents.update",
+            "payload": {"kind": "remove", "parentAgentId": "parent", "subagentId": "b"}}),
+        );
+        let ids: Vec<&str> = session
+            .subagents
+            .iter()
+            .map(|s| str_of(get(s, "id")))
+            .collect();
         assert_eq!(ids, ["c"]);
         let version = session.version;
         session.drop_subagents(&["a".to_owned()]);
-        assert_eq!(session.version, version, "an already dropped child is a no-op");
+        assert_eq!(
+            session.version, version,
+            "an already dropped child is a no-op"
+        );
     }
 }

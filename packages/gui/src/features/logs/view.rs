@@ -9,7 +9,9 @@ use makepad_widgets::*;
 use super::session::LogSession;
 use crate::common::{UiContext, UiEffect};
 use crate::features::terminal::find::{FindHits, FindMatch, SearchMode};
-use crate::features::terminal::grid::{grapheme_column, selected_text, CellGrid, CellPos, GridPaint, GridSelection};
+use crate::features::terminal::grid::{
+    CellGrid, CellPos, GridPaint, GridSelection, grapheme_column, selected_text,
+};
 use crate::features::terminal::links;
 use crate::theme;
 
@@ -86,15 +88,24 @@ impl WaLogView {
         let row = pos.row.min(session.line_count().checked_sub(1)?);
         let lines = session.read(row, 1);
         let line = lines.first()?;
-        Some(CellPos { row, col: grapheme_column(line, pos.col, next) })
+        Some(CellPos {
+            row,
+            col: grapheme_column(line, pos.col, next),
+        })
     }
 
     fn handle_selection_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) -> bool {
-        let Some(action) = self.selection.handle_event(cx, event, self.draw_hit.area()) else { return false };
+        let Some(action) = self.selection.handle_event(cx, event, self.draw_hit.area()) else {
+            return false;
+        };
         self.scroll_bars.cancel_touch_scroll();
         if action.phase == TextHandlePhase::Start {
             self.follow = false;
-            cx.widget_action(self.widget_uid(), &scope.path, WaLogViewAction::UserScrolled);
+            cx.widget_action(
+                self.widget_uid(),
+                &scope.path,
+                WaLogViewAction::UserScrolled,
+            );
         }
         let mut point = None;
         if action.phase != TextHandlePhase::Cancel {
@@ -103,7 +114,11 @@ impl WaLogView {
                 self.scroll_bars.set_scroll_pos(cx, scroll + action.scroll);
                 self.hit_origin = self.scroll_bars.get_scroll_pos();
                 self.follow = false;
-                cx.widget_action(self.widget_uid(), &scope.path, WaLogViewAction::UserScrolled);
+                cx.widget_action(
+                    self.widget_uid(),
+                    &scope.path,
+                    WaLogViewAction::UserScrolled,
+                );
             }
             point = self.pos_to_cell(cx, action.abs);
         }
@@ -114,8 +129,12 @@ impl WaLogView {
 
     /// The selected text, with logical lines joined like `renderedText`.
     fn selected_text(&mut self) -> String {
-        let Some((start, end)) = self.selection.ordered() else { return String::new() };
-        let Some(session) = self.session.as_mut() else { return String::new() };
+        let Some((start, end)) = self.selection.ordered() else {
+            return String::new();
+        };
+        let Some(session) = self.session.as_mut() else {
+            return String::new();
+        };
         let lines = session.read(start.row, end.row - start.row + 1);
         selected_text(&lines, start, end)
     }
@@ -174,10 +193,15 @@ impl Widget for WaLogView {
         let uid = self.widget_uid();
         let area = self.draw_hit.area();
         let before = self.scroll_bars.get_scroll_pos();
-        self.scroll_bars.handle_main_event(cx, event, scope, &mut Vec::new());
+        self.scroll_bars
+            .handle_main_event(cx, event, scope, &mut Vec::new());
         match event.hits(cx, area) {
             Hit::FingerHoverIn(hover) | Hit::FingerHoverOver(hover) => {
-                let primary = if APPLE { hover.modifiers.logo } else { hover.modifiers.control };
+                let primary = if APPLE {
+                    hover.modifiers.logo
+                } else {
+                    hover.modifiers.control
+                };
                 if primary && self.link_at(cx, hover.abs).is_some() {
                     cx.set_cursor(MouseCursor::Hand);
                 }
@@ -185,11 +209,22 @@ impl Widget for WaLogView {
             Hit::FingerDown(down) => {
                 cx.claim_text_selection(area);
                 self.selection.dragging = false;
-                let primary = if APPLE { down.modifiers.logo } else { down.modifiers.control };
-                if !down.device.is_touch() && down.device.is_primary_hit() && primary && let Some(url) = self.link_at(cx, down.abs) {
+                let primary = if APPLE {
+                    down.modifiers.logo
+                } else {
+                    down.modifiers.control
+                };
+                if !down.device.is_touch()
+                    && down.device.is_primary_hit()
+                    && primary
+                    && let Some(url) = self.link_at(cx, down.abs)
+                {
                     // Ctrl/Cmd+click opens a link instead of starting a selection.
                     Self::open_link(scope, url);
-                } else if !down.device.is_touch() && down.device.is_primary_hit() && let Some(pos) = self.pos_to_cell(cx, down.abs) {
+                } else if !down.device.is_touch()
+                    && down.device.is_primary_hit()
+                    && let Some(pos) = self.pos_to_cell(cx, down.abs)
+                {
                     self.selection.touch = false;
                     self.selection.set(pos, pos);
                     self.selection.dragging = true;
@@ -207,10 +242,16 @@ impl Widget for WaLogView {
                 }
             }
             Hit::FingerMove(moved) => {
-                if self.selection.dragging && let (Some(pos), Some((anchor, _))) = (self.pos_to_cell(cx, moved.abs), self.selection.range()) {
+                if self.selection.dragging
+                    && let (Some(pos), Some((anchor, _))) =
+                        (self.pos_to_cell(cx, moved.abs), self.selection.range())
+                {
                     if let Event::TouchUpdate(update) = event {
                         for touch in &update.touches {
-                            if matches!(touch.state, makepad_widgets::makepad_draw::event::TouchState::Move) {
+                            if matches!(
+                                touch.state,
+                                makepad_widgets::makepad_draw::event::TouchState::Move
+                            ) {
                                 touch.handled.set(area);
                             }
                         }
@@ -250,7 +291,15 @@ impl Widget for WaLogView {
                     let rows = self.session.as_ref().map(|s| s.line_count()).unwrap_or(0);
                     if rows > 0 {
                         cx.claim_text_selection(area);
-                        let end = self.snap_cell(CellPos { row: rows - 1, col: usize::MAX }, false).unwrap_or_default();
+                        let end = self
+                            .snap_cell(
+                                CellPos {
+                                    row: rows - 1,
+                                    col: usize::MAX,
+                                },
+                                false,
+                            )
+                            .unwrap_or_default();
                         self.selection.set(CellPos::default(), end);
                         self.redraw(cx);
                     }
@@ -259,7 +308,8 @@ impl Widget for WaLogView {
             Hit::KeyFocusLost(_) => self.clear_selection(cx),
             _ => {}
         }
-        self.scroll_bars.handle_scroll_event(cx, event, scope, &mut Vec::new());
+        self.scroll_bars
+            .handle_scroll_event(cx, event, scope, &mut Vec::new());
         let after = self.scroll_bars.get_scroll_pos();
         if (after.y - before.y).abs() > 0.5 && !matches!(event, Event::NextFrame(_)) {
             // Scrolling away pauses following; scrolling back to the end resumes it.
@@ -286,24 +336,42 @@ impl Widget for WaLogView {
         let count = (visible_height / height).ceil() as usize + 2;
         // Hit surface over the visible viewport.
         self.hit_origin = dvec2(scroll.x, scroll.y);
-        self.draw_hit.draw_abs(cx, Rect { pos: origin + scroll, size: dvec2(viewport.x.max(1.0), visible_height) });
+        self.draw_hit.draw_abs(
+            cx,
+            Rect {
+                pos: origin + scroll,
+                size: dvec2(viewport.x.max(1.0), visible_height),
+            },
+        );
         let area = self.draw_hit.area();
         let hit_rect = area.rect(cx);
         self.grid.begin(cx, origin);
         self.selection.begin_frame();
-        if let Some(session) = self.session.as_mut() && first < rows {
+        if let Some(session) = self.session.as_mut()
+            && first < rows
+        {
             let lines = session.read(first, count.min(rows - first));
             for (index, line) in lines.iter().enumerate() {
                 let row = first + index;
                 let highlights = self.find.row(row, line.columns.len());
                 let cells: usize = line.runs.iter().map(|run| run.cells).sum();
                 let span = self.selection.span(row, cells);
-                if let Some(rect) = self.grid.draw_line(cx, dvec2(origin.x, origin.y + row as f64 * height), line, &paint, &highlights, span) {
+                if let Some(rect) = self.grid.draw_line(
+                    cx,
+                    dvec2(origin.x, origin.y + row as f64 * height),
+                    line,
+                    &paint,
+                    &highlights,
+                    span,
+                ) {
                     self.selection.painted(rect, hit_rect);
                 }
             }
         }
-        cx.walk_turtle(Walk::size(Size::Fixed(content.x.max(1.0)), Size::Fixed(content.y.max(1.0))));
+        cx.walk_turtle(Walk::size(
+            Size::Fixed(content.x.max(1.0)),
+            Size::Fixed(content.y.max(1.0)),
+        ));
         self.scroll_bars.end(cx);
         let viewport = self.scroll_bars.area().rect(cx).size;
         let resized = viewport != self.viewport && viewport.y > 0.0;
@@ -313,15 +381,19 @@ impl Widget for WaLogView {
             // `end` measures the current content and viewport. Before it, scroll
             // setters clamp against the previous frame (zero on the initial draw).
             if let Some(target) = self.reveal.take() {
-                let y = (target.start_row as f64 * height - viewport.y / 3.0).clamp(0.0, self.max_scroll);
-                let x = (target.start_offset as f64 * width - viewport.x / 2.0).clamp(0.0, (content.x - viewport.x).max(0.0));
+                let y = (target.start_row as f64 * height - viewport.y / 3.0)
+                    .clamp(0.0, self.max_scroll);
+                let x = (target.start_offset as f64 * width - viewport.x / 2.0)
+                    .clamp(0.0, (content.x - viewport.x).max(0.0));
                 self.scroll_bars.set_scroll_pos(cx, dvec2(x, y));
             } else if self.follow {
                 let x = self.scroll_bars.get_scroll_pos().x;
-                self.scroll_bars.set_scroll_pos(cx, dvec2(x, self.max_scroll));
+                self.scroll_bars
+                    .set_scroll_pos(cx, dvec2(x, self.max_scroll));
             }
         }
-        self.selection.draw_overlays(cx, area, origin, (width, height), false);
+        self.selection
+            .draw_overlays(cx, area, origin, (width, height), false);
         // The turtle and visible row range were drawn with `scroll`. Repaint only
         // this list when measurement or positioning changed; ordinary redraw()
         // requests are ignored inside draw. The settled frame schedules nothing.

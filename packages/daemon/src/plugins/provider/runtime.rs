@@ -257,7 +257,8 @@ impl Connection {
                     .sessions
                     .get(session)
                     .with_context(|| format!("Unknown provider session: {session}"))?,
-                _ => self.capabilities
+                _ => self
+                    .capabilities
                     .get()
                     .context("Provider connection is not ready")?,
             };
@@ -466,15 +467,16 @@ impl Connection {
                         bail!("Provider parent session did not negotiate session.subsession");
                     }
                     if !state.routes.contains_key(id)
-                        && let Some(parent_route) = state.routes.get(parent).cloned() {
-                            state.routes.insert(
-                                id.clone(),
-                                Route {
-                                    root: parent_route.root,
-                                    child: true,
-                                },
-                            );
-                        }
+                        && let Some(parent_route) = state.routes.get(parent).cloned()
+                    {
+                        state.routes.insert(
+                            id.clone(),
+                            Route {
+                                root: parent_route.root,
+                                child: true,
+                            },
+                        );
+                    }
                 }
                 state.sessions.insert(id.clone(), capabilities);
             }
@@ -488,15 +490,14 @@ impl Connection {
                             || pending.kind != "session.open"
                             || kind == "session.ready"
                     });
-                    if ready
-                        && let Some(pending) = state.requests.remove(id) {
-                            let result = if kind == "request.failed" {
-                                Err(ProviderOperationError::from_value(&event["error"]).into())
-                            } else {
-                                Ok(event.clone())
-                            };
-                            let _ = pending.reply.send(result);
-                        }
+                    if ready && let Some(pending) = state.requests.remove(id) {
+                        let result = if kind == "request.failed" {
+                            Err(ProviderOperationError::from_value(&event["error"]).into())
+                        } else {
+                            Ok(event.clone())
+                        };
+                        let _ = pending.reply.send(result);
+                    }
                 }
                 if kind != "session.ready" {
                     return Ok(());
@@ -510,18 +511,20 @@ impl Connection {
         // Update session state before settling prompts or terminal requests. A
         // caller waking from a reply observes the state established by that event.
         if let Some(route) = route
-            && let Some(root) = route.root.upgrade() {
-                root.accept(event.clone(), route.child).await?;
-            }
+            && let Some(root) = route.root.upgrade()
+        {
+            root.accept(event.clone(), route.child).await?;
+        }
         if let Some(session) = session {
             let mut state = self.state.lock().unwrap();
             if kind == "session.prompt_result"
                 && let Some(tx) = state.prompts.remove(&(
                     session.clone(),
                     event["clientMessageId"].as_str().unwrap().to_owned(),
-                )) {
-                    let _ = tx.send(Ok(event["result"].clone()));
-                }
+                ))
+            {
+                let _ = tx.send(Ok(event["result"].clone()));
+            }
             if matches!(kind.as_str(), "session.runtime_failed" | "session.closed") {
                 let error = event["error"]["message"]
                     .as_str()
@@ -638,10 +641,10 @@ impl Connection {
                 .worker
                 .send(json!({"type":"provider.close","connectionId":self.id}))
                 .await
-            {
-                self.fail(&error.to_string(), false).await;
-                return Err(error);
-            }
+        {
+            self.fail(&error.to_string(), false).await;
+            return Err(error);
+        }
         self.done.cancelled().await;
         let error = self.error();
         if error != "Provider connection closed" {

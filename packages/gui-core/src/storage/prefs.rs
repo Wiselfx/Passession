@@ -73,12 +73,13 @@ pub(crate) fn load(paths: &Paths) -> Prefs {
                 writable: true,
             };
             if !prefs.values.is_empty()
-                && let Err(error) = save(paths, &prefs.values, &prefs.foreign) {
-                    return Prefs {
-                        error: Some(error),
-                        ..prefs
-                    };
-                }
+                && let Err(error) = save(paths, &prefs.values, &prefs.foreign)
+            {
+                return Prefs {
+                    error: Some(error),
+                    ..prefs
+                };
+            }
             prefs
         }
         Err(error) => Prefs {

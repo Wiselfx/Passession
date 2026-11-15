@@ -12,8 +12,8 @@ use paseo_gui_core::{CoreConfig, CoreEvent, GuiCore};
 use serde_json::Value;
 
 use crate::common::{self, UiContext, i18n};
-use crate::shell::{self, PaseoShellWidgetRefExt, platform as shell_platform};
 use crate::fonts::{self, FontRoles, SystemFontState};
+use crate::shell::{self, PaseoShellWidgetRefExt, platform as shell_platform};
 use crate::theme;
 
 live_design! {
@@ -44,13 +44,18 @@ pub fn set_launch_args(argv: Vec<String>) {
 }
 
 fn launch_args() -> Vec<String> {
-    LAUNCH_ARGS.get().cloned().unwrap_or_else(|| std::env::args().collect())
+    LAUNCH_ARGS
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::args().collect())
 }
 
 /// `PASEO_VERSION` from the build (xtask always sets it), else the crate version for plain
 /// `cargo run`.
 pub fn app_version() -> &'static str {
-    option_env!("PASEO_VERSION").filter(|v| !v.is_empty()).unwrap_or(env!("CARGO_PKG_VERSION"))
+    option_env!("PASEO_VERSION")
+        .filter(|v| !v.is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 fn core_config() -> CoreConfig {
@@ -60,10 +65,17 @@ fn core_config() -> CoreConfig {
         .map(PathBuf::from)
         .unwrap_or_else(|| paseo_gui_platform::paths::app_paths().support_dir.clone());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let daemon_home = std::env::var_os("PASEO_HOME").filter(|v| !v.is_empty()).map(PathBuf::from);
+    let daemon_home = std::env::var_os("PASEO_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let daemon_home = None;
-    CoreConfig { state_dir, daemon_home, default_endpoint: None }
+    CoreConfig {
+        state_dir,
+        daemon_home,
+        default_endpoint: None,
+        tailnet_key_store: Some(paseo_gui_platform::tailnet_key_store()),
+    }
 }
 
 // Leave event-loop turns between transcript batches for input and painting.
@@ -162,7 +174,10 @@ impl App {
             menu_locale: "",
             core_batch_timer: Timer::default(),
         });
-        self.ui.widget(id!(main_window.shell)).as_paseo_shell().set_window(cx, common::MAIN_WINDOW_ID);
+        self.ui
+            .widget(id!(main_window.shell))
+            .as_paseo_shell()
+            .set_window(cx, common::MAIN_WINDOW_ID);
         shell::register_window(common::MAIN_WINDOW_ID);
         #[cfg(feature = "desktop-smoke")]
         crate::smoke::start(cx);
@@ -171,9 +186,29 @@ impl App {
     /// Recomputes theme and locale when their preference inputs change (Flutter
     /// `_appearance`): theme fields and `language`.
     fn appearance(runtime: &mut Runtime, cx: &mut Cx) {
-        let preferences = runtime.ui.state.get("preferences").cloned().unwrap_or(Value::Null);
-        let fields = ["theme", "uiFontFamily", "monoFontFamily", "uiBaseFontSize", "contentFontSize", "codeFontSize", "contentMaxWidth", "language"];
-        let key = serde_json::to_string(&fields.iter().map(|f| preferences.get(f)).collect::<Vec<_>>()).unwrap_or_default()
+        let preferences = runtime
+            .ui
+            .state
+            .get("preferences")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let fields = [
+            "theme",
+            "uiFontFamily",
+            "monoFontFamily",
+            "uiBaseFontSize",
+            "contentFontSize",
+            "codeFontSize",
+            "contentMaxWidth",
+            "language",
+        ];
+        let key = serde_json::to_string(
+            &fields
+                .iter()
+                .map(|f| preferences.get(f))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_default()
             + if runtime.system_dark { "d" } else { "l" };
         if key == runtime.theme_key {
             return;
@@ -206,7 +241,9 @@ impl App {
     /// Admits one bounded FIFO batch; a live producer cannot extend this dispatch.
     fn drain_core(runtime: &mut Runtime) -> bool {
         let mut state_changed = false;
-        runtime.core.drain_events(&mut runtime.ui.events, CORE_BATCH_LIMIT);
+        runtime
+            .core
+            .drain_events(&mut runtime.ui.events, CORE_BATCH_LIMIT);
         for event in &runtime.ui.events {
             if let Some(platform) = runtime.platform.as_mut() {
                 platform.observe_core_event(event);
@@ -215,7 +252,11 @@ impl App {
                 runtime.ui.state = state.clone();
                 state_changed = true;
             }
-            if let CoreEvent::Connected { host_id, server_info } = &event {
+            if let CoreEvent::Connected {
+                host_id,
+                server_info,
+            } = &event
+            {
                 let mut infos = (*runtime.ui.server_infos).clone();
                 infos.insert(host_id.clone(), server_info.clone());
                 runtime.ui.server_infos = std::rc::Rc::new(infos);
@@ -225,7 +266,9 @@ impl App {
     }
 
     fn open_window(&mut self, cx: &mut Cx, request: shell::WindowRequest) {
-        let Some(runtime) = self.runtime.as_mut() else { return };
+        let Some(runtime) = self.runtime.as_mut() else {
+            return;
+        };
         // Original `openNew`: a dormant first window is shown again instead of a new one.
         if shell::window_state(common::MAIN_WINDOW_ID) == Some(shell::WindowState::Dormant) {
             let main = self.ui.widget(id!(main_window.shell)).as_paseo_shell();
@@ -255,15 +298,28 @@ impl App {
             return Some(self.ui.widget(id!(main_window.shell)).as_paseo_shell());
         }
         let runtime = self.runtime.as_ref()?;
-        runtime.windows.iter().find(|(w, _)| w == id).map(|(_, window)| window.widget(id!(shell)).as_paseo_shell())
+        runtime
+            .windows
+            .iter()
+            .find(|(w, _)| w == id)
+            .map(|(_, window)| window.widget(id!(shell)).as_paseo_shell())
     }
 
     /// Hands the event to the lifecycle smoke driver after it was dispatched and drawn.
     #[cfg(feature = "desktop-smoke")]
     fn smoke_event(&self, cx: &mut Cx, event: &Event) {
-        let Some(runtime) = self.runtime.as_ref() else { return };
+        let Some(runtime) = self.runtime.as_ref() else {
+            return;
+        };
         let shell_of = |id: &str| self.shell_of(id);
-        crate::smoke::handle_event(cx, event, &crate::smoke::Ctx { state: &runtime.ui.state, shell: &shell_of });
+        crate::smoke::handle_event(
+            cx,
+            event,
+            &crate::smoke::Ctx {
+                state: &runtime.ui.state,
+                shell: &shell_of,
+            },
+        );
     }
 }
 
@@ -271,11 +327,33 @@ impl App {
 /// in the active language, with the same commands and keys.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn native_menu() -> MacosMenu {
-    let item = |name: String, command: LiveId, shift: bool, key: KeyCode| MacosMenu::Item { name, command, shift, key, enabled: true };
+    let item = |name: String, command: LiveId, shift: bool, key: KeyCode| MacosMenu::Item {
+        name,
+        command,
+        shift,
+        key,
+        enabled: true,
+    };
     MacosMenu::Main {
         items: vec![
-            MacosMenu::Sub { name: "Passession".into(), items: vec![item(common::tr("shell.menu.quitApp"), live_id!(paseo_quit), false, KeyCode::KeyQ)] },
-            MacosMenu::Sub { name: common::tr("shell.menu.file"), items: vec![item(common::tr("shell.menu.newWindow"), live_id!(new_window), true, KeyCode::KeyN)] },
+            MacosMenu::Sub {
+                name: "Passession".into(),
+                items: vec![item(
+                    common::tr("shell.menu.quitApp"),
+                    live_id!(paseo_quit),
+                    false,
+                    KeyCode::KeyQ,
+                )],
+            },
+            MacosMenu::Sub {
+                name: common::tr("shell.menu.file"),
+                items: vec![item(
+                    common::tr("shell.menu.newWindow"),
+                    live_id!(new_window),
+                    true,
+                    KeyCode::KeyN,
+                )],
+            },
         ],
     }
 }
@@ -300,7 +378,8 @@ impl AppMain for App {
         if retirement_tick {
             self.layout_retirement_timer = Timer::default();
         }
-        if (retirement_tick || (matches!(event, Event::Signal) && self.layout_retirement_timer.is_empty()))
+        if (retirement_tick
+            || (matches!(event, Event::Signal) && self.layout_retirement_timer.is_empty()))
             && makepad_widgets::makepad_draw::text::collect_retired_layouts()
         {
             self.layout_retirement_timer = cx.start_timeout(LAYOUT_RETIREMENT_INTERVAL);
@@ -320,7 +399,11 @@ impl AppMain for App {
                 Some(paseo_gui_platform::PlatformAction::Event(paseo_gui_platform::PlatformEvent::AppearanceChanged))
             )
         }));
-        let refresh_appearance = appearance_changed || matches!(event, Event::Foreground | Event::Resume | Event::AppGotFocus);
+        let refresh_appearance = appearance_changed
+            || matches!(
+                event,
+                Event::Foreground | Event::Resume | Event::AppGotFocus
+            );
         if refresh_appearance {
             runtime.system_dark = shell_platform::system_prefers_dark();
             runtime.theme_key.clear();
@@ -349,7 +432,8 @@ impl AppMain for App {
         // The first frame waits briefly for system fonts; a slower worker
         // result arrives with a later signal (one relayout).
         if matches!(event, Event::Startup) {
-            self.system_fonts.settle(cx, &self.font_roles, fonts::STARTUP_BUDGET);
+            self.system_fonts
+                .settle(cx, &self.font_roles, fonts::STARTUP_BUDGET);
         } else if matches!(event, Event::Signal) {
             self.system_fonts.poll(cx, &self.font_roles);
         }
@@ -365,7 +449,8 @@ impl AppMain for App {
 
         // Main window first, then the others; the first shell consumes global effects.
         let windows: Vec<WidgetRef> = runtime.windows.iter().map(|(_, w)| w.clone()).collect();
-        self.ui.handle_event(cx, event, &mut Scope::with_data(&mut runtime.ui));
+        self.ui
+            .handle_event(cx, event, &mut Scope::with_data(&mut runtime.ui));
         for window in &windows {
             window.handle_event(cx, event, &mut Scope::with_data(&mut runtime.ui));
         }
@@ -384,7 +469,12 @@ impl AppMain for App {
         // Windows closed this event (their shells already ran their guards).
         if let Event::Actions(actions) = event {
             runtime.windows.retain(|(id, window)| {
-                let closed = matches!(actions.find_widget_action(window.widget_uid()).cast_ref::<WindowAction>(), WindowAction::WindowClosed);
+                let closed = matches!(
+                    actions
+                        .find_widget_action(window.widget_uid())
+                        .cast_ref::<WindowAction>(),
+                    WindowAction::WindowClosed
+                );
                 if closed {
                     shell::unregister_window(id);
                 }

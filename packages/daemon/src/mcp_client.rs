@@ -171,10 +171,11 @@ impl McpConnection {
         let deadline = Instant::now() + SERVER_TIMEOUT;
         let initialize = async {
             if let Transport::Http(http) = &transport
-                && http.legacy {
-                    start_listener(&tasks, &transport, &state);
-                    http.wait_endpoint().await?;
-                }
+                && http.legacy
+            {
+                start_listener(&tasks, &transport, &state);
+                http.wait_endpoint().await?;
+            }
             let result = connection
                 .request(
                     "initialize",

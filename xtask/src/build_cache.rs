@@ -38,11 +38,16 @@ fn repository_key() -> Result<String> {
         }
         _ => fs::canonicalize(source)?,
     };
-    Ok(hex::encode(Sha256::digest(directory.as_os_str().as_encoded_bytes())))
+    Ok(hex::encode(Sha256::digest(
+        directory.as_os_str().as_encoded_bytes(),
+    )))
 }
 
 fn generation() -> Result<String> {
-    Ok(format!("generation-{}", SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / GENERATION_SECONDS))
+    Ok(format!(
+        "generation-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / GENERATION_SECONDS
+    ))
 }
 
 fn resolve_target() -> Result<PathBuf> {
@@ -50,12 +55,18 @@ fn resolve_target() -> Result<PathBuf> {
         ensure!(!target.is_empty(), "CARGO_TARGET_DIR must not be empty");
         absolute(target)
     } else {
-        Ok(managed_root()?.join(repository_key()?).join(generation()?).join("target"))
+        Ok(managed_root()?
+            .join(repository_key()?)
+            .join(generation()?)
+            .join("target"))
     }
 }
 
 pub fn target_root() -> Result<PathBuf> {
-    TARGET.as_ref().cloned().map_err(|error| anyhow::anyhow!("{error}"))
+    TARGET
+        .as_ref()
+        .cloned()
+        .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 /// Pin checkout staging while a managed development process uses its resources.
@@ -68,19 +79,42 @@ pub fn runtime_lease() -> Result<File> {
 fn lock(path: &Path) -> Result<File> {
     let parent = path.parent().context("Lock has no parent")?;
     fs::create_dir_all(parent)?;
-    ensure!(!fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()), "Refusing symlink lock {}", path.display());
-    Ok(OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?)
+    ensure!(
+        !fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()),
+        "Refusing symlink lock {}",
+        path.display()
+    );
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?)
 }
 
 fn mark(path: &Path) -> Result<()> {
     fs::create_dir_all(path)?;
-    ensure!(!fs::symlink_metadata(path)?.file_type().is_symlink(), "Refusing symlink build directory {}", path.display());
+    ensure!(
+        !fs::symlink_metadata(path)?.file_type().is_symlink(),
+        "Refusing symlink build directory {}",
+        path.display()
+    );
     let marker = path.join(".paseo-managed");
-    ensure!(!fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.file_type().is_symlink()), "Refusing symlink cache marker");
+    ensure!(
+        !fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.file_type().is_symlink()),
+        "Refusing symlink cache marker"
+    );
     if marker.exists() {
-        ensure!(fs::read_to_string(&marker)? == MARKER, "Unknown build directory marker");
+        ensure!(
+            fs::read_to_string(&marker)? == MARKER,
+            "Unknown build directory marker"
+        );
     } else {
-        ensure!(fs::read_dir(path)?.next().is_none(), "Refusing to adopt existing unmarked build directory {}", path.display());
+        ensure!(
+            fs::read_dir(path)?.next().is_none(),
+            "Refusing to adopt existing unmarked build directory {}",
+            path.display()
+        );
         fs::write(marker, MARKER)?;
     }
     touch(path)
@@ -88,7 +122,10 @@ fn mark(path: &Path) -> Result<()> {
 
 fn touch(path: &Path) -> Result<()> {
     let activity = path.join(".last-used");
-    ensure!(!fs::symlink_metadata(&activity).is_ok_and(|metadata| metadata.file_type().is_symlink()), "Refusing symlink cache activity record");
+    ensure!(
+        !fs::symlink_metadata(&activity).is_ok_and(|metadata| metadata.file_type().is_symlink()),
+        "Refusing symlink cache activity record"
+    );
     fs::write(activity, b"\n")?;
     Ok(())
 }
@@ -158,7 +195,12 @@ pub fn acquire() -> Result<Lease> {
     };
     mark(&source)?;
     drop(coordinator);
-    Ok(Lease { target: Some(target_lease), source_lease, generation, source })
+    Ok(Lease {
+        target: Some(target_lease),
+        source_lease,
+        generation,
+        source,
+    })
 }
 
 /// Optional accelerators are opt-in and never downloaded. Explicit wrapper and
@@ -166,7 +208,8 @@ pub fn acquire() -> Result<Lease> {
 pub fn configure(command: &mut Command) -> Result<()> {
     command.env("CARGO_TARGET_DIR", target_root()?);
     if env::var("PASEO_SCCACHE").as_deref() == Ok("1") && env::var_os("RUSTC_WRAPPER").is_none() {
-        let wrapper = which::which("sccache").context("PASEO_SCCACHE=1 requires sccache on PATH")?;
+        let wrapper =
+            which::which("sccache").context("PASEO_SCCACHE=1 requires sccache on PATH")?;
         command.env("RUSTC_WRAPPER", wrapper);
         // sccache cannot cache incremental Rust compilations. An explicit caller
         // choice still wins, including CARGO_INCREMENTAL=1.
@@ -175,19 +218,33 @@ pub fn configure(command: &mut Command) -> Result<()> {
         }
     }
     if env::var("PASEO_FAST_LINKER").as_deref() == Ok("1") {
-        ensure!(cfg!(target_os = "linux") && cfg!(target_env = "gnu"), "PASEO_FAST_LINKER supports native Linux GNU targets only");
-        let target = format!("{}_UNKNOWN_LINUX_GNU", env::consts::ARCH.to_ascii_uppercase());
+        ensure!(
+            cfg!(target_os = "linux") && cfg!(target_env = "gnu"),
+            "PASEO_FAST_LINKER supports native Linux GNU targets only"
+        );
+        let target = format!(
+            "{}_UNKNOWN_LINUX_GNU",
+            env::consts::ARCH.to_ascii_uppercase()
+        );
         let linker = format!("CARGO_TARGET_{target}_LINKER");
         let flags = format!("CARGO_TARGET_{target}_RUSTFLAGS");
-        if env::var_os(&linker).is_none() && env::var_os(&flags).is_none()
-            && env::var_os("RUSTFLAGS").is_none() && env::var_os("CARGO_ENCODED_RUSTFLAGS").is_none()
+        if env::var_os(&linker).is_none()
+            && env::var_os(&flags).is_none()
+            && env::var_os("RUSTFLAGS").is_none()
+            && env::var_os("CARGO_ENCODED_RUSTFLAGS").is_none()
         {
-            let clang = which::which("clang").context("PASEO_FAST_LINKER=1 requires clang on PATH")?;
-            let flavor = if which::which("mold").is_ok() { "mold" } else {
-                which::which("ld.lld").context("PASEO_FAST_LINKER=1 requires mold or ld.lld on PATH")?;
+            let clang =
+                which::which("clang").context("PASEO_FAST_LINKER=1 requires clang on PATH")?;
+            let flavor = if which::which("mold").is_ok() {
+                "mold"
+            } else {
+                which::which("ld.lld")
+                    .context("PASEO_FAST_LINKER=1 requires mold or ld.lld on PATH")?;
                 "lld"
             };
-            command.env(linker, clang).env(flags, format!("-C link-arg=-fuse-ld={flavor}"));
+            command
+                .env(linker, clang)
+                .env(flags, format!("-C link-arg=-fuse-ld={flavor}"));
         }
     }
     Ok(())
@@ -195,7 +252,10 @@ pub fn configure(command: &mut Command) -> Result<()> {
 
 fn eligible(path: &Path, now: SystemTime) -> Result<bool> {
     if fs::symlink_metadata(path)?.file_type().is_symlink()
-        || fs::read_to_string(path.join(".paseo-managed")).ok().as_deref() != Some(MARKER)
+        || fs::read_to_string(path.join(".paseo-managed"))
+            .ok()
+            .as_deref()
+            != Some(MARKER)
     {
         return Ok(false);
     }
@@ -229,9 +289,14 @@ pub fn housekeeping(args: &[String]) -> Result<()> {
             "--staging" => staging = true,
             "--max-bytes" => {
                 index += 1;
-                max_bytes = args.get(index).context("--max-bytes requires an integer")?.parse()?;
+                max_bytes = args
+                    .get(index)
+                    .context("--max-bytes requires an integer")?
+                    .parse()?;
             }
-            other => bail!("Unknown housekeeping option {other}; use [--apply] [--staging] [--max-bytes N]"),
+            other => bail!(
+                "Unknown housekeeping option {other}; use [--apply] [--staging] [--max-bytes N]"
+            ),
         }
         index += 1;
     }
@@ -245,52 +310,99 @@ pub fn housekeeping(args: &[String]) -> Result<()> {
     for project in fs::read_dir(&managed)? {
         let project = project?;
         let name = project.file_name();
-        if !project.file_type()?.is_dir() || name.to_str().is_none_or(|name| name.len() != 64 || !name.bytes().all(|b| b.is_ascii_hexdigit())) {
+        if !project.file_type()?.is_dir()
+            || name
+                .to_str()
+                .is_none_or(|name| name.len() != 64 || !name.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
             continue;
         }
         for entry in fs::read_dir(project.path())? {
             let entry = entry?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if !entry.file_type()?.is_dir() || !name.strip_prefix("generation-").is_some_and(|n| n.parse::<u64>().is_ok()) {
+            if !entry.file_type()?.is_dir()
+                || name
+                    .strip_prefix("generation-")
+                    .is_none_or(|n| n.parse::<u64>().is_err())
+            {
                 continue;
             }
-            if fs::read_to_string(entry.path().join(".paseo-managed")).ok().as_deref() != Some(MARKER) {
+            if fs::read_to_string(entry.path().join(".paseo-managed"))
+                .ok()
+                .as_deref()
+                != Some(MARKER)
+            {
                 continue;
             }
             let lease = lock(&project.path().join("locks").join(name))?;
             if lease.try_lock().is_err() {
-                println!("Retaining active generation {} (size not sampled)", entry.path().display());
+                println!(
+                    "Retaining active generation {} (size not sampled)",
+                    entry.path().display()
+                );
                 continue;
             }
             let size = bytes(&entry.path())?;
             total = total.saturating_add(size);
             if name != current && eligible(&entry.path(), now)? {
                 let modified = fs::metadata(entry.path().join(".last-used"))?.modified()?;
-                candidates.push((modified, entry.path(), project.path().join("locks").join(name), size));
+                candidates.push((
+                    modified,
+                    entry.path(),
+                    project.path().join("locks").join(name),
+                    size,
+                ));
             }
         }
     }
     candidates.sort_by_key(|(modified, _, _, _)| *modified);
     for (_, path, lock_path, size) in candidates {
-        if total <= max_bytes { break; }
+        if total <= max_bytes {
+            break;
+        }
         let lease = lock(&lock_path)?;
-        if lease.try_lock().is_err() { continue; }
-        if !eligible(&path, now)? { continue; }
-        println!("{} {} ({size} bytes)", if apply { "Removing" } else { "Would remove" }, path.display());
-        if apply { fs::remove_dir_all(&path)?; }
+        if lease.try_lock().is_err() {
+            continue;
+        }
+        if !eligible(&path, now)? {
+            continue;
+        }
+        println!(
+            "{} {} ({size} bytes)",
+            if apply { "Removing" } else { "Would remove" },
+            path.display()
+        );
+        if apply {
+            fs::remove_dir_all(&path)?;
+        }
         total = total.saturating_sub(size);
     }
-    println!("Inactive managed cache after {}: {total} bytes; soft limit {max_bytes}; active/current/recent generations are retained", if apply { "pruning" } else { "planned pruning" });
+    println!(
+        "Inactive managed cache after {}: {total} bytes; soft limit {max_bytes}; active/current/recent generations are retained",
+        if apply { "pruning" } else { "planned pruning" }
+    );
     if staging {
         let path = root()?.join(".dev/build");
         let lease = lock(&root()?.join(".dev/build.lock"))?;
         let runtime = lock(&root()?.join(".dev/run.lock"))?;
-        if lease.try_lock().is_ok() && runtime.try_lock().is_ok() && path.exists() && eligible(&path, now)? {
-            println!("{} {}", if apply { "Removing" } else { "Would remove" }, path.display());
-            if apply { fs::remove_dir_all(path)?; }
+        if lease.try_lock().is_ok()
+            && runtime.try_lock().is_ok()
+            && path.exists()
+            && eligible(&path, now)?
+        {
+            println!(
+                "{} {}",
+                if apply { "Removing" } else { "Would remove" },
+                path.display()
+            );
+            if apply {
+                fs::remove_dir_all(path)?;
+            }
         } else {
-            println!("Checkout staging retained: absent, unmarked, active or used within seven days");
+            println!(
+                "Checkout staging retained: absent, unmarked, active or used within seven days"
+            );
         }
     }
     Ok(())
@@ -315,8 +427,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         mark(directory.path()).unwrap();
         let last = UNIX_EPOCH + Duration::from_secs(1_000_000);
-        File::options().write(true).open(directory.path().join(".last-used")).unwrap()
-            .set_modified(last).unwrap();
+        File::options()
+            .write(true)
+            .open(directory.path().join(".last-used"))
+            .unwrap()
+            .set_modified(last)
+            .unwrap();
         assert!(!eligible(directory.path(), last + MIN_AGE - Duration::from_secs(1)).unwrap());
         assert!(eligible(directory.path(), last + MIN_AGE).unwrap());
         assert!(!eligible(directory.path(), last - Duration::from_secs(1)).unwrap());

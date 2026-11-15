@@ -1,6 +1,8 @@
 use super::Timeline;
 use anyhow::{Result, bail, ensure};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use serde_json::{Value, json};
 use std::fs;
 #[cfg(unix)]
@@ -9,8 +11,10 @@ use std::path::{Path, PathBuf};
 
 const UPSERT_ROW: &str = "INSERT INTO timeline_rows(position, row_json) VALUES (?1, ?2) \
     ON CONFLICT(position) DO UPDATE SET row_json = excluded.row_json";
-const UPDATE_METADATA: &str = "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1";
-const READ_METADATA: &str = "SELECT version, agent_id, epoch, next_seq, min_seq FROM timeline_metadata WHERE id = 1";
+const UPDATE_METADATA: &str =
+    "UPDATE timeline_metadata SET epoch = ?1, next_seq = ?2, min_seq = ?3 WHERE id = 1";
+const READ_METADATA: &str =
+    "SELECT version, agent_id, epoch, next_seq, min_seq FROM timeline_metadata WHERE id = 1";
 // An expression index, rather than a side table, stays exact even when an older
 // v1 writer updates row_json. SQLite maintains it in the row's own transaction.
 const CREATE_PAGE_INDEX: &str = "CREATE INDEX timeline_rows_page ON timeline_rows(\
@@ -41,15 +45,25 @@ impl Store {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         ensure!(version == 1, "Unsupported timeline database version");
-        ensure!(stored_agent == agent_id, "Timeline checkpoint agent mismatch");
+        ensure!(
+            stored_agent == agent_id,
+            "Timeline checkpoint agent mismatch"
+        );
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         ensure_page_index(&mut connection)?;
-        Ok(Self { connection, path: path.to_owned(), agent_id: agent_id.to_owned() })
+        Ok(Self {
+            connection,
+            path: path.to_owned(),
+            agent_id: agent_id.to_owned(),
+        })
     }
 
     fn check_target(&self, path: &Path, agent_id: &str) -> Result<()> {
-        ensure!(self.path == path && self.agent_id == agent_id, "Timeline storage target mismatch");
+        ensure!(
+            self.path == path && self.agent_id == agent_id,
+            "Timeline storage target mismatch"
+        );
         Ok(())
     }
 
@@ -64,11 +78,13 @@ impl Store {
 }
 
 fn has_page_index(connection: &Connection) -> Result<bool> {
-    let sql: Option<String> = connection.query_row(
-        "SELECT sql FROM sqlite_schema WHERE name = 'timeline_rows_page'",
-        [],
-        |row| row.get(0),
-    ).optional()?;
+    let sql: Option<String> = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'timeline_rows_page'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
     if let Some(sql) = sql {
         ensure!(sql == CREATE_PAGE_INDEX, "Invalid timeline page index");
         return Ok(true);
@@ -98,30 +114,41 @@ fn ensure_page_index(connection: &mut Connection) -> Result<()> {
 }
 
 fn read_page_metadata(row: &rusqlite::Row<'_>, position: usize) -> Result<Value> {
-    ensure!(row.get::<_, i64>(0)? == position as i64, "Invalid timeline row position");
-    let (Some(start), Some(end), Some(ranges)) =
-        (row.get::<_, Option<i64>>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, Option<String>>(3)?)
-    else {
+    ensure!(
+        row.get::<_, i64>(0)? == position as i64,
+        "Invalid timeline row position"
+    );
+    let (Some(start), Some(end), Some(ranges)) = (
+        row.get::<_, Option<i64>>(1)?,
+        row.get::<_, Option<i64>>(2)?,
+        row.get::<_, Option<String>>(3)?,
+    ) else {
         bail!("Invalid timeline row metadata");
     };
     let ranges: Value = serde_json::from_str(&ranges)?;
-    ensure!(valid_page_metadata(start, end, &ranges), "Invalid timeline row metadata");
+    ensure!(
+        valid_page_metadata(start, end, &ranges),
+        "Invalid timeline row metadata"
+    );
     Ok(json!({"seqStart":start,"seqEnd":end,"sourceSeqRanges":ranges,"position":position}))
 }
 
 fn valid_page_metadata(start: i64, end: i64, ranges: &Value) -> bool {
-    start > 0 && end >= start && ranges.as_array().is_some_and(|ranges| {
-        !ranges.is_empty() && ranges.iter().all(|range| {
-            matches!((range["startSeq"].as_i64(), range["endSeq"].as_i64()),
+    start > 0
+        && end >= start
+        && ranges.as_array().is_some_and(|ranges| {
+            !ranges.is_empty()
+                && ranges.iter().all(|range| {
+                    matches!((range["startSeq"].as_i64(), range["endSeq"].as_i64()),
                 (Some(a), Some(b)) if a >= start && b >= a && b <= end)
+                })
         })
-    })
 }
 
 fn write_metadata(transaction: &Transaction<'_>, timeline: &Timeline) -> Result<()> {
-    transaction.prepare_cached(UPDATE_METADATA)?.execute(params![
-        timeline.epoch, timeline.next_seq, timeline.min_seq
-    ])?;
+    transaction
+        .prepare_cached(UPDATE_METADATA)?
+        .execute(params![timeline.epoch, timeline.next_seq, timeline.min_seq])?;
     Ok(())
 }
 
@@ -136,7 +163,10 @@ fn write_rows(transaction: &Transaction<'_>, rows: &[Value]) -> Result<()> {
 // Build the complete initial database off to the side, so a failed creation
 // never leaves a partial database behind.
 fn create(path: &Path, agent_id: &str, timeline: &Timeline) -> Result<Store> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
     let file = tempfile::NamedTempFile::new_in(parent)?;
     let mut connection = Connection::open(file.path())?;
@@ -154,11 +184,16 @@ fn create(path: &Path, agent_id: &str, timeline: &Timeline) -> Result<Store> {
         CREATE TABLE timeline_rows (
             position INTEGER PRIMARY KEY CHECK(position >= 0),
             row_json TEXT NOT NULL
-        );"
+        );",
     )?;
     transaction.execute(
         "INSERT INTO timeline_metadata VALUES (1, 1, ?1, ?2, ?3, ?4)",
-        params![agent_id, timeline.epoch, timeline.next_seq, timeline.min_seq],
+        params![
+            agent_id,
+            timeline.epoch,
+            timeline.next_seq,
+            timeline.min_seq
+        ],
     )?;
     transaction.execute_batch(CREATE_PAGE_INDEX)?;
     write_rows(&transaction, &timeline.rows)?;
@@ -220,11 +255,15 @@ pub(super) fn load_measured(path: &Path, agent_id: &str) -> Result<(Timeline, u6
     timeline.min_seq = min_seq;
     let mut bytes = 0;
     {
-        let mut statement = transaction.prepare("SELECT position, row_json FROM timeline_rows ORDER BY position")?;
+        let mut statement = transaction
+            .prepare("SELECT position, row_json FROM timeline_rows ORDER BY position")?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let index = timeline.rows.len();
-            ensure!(row.get::<_, i64>(0)? == index as i64, "Invalid timeline row position");
+            ensure!(
+                row.get::<_, i64>(0)? == index as i64,
+                "Invalid timeline row position"
+            );
             let encoded: String = row.get(1)?;
             bytes += encoded.len() as u64;
             let row: Value = serde_json::from_str(&encoded)?;
@@ -233,9 +272,12 @@ pub(super) fn load_measured(path: &Path, agent_id: &str) -> Result<(Timeline, u6
                 timeline.identities.insert(id, index);
             }
             if row["item"]["type"] == "user_message"
-                && let Some(id) = row["item"]["clientMessageId"].as_str().filter(|id| !id.is_empty()) {
-                    timeline.submitted.entry(id.to_owned()).or_insert(index);
-                }
+                && let Some(id) = row["item"]["clientMessageId"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+            {
+                timeline.submitted.entry(id.to_owned()).or_insert(index);
+            }
             timeline.rows.push(row);
         }
     }
@@ -252,38 +294,64 @@ pub(super) fn load_measured(path: &Path, agent_id: &str) -> Result<(Timeline, u6
 /// metadata stub per row plus the selected rows; `limit: 0` explicitly selects
 /// the whole history. Only reads; never alters the database.
 pub(super) fn fetch_page(path: &Path, agent_id: &str, options: &Value) -> Result<Value> {
-    ensure!(path.try_exists()?, "Timeline database missing: {}", path.display());
+    ensure!(
+        path.try_exists()?,
+        "Timeline database missing: {}",
+        path.display()
+    );
     let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let transaction = connection.transaction()?;
     let (version, stored_agent, epoch, next_seq, min_seq): (i64, String, String, i64, i64) =
         transaction.query_row(READ_METADATA, [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?;
     ensure!(version == 1, "Unsupported timeline database version");
-    ensure!(stored_agent == agent_id, "Timeline checkpoint agent mismatch");
+    ensure!(
+        stored_agent == agent_id,
+        "Timeline checkpoint agent mismatch"
+    );
     let mut timeline = Timeline::new();
     timeline.epoch = epoch;
     timeline.next_seq = next_seq;
     timeline.min_seq = min_seq;
     {
-        let query = if has_page_index(&transaction)? { ROW_PAGE_METADATA } else { LEGACY_ROW_PAGE_METADATA };
+        let query = if has_page_index(&transaction)? {
+            ROW_PAGE_METADATA
+        } else {
+            LEGACY_ROW_PAGE_METADATA
+        };
         let mut statement = transaction.prepare(query)?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            timeline.rows.push(read_page_metadata(row, timeline.rows.len())?);
+            timeline
+                .rows
+                .push(read_page_metadata(row, timeline.rows.len())?);
         }
     }
-    let selected: Vec<usize> = timeline.fetch(options)["rows"].as_array().expect("page rows").iter()
+    let selected: Vec<usize> = timeline.fetch(options)["rows"]
+        .as_array()
+        .expect("page rows")
+        .iter()
         .map(|stub| stub["position"].as_u64().expect("stub position") as usize)
         .collect();
     {
-        let mut statement = transaction.prepare("SELECT row_json FROM timeline_rows WHERE position = ?1")?;
+        let mut statement =
+            transaction.prepare("SELECT row_json FROM timeline_rows WHERE position = ?1")?;
         for index in selected {
             let encoded: String = statement.query_row([index as i64], |row| row.get(0))?;
             let row: Value = serde_json::from_str(&encoded)?;
             ensure!(valid_row(&row), "Invalid timeline row");
             for field in ["seqStart", "seqEnd", "sourceSeqRanges"] {
-                ensure!(row[field] == timeline.rows[index][field], "Invalid timeline row metadata");
+                ensure!(
+                    row[field] == timeline.rows[index][field],
+                    "Invalid timeline row metadata"
+                );
             }
             timeline.rows[index] = row;
         }
@@ -330,10 +398,12 @@ fn persist_row(timeline: &mut Timeline, index: usize) -> Result<()> {
     let encoded = serde_json::to_string(&timeline.rows[index])?;
     let store = timeline.storage.as_mut().unwrap();
     let transaction = store.connection.transaction()?;
-    transaction.prepare_cached(UPSERT_ROW)?.execute(params![index as i64, encoded])?;
-    transaction.prepare_cached(UPDATE_METADATA)?.execute(params![
-        timeline.epoch, timeline.next_seq, timeline.min_seq
-    ])?;
+    transaction
+        .prepare_cached(UPSERT_ROW)?
+        .execute(params![index as i64, encoded])?;
+    transaction
+        .prepare_cached(UPDATE_METADATA)?
+        .execute(params![timeline.epoch, timeline.next_seq, timeline.min_seq])?;
     transaction.commit()?;
     Ok(())
 }
@@ -350,20 +420,25 @@ pub(super) fn append(
     let old_min = timeline.min_seq;
     let old_len = timeline.rows.len();
     let id = super::identity(&item);
-    let old_identity = id.as_ref().and_then(|id| timeline.identities.get(id).copied());
+    let old_identity = id
+        .as_ref()
+        .and_then(|id| timeline.identities.get(id).copied());
     let candidate = old_identity.or_else(|| {
         if matches!(super::kind(&item), "assistant_message" | "reasoning") {
-            old_len.checked_sub(1).filter(|&index| {
-                super::kind(&timeline.rows[index]["item"]) == super::kind(&item)
-            })
+            old_len
+                .checked_sub(1)
+                .filter(|&index| super::kind(&timeline.rows[index]["item"]) == super::kind(&item))
         } else {
             None
         }
     });
     let old_row = candidate.map(|index| (index, timeline.rows[index].clone()));
     let submitted_id = (item["type"] == "user_message")
-        .then(|| item["clientMessageId"].as_str().map(str::to_owned)).flatten();
-    let old_submitted = submitted_id.as_ref().and_then(|id| timeline.submitted.get(id).copied());
+        .then(|| item["clientMessageId"].as_str().map(str::to_owned))
+        .flatten();
+    let old_submitted = submitted_id
+        .as_ref()
+        .and_then(|id| timeline.submitted.get(id).copied());
     let (row, index) = timeline.append_indexed(item, options);
     if let Err(error) = persist_row(timeline, index) {
         timeline.rows.truncate(old_len);
@@ -408,7 +483,10 @@ pub(super) fn enrich(
         if let Some(previous) = previous {
             timeline.rows[index]["providerMessageId"] = previous;
         } else {
-            timeline.rows[index].as_object_mut().unwrap().remove("providerMessageId");
+            timeline.rows[index]
+                .as_object_mut()
+                .unwrap()
+                .remove("providerMessageId");
         }
         return Err(error);
     }

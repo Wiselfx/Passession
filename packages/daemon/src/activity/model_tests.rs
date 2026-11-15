@@ -125,7 +125,11 @@ fn failure_pages_discover_old_errors_and_recover_every_item_byte() {
         let page = read(&timeline, &snapshot(), &input);
         let entries = page["entries"].as_array().unwrap();
         empty_pages += usize::from(entries.is_empty());
-        found.extend(entries.iter().map(|entry| (entry.clone(), item_reference(&page, entry))));
+        found.extend(
+            entries
+                .iter()
+                .map(|entry| (entry.clone(), item_reference(&page, entry))),
+        );
         if page["nextCursor"].is_null() {
             break;
         }
@@ -178,10 +182,7 @@ fn crossing_tool_lifecycle_never_expands_or_duplicates_backward_pages() {
     let (failure, reference) = failure.unwrap();
     assert_eq!(failure["seqEnd"], 32);
     assert_eq!(failure["errorText"], "cross-boundary failure");
-    assert_eq!(
-        recover_item(&timeline, reference)["status"],
-        "failed"
-    );
+    assert_eq!(recover_item(&timeline, reference)["status"], "failed");
 }
 
 #[test]
@@ -487,8 +488,7 @@ fn detail_cache_evicts_by_entry_and_byte_budgets_without_changing_reads() {
         serialize_cached(&cache, value, 0, CHUNK_BYTES, false).unwrap();
     }
     serialize_cached(&cache, &values[0], 0, CHUNK_BYTES, false).unwrap();
-    serialize_cached(&cache, &values[DETAIL_CACHE_ENTRIES], 0, CHUNK_BYTES, false)
-        .unwrap();
+    serialize_cached(&cache, &values[DETAIL_CACHE_ENTRIES], 0, CHUNK_BYTES, false).unwrap();
     {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.entries.len(), DETAIL_CACHE_ENTRIES);
@@ -507,7 +507,11 @@ fn detail_cache_evicts_by_entry_and_byte_budgets_without_changing_reads() {
         assert!(cache.bytes <= DETAIL_CACHE_BYTES);
         assert_eq!(
             cache.bytes,
-            cache.entries.iter().map(|entry| entry.charge).sum::<usize>()
+            cache
+                .entries
+                .iter()
+                .map(|entry| entry.charge)
+                .sum::<usize>()
         );
         assert!(cache.entries.iter().all(|entry| {
             entry.charge == cache_charge(&entry.source).unwrap() + entry.text.capacity()
@@ -617,7 +621,12 @@ fn detail_cache_status_checks_current_selected_value_and_scope() {
     snapshot["status"] = json!("idle");
     assert!(status(&snapshot, &next).is_ok());
     snapshot["custom"] = json!("b".repeat(9000));
-    assert!(status(&snapshot, &next).unwrap_err().to_string().contains("Status value changed"));
+    assert!(
+        status(&snapshot, &next)
+            .unwrap_err()
+            .to_string()
+            .contains("Status value changed")
+    );
     let current = status(&snapshot, &input).unwrap();
     assert_ne!(current["chunk"], first["chunk"]);
     assert_ne!(
@@ -654,8 +663,8 @@ fn detail_cache_activity_reads_mutated_source_at_unchanged_sequence() {
     page["rows"][0]["item"]["text"] = json!("b".repeat(9000));
     let changed = activity(&page, &snapshot(), &next).unwrap();
     assert_ne!(changed["chunk"], unchanged["chunk"]);
-    let expected = serialize_streaming(&page["rows"][0]["item"], CHUNK_BYTES, CHUNK_BYTES, false)
-        .unwrap();
+    let expected =
+        serialize_streaming(&page["rows"][0]["item"], CHUNK_BYTES, CHUNK_BYTES, false).unwrap();
     assert_eq!(changed["chunk"], expected.text);
     page["rows"][0]["seqEnd"] = json!(2);
     assert!(activity(&page, &snapshot(), &next).is_err());
@@ -681,13 +690,15 @@ fn detail_cache_reuses_a_64k_tool_result_for_every_continuation() {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.entries.len(), 1);
         assert_eq!(cache.hits, 0);
-        (cache.entries[0].text.as_ptr(), cache.entries[0].revision.clone())
+        (
+            cache.entries[0].text.as_ptr(),
+            cache.entries[0].revision.clone(),
+        )
     };
     let mut recovered = first.text;
     let mut continuations = 0;
     while recovered.len() < expected.len() {
-        let part = serialize_cached(&cache, &value, recovered.len(), CHUNK_BYTES, true)
-            .unwrap();
+        let part = serialize_cached(&cache, &value, recovered.len(), CHUNK_BYTES, true).unwrap();
         assert_eq!(part.revision, revision);
         assert_eq!(part.total, expected.len());
         assert!(!part.text.is_empty());

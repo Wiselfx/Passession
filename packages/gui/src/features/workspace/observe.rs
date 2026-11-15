@@ -8,7 +8,7 @@
 use paseo_gui_core::{CoreEvent, CoreHandle, RequestId};
 use serde_json::Value;
 
-use super::rpc::{message, payload, str_of, RpcError};
+use super::rpc::{RpcError, message, payload, str_of};
 
 /// One item of an observation stream.
 #[derive(Debug, Clone)]
@@ -32,9 +32,20 @@ pub struct Observation {
 }
 
 impl Observation {
-    pub fn start(core: &CoreHandle, host_id: &str, request_type: &str, response_type: &str, fields: Value) -> Self {
+    pub fn start(
+        core: &CoreHandle,
+        host_id: &str,
+        request_type: &str,
+        response_type: &str,
+        fields: Value,
+    ) -> Self {
         let id = core.observe(host_id, message(request_type, fields), response_type);
-        Self { core: core.clone(), id, host_id: host_id.to_owned(), over: false }
+        Self {
+            core: core.clone(),
+            id,
+            host_id: host_id.to_owned(),
+            over: false,
+        }
     }
 
     /// The items of this observation in one core event batch, in wire order.
@@ -45,8 +56,13 @@ impl Observation {
         }
         for event in events {
             match event {
-                CoreEvent::Response { request_id, result, .. } if *request_id == self.id => match result {
-                    Ok(value) => out.push(ObsEvent::Snapshot { payload: payload(value).clone(), restored: false }),
+                CoreEvent::Response {
+                    request_id, result, ..
+                } if *request_id == self.id => match result {
+                    Ok(value) => out.push(ObsEvent::Snapshot {
+                        payload: payload(value).clone(),
+                        restored: false,
+                    }),
                     Err(error) => {
                         self.over = true;
                         out.push(ObsEvent::Failed(RpcError {
@@ -56,11 +72,14 @@ impl Observation {
                         }));
                     }
                 },
-                CoreEvent::HostEvent { host_id, event } if *host_id == self.host_id && routed_to(event, &self.id) => {
+                CoreEvent::HostEvent { host_id, event }
+                    if *host_id == self.host_id && routed_to(event, &self.id) =>
+                {
                     match str_of(event, "type") {
-                        "subscription.restored" => {
-                            out.push(ObsEvent::Snapshot { payload: payload(event).clone(), restored: true })
-                        }
+                        "subscription.restored" => out.push(ObsEvent::Snapshot {
+                            payload: payload(event).clone(),
+                            restored: true,
+                        }),
                         "subscription.error" => {
                             let body = payload(event);
                             let text = str_of(body, "error");

@@ -14,10 +14,20 @@ use std::collections::{HashMap, HashSet};
 const HOST_DISCONNECTED: &str = "workspace.git.diff.hostDisconnectedCached";
 
 enum Pending {
-    Status { generation: u64 },
-    Commits { generation: u64 },
-    CommitGet { generation: u64 },
-    FileDiff { path: String, generation: u64, revision: u64 },
+    Status {
+        generation: u64,
+    },
+    Commits {
+        generation: u64,
+    },
+    CommitGet {
+        generation: u64,
+    },
+    FileDiff {
+        path: String,
+        generation: u64,
+        revision: u64,
+    },
 }
 
 pub struct DiffController {
@@ -44,10 +54,19 @@ pub struct DiffController {
 
 impl DiffController {
     pub fn new(target: &PanelTarget, _store: &GitStore) -> Self {
-        let selected_path = target.data.get("focusPath").or_else(|| target.data.get("path"))
-            .and_then(Value::as_str).unwrap_or_default().to_owned();
-        let sha = target.data.get("sha").and_then(Value::as_str)
-            .map(str::to_owned).unwrap_or_else(|| target.id.clone().unwrap_or_default());
+        let selected_path = target
+            .data
+            .get("focusPath")
+            .or_else(|| target.data.get("path"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let sha = target
+            .data
+            .get("sha")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| target.id.clone().unwrap_or_default());
         Self {
             host: target.server_id.clone(),
             cwd: target.cwd.clone(),
@@ -121,8 +140,18 @@ impl DiffController {
         }
         self.loading_patches.clear();
         self.dirty = true;
-        let request = wire::send(&ui.core, &self.host, "checkout_status_request", json!({ "cwd": self.cwd }));
-        self.pending.insert(request, Pending::Status { generation: self.generation });
+        let request = wire::send(
+            &ui.core,
+            &self.host,
+            "checkout_status_request",
+            json!({ "cwd": self.cwd }),
+        );
+        self.pending.insert(
+            request,
+            Pending::Status {
+                generation: self.generation,
+            },
+        );
     }
 
     fn finish_commit(&mut self, ui: &UiContext, subject: Option<String>, files: Vec<Value>) {
@@ -174,11 +203,14 @@ impl DiffController {
             "checkout.commits.file_diff.request",
             json!({ "cwd": self.cwd, "sha": self.sha, "path": path }),
         );
-        self.pending.insert(request, Pending::FileDiff {
-            path: path.to_owned(),
-            generation: self.generation,
-            revision: self.patch_revision,
-        });
+        self.pending.insert(
+            request,
+            Pending::FileDiff {
+                path: path.to_owned(),
+                generation: self.generation,
+                revision: self.patch_revision,
+            },
+        );
     }
 
     pub fn process(&mut self, ui: &UiContext, store: &mut GitStore) -> bool {
@@ -196,7 +228,9 @@ impl DiffController {
                     self.error = Some(t(HOST_DISCONNECTED));
                     self.dirty = true;
                 }
-                CoreEvent::Response { request_id, result, .. } => {
+                CoreEvent::Response {
+                    request_id, result, ..
+                } => {
                     if let Some(pending) = self.pending.remove(request_id) {
                         self.on_response(ui, pending, result);
                     }
@@ -239,8 +273,14 @@ impl DiffController {
                     self.loading = false;
                     return;
                 }
-                let request = wire::send(&ui.core, &self.host, "checkout.commits.list.request", json!({ "cwd": self.cwd }));
-                self.pending.insert(request, Pending::Commits { generation });
+                let request = wire::send(
+                    &ui.core,
+                    &self.host,
+                    "checkout.commits.list.request",
+                    json!({ "cwd": self.cwd }),
+                );
+                self.pending
+                    .insert(request, Pending::Commits { generation });
             }
             Pending::Commits { generation } => {
                 if generation != self.generation {
@@ -255,13 +295,24 @@ impl DiffController {
                         return;
                     }
                 };
-                if let Some(commit) = array(&payload, "commits").iter().find(|c| text(c, "sha") == self.sha) {
-                    self.finish_commit(ui, Some(text(commit, "subject").to_owned()), array(commit, "files").to_vec());
+                if let Some(commit) = array(&payload, "commits")
+                    .iter()
+                    .find(|c| text(c, "sha") == self.sha)
+                {
+                    self.finish_commit(
+                        ui,
+                        Some(text(commit, "subject").to_owned()),
+                        array(commit, "files").to_vec(),
+                    );
                 } else if host::supports(ui, &self.host, "gitLog") {
                     let request = wire::send(
-                        &ui.core, &self.host, "checkout.commit.get.request", json!({ "cwd": self.cwd, "sha": self.sha }),
+                        &ui.core,
+                        &self.host,
+                        "checkout.commit.get.request",
+                        json!({ "cwd": self.cwd, "sha": self.sha }),
                     );
-                    self.pending.insert(request, Pending::CommitGet { generation });
+                    self.pending
+                        .insert(request, Pending::CommitGet { generation });
                 } else {
                     self.finish_commit(ui, None, Vec::new());
                 }
@@ -275,13 +326,20 @@ impl DiffController {
                 let (subject, files) = match wire::git_result(result) {
                     Ok(payload) => {
                         let commit = object(&payload, "commit");
-                        (Some(text(commit, "subject").to_owned()), array(commit, "files").to_vec())
+                        (
+                            Some(text(commit, "subject").to_owned()),
+                            array(commit, "files").to_vec(),
+                        )
                     }
                     Err(_) => (None, Vec::new()),
                 };
                 self.finish_commit(ui, subject, files);
             }
-            Pending::FileDiff { path, generation, revision } => {
+            Pending::FileDiff {
+                path,
+                generation,
+                revision,
+            } => {
                 if generation != self.generation || revision != self.patch_revision {
                     return;
                 }

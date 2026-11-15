@@ -17,8 +17,8 @@ use super::{
     catalog,
     wire::{self, Error, Frame, Status, Turn},
 };
+use crate::providers::{api::*, prompt};
 use paseo_client::process::ManagedProcess;
-use crate::{ providers::{api::*, prompt}, };
 
 type Reply = oneshot::Sender<Result<Value>>;
 enum Command {
@@ -187,7 +187,10 @@ impl AgentSession for Session {
     async fn steer_active_turn(&self, _prompt: Value, _options: Value) -> Result<Value> {
         Ok(json!({"status":"unavailable"}))
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         let events = self
             .snapshot
             .lock()
@@ -330,10 +333,11 @@ impl Runtime {
                 Next::Command(Some(Command::Close(reply))) => {
                     let result = self.stop(true).await.map(|_| Value::Null);
                     if let Some(images) = self.images.take()
-                        && let Err(error) = images.close() {
-                            let _ = reply.send(Err(error.into()));
-                            break;
-                        }
+                        && let Err(error) = images.close()
+                    {
+                        let _ = reply.send(Err(error.into()));
+                        break;
+                    }
                     let _ = reply.send(result);
                     break;
                 }
@@ -419,9 +423,10 @@ impl Runtime {
             .driver
             .as_ref()
             .is_some_and(|d| d.selection != selection)
-            && let Some(driver) = self.driver.take() {
-                driver.stop(false).await?;
-            }
+            && let Some(driver) = self.driver.take()
+        {
+            driver.stop(false).await?;
+        }
         if self.driver.is_some() {
             return Ok(());
         }
@@ -478,8 +483,7 @@ impl Runtime {
                 }
                 match wire::decode(&line)? {
                     Frame::Init {
-                        conversation_id,
-                        ..
+                        conversation_id, ..
                     } => return Ok(conversation_id),
                     Frame::Result { result } => {
                         return Err(

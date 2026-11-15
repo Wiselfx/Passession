@@ -1,6 +1,6 @@
 //! Native Rust GUI (`paseo-gui`, Makepad) builds for desktop, Android and iOS.
 //! Mobile packages are remote-only clients and never contain the daemon.
-use crate::{assets, build, common::*, notices};
+use crate::{assets, build, common::*, notices, tailnet};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -139,9 +139,17 @@ impl Identity {
             )
         } else {
             let channel = env::var("PASEO_RELEASE_CHANNEL").unwrap_or_else(|_| {
-                if version.contains('-') { "beta" } else { "stable" }.into()
+                if version.contains('-') {
+                    "beta"
+                } else {
+                    "stable"
+                }
+                .into()
             });
-            (channel, capture(command("git")?.args(["rev-parse", "HEAD"]))?)
+            (
+                channel,
+                capture(command("git")?.args(["rev-parse", "HEAD"]))?,
+            )
         };
         ensure!(
             matches!(channel.as_str(), "stable" | "beta"),
@@ -221,7 +229,13 @@ fn stage_resources(metadata: &Value, root: &Path) -> Result<Vec<notices::Package
                 .collect::<Result<Vec<_>>>()?
                 .join("/");
             let sha256 = sha256_file(entry.path())?;
-            if notices::is_excluded(&excluded, &directory.name, &directory.version, &file, &sha256)? {
+            if notices::is_excluded(
+                &excluded,
+                &directory.name,
+                &directory.version,
+                &file,
+                &sha256,
+            )? {
                 continue;
             }
             copy_tree(entry.path(), &destination.join(relative))?;
@@ -235,7 +249,9 @@ fn stage_resources(metadata: &Value, root: &Path) -> Result<Vec<notices::Package
         }
     }
     ensure!(
-        packaged.iter().any(|resource| resource.package == "makepad-widgets"),
+        packaged
+            .iter()
+            .any(|resource| resource.package == "makepad-widgets"),
         "makepad-widgets resources were not found in the paseo-gui dependency closure"
     );
     notices::ensure_references_staged(&packaged)?;
@@ -248,13 +264,21 @@ fn stage_notices(
     packaged: &[notices::PackagedResource],
     platform: &str,
     root: &Path,
+    native_notices: &str,
 ) -> Result<()> {
     text(
         &root.join("THIRD-PARTY-NOTICES.txt"),
-        notices::render_app(metadata, packaged, platform)?,
+        format!(
+            "{}{}",
+            notices::render_app(metadata, packaged, platform)?,
+            native_notices
+        ),
         0o644,
     )?;
-    copy_tree(&crate::common::root()?.join("LICENSE"), &root.join("LICENSE"))?;
+    copy_tree(
+        &crate::common::root()?.join("LICENSE"),
+        &root.join("LICENSE"),
+    )?;
     chmod(&root.join("LICENSE"), 0o644)
 }
 
@@ -265,8 +289,13 @@ fn substitute(template: &str, values: &[(&str, &str)]) -> Result<String> {
         output = output.replace(&format!("$({name})"), value);
     }
     if let Some(start) = output.find("$(") {
-        let end = output[start..].find(')').map_or(output.len(), |end| start + end + 1);
-        bail!("Unresolved placeholder {} in plist template", &output[start..end]);
+        let end = output[start..]
+            .find(')')
+            .map_or(output.len(), |end| start + end + 1);
+        bail!(
+            "Unresolved placeholder {} in plist template",
+            &output[start..end]
+        );
     }
     Ok(output)
 }
@@ -298,20 +327,53 @@ fn plist_set(plist: &Path, key: &str, kind: &str, value: &str) -> Result<()> {
 pub const SMOKE_FEATURE: &str = "desktop-smoke";
 
 fn build_desktop(target: &str, mode: &str, identity: &Identity, smoke: bool) -> Result<PathBuf> {
-    // macOS needs separate deployment targets; local builds need separate identity.
-    let combined_release = identity.release && target != "macos";
-    if !combined_release {
-        build::build_native(mode, false)?;
-    }
+    let tailnet = tailnet::desktop(target, MACOS_MINIMUM)?;
+    let update_helper = crate::app_updater::desktop(target)?;
+    build::build_native(mode, false)?;
+    let bundle = build_desktop_app(target, mode, identity, smoke)?;
+    let executable = bundle.join(desktop_executable(target));
+    let directory = executable.parent().context("Missing app directory")?;
+    copy_tree(
+        &tailnet.library,
+        &directory.join(tailnet::library_name(target)?),
+    )?;
+    copy_tree(
+        &update_helper,
+        &directory.join(crate::app_updater::executable_name(target)),
+    )?;
+    chmod(
+        &directory.join(crate::app_updater::executable_name(target)),
+        0o755,
+    )?;
+    tailnet::require_packaged(&executable, target)?;
+    crate::app_updater::require_packaged(&executable, target)?;
+    let resources = bundle.join(desktop_resources(target));
+    let mut notices = fs::OpenOptions::new()
+        .append(true)
+        .open(resources.join("THIRD-PARTY-NOTICES.txt"))?;
+    std::io::Write::write_all(&mut notices, tailnet.notices.as_bytes())?;
+    build::bundle_runtime(
+        &bundle.join(desktop_runtime(target)),
+        mode,
+        "desktop-bundled",
+    )?;
+    Ok(bundle)
+}
+
+fn build_desktop_app(
+    target: &str,
+    mode: &str,
+    identity: &Identity,
+    smoke: bool,
+) -> Result<PathBuf> {
     let mut cargo = command(cargo())?;
     cargo
         .args(["build", "--locked", "-p", "paseo-gui", "--bin", CARGO_BIN])
         .env("MAKEPAD_PACKAGE_DIR", "makepad");
-    if combined_release {
-        cargo.args(["-p", "paseo-daemon", "--bin", "paseo"]);
-    }
     if smoke {
-        cargo.arg("--features").arg(format!("paseo-gui/{SMOKE_FEATURE}"));
+        cargo
+            .arg("--features")
+            .arg(format!("paseo-gui/{SMOKE_FEATURE}"));
     }
     cargo_profile(&mut cargo, mode);
     identity.apply(&mut cargo);
@@ -320,11 +382,7 @@ fn build_desktop(target: &str, mode: &str, identity: &Identity, smoke: bool) -> 
             .env("MAKEPAD", "apple_bundle")
             .env("MACOSX_DEPLOYMENT_TARGET", MACOS_MINIMUM);
     }
-    if combined_release {
-        build::build_desktop_release(mode, &mut cargo)?;
-    } else {
-        run(&mut cargo)?;
-    }
+    run(&mut cargo)?;
     let compiled = target_root()?
         .join(mode)
         .join(format!("{CARGO_BIN}{}", env::consts::EXE_SUFFIX));
@@ -338,7 +396,11 @@ fn build_desktop(target: &str, mode: &str, identity: &Identity, smoke: bool) -> 
             mode.to_owned()
         });
     fresh(&output)?;
-    let bundle = output.join(if target == "macos" { MACOS_BUNDLE } else { "bundle" });
+    let bundle = output.join(if target == "macos" {
+        MACOS_BUNDLE
+    } else {
+        "bundle"
+    });
     let executable = bundle.join(desktop_executable(target));
     copy_tree(&compiled, &executable)?;
     chmod(&executable, 0o755)?;
@@ -359,7 +421,8 @@ fn build_desktop(target: &str, mode: &str, identity: &Identity, smoke: bool) -> 
             0o644,
         )?;
         ensure!(
-            plist_value(&bundle.join("Contents/Info.plist"), "CFBundleIdentifier")? == DESKTOP_APP_ID,
+            plist_value(&bundle.join("Contents/Info.plist"), "CFBundleIdentifier")?
+                == DESKTOP_APP_ID,
             "macOS Info.plist template lost the {DESKTOP_APP_ID} bundle identifier"
         );
         text(&bundle.join("Contents/PkgInfo"), "APPL????", 0o644)?;
@@ -372,8 +435,7 @@ fn build_desktop(target: &str, mode: &str, identity: &Identity, smoke: bool) -> 
     }
     let metadata = notices::cargo_metadata(notices::host_triple()?)?;
     let packaged = stage_resources(&metadata, &resources)?;
-    stage_notices(&metadata, &packaged, target, &resources)?;
-    build::bundle_runtime(&bundle.join(desktop_runtime(target)), mode, "desktop-bundled")?;
+    stage_notices(&metadata, &packaged, target, &resources, "")?;
     // A smoke bundle carries a test driver: it gets no build descriptor, so
     // package-desktop can never pick it up.
     if !smoke {
@@ -434,7 +496,10 @@ fn android_sdk() -> Result<PathBuf> {
             "ANDROID_HOME and ANDROID_SDK_ROOT select different SDKs"
         );
     }
-    let sdk = PathBuf::from(home.or(root).context("Set ANDROID_HOME to the Android SDK")?);
+    let sdk = PathBuf::from(
+        home.or(root)
+            .context("Set ANDROID_HOME to the Android SDK")?,
+    );
     ensure!(sdk.is_dir(), "Android SDK not found: {}", sdk.display());
     Ok(sdk)
 }
@@ -486,7 +551,9 @@ fn elf_needed(image: &[u8]) -> Result<Vec<String>> {
         Ok(if wide {
             u64::from_le_bytes(image.get(at..at + 8).ok_or_else(malformed)?.try_into()?)
         } else {
-            u64::from(u32::from_le_bytes(image.get(at..at + 4).ok_or_else(malformed)?.try_into()?))
+            u64::from(u32::from_le_bytes(
+                image.get(at..at + 4).ok_or_else(malformed)?.try_into()?,
+            ))
         })
     };
     let half = |at: usize| -> Result<usize> {
@@ -496,14 +563,23 @@ fn elf_needed(image: &[u8]) -> Result<Vec<String>> {
     };
     let size = if wide { 8 } else { 4 };
     let program_offset = word(if wide { 32 } else { 28 })? as usize;
-    let (entry_size, count) = if wide { (half(54)?, half(56)?) } else { (half(42)?, half(44)?) };
+    let (entry_size, count) = if wide {
+        (half(54)?, half(56)?)
+    } else {
+        (half(42)?, half(44)?)
+    };
     // (type, file offset, virtual address, file size) of every program header.
     let mut segments = Vec::with_capacity(count);
     for index in 0..count {
         let header = program_offset
             .checked_add(index.checked_mul(entry_size).ok_or_else(malformed)?)
             .ok_or_else(malformed)?;
-        let kind = u32::from_le_bytes(image.get(header..header + 4).ok_or_else(malformed)?.try_into()?);
+        let kind = u32::from_le_bytes(
+            image
+                .get(header..header + 4)
+                .ok_or_else(malformed)?
+                .try_into()?,
+        );
         let (offset, address, file_size) = if wide {
             (word(header + 8)?, word(header + 16)?, word(header + 32)?)
         } else {
@@ -511,13 +587,17 @@ fn elf_needed(image: &[u8]) -> Result<Vec<String>> {
         };
         segments.push((kind, offset, address, file_size));
     }
-    let Some(&(_, dynamic_offset, _, dynamic_size)) = segments.iter().find(|segment| segment.0 == 2) else {
+    let Some(&(_, dynamic_offset, _, dynamic_size)) =
+        segments.iter().find(|segment| segment.0 == 2)
+    else {
         return Ok(Vec::new());
     };
     let mut needed = Vec::new();
     let mut string_table = None;
     let mut at = dynamic_offset as usize;
-    let end = at.checked_add(dynamic_size as usize).ok_or_else(malformed)?;
+    let end = at
+        .checked_add(dynamic_size as usize)
+        .ok_or_else(malformed)?;
     while at + 2 * size <= end {
         let (tag, value) = (word(at)?, word(at + size)?);
         match tag {
@@ -534,7 +614,9 @@ fn elf_needed(image: &[u8]) -> Result<Vec<String>> {
     let address = string_table.ok_or_else(malformed)?;
     let table = segments
         .iter()
-        .find(|&&(kind, _, start, length)| kind == 1 && address >= start && address < start + length)
+        .find(|&&(kind, _, start, length)| {
+            kind == 1 && address >= start && address < start + length
+        })
         .map(|&(_, offset, start, _)| (address - start + offset) as usize)
         .ok_or_else(malformed)?;
     needed
@@ -576,9 +658,11 @@ fn ensure_android_floor(library: &Path) -> Result<()> {
 fn gradle() -> Result<PathBuf> {
     let directory = cache()?.join("paseo-packaging");
     let home = directory.join(format!("gradle-{GRADLE_VERSION}"));
-    let launcher = home
-        .join("bin")
-        .join(if cfg!(windows) { "gradle.bat" } else { "gradle" });
+    let launcher = home.join("bin").join(if cfg!(windows) {
+        "gradle.bat"
+    } else {
+        "gradle"
+    });
     if launcher.is_file() {
         return Ok(launcher);
     }
@@ -618,7 +702,10 @@ fn gradle() -> Result<PathBuf> {
     );
     remove_if_exists(&home)?;
     fs::rename(unpacked, &home)?;
-    ensure!(launcher.is_file(), "Gradle launcher missing after unpacking");
+    ensure!(
+        launcher.is_file(),
+        "Gradle launcher missing after unpacking"
+    );
     Ok(launcher)
 }
 
@@ -636,7 +723,25 @@ fn release_key(android: &Path) -> Result<bool> {
 }
 
 /// Build the APK or AAB for `abis`; returns Gradle's output inside the GUI work directory.
-fn build_android(mode: &str, format: &str, abis: &[AndroidAbi], identity: &Identity) -> Result<PathBuf> {
+fn build_android(
+    mode: &str,
+    format: &str,
+    abis: &[AndroidAbi],
+    identity: &Identity,
+) -> Result<PathBuf> {
+    let work = gui_output()?.join("android").join(mode);
+    build_android_native(mode, abis, identity, &work, true, true)?;
+    package_android_native(mode, format, abis, identity, &work)
+}
+
+fn build_android_native(
+    mode: &str,
+    abis: &[AndroidAbi],
+    identity: &Identity,
+    work: &Path,
+    app: bool,
+    native: bool,
+) -> Result<()> {
     let sdk = android_sdk()?;
     let ndk = android_ndk(&sdk)?;
     let host = match platform()? {
@@ -645,9 +750,9 @@ fn build_android(mode: &str, format: &str, abis: &[AndroidAbi], identity: &Ident
         _ => "windows-x86_64",
     };
     let tools = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
-    let work = gui_output()?.join("android").join(mode);
     fresh(&work.join("jniLibs"))?;
     fresh(&work.join("assets"))?;
+    let mut native_notices = std::collections::BTreeSet::new();
     for abi in abis {
         let clang = tools.join(format!(
             "{}{ANDROID_API}-clang{}",
@@ -656,48 +761,98 @@ fn build_android(mode: &str, format: &str, abis: &[AndroidAbi], identity: &Ident
         ));
         let archiver = tools.join(format!("llvm-ar{}", env::consts::EXE_SUFFIX));
         ensure!(clang.is_file(), "NDK linker missing: {}", clang.display());
-        let underscored = abi.triple.replace('-', "_");
-        let mut cargo = command(cargo())?;
-        cargo
-            .args([
-                "rustc",
-                "--locked",
-                "-p",
-                "paseo-gui",
-                "--lib",
-                "--crate-type",
-                "cdylib",
-                "--target",
-                abi.triple,
-            ])
-            .env(
-                format!("CARGO_TARGET_{}_LINKER", underscored.to_ascii_uppercase()),
-                &clang,
-            )
-            .env(format!("CC_{underscored}"), &clang)
-            .env(format!("AR_{underscored}"), &archiver)
-            .env("ANDROID_NDK_HOME", &ndk)
-            .env("ANDROID_HOME", &sdk);
-        cargo_profile(&mut cargo, mode);
-        identity.apply(&mut cargo);
-        run(&mut cargo)?;
-        let library = target_root()?
-            .join(abi.triple)
-            .join(mode)
-            .join("libpaseo_gui.so");
-        ensure!(
-            elf_identity(&library)? == (abi.class, abi.machine),
-            "{} is not an {} library",
-            library.display(),
-            abi.abi
-        );
-        ensure_android_floor(&library)?;
-        // MakepadActivity loads "makepad".
-        copy_tree(&library, &work.join("jniLibs").join(abi.abi).join("libmakepad.so"))?;
+        if native {
+            let tailnet = tailnet::android(abi.triple, &clang, &ndk)?;
+            ensure!(
+                elf_identity(&tailnet.library)? == (abi.class, abi.machine),
+                "Embedded Tailscale library architecture does not match {}",
+                abi.abi
+            );
+            ensure_android_floor(&tailnet.library)?;
+            copy_tree(
+                &tailnet.library,
+                &work
+                    .join("jniLibs")
+                    .join(abi.abi)
+                    .join(tailnet::library_name("android")?),
+            )?;
+            native_notices.insert(tailnet.notices);
+        }
+        if app {
+            let underscored = abi.triple.replace('-', "_");
+            let mut cargo = command(cargo())?;
+            cargo
+                .args([
+                    "rustc",
+                    "--locked",
+                    "-p",
+                    "paseo-gui",
+                    "--lib",
+                    "--crate-type",
+                    "cdylib",
+                    "--target",
+                    abi.triple,
+                ])
+                .env(
+                    format!("CARGO_TARGET_{}_LINKER", underscored.to_ascii_uppercase()),
+                    &clang,
+                )
+                .env(format!("CC_{underscored}"), &clang)
+                .env(format!("AR_{underscored}"), &archiver)
+                .env("ANDROID_NDK_HOME", &ndk)
+                .env("ANDROID_HOME", &sdk);
+            cargo_profile(&mut cargo, mode);
+            identity.apply(&mut cargo);
+            run(&mut cargo)?;
+            let library = target_root()?
+                .join(abi.triple)
+                .join(mode)
+                .join("libpaseo_gui.so");
+            ensure!(
+                elf_identity(&library)? == (abi.class, abi.machine),
+                "{} is not an {} library",
+                library.display(),
+                abi.abi
+            );
+            ensure_android_floor(&library)?;
+            // MakepadActivity loads "makepad".
+            copy_tree(
+                &library,
+                &work.join("jniLibs").join(abi.abi).join("libmakepad.so"),
+            )?;
+        }
     }
-    let metadata = notices::cargo_metadata(abis[0].triple)?;
-    let packaged = stage_resources(&metadata, &work.join("assets"))?;
-    stage_notices(&metadata, &packaged, "android", &work.join("assets"))?;
+    if app {
+        let metadata = notices::cargo_metadata(abis[0].triple)?;
+        let packaged = stage_resources(&metadata, &work.join("assets"))?;
+        let native_notices = native_notices.into_iter().collect::<Vec<_>>().join("\n");
+        stage_notices(
+            &metadata,
+            &packaged,
+            "android",
+            &work.join("assets"),
+            &native_notices,
+        )?;
+    } else {
+        text(
+            &work.join("assets/THIRD-PARTY-NOTICES.txt"),
+            native_notices.into_iter().collect::<Vec<_>>().join("\n"),
+            0o644,
+        )?;
+        copy_tree(&root()?.join("LICENSE"), &work.join("assets/LICENSE"))?;
+    }
+    Ok(())
+}
+
+fn package_android_native(
+    mode: &str,
+    format: &str,
+    abis: &[AndroidAbi],
+    identity: &Identity,
+    work: &Path,
+) -> Result<PathBuf> {
+    let sdk = android_sdk()?;
+    let ndk = android_ndk(&sdk)?;
 
     let android = packaging()?.join("android");
     let mut credentials = Credentials(Vec::new());
@@ -708,15 +863,20 @@ fn build_android(mode: &str, format: &str, abis: &[AndroidAbi], identity: &Ident
             ensure!(
                 config["client"]
                     .as_array()
-                    .is_some_and(|clients| clients.iter().any(|client| client["client_info"]
-                        ["android_client_info"]["package_name"]
-                        == MOBILE_APP_ID)),
+                    .is_some_and(|clients| clients.iter().any(
+                        |client| client["client_info"]["android_client_info"]["package_name"]
+                            == MOBILE_APP_ID
+                    )),
                 "Firebase configuration is not for {MOBILE_APP_ID}"
             );
             credentials.stage(&source, android.join("app/google-services.json"))?;
         }
         // Rust's dev-fast profile packages as an Android debug variant.
-        let variant = if mode == "release" { "release" } else { "debug" };
+        let variant = if mode == "release" {
+            "release"
+        } else {
+            "debug"
+        };
         let task = match (format, variant) {
             ("apk", "release") => "assembleRelease",
             ("apk", _) => "assembleDebug",
@@ -747,7 +907,11 @@ fn build_android(mode: &str, format: &str, abis: &[AndroidAbi], identity: &Ident
         } else {
             gradle_build.join(format!("app/outputs/apk/{variant}/app-{variant}.apk"))
         };
-        ensure!(built.is_file(), "Gradle produced no {format} at {}", built.display());
+        ensure!(
+            built.is_file(),
+            "Gradle produced no {format} at {}",
+            built.display()
+        );
         Ok(built)
     })();
     let cleanup = credentials.restore();
@@ -768,6 +932,7 @@ fn android_artifact(
     android_arch: &str,
     identity: &Identity,
 ) -> Result<PathBuf> {
+    crate::release::integrity::validate_android(built, android_arch, format)?;
     let signing = if mode != "release" || !release_key(&packaging()?.join("android"))? {
         "-debug-signed"
     } else {
@@ -801,6 +966,15 @@ fn ios_template() -> Result<PathBuf> {
 
 /// Assemble the iOS bundle; `simulator` selects a simulator triple.
 fn build_ios(mode: &str, identity: &Identity, simulator: bool) -> Result<PathBuf> {
+    build_ios_native(mode, identity, simulator, None)
+}
+
+fn build_ios_native(
+    mode: &str,
+    identity: &Identity,
+    simulator: bool,
+    selected_tailnet: Option<&Path>,
+) -> Result<PathBuf> {
     ensure!(platform()? == "macos", "iOS builds require macOS and Xcode");
     let triple = match (simulator, arch()?) {
         (false, _) => "aarch64-apple-ios",
@@ -831,10 +1005,33 @@ fn build_ios(mode: &str, identity: &Identity, simulator: bool) -> Result<PathBuf
         "iOS Info.plist must declare {MOBILE_APP_ID} and executable {IOS_EXECUTABLE}"
     );
     let minimum = plist_value(&plist, "MinimumOSVersion")?;
+    let tailnet = match selected_tailnet {
+        Some(directory) => tailnet::NativeBuild {
+            library: directory.join(tailnet::library_name("ios")?),
+            notices: fs::read_to_string(directory.join("THIRD-PARTY-NOTICES.txt"))?,
+        },
+        None => tailnet::ios(triple, simulator, &minimum)?,
+    };
     let mut cargo = command(cargo())?;
     cargo
-        .args(["build", "--locked", "-p", "paseo-gui", "--bin", CARGO_BIN, "--target", triple])
-        .env("IPHONEOS_DEPLOYMENT_TARGET", &minimum);
+        .args([
+            "build",
+            "--locked",
+            "-p",
+            "paseo-gui",
+            "--bin",
+            CARGO_BIN,
+            "--target",
+            triple,
+        ])
+        .env("IPHONEOS_DEPLOYMENT_TARGET", &minimum)
+        .env(
+            "PASEO_TAILSCALE_STATIC_DIR",
+            tailnet
+                .library
+                .parent()
+                .context("Missing native archive directory")?,
+        );
     cargo_profile(&mut cargo, mode);
     identity.apply(&mut cargo);
     run(&mut cargo)?;
@@ -842,10 +1039,7 @@ fn build_ios(mode: &str, identity: &Identity, simulator: bool) -> Result<PathBuf
     fs::create_dir_all(&app)?;
     let executable = app.join(IOS_EXECUTABLE);
     copy_tree(
-        &target_root()?
-            .join(triple)
-            .join(mode)
-            .join(CARGO_BIN),
+        &target_root()?.join(triple).join(mode).join(CARGO_BIN),
         &executable,
     )?;
     chmod(&executable, 0o755)?;
@@ -858,7 +1052,11 @@ fn build_ios(mode: &str, identity: &Identity, simulator: bool) -> Result<PathBuf
         .arg(&app)
         .args([
             "--platform",
-            if simulator { "iphonesimulator" } else { "iphoneos" },
+            if simulator {
+                "iphonesimulator"
+            } else {
+                "iphoneos"
+            },
             "--minimum-deployment-target",
             minimum.as_str(),
             "--app-icon",
@@ -878,7 +1076,7 @@ fn build_ios(mode: &str, identity: &Identity, simulator: bool) -> Result<PathBuf
         .arg(app.join("Info.plist")))?;
     let metadata = notices::cargo_metadata(triple)?;
     let packaged = stage_resources(&metadata, &app)?;
-    stage_notices(&metadata, &packaged, "ios", &app)?;
+    stage_notices(&metadata, &packaged, "ios", &app, &tailnet.notices)?;
     Ok(app)
 }
 
@@ -921,7 +1119,12 @@ fn sign_ios(app: &Path, simulator: bool) -> Result<bool> {
         "string",
         &format!("{team}.{MOBILE_APP_ID}"),
     )?;
-    plist_set(&entitlements, "com.apple.developer.team-identifier", "string", &team)?;
+    plist_set(
+        &entitlements,
+        "com.apple.developer.team-identifier",
+        "string",
+        &team,
+    )?;
     plist_set(
         &entitlements,
         "get-task-allow",
@@ -929,8 +1132,9 @@ fn sign_ios(app: &Path, simulator: bool) -> Result<bool> {
         &plist_value(&decoded, "Entitlements:get-task-allow")?,
     )?;
     if plist_value(&entitlements, "aps-environment").is_ok() {
-        let environment = plist_value(&decoded, "Entitlements:aps-environment")
-            .context("The app requests push notifications; the provisioning profile lacks aps-environment")?;
+        let environment = plist_value(&decoded, "Entitlements:aps-environment").context(
+            "The app requests push notifications; the provisioning profile lacks aps-environment",
+        )?;
         plist_set(&entitlements, "aps-environment", "string", &environment)?;
     }
     copy_tree(&profile, &app.join("embedded.mobileprovision"))?;
@@ -961,7 +1165,10 @@ fn package_ios(app: &Path, signed: bool) -> Result<PathBuf> {
     eprintln!(
         "No PASEO_IOS_PROVISIONING_PROFILE: building an explicitly unsigned device .app, not an installable IPA"
     );
-    let output = release()?.join(format!("{}-unsigned.app.zip", artifact_stem("ios", "arm64")?));
+    let output = release()?.join(format!(
+        "{}-unsigned.app.zip",
+        artifact_stem("ios", "arm64")?
+    ));
     run(command("ditto")?
         .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
         .arg(app)
@@ -1041,7 +1248,13 @@ fn select<'a>(
 fn android_device(adb: &Path, device: Option<&str>) -> Result<(String, &'static AndroidAbi)> {
     let devices = adb_devices(&capture(command(adb)?.args(["devices", "-l"]))?);
     let (serial, _) = select("Android", &devices, device)?;
-    let reported = capture(command(adb)?.args(["-s", serial.as_str(), "shell", "getprop", "ro.product.cpu.abi"]))?;
+    let reported = capture(command(adb)?.args([
+        "-s",
+        serial.as_str(),
+        "shell",
+        "getprop",
+        "ro.product.cpu.abi",
+    ]))?;
     let abi = ANDROID_ABIS
         .iter()
         .find(|abi| abi.abi == reported)
@@ -1071,7 +1284,16 @@ fn run_android(adb: &Path, serial: &str, apk: &Path) -> Result<()> {
         .filter(|line| line.starts_with(&format!("{MOBILE_APP_ID}/")))
         .context("The installed package has no launcher activity")?
         .to_owned();
-    run(command(adb)?.args(["-s", serial, "shell", "am", "start", "-W", "-n", component.as_str()]))?;
+    run(command(adb)?.args([
+        "-s",
+        serial,
+        "shell",
+        "am",
+        "start",
+        "-W",
+        "-n",
+        component.as_str(),
+    ]))?;
     let started = Instant::now();
     let pid = loop {
         let output = command(adb)?
@@ -1106,7 +1328,10 @@ fn ios_devices(simulator: bool) -> Result<Vec<(String, String)>> {
             for entry in entries.as_array().into_iter().flatten() {
                 if entry["state"] == "Booted" {
                     devices.push((
-                        entry["udid"].as_str().context("Simulator lacks udid")?.to_owned(),
+                        entry["udid"]
+                            .as_str()
+                            .context("Simulator lacks udid")?
+                            .to_owned(),
                         entry["name"].as_str().unwrap_or_default().to_owned(),
                     ));
                 }
@@ -1118,7 +1343,11 @@ fn ios_devices(simulator: bool) -> Result<Vec<(String, String)>> {
             .args(["devicectl", "list", "devices", "--json-output"])
             .arg(output.path()))?;
         let listing = read_json(output.path())?;
-        for entry in listing["result"]["devices"].as_array().into_iter().flatten() {
+        for entry in listing["result"]["devices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
             if entry["hardwareProperties"]["platform"] == "iOS" {
                 devices.push((
                     entry["identifier"]
@@ -1147,7 +1376,9 @@ fn ios_target(device: Option<&str>) -> Result<(bool, String)> {
 
 fn run_ios(app: &Path, simulator: bool, device: &str) -> Result<()> {
     if simulator {
-        run(command("xcrun")?.args(["simctl", "install", device]).arg(app))?;
+        run(command("xcrun")?
+            .args(["simctl", "install", device])
+            .arg(app))?;
         return run(command("xcrun")?.args([
             "simctl",
             "launch",
@@ -1239,8 +1470,15 @@ pub fn build_gui(args: &[String]) -> Result<()> {
         matches!(format, "apk" | "aab") && (!explicit_format || target == "android"),
         "--format apk|aab is only supported for Android"
     );
-    ensure!(!launch || format == "apk", "--run requires APK output, not an Android App Bundle");
-    let android_arch = android_arch.unwrap_or(if format == "aab" { "universal" } else { "arm64" });
+    ensure!(
+        !launch || format == "apk",
+        "--run requires APK output, not an Android App Bundle"
+    );
+    let android_arch = android_arch.unwrap_or(if format == "aab" {
+        "universal"
+    } else {
+        "arm64"
+    });
     let abis = android_abis(android_arch)?;
     ensure!(
         device.is_none() || launch && !desktop,
@@ -1292,7 +1530,11 @@ pub fn build_gui(args: &[String]) -> Result<()> {
         }
         _ => {
             let bundle = build_desktop(target, mode, &identity, smoke)?;
-            println!("GUI {target} {mode}{}: {}", if smoke { " smoke" } else { "" }, bundle.display());
+            println!(
+                "GUI {target} {mode}{}: {}",
+                if smoke { " smoke" } else { "" },
+                bundle.display()
+            );
             lease.release_target();
             if launch {
                 let mut process = command(bundle.join(desktop_executable(target)))?;
@@ -1305,6 +1547,125 @@ pub fn build_gui(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Compile just one GUI/native component. Mobile output is deliberately raw;
+/// Gradle and iOS signing consume these same directories without Cargo/Go.
+pub(crate) fn component_compile(
+    target: &str,
+    cpu: &str,
+    id: paseo_protocol::components::ComponentId,
+    output: &Path,
+    selected_tailnet: Option<&Path>,
+) -> Result<()> {
+    use paseo_protocol::components::ComponentId;
+    let identity = Identity::resolve(target)?;
+    if id == ComponentId::App {
+        require_zig()?;
+    }
+    match (target, id) {
+        ("linux" | "macos" | "windows", ComponentId::App) => {
+            let bundle = build_desktop_app(target, "release", &identity, false)?;
+            copy_tree(
+                &bundle,
+                &if target == "macos" {
+                    output.join(MACOS_BUNDLE)
+                } else {
+                    output.to_path_buf()
+                },
+            )?;
+        }
+        ("android", ComponentId::App | ComponentId::Tailnet) => {
+            let work = gui_output()?.join("components/android").join(id.as_str());
+            build_android_native(
+                "release",
+                android_abis(cpu)?,
+                &identity,
+                &work,
+                id == ComponentId::App,
+                id == ComponentId::Tailnet,
+            )?;
+            copy_tree(&work.join("jniLibs"), &output.join("jniLibs"))?;
+            copy_tree(&work.join("assets"), &output.join("assets"))?;
+        }
+        ("ios", ComponentId::Tailnet) => {
+            let minimum = plist_value(&ios_template()?.join("Info.plist"), "MinimumOSVersion")?;
+            let native = tailnet::ios("aarch64-apple-ios", false, &minimum)?;
+            copy_tree(&native.library, &output.join(tailnet::library_name("ios")?))?;
+            text(
+                &output.join("THIRD-PARTY-NOTICES.txt"),
+                native.notices,
+                0o644,
+            )?;
+            copy_tree(&root()?.join("LICENSE"), &output.join("LICENSE"))?;
+        }
+        ("ios", ComponentId::App) => {
+            let native = selected_tailnet
+                .context("iOS app compilation requires the exact selected static tailnet object")?;
+            let app = build_ios_native("release", &identity, false, Some(native))?;
+            copy_tree(&app, &output.join(IOS_BUNDLE))?;
+        }
+        _ => bail!("Unsupported GUI component {id} on {target}"),
+    }
+    Ok(())
+}
+
+/// Native containers are repackaged from authenticated raw component objects.
+/// This function never invokes Cargo or Go, including package-only releases.
+pub(crate) fn component_package_mobile(
+    target: &str,
+    cpu: &str,
+    app: &Path,
+    tailnet: &Path,
+    version: &str,
+    source: &str,
+    channel: &str,
+) -> Result<Vec<PathBuf>> {
+    let identity = Identity {
+        version: version.into(),
+        source: source.into(),
+        channel: channel.into(),
+        build_number: build_number(target)?,
+        release: true,
+    };
+    let work = gui_output()?.join("components/package").join(target);
+    fresh(&work)?;
+    match target {
+        "android" => {
+            copy_tree(&app.join("jniLibs"), &work.join("jniLibs"))?;
+            copy_tree(&tailnet.join("jniLibs"), &work.join("jniLibs"))?;
+            copy_tree(&app.join("assets"), &work.join("assets"))?;
+            let native_notice = fs::read(tailnet.join("assets/THIRD-PARTY-NOTICES.txt"))?;
+            let mut notice = fs::OpenOptions::new()
+                .append(true)
+                .open(work.join("assets/THIRD-PARTY-NOTICES.txt"))?;
+            std::io::Write::write_all(&mut notice, &native_notice)?;
+            let format = if cpu == "universal" { "aab" } else { "apk" };
+            let built =
+                package_android_native("release", format, android_abis(cpu)?, &identity, &work)?;
+            Ok(vec![android_artifact(
+                &built, "release", format, cpu, &identity,
+            )?])
+        }
+        "ios" => {
+            let bundle = work.join(IOS_BUNDLE);
+            copy_tree(&app.join(IOS_BUNDLE), &bundle)?;
+            plist_set(
+                &bundle.join("Info.plist"),
+                "CFBundleShortVersionString",
+                "string",
+                &identity.version,
+            )?;
+            plist_set(
+                &bundle.join("Info.plist"),
+                "CFBundleVersion",
+                "string",
+                &identity.build_number.to_string(),
+            )?;
+            let signed = sign_ios(&bundle, false)?;
+            Ok(vec![package_ios(&bundle, signed)?])
+        }
+        _ => bail!("Not a mobile container target"),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,32 +1689,55 @@ mod tests {
     #[test]
     fn plist_templates_reject_unresolved_placeholders() {
         assert_eq!(
-            substitute("<string>$(PASEO_VERSION)</string>", &[("PASEO_VERSION", "1.2.3")]).unwrap(),
+            substitute(
+                "<string>$(PASEO_VERSION)</string>",
+                &[("PASEO_VERSION", "1.2.3")]
+            )
+            .unwrap(),
             "<string>1.2.3</string>"
         );
-        assert!(substitute("$(PASEO_VERSION) $(PRODUCT_NAME)", &[("PASEO_VERSION", "1")]).is_err());
+        assert!(
+            substitute(
+                "$(PASEO_VERSION) $(PRODUCT_NAME)",
+                &[("PASEO_VERSION", "1")]
+            )
+            .is_err()
+        );
     }
     #[test]
     fn adb_selection_ignores_unready_devices_and_requires_choice() {
         let listing = "* daemon started successfully\nList of devices attached\nemulator-5554 device product:sdk model:Pixel_8\nR5CT offline\nZX1 unauthorized usb:1-1\n9A device usb:2-1 model:Phone\n\n";
         let devices = adb_devices(listing);
         assert_eq!(
-            devices.iter().map(|(serial, _)| serial.as_str()).collect::<Vec<_>>(),
+            devices
+                .iter()
+                .map(|(serial, _)| serial.as_str())
+                .collect::<Vec<_>>(),
             ["emulator-5554", "9A"]
         );
         assert!(select("Android", &devices, None).is_err());
         assert_eq!(select("Android", &devices, Some("9A")).unwrap().0, "9A");
         assert!(select("Android", &devices, Some("R5CT")).is_err());
-        assert_eq!(select("Android", &devices[..1], None).unwrap().0, "emulator-5554");
+        assert_eq!(
+            select("Android", &devices[..1], None).unwrap().0,
+            "emulator-5554"
+        );
     }
     #[test]
     fn android_arch_selection_never_includes_another_abi() {
         for (arch, expected) in [("arm64", "arm64-v8a"), ("x64", "x86_64")] {
             let selected = android_abis(arch).unwrap();
-            assert_eq!(selected.iter().map(|abi| abi.abi).collect::<Vec<_>>(), [expected]);
+            assert_eq!(
+                selected.iter().map(|abi| abi.abi).collect::<Vec<_>>(),
+                [expected]
+            );
         }
         assert_eq!(
-            android_abis("universal").unwrap().iter().map(|abi| abi.abi).collect::<Vec<_>>(),
+            android_abis("universal")
+                .unwrap()
+                .iter()
+                .map(|abi| abi.abi)
+                .collect::<Vec<_>>(),
             ["arm64-v8a", "x86_64"]
         );
         assert!(ANDROID_ABIS.iter().all(|abi| abi.class == 2));

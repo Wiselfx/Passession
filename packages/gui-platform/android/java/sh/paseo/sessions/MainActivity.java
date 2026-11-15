@@ -105,6 +105,11 @@ public class MainActivity extends MakepadActivity {
         bridge.callAsync(id, method, args);
     }
 
+    /** Blocking JNI entry point; the caller must be a native worker thread. */
+    public byte[] paseoTailnetKey(String identity, boolean delete, boolean hasState) throws Exception {
+        return PaseoTailnetKeys.access(getApplicationContext(), identity, delete, hasState);
+    }
+
     public void paseoAudioPlay(long request, byte[] pcm16, int channels, int sampleRate) {
         bridge.audio().play(request, pcm16, channels, sampleRate);
     }

@@ -56,7 +56,10 @@ fn host_facts(ui: &UiContext, record: Option<&HostRecord>, host_id: &str) -> (bo
         .server_infos
         .get(host_id)
         .cloned()
-        .or_else(|| row.map(|row| get(row, "serverInfo").clone()).filter(|v| v.is_object()))
+        .or_else(|| {
+            row.map(|row| get(row, "serverInfo").clone())
+                .filter(|v| v.is_object())
+        })
         .or_else(|| record.map(|r| r.server_info.clone()))
         .unwrap_or(Value::Null);
     (connected, server_info)
@@ -75,25 +78,49 @@ impl TimelineStore {
     }
 
     fn server_info(&self, host_id: &str) -> Value {
-        self.hosts.get(host_id).map(|h| h.server_info.clone()).unwrap_or(Value::Null)
+        self.hosts
+            .get(host_id)
+            .map(|h| h.server_info.clone())
+            .unwrap_or(Value::Null)
     }
 
     /// provider-store.ts `hideFromTrack`: a child whose current descriptor is
     /// running stays on the track.
-    pub fn hide_subagents<'a>(&mut self, host_id: &str, parent_agent_id: &str, ids: impl IntoIterator<Item = &'a str>) {
-        let parent = SessionKey { host_id: host_id.to_owned(), agent_id: parent_agent_id.to_owned(), subagent_id: None };
-        let descriptors = self.sessions.get(&parent).map(|s| s.subagents.as_slice()).unwrap_or_default();
+    pub fn hide_subagents<'a>(
+        &mut self,
+        host_id: &str,
+        parent_agent_id: &str,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) {
+        let parent = SessionKey {
+            host_id: host_id.to_owned(),
+            agent_id: parent_agent_id.to_owned(),
+            subagent_id: None,
+        };
+        let descriptors = self
+            .sessions
+            .get(&parent)
+            .map(|s| s.subagents.as_slice())
+            .unwrap_or_default();
         for id in ids {
-            let running = descriptors.iter().any(|d| get(d, "id") == id && get(d, "status") == "running");
+            let running = descriptors
+                .iter()
+                .any(|d| get(d, "id") == id && get(d, "status") == "running");
             if !running {
-                self.hidden_subagents.insert((host_id.to_owned(), parent_agent_id.to_owned(), id.to_owned()));
+                self.hidden_subagents.insert((
+                    host_id.to_owned(),
+                    parent_agent_id.to_owned(),
+                    id.to_owned(),
+                ));
             }
         }
     }
 
     pub fn subagent_hidden(&self, host_id: &str, parent_agent_id: &str, id: &str) -> bool {
         // Borrowed lookup without building an owned key per row.
-        self.hidden_subagents.iter().any(|(h, p, s)| h == host_id && p == parent_agent_id && s == id)
+        self.hidden_subagents
+            .iter()
+            .any(|(h, p, s)| h == host_id && p == parent_agent_id && s == id)
     }
 
     /// provider-store.ts `applyUpdate`: an upsert reporting `running` returns
@@ -117,7 +144,8 @@ impl TimelineStore {
     fn unhide_if_running(&mut self, host_id: &str, parent_agent_id: &str, child: &Value) {
         if get(child, "status") == "running" && !self.hidden_subagents.is_empty() {
             let id = str_of(get(child, "id"));
-            self.hidden_subagents.retain(|(h, p, s)| !(h == host_id && p == parent_agent_id && s == id));
+            self.hidden_subagents
+                .retain(|(h, p, s)| !(h == host_id && p == parent_agent_id && s == id));
         }
     }
 
@@ -131,7 +159,8 @@ impl TimelineStore {
     ) -> Option<R> {
         let core = self.core.clone()?;
         let server_info = self.server_info(&key.host_id);
-        let create_handoff = !key.is_subagent() && composer_bridge::create_handoff_active(&key.host_id, &key.agent_id);
+        let create_handoff = !key.is_subagent()
+            && composer_bridge::create_handoff_active(&key.host_id, &key.agent_id);
         let session = self.sessions.get_mut(key)?;
         let mut io = Io {
             cx,
@@ -165,7 +194,8 @@ impl TimelineStore {
         if self.sessions.contains_key(key) {
             return;
         }
-        self.sessions.insert(key.clone(), ChatSession::new(key.clone(), connected));
+        self.sessions
+            .insert(key.clone(), ChatSession::new(key.clone(), connected));
         let mut effects = std::mem::take(&mut ui.effects);
         self.with_session(cx, &mut effects, key, |session, io| session.start(io));
         ui.effects = effects;
@@ -185,12 +215,19 @@ impl TimelineStore {
     }
 
     fn keys_for_host(&self, host_id: &str) -> Vec<SessionKey> {
-        self.sessions.keys().filter(|k| k.host_id == host_id).cloned().collect()
+        self.sessions
+            .keys()
+            .filter(|k| k.host_id == host_id)
+            .cloned()
+            .collect()
     }
 
     fn on_core_event(&mut self, cx: &mut Cx, effects: &mut Vec<UiEffect>, event: &CoreEvent) {
         match event {
-            CoreEvent::Connected { host_id, server_info } => {
+            CoreEvent::Connected {
+                host_id,
+                server_info,
+            } => {
                 let record = self.hosts.entry(host_id.clone()).or_default();
                 record.connected = true;
                 record.server_info = server_info.clone();
@@ -214,8 +251,12 @@ impl TimelineStore {
                     self.note_subagent_update(host_id, event);
                 }
                 let subscription = ty.starts_with("subscription.");
-                let keys: Vec<_> = self.sessions.iter()
-                    .filter(|(key, session)| key.host_id == *host_id && (subscription || session.wants(event)))
+                let keys: Vec<_> = self
+                    .sessions
+                    .iter()
+                    .filter(|(key, session)| {
+                        key.host_id == *host_id && (subscription || session.wants(event))
+                    })
                     .map(|(key, _)| key.clone())
                     .collect();
                 for key in keys {
@@ -228,8 +269,12 @@ impl TimelineStore {
                     });
                 }
             }
-            CoreEvent::Response { request_id, result, .. } => {
-                let Some(route) = self.requests.remove(request_id) else { return };
+            CoreEvent::Response {
+                request_id, result, ..
+            } => {
+                let Some(route) = self.requests.remove(request_id) else {
+                    return;
+                };
                 // Domain rejections (accepted:false, error, success:false) are failures.
                 let result = match result {
                     Ok(payload) => match response_error(payload, &route.request_type) {
@@ -245,10 +290,14 @@ impl TimelineStore {
                     self.note_subagent_list(&key.host_id, &key.agent_id, body);
                 }
                 self.with_session(cx, effects, &key, |s, io| match route.pending {
-                    Pending::Membership { generation } => s.on_membership_response(io, request_id, generation, result),
-                    Pending::Fetch { direction, force_replace, generation } => {
-                        s.on_fetch(io, request_id, direction, force_replace, generation, result)
+                    Pending::Membership { generation } => {
+                        s.on_membership_response(io, request_id, generation, result)
                     }
+                    Pending::Fetch {
+                        direction,
+                        force_replace,
+                        generation,
+                    } => s.on_fetch(io, request_id, direction, force_replace, generation, result),
                     Pending::Subagents => s.on_subagents(result),
                     Pending::Action(kind) => s.on_action(kind, result),
                 });
@@ -260,7 +309,10 @@ impl TimelineStore {
     /// The core re-keys a host whose server id became known (or merged).
     fn remap_host(&mut self, event: &Value) {
         let payload = get(event, "payload");
-        let (Some(previous), Some(next)) = (non_empty_str(get(payload, "previousHostId")), non_empty_str(get(payload, "hostId"))) else {
+        let (Some(previous), Some(next)) = (
+            non_empty_str(get(payload, "previousHostId")),
+            non_empty_str(get(payload, "hostId")),
+        ) else {
             return;
         };
         if previous == next {
@@ -294,6 +346,14 @@ impl TimelineStore {
 
 /// Shell hook: once per Makepad event, before widget dispatch.
 pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
+    super::mermaid::handle_event(cx, event);
+    if ui
+        .events
+        .iter()
+        .any(|event| matches!(event, CoreEvent::State { .. }))
+    {
+        super::images::sync_hosts(&ui.core, &ui.state);
+    }
     if matches!(event, Event::Signal) && super::highlight::poll() {
         cx.redraw_all();
     }
@@ -304,7 +364,9 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
         let mut effects = std::mem::take(&mut ui.effects);
         let mut image_responses = Vec::new();
         for core_event in ui.events.iter() {
-            if let CoreEvent::Response { request_id, result, .. } = core_event
+            if let CoreEvent::Response {
+                request_id, result, ..
+            } = core_event
                 && super::images::owns(request_id)
             {
                 image_responses.push((request_id.clone(), result.clone().map_err(|e| e.message)));
@@ -315,7 +377,9 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
         super::images::handle_event(cx, event, &image_responses);
         match event {
             Event::Timer(_) => {
-                let keys: Vec<SessionKey> = store.sessions.iter()
+                let keys: Vec<SessionKey> = store
+                    .sessions
+                    .iter()
                     .filter(|(_, session)| session.owns_timer(event))
                     .map(|(key, _)| key.clone())
                     .collect();
@@ -329,7 +393,9 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
                     store.app_visible = visible;
                     let keys: Vec<SessionKey> = store.sessions.keys().cloned().collect();
                     for key in keys {
-                        store.with_session(cx, &mut effects, &key, |s, io| s.set_app_visible(io, visible));
+                        store.with_session(cx, &mut effects, &key, |s, io| {
+                            s.set_app_visible(io, visible)
+                        });
                     }
                 }
             }
@@ -346,12 +412,22 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
 
 /// Shell hook: a chat tab closed.
 pub fn release_session(cx: &mut Cx, _ui: &UiContext, host_id: &str, agent_id: &str) {
-    let key = SessionKey { host_id: host_id.to_owned(), agent_id: agent_id.to_owned(), subagent_id: None };
+    let key = SessionKey {
+        host_id: host_id.to_owned(),
+        agent_id: agent_id.to_owned(),
+        subagent_id: None,
+    };
     with_store(|store| store.release(cx, &key));
 }
 
 /// Shell hook: a provider-subagent tab closed.
-pub fn release_subagent(cx: &mut Cx, _ui: &UiContext, host_id: &str, parent_agent_id: &str, subagent_id: &str) {
+pub fn release_subagent(
+    cx: &mut Cx,
+    _ui: &UiContext,
+    host_id: &str,
+    parent_agent_id: &str,
+    subagent_id: &str,
+) {
     let key = SessionKey {
         host_id: host_id.to_owned(),
         agent_id: parent_agent_id.to_owned(),
@@ -395,7 +471,11 @@ mod hidden_subagent_tests {
 
         store.note_subagent_update("host", &upsert("parent", "a", "running"));
         assert!(!store.subagent_hidden("host", "parent", "a"));
-        store.note_subagent_list("host", "parent", &json!({"subagents": [{"id": "b", "status": "running"}]}));
+        store.note_subagent_list(
+            "host",
+            "parent",
+            &json!({"subagents": [{"id": "b", "status": "running"}]}),
+        );
         assert!(!store.subagent_hidden("host", "parent", "b"));
     }
 

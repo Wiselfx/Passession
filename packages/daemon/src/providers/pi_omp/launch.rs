@@ -1,10 +1,10 @@
 use super::transport::Transport;
-use paseo_client::process::CommandSpec;
 use crate::providers::{
     api::{LaunchContext, ProviderSpec},
     registry::catalog::memo::{self, Loaded, Memo},
 };
 use anyhow::{Result, anyhow, bail};
+use paseo_client::process::CommandSpec;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -89,9 +89,10 @@ pub fn command(
     // Resume follows the engine's stored model, then explicit overrides are applied
     // with set_model after initialization (the original resume omits --model).
     if session.is_none()
-        && let Some(model) = config["model"].as_str().filter(|v| !v.is_empty()) {
-            argv.extend(["--model".into(), model.into()]);
-        }
+        && let Some(model) = config["model"].as_str().filter(|v| !v.is_empty())
+    {
+        argv.extend(["--model".into(), model.into()]);
+    }
     if let Some(level) = config["thinkingOptionId"]
         .as_str()
         .filter(|s| valid_thinking(s, omp))
@@ -256,12 +257,9 @@ async fn extension_commands(
     let key = probe_key(&launch).await;
     probes
         .get_or_load(key, &context.cancel, || async move {
-            let (probe, mut events) = Transport::spawn(
-                launch,
-                timeout(spec, config),
-                context.cancel.child_token(),
-            )
-            .await?;
+            let (probe, mut events) =
+                Transport::spawn(launch, timeout(spec, config), context.cancel.child_token())
+                    .await?;
             let drain = tokio::spawn(async move { while events.recv().await.is_some() {} });
             let commands = probe.request(json!({"type":"get_commands"})).await;
             let _ = probe.close().await;

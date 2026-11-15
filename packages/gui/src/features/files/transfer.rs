@@ -110,25 +110,46 @@ impl Transfer {
                 Some(bytes) => {
                     std::fs::write(&staging, bytes.as_slice())?;
                     let size = bytes.len() as u64;
-                    let _ = progress.send(Progress { id, received: size, total: size });
+                    let _ = progress.send(Progress {
+                        id,
+                        received: size,
+                        total: size,
+                    });
                     json!({})
                 }
                 None => {
                     let sender = progress.clone();
-                    super::service::download_into(&client, &cwd, &path, &staging, move |received, total| {
-                        let _ = sender.send(Progress { id, received, total });
-                    })
+                    super::service::download_into(
+                        &client,
+                        &cwd,
+                        &path,
+                        &staging,
+                        move |received, total| {
+                            let _ = sender.send(Progress {
+                                id,
+                                received,
+                                total,
+                            });
+                        },
+                    )
                     .await?
                 }
             };
             let mime = mime
-                .or_else(|| metadata.get("mime").and_then(Value::as_str).map(str::to_owned))
+                .or_else(|| {
+                    metadata
+                        .get("mime")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
                 .unwrap_or_else(|| "application/octet-stream".to_owned());
             if let Some(destination) = destination {
                 // `XFile.saveTo` then delete the staging directory.
                 std::fs::copy(&staging, &destination)?;
                 remove_staging(&staging);
-                return Ok(json!({ "path": destination.to_string_lossy(), "mime": mime, "saved": true }));
+                return Ok(
+                    json!({ "path": destination.to_string_lossy(), "mime": mime, "saved": true }),
+                );
             }
             Ok(json!({ "path": staging.to_string_lossy(), "mime": mime, "saved": false }))
         }));

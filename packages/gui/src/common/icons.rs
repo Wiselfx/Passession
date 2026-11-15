@@ -25,7 +25,10 @@ pub fn glyph(name: &str) -> Option<char> {
 
 /// The glyph as a one-character string; unknown names render the Lucide `circle-help`.
 pub fn text(name: &str) -> String {
-    glyph(name).or_else(|| glyph("circle-help")).map(String::from).unwrap_or_default()
+    glyph(name)
+        .or_else(|| glyph("circle-help"))
+        .map(String::from)
+        .unwrap_or_default()
 }
 
 /// `ForgeBrandIcon`: the SVG brand mark of a forge (`github` for an empty kind), `None` for an

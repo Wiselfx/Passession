@@ -13,6 +13,11 @@ use super::super::images::{self, ImageState};
 use super::super::links::FileLinkSourceType;
 use super::super::paint::{Draw, Look};
 use super::model::{AlertKind, Block, Inline, ListItem, Style};
+use super::worker::{INTERACTIVE_SOURCE_BYTES, ParagraphKey, ParsedSnapshot, SemanticParagraph};
+use makepad_widgets::makepad_draw::text::AsyncLayout;
+use makepad_widgets::makepad_draw::text::layouter::{LaidoutText, Span as FontSpan};
+use makepad_widgets::makepad_draw::text::selection::Cursor;
+use makepad_widgets::makepad_draw::text::substr::Substr;
 use makepad_widgets::*;
 use paseo_gui_core::CoreHandle;
 use pulldown_cmark::Alignment;
@@ -20,12 +25,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
-use makepad_widgets::makepad_draw::text::AsyncLayout;
 use std::time::{Duration, Instant};
-use makepad_widgets::makepad_draw::text::layouter::{LaidoutText, Span as FontSpan};
-use super::worker::{INTERACTIVE_SOURCE_BYTES, ParagraphKey, ParsedSnapshot, SemanticParagraph};
-use makepad_widgets::makepad_draw::text::selection::Cursor;
-use makepad_widgets::makepad_draw::text::substr::Substr;
 
 /// Find highlight: the `occurrence`-th match across the message's text blocks.
 pub struct FindMark {
@@ -78,6 +78,7 @@ struct PreparedRich {
 #[derive(Clone, Copy, PartialEq)]
 struct ParagraphStyle {
     look: Look,
+    theme_epoch: u64,
     size: f64,
     color: Vec4,
     bold: bool,
@@ -126,7 +127,9 @@ pub struct ParagraphCache {
 impl ParagraphCache {
     fn can_layout_inline(&self, bytes: usize) -> bool {
         bytes <= self.inline_remaining
-            && self.inline_deadline.is_some_and(|deadline| Instant::now() < deadline)
+            && self
+                .inline_deadline
+                .is_some_and(|deadline| Instant::now() < deadline)
     }
 
     /// Admits one paragraph's background advance (span mapping, layout
@@ -142,7 +145,8 @@ impl ParagraphCache {
     }
 
     pub(super) fn set_owner(&mut self, owner: Option<Rc<Vec<Block>>>) -> Option<Rc<Vec<Block>>> {
-        self.entries.retain(|_, entry| entry.owner.strong_count() > 0);
+        self.entries
+            .retain(|_, entry| entry.owner.strong_count() > 0);
         std::mem::replace(&mut self.owner, owner)
     }
 }
@@ -150,6 +154,7 @@ impl ParagraphCache {
 struct DocumentLayout {
     snapshot: Rc<ParsedSnapshot>,
     look: Look,
+    theme_epoch: u64,
     width: f64,
     font_size: f64,
     occurrence: Option<usize>,
@@ -161,12 +166,32 @@ pub struct MarkdownPresentation {
     epoch: u64,
     published: Option<DocumentLayout>,
     preparing: Option<DocumentLayout>,
+    reprepare_published: bool,
+}
+
+impl MarkdownPresentation {
+    /// Expansion can expose source text absent from the frozen paragraph cache.
+    /// Retain the published snapshot and prepare only its newly visible content.
+    pub fn invalidate_interaction(&mut self) {
+        self.reprepare_published = true;
+    }
 }
 
 impl DocumentLayout {
-    fn matches(&self, snapshot: &Rc<ParsedSnapshot>, look: Look, width: f64, opts: &MdOpts) -> bool {
-        Rc::ptr_eq(&self.snapshot, snapshot) && self.look == look && self.width == width
-            && self.font_size == opts.font_size && self.occurrence == opts.find.as_ref().map(|find| find.occurrence)
+    fn matches(
+        &self,
+        snapshot: &Rc<ParsedSnapshot>,
+        look: Look,
+        width: f64,
+        opts: &MdOpts,
+        theme_epoch: u64,
+    ) -> bool {
+        Rc::ptr_eq(&self.snapshot, snapshot)
+            && self.look == look
+            && self.width == width
+            && self.font_size == opts.font_size
+            && self.occurrence == opts.find.as_ref().map(|find| find.occurrence)
+            && self.theme_epoch == theme_epoch
     }
 }
 
@@ -176,41 +201,66 @@ impl DocumentLayout {
 pub fn draw_worker(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, x: f64, y: f64, w: f64) -> f64 {
     let mut presentation = std::mem::take(&mut d.state.markdown_presentation);
     let epoch = d.state.markdown_worker.epoch();
+    let theme_epoch = crate::theme::epoch();
     if presentation.epoch != epoch {
-        presentation = MarkdownPresentation { epoch, ..Default::default() };
+        presentation = MarkdownPresentation {
+            epoch,
+            ..Default::default()
+        };
     }
     if !d.state.managed_preparation || d.state.preparing {
-        let candidate = d.state.markdown_worker.candidate()
-            .or_else(|| presentation.published.as_ref().map(|doc| doc.snapshot.clone()));
+        let candidate = d.state.markdown_worker.candidate().or_else(|| {
+            presentation
+                .published
+                .as_ref()
+                .map(|doc| doc.snapshot.clone())
+        });
         if let Some(candidate) = candidate {
-            let current = presentation.published.as_ref().is_some_and(|doc| doc.matches(&candidate, d.look, w, opts));
-            let pending = presentation.preparing.as_ref().is_some_and(|doc| doc.matches(&candidate, d.look, w, opts));
+            let current = presentation
+                .published
+                .as_ref()
+                .is_some_and(|doc| doc.matches(&candidate, d.look, w, opts, theme_epoch));
+            let pending = presentation
+                .preparing
+                .as_ref()
+                .is_some_and(|doc| doc.matches(&candidate, d.look, w, opts, theme_epoch));
             if !current && !pending {
                 presentation.preparing = Some(DocumentLayout {
-                    snapshot: candidate.clone(), look: d.look, width: w, font_size: opts.font_size,
+                    snapshot: candidate.clone(),
+                    look: d.look,
+                    theme_epoch,
+                    width: w,
+                    font_size: opts.font_size,
                     occurrence: opts.find.as_ref().map(|find| find.occurrence),
-                    cache: ParagraphCache { owner: Some(candidate.blocks.clone()), snapshot: Some(candidate), ..Default::default() },
+                    cache: ParagraphCache {
+                        owner: Some(candidate.blocks.clone()),
+                        snapshot: Some(candidate),
+                        ..Default::default()
+                    },
                 });
             }
         }
         if let Some(mut preparing) = presentation.preparing.take() {
-            let deadline = Instant::now() + PREPARATION_PASS;
-            preparing.cache.pending = false;
-            preparing.cache.advance_available = true;
-            preparing.cache.advance_deadline = Some(deadline);
-            preparing.cache.frozen = false;
-            preparing.cache.inline_remaining = if preparing.snapshot.interactive { INTERACTIVE_SOURCE_BYTES } else { 0 };
-            preparing.cache.inline_deadline = preparing.snapshot.interactive.then_some(deadline);
-            measured(cx, d, opts, |cx, d, opts| draw_document(cx, d, opts, &mut preparing, x, y));
+            prepare_document(cx, d, opts, &mut preparing, x, y);
             if !preparing.cache.pending {
                 d.state.markdown_worker.publish(preparing.snapshot.revision);
                 presentation.published = Some(preparing);
+                presentation.reprepare_published = false;
             } else {
                 presentation.preparing = Some(preparing);
             }
         }
+        if presentation.reprepare_published && presentation.preparing.is_none() {
+            presentation.reprepare_published = false;
+            if let Some(published) = presentation.published.as_mut() {
+                prepare_document(cx, d, opts, published, x, y);
+                presentation.reprepare_published = published.cache.pending;
+            }
+        }
     }
-    d.animating |= presentation.preparing.is_some() || d.state.markdown_worker.is_pending();
+    d.animating |= presentation.reprepare_published
+        || presentation.preparing.is_some()
+        || d.state.markdown_worker.is_pending();
     let height = if let Some(published) = presentation.published.as_mut() {
         published.cache.frozen = true;
         published.cache.advance_available = false;
@@ -222,15 +272,59 @@ pub fn draw_worker(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, x: f64, y: f6
     height
 }
 
-fn draw_document(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, doc: &mut DocumentLayout, x: f64, y: f64) -> f64 {
+fn prepare_document(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    doc: &mut DocumentLayout,
+    x: f64,
+    y: f64,
+) {
+    let deadline = Instant::now() + PREPARATION_PASS;
+    doc.cache.pending = false;
+    doc.cache.advance_available = true;
+    doc.cache.advance_deadline = Some(deadline);
+    doc.cache.frozen = false;
+    doc.cache.inline_remaining = if doc.snapshot.interactive {
+        INTERACTIVE_SOURCE_BYTES
+    } else {
+        0
+    };
+    doc.cache.inline_deadline = doc.snapshot.interactive.then_some(deadline);
+    measured(cx, d, opts, |cx, d, opts| {
+        draw_document(cx, d, opts, doc, x, y)
+    });
+}
+
+fn draw_document(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    doc: &mut DocumentLayout,
+    x: f64,
+    y: f64,
+) -> f64 {
     let look = std::mem::replace(&mut d.look, doc.look);
     let font_size = std::mem::replace(&mut opts.font_size, doc.font_size);
     let previous_find_y = d.state.find_y;
     let current_find = doc.occurrence == opts.find.as_ref().map(|find| find.occurrence)
-        && doc.snapshot.find_pattern.as_deref() == opts.find.as_ref().map(|find| find.pattern.as_str());
+        && doc.snapshot.find_pattern.as_deref()
+            == opts.find.as_ref().map(|find| find.pattern.as_str());
     std::mem::swap(&mut d.state.markdown_paragraphs, &mut doc.cache);
-    let height = draw_blocks(cx, d, opts, &doc.snapshot.blocks, x, y, doc.width, doc.look.palette.foreground, false);
-    if !current_find { d.state.find_y = previous_find_y; }
+    let height = draw_blocks(
+        cx,
+        d,
+        opts,
+        &doc.snapshot.blocks,
+        x,
+        y,
+        doc.width,
+        doc.look.palette.foreground,
+        false,
+    );
+    if !current_find {
+        d.state.find_y = previous_find_y;
+    }
     std::mem::swap(&mut d.state.markdown_paragraphs, &mut doc.cache);
     opts.font_size = font_size;
     d.look = look;
@@ -239,89 +333,211 @@ fn draw_document(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, doc: &mut Docum
 
 fn find_in_matches(opts: &mut MdOpts, matches: &[(usize, usize)]) -> Option<(usize, usize)> {
     let find = opts.find.as_deref_mut()?;
-    let found = find.occurrence.checked_sub(find.seen).and_then(|index| matches.get(index)).copied();
+    let found = find
+        .occurrence
+        .checked_sub(find.seen)
+        .and_then(|index| matches.get(index))
+        .copied();
     find.seen += matches.len();
     found
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_paragraph(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, inlines: &[Inline], w: f64, para: &Para, height: f64) -> Option<Rc<PreparedRich>> {
-    let key = (inlines.as_ptr() as usize, w.to_bits(), height.to_bits(), para.bold);
+fn prepare_paragraph(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    inlines: &[Inline],
+    w: f64,
+    para: &Para,
+    height: f64,
+) -> Option<Rc<PreparedRich>> {
+    let key = (
+        inlines.as_ptr() as usize,
+        w.to_bits(),
+        height.to_bits(),
+        para.bold,
+    );
     if d.state.markdown_paragraphs.frozen {
         let entry = d.state.markdown_paragraphs.entries.get(&key)?;
         let prepared = entry.prepared.clone()?;
         find_in_matches(opts, &prepared.rich.find_matches);
         return Some(prepared);
     }
-    let semantic = d.state.markdown_paragraphs.snapshot.as_ref()
-        .and_then(|snapshot| snapshot.paragraphs.get(&ParagraphKey::of(inlines))).cloned();
+    let semantic = d
+        .state
+        .markdown_paragraphs
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.paragraphs.get(&ParagraphKey::of(inlines)))
+        .cloned();
     if let Some(semantic) = semantic {
         return prepare_semantic(cx, d, opts, key, semantic, w, para, height, None);
     }
-    let style = ParagraphStyle { look: d.look, size: para.size, color: para.color, bold: para.bold, width: w, height };
+    let style = ParagraphStyle {
+        look: d.look,
+        theme_epoch: crate::theme::epoch(),
+        size: para.size,
+        color: para.color,
+        bold: para.bold,
+        width: w,
+        height,
+    };
     let pattern = opts.find.as_ref().map(|find| find.pattern.as_str());
     if let Some(cached) = d.state.markdown_paragraphs.entries.get(&key)
-        && cached.len == inlines.len() && cached.style == style && cached.pattern.as_deref() == pattern
-        && cached.owner.upgrade().zip(d.state.markdown_paragraphs.owner.as_ref()).is_some_and(|(old, owner)| Rc::ptr_eq(&old, owner))
+        && cached.len == inlines.len()
+        && cached.style == style
+        && cached.pattern.as_deref() == pattern
+        && cached
+            .owner
+            .upgrade()
+            .zip(d.state.markdown_paragraphs.owner.as_ref())
+            .is_some_and(|(old, owner)| Rc::ptr_eq(&old, owner))
         && let Some(prepared) = &cached.prepared
     {
         let prepared = prepared.clone();
         if find_in_matches(opts, &prepared.rich.find_matches) == cached.found {
             return Some(prepared);
         }
-        if let Some(find) = opts.find.as_deref_mut() { find.seen -= prepared.rich.find_matches.len(); }
+        if let Some(find) = opts.find.as_deref_mut() {
+            find.seen -= prepared.rich.find_matches.len();
+        }
     }
     let mut rich = Rich::default();
     build_inlines(&mut rich, inlines, d, para, None);
-    if rich.text.trim_matches('\n').is_empty() { return None }
+    if rich.text.trim_matches('\n').is_empty() {
+        return None;
+    }
     let prepared = prepare_legacy(cx, d, opts, rich, w, height);
     if let Some(owner) = &d.state.markdown_paragraphs.owner {
-        d.state.markdown_paragraphs.entries.insert(key, CachedParagraph {
-            owner: Rc::downgrade(owner), len: inlines.len(), style,
-            pattern: opts.find.as_ref().map(|find| find.pattern.as_str().to_owned()),
-            found: prepared.found, prepared: Some(prepared.clone()), pending: None,
-        });
+        d.state.markdown_paragraphs.entries.insert(
+            key,
+            CachedParagraph {
+                owner: Rc::downgrade(owner),
+                len: inlines.len(),
+                style,
+                pattern: opts
+                    .find
+                    .as_ref()
+                    .map(|find| find.pattern.as_str().to_owned()),
+                found: prepared.found,
+                prepared: Some(prepared.clone()),
+                pending: None,
+            },
+        );
     }
     Some(prepared)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_semantic(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, key: (usize, u64, u64, bool), rich: Arc<SemanticParagraph>, w: f64, para: &Para, height: f64, colors: Option<highlight::Colored>) -> Option<Rc<PreparedRich>> {
-    if rich.empty && !d.state.markdown_paragraphs.snapshot.as_ref().is_some_and(|snapshot| snapshot.codes.contains_key(&key.0)) { return None }
+fn prepare_semantic(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    key: (usize, u64, u64, bool),
+    rich: Arc<SemanticParagraph>,
+    w: f64,
+    para: &Para,
+    height: f64,
+    colors: Option<highlight::Colored>,
+) -> Option<Rc<PreparedRich>> {
+    if rich.empty
+        && !d
+            .state
+            .markdown_paragraphs
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.codes.contains_key(&key.0))
+    {
+        return None;
+    }
     if d.state.markdown_paragraphs.frozen {
-        let prepared = d.state.markdown_paragraphs.entries.get(&key)?.prepared.clone()?;
+        let prepared = d
+            .state
+            .markdown_paragraphs
+            .entries
+            .get(&key)?
+            .prepared
+            .clone()?;
         find_in_matches(opts, &prepared.rich.find_matches);
         return Some(prepared);
     }
     let found = find_in_matches(opts, &rich.find_matches);
-    let style = ParagraphStyle { look: d.look, size: para.size, color: para.color, bold: para.bold, width: w, height };
-    let mut entry = d.state.markdown_paragraphs.entries.remove(&key).unwrap_or_else(|| CachedParagraph {
-        owner: d.state.markdown_paragraphs.owner.as_ref().map(Rc::downgrade).unwrap_or_default(),
-        len: rich.spans.len(), style, pattern: None, found, prepared: None,
-        pending: Some(PendingParagraph {
-            remaining: rich.spans.first().map_or(0, |span| span.len),
-            rich, spans: Vec::new(), ready_spans: None, cursor: 0, byte: 0,
-            colors, color_cursor: 0, layout: AsyncLayout::default(),
-        }),
-    });
+    let style = ParagraphStyle {
+        look: d.look,
+        theme_epoch: crate::theme::epoch(),
+        size: para.size,
+        color: para.color,
+        bold: para.bold,
+        width: w,
+        height,
+    };
+    let mut entry = d
+        .state
+        .markdown_paragraphs
+        .entries
+        .remove(&key)
+        .unwrap_or_else(|| CachedParagraph {
+            owner: d
+                .state
+                .markdown_paragraphs
+                .owner
+                .as_ref()
+                .map(Rc::downgrade)
+                .unwrap_or_default(),
+            len: rich.spans.len(),
+            style,
+            pattern: None,
+            found,
+            prepared: None,
+            pending: Some(PendingParagraph {
+                remaining: rich.spans.first().map_or(0, |span| span.len),
+                rich,
+                spans: Vec::new(),
+                ready_spans: None,
+                cursor: 0,
+                byte: 0,
+                colors,
+                color_cursor: 0,
+                layout: AsyncLayout::default(),
+            }),
+        });
     let inline = entry.pending.as_ref().is_some_and(|pending| {
-        !pending.layout.is_pending() && d.state.markdown_paragraphs.can_layout_inline(pending.rich.text.len())
+        !pending.layout.is_pending()
+            && d.state
+                .markdown_paragraphs
+                .can_layout_inline(pending.rich.text.len())
     });
     // Evaluated first: an inline paragraph must not end the pass for the
     // background paragraphs after it.
-    if entry.prepared.is_none() && (d.state.markdown_paragraphs.take_advance(Instant::now()) || inline) {
+    if entry.prepared.is_none()
+        && (d.state.markdown_paragraphs.take_advance(Instant::now()) || inline)
+    {
         let pending = entry.pending.as_mut().expect("unpublished paragraph");
         for _ in 0..256 {
-            let Some(span) = pending.rich.spans.get(pending.cursor) else { break };
+            let Some(span) = pending.rich.spans.get(pending.cursor) else {
+                break;
+            };
             let mut text_style = span.style;
             text_style.bold |= para.bold;
-            let font = if span.code { Font::Mono } else { style_font(text_style) };
+            let font = if span.code {
+                Font::Mono
+            } else {
+                style_font(text_style)
+            };
             let size = if span.code { d.look.code() } else { para.size };
-            let mut color = if span.link { d.look.palette.accent_bright } else { para.color };
+            let mut color = if span.link {
+                d.look.palette.accent_bright
+            } else {
+                para.color
+            };
             let a = pending.byte;
             let mut b = a + pending.remaining;
             if let Some(colors) = &pending.colors {
-                while colors.get(pending.color_cursor).is_some_and(|(range, _)| range.end <= a) {
+                while colors
+                    .get(pending.color_cursor)
+                    .is_some_and(|(range, _)| range.end <= a)
+                {
                     pending.color_cursor += 1;
                 }
                 if let Some((range, syntax_color)) = colors.get(pending.color_cursor) {
@@ -338,10 +554,25 @@ fn prepare_semantic(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, key: (usize,
                 cuts = [a, s.clamp(a, b), e.clamp(a, b), b];
             }
             for bounds in cuts.windows(2) {
-                if bounds[0] == bounds[1] { continue }
+                if bounds[0] == bounds[1] {
+                    continue;
+                }
                 let highlighted = found.is_some_and(|(s, e)| bounds[0] >= s && bounds[1] <= e);
-                let mapped = d.kit.rich_span(RichSpan { len: bounds[1] - bounds[0], font, size_px: size, color: if highlighted { d.look.palette.surface0 } else { color } });
-                if let Some(last) = pending.spans.last_mut().filter(|last| last.style == mapped.style) {
+                let mapped = d.kit.rich_span(RichSpan {
+                    len: bounds[1] - bounds[0],
+                    font,
+                    size_px: size,
+                    color: if highlighted {
+                        d.look.palette.surface0
+                    } else {
+                        color
+                    },
+                });
+                if let Some(last) = pending
+                    .spans
+                    .last_mut()
+                    .filter(|last| last.style == mapped.style)
+                {
                     last.len += mapped.len;
                 } else {
                     pending.spans.push(mapped);
@@ -351,27 +582,75 @@ fn prepare_semantic(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, key: (usize,
             pending.remaining -= b - a;
             if pending.remaining == 0 {
                 pending.cursor += 1;
-                pending.remaining = pending.rich.spans.get(pending.cursor).map_or(0, |span| span.len);
+                pending.remaining = pending
+                    .rich
+                    .spans
+                    .get(pending.cursor)
+                    .map_or(0, |span| span.len);
             }
         }
         if pending.cursor == pending.rich.spans.len() {
             if pending.spans.is_empty() && pending.ready_spans.is_none() {
-                pending.spans.push(d.kit.rich_span(RichSpan { len: 0, font: Font::Mono, size_px: d.look.code(), color: para.color }));
+                pending.spans.push(d.kit.rich_span(RichSpan {
+                    len: 0,
+                    font: Font::Mono,
+                    size_px: d.look.code(),
+                    color: para.color,
+                }));
             }
-            let spans = pending.ready_spans.get_or_insert_with(|| Arc::new(std::mem::take(&mut pending.spans))).clone();
-            let base = pending.rich.spans.first().map(|span| {
-                let mut style = span.style; style.bold |= para.bold;
-                if span.code { Font::Mono } else { style_font(style) }
-            }).unwrap_or(Font::Regular);
-            let laidout = if inline && d.state.markdown_paragraphs.can_layout_inline(pending.rich.text.len()) {
+            let spans = pending
+                .ready_spans
+                .get_or_insert_with(|| Arc::new(std::mem::take(&mut pending.spans)))
+                .clone();
+            let base = pending
+                .rich
+                .spans
+                .first()
+                .map(|span| {
+                    let mut style = span.style;
+                    style.bold |= para.bold;
+                    if span.code {
+                        Font::Mono
+                    } else {
+                        style_font(style)
+                    }
+                })
+                .unwrap_or(Font::Regular);
+            let laidout = if inline
+                && d.state
+                    .markdown_paragraphs
+                    .can_layout_inline(pending.rich.text.len())
+            {
                 d.state.markdown_paragraphs.inline_remaining -= pending.rich.text.len();
-                Some(d.kit.layout_mapped_rich(cx, &pending.rich.text, &spans, base, w.is_finite().then_some(w), height))
+                Some(d.kit.layout_mapped_rich(
+                    cx,
+                    &pending.rich.text,
+                    &spans,
+                    base,
+                    w.is_finite().then_some(w),
+                    height,
+                ))
             } else {
-                d.kit.advance_rich_layout(cx, &mut pending.layout, 1, pending.rich.text.clone(), spans, base, w.is_finite().then_some(w), height);
-                (!pending.layout.is_pending()).then(|| pending.layout.completed().cloned()).flatten()
+                d.kit.advance_rich_layout(
+                    cx,
+                    &mut pending.layout,
+                    1,
+                    pending.rich.text.clone(),
+                    spans,
+                    base,
+                    w.is_finite().then_some(w),
+                    height,
+                );
+                (!pending.layout.is_pending())
+                    .then(|| pending.layout.completed().cloned())
+                    .flatten()
             };
             if let Some(laidout) = laidout {
-                entry.prepared = Some(Rc::new(PreparedRich { rich: pending.rich.clone(), laidout, found }));
+                entry.prepared = Some(Rc::new(PreparedRich {
+                    rich: pending.rich.clone(),
+                    laidout,
+                    found,
+                }));
                 entry.pending = None;
             }
         }
@@ -389,8 +668,15 @@ impl Rich {
         }
         self.text.push_str(s);
         match self.spans.last_mut() {
-            Some(last) if last.font == font && last.size_px == size && last.color == color => last.len += s.len(),
-            _ => self.spans.push(RichSpan { len: s.len(), font, size_px: size, color }),
+            Some(last) if last.font == font && last.size_px == size && last.color == color => {
+                last.len += s.len()
+            }
+            _ => self.spans.push(RichSpan {
+                len: s.len(),
+                font,
+                size_px: size,
+                color,
+            }),
         }
     }
 
@@ -407,11 +693,21 @@ impl Rich {
                 continue;
             }
             if s > a {
-                out.push(RichSpan { len: s - a, ..*span });
+                out.push(RichSpan {
+                    len: s - a,
+                    ..*span
+                });
             }
-            out.push(RichSpan { len: e - s, color, ..*span });
+            out.push(RichSpan {
+                len: e - s,
+                color,
+                ..*span
+            });
             if b > e {
-                out.push(RichSpan { len: b - e, ..*span });
+                out.push(RichSpan {
+                    len: b - e,
+                    ..*span
+                });
             }
         }
         self.spans = out;
@@ -433,7 +729,13 @@ struct Para {
     bold: bool,
 }
 
-fn build_inlines(rich: &mut Rich, inlines: &[Inline], d: &Draw, para: &Para, link: Option<(String, FileLinkSourceType)>) {
+fn build_inlines(
+    rich: &mut Rich,
+    inlines: &[Inline],
+    d: &Draw,
+    para: &Para,
+    link: Option<(String, FileLinkSourceType)>,
+) {
     let p = d.look.palette;
     for inline in inlines {
         match inline {
@@ -441,7 +743,11 @@ fn build_inlines(rich: &mut Rich, inlines: &[Inline], d: &Draw, para: &Para, lin
                 let mut style = *style;
                 style.bold |= para.bold;
                 let start = rich.text.len();
-                let color = if link.is_some() { p.accent_bright } else { para.color };
+                let color = if link.is_some() {
+                    p.accent_bright
+                } else {
+                    para.color
+                };
                 rich.push(text, style_font(style), para.size, color);
                 if style.strike {
                     rich.strikes.push((start, rich.text.len()));
@@ -449,14 +755,22 @@ fn build_inlines(rich: &mut Rich, inlines: &[Inline], d: &Draw, para: &Para, lin
             }
             Inline::Code { text, style } => {
                 let start = rich.text.len();
-                let color = if link.is_some() { p.accent_bright } else { para.color };
+                let color = if link.is_some() {
+                    p.accent_bright
+                } else {
+                    para.color
+                };
                 rich.push(text, Font::Mono, d.look.code(), color);
                 rich.codes.push((start, rich.text.len()));
                 if style.strike {
                     rich.strikes.push((start, rich.text.len()));
                 }
             }
-            Inline::Link { href, kind, children } => {
+            Inline::Link {
+                href,
+                kind,
+                children,
+            } => {
                 let start = rich.text.len();
                 build_inlines(rich, children, d, para, Some((href.clone(), *kind)));
                 let end = rich.text.len();
@@ -466,45 +780,121 @@ fn build_inlines(rich: &mut Rich, inlines: &[Inline], d: &Draw, para: &Para, lin
             }
             // Images are split out by the caller; alt text stays searchable.
             Inline::Image { .. } => {}
-            Inline::Break => rich.push("\n", style_font(Style { bold: para.bold, ..Style::default() }), para.size, para.color),
+            Inline::Break => rich.push(
+                "\n",
+                style_font(Style {
+                    bold: para.bold,
+                    ..Style::default()
+                }),
+                para.size,
+                para.color,
+            ),
         }
     }
 }
 
 /// Draws a rich paragraph at (x, y) wrapped to `w`; returns its height.
 #[allow(clippy::too_many_arguments)]
-fn draw_rich(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, rich: Rich, x: f64, y: f64, w: f64, height: f64) -> f64 {
-    if rich.text.is_empty() { return 0.0 }
+fn draw_rich(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    rich: Rich,
+    x: f64,
+    y: f64,
+    w: f64,
+    height: f64,
+) -> f64 {
+    if rich.text.is_empty() {
+        return 0.0;
+    }
     let prepared = prepare_legacy(cx, d, opts, rich, w, height);
     draw_prepared(cx, d, opts, &prepared, x, y, w, height)
 }
 
-fn prepare_legacy(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, mut rich: Rich, w: f64, height: f64) -> Rc<PreparedRich> {
-    let matches: Arc<[(usize, usize)]> = opts.find.as_ref().map(|find| {
-        find.pattern.find_iter(&rich.text).map(|m| (m.start(), m.end())).collect::<Vec<_>>().into()
-    }).unwrap_or_default();
+fn prepare_legacy(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    mut rich: Rich,
+    w: f64,
+    height: f64,
+) -> Rc<PreparedRich> {
+    let matches: Arc<[(usize, usize)]> = opts
+        .find
+        .as_ref()
+        .map(|find| {
+            find.pattern
+                .find_iter(&rich.text)
+                .map(|m| (m.start(), m.end()))
+                .collect::<Vec<_>>()
+                .into()
+        })
+        .unwrap_or_default();
     let found = find_in_matches(opts, &matches);
-    if let Some((s, e)) = found { rich.recolor(s, e, d.look.palette.surface0); }
-    let laidout = d.kit.layout_rich(cx, &rich.text, &rich.spans, w.is_finite().then_some(w), height);
-    let mut links: Vec<_> = rich.links.into_iter().map(|(s, e, href, kind)| {
-        (s, e, Arc::<str>::from(href), kind, Arc::<str>::from(&rich.text[s..e]))
-    }).collect();
+    if let Some((s, e)) = found {
+        rich.recolor(s, e, d.look.palette.surface0);
+    }
+    let laidout = d.kit.layout_rich(
+        cx,
+        &rich.text,
+        &rich.spans,
+        w.is_finite().then_some(w),
+        height,
+    );
+    let mut links: Vec<_> = rich
+        .links
+        .into_iter()
+        .map(|(s, e, href, kind)| {
+            (
+                s,
+                e,
+                Arc::<str>::from(href),
+                kind,
+                Arc::<str>::from(&rich.text[s..e]),
+            )
+        })
+        .collect();
     links.sort_by_key(|link| (link.0, link.1));
     let mut end = 0;
-    let link_max_ends = links.iter().map(|link| { end = end.max(link.1); end }).collect::<Vec<_>>().into();
+    let link_max_ends = links
+        .iter()
+        .map(|link| {
+            end = end.max(link.1);
+            end
+        })
+        .collect::<Vec<_>>()
+        .into();
     let copy_end = rich.text.trim_end_matches('\n').len();
     Rc::new(PreparedRich {
         rich: Arc::new(SemanticParagraph {
-            text: rich.text.into(), empty: false, copy_end, spans: Arc::from([]),
-            codes: rich.codes.into(), strikes: rich.strikes.into(), links: links.into(), link_max_ends,
+            text: rich.text.into(),
+            empty: false,
+            contains_images: false,
+            copy_end,
+            spans: Arc::from([]),
+            codes: rich.codes.into(),
+            strikes: rich.strikes.into(),
+            links: links.into(),
+            link_max_ends,
             find_matches: matches,
         }),
-        laidout, found,
+        laidout,
+        found,
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_prepared(cx: &mut Cx2d, d: &mut Draw, _opts: &mut MdOpts, prepared: &PreparedRich, x: f64, y: f64, _w: f64, _height: f64) -> f64 {
+fn draw_prepared(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    _opts: &mut MdOpts,
+    prepared: &PreparedRich,
+    x: f64,
+    y: f64,
+    _w: f64,
+    _height: f64,
+) -> f64 {
     let rich = &prepared.rich;
     let p = d.look.palette;
     let found = prepared.found;
@@ -514,63 +904,169 @@ fn draw_prepared(cx: &mut Cx2d, d: &mut Draw, _opts: &mut MdOpts, prepared: &Pre
         return size.y;
     }
     let pos = dvec2(x, y);
-    let visible = d.kit.viewport.map(|viewport| laidout.visible_row_range(
-        (viewport.pos.y - y) as f32, (viewport.pos.y + viewport.size.y - y) as f32,
-    )).unwrap_or(0..laidout.rows.len());
-    let visible_start = laidout.rows.get(visible.start).map(|row| row.text.start_in_parent()).unwrap_or(laidout.text.len());
-    let visible_end = visible.end.checked_sub(1).and_then(|index| laidout.rows.get(index)).map(|row| row.text.end_in_parent()).unwrap_or(0);
-    for &(s, e) in rich.codes.iter().skip(rich.codes.partition_point(|&(_, end)| end <= visible_start)).take_while(|&&(start, _)| start < visible_end) {
+    let visible = d
+        .kit
+        .viewport
+        .map(|viewport| {
+            laidout.visible_row_range(
+                (viewport.pos.y - y) as f32,
+                (viewport.pos.y + viewport.size.y - y) as f32,
+            )
+        })
+        .unwrap_or(0..laidout.rows.len());
+    let visible_start = laidout
+        .rows
+        .get(visible.start)
+        .map(|row| row.text.start_in_parent())
+        .unwrap_or(laidout.text.len());
+    let visible_end = visible
+        .end
+        .checked_sub(1)
+        .and_then(|index| laidout.rows.get(index))
+        .map(|row| row.text.end_in_parent())
+        .unwrap_or(0);
+    for &(s, e) in rich
+        .codes
+        .iter()
+        .skip(rich.codes.partition_point(|&(_, end)| end <= visible_start))
+        .take_while(|&&(start, _)| start < visible_end)
+    {
         for r in range_rects_visible(&laidout, s, e, pos, d.kit.viewport) {
             let r = r.translate(pos);
-            d.kit.rect(cx, Rect { pos: r.pos - dvec2(3.0, 0.0), size: r.size + dvec2(6.0, 0.0) }, p.surface2, 4.0);
+            d.kit.rect(
+                cx,
+                Rect {
+                    pos: r.pos - dvec2(3.0, 0.0),
+                    size: r.size + dvec2(6.0, 0.0),
+                },
+                p.surface2,
+                4.0,
+            );
         }
     }
     if let Some((s, e)) = found {
-        let location = laidout.cursor_to_position(Cursor { index: s, prefer_next_row: true });
+        let location = laidout.cursor_to_position(Cursor {
+            index: s,
+            prefer_next_row: true,
+        });
         if let Some(row) = laidout.rows.get(location.row_index) {
-            d.state.find_y.get_or_insert(y + (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64);
+            d.state
+                .find_y
+                .get_or_insert(y + (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64);
         }
         for r in range_rects_visible(&laidout, s, e, pos, d.kit.viewport) {
             d.kit.rect(cx, r.translate(pos), p.warning, 2.0);
         }
     }
     d.kit.draw_rich(cx, pos, &laidout);
-    for &(s, e) in rich.strikes.iter().skip(rich.strikes.partition_point(|&(_, end)| end <= visible_start)).take_while(|&&(start, _)| start < visible_end) {
+    for &(s, e) in rich
+        .strikes
+        .iter()
+        .skip(
+            rich.strikes
+                .partition_point(|&(_, end)| end <= visible_start),
+        )
+        .take_while(|&&(start, _)| start < visible_end)
+    {
         for r in range_rects_visible(&laidout, s, e, pos, d.kit.viewport) {
             let r = r.translate(pos);
-            d.kit.rect(cx, rect_xywh(r.pos.x, r.pos.y + r.size.y * 0.5, r.size.x, 1.0), p.foreground, 0.0);
+            d.kit.rect(
+                cx,
+                rect_xywh(r.pos.x, r.pos.y + r.size.y * 0.5, r.size.x, 1.0),
+                p.foreground,
+                0.0,
+            );
         }
     }
-    let first_link = rich.link_max_ends.partition_point(|&end| end <= visible_start);
-    for (s, e, href, kind, text) in rich.links.iter().skip(first_link).take_while(|link| link.0 < visible_end) {
+    let first_link = rich
+        .link_max_ends
+        .partition_point(|&end| end <= visible_start);
+    for (s, e, href, kind, text) in rich
+        .links
+        .iter()
+        .skip(first_link)
+        .take_while(|link| link.0 < visible_end)
+    {
         let hovered = d.state.hover_link.as_deref() == Some(href.as_ref()) && !d.look.mobile;
         for r in range_rects_visible(&laidout, *s, *e, pos, d.kit.viewport) {
             let r = r.translate(pos);
             if hovered {
-                d.kit.rect(cx, rect_xywh(r.pos.x, r.pos.y + r.size.y - 2.0, r.size.x, 1.0), p.accent_bright, 0.0);
+                d.kit.rect(
+                    cx,
+                    rect_xywh(r.pos.x, r.pos.y + r.size.y - 2.0, r.size.x, 1.0),
+                    p.accent_bright,
+                    0.0,
+                );
             }
-            d.canvas.add_hit(r, HitTarget::Link { href: href.clone(), kind: *kind, text: text.clone() });
+            d.canvas.add_hit(
+                r,
+                HitTarget::Link {
+                    href: href.clone(),
+                    kind: *kind,
+                    text: text.clone(),
+                },
+            );
         }
     }
     d.canvas.add_run(laidout, pos, Some('\n'));
     size.y
 }
 
+fn contains_images(d: &Draw, inlines: &[Inline]) -> bool {
+    d.state
+        .markdown_paragraphs
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.paragraphs.get(&ParagraphKey::of(inlines)))
+        .map_or_else(
+            || {
+                inlines
+                    .iter()
+                    .any(|inline| matches!(inline, Inline::Image { .. }))
+            },
+            |paragraph| paragraph.contains_images,
+        )
+}
+
 #[allow(clippy::too_many_arguments)]
-fn paragraph(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, inlines: &[Inline], x: f64, y: f64, w: f64, para: &Para, height: f64) -> f64 {
-    if d.state.markdown_paragraphs.snapshot.as_ref().is_some_and(|snapshot| snapshot.paragraphs.contains_key(&ParagraphKey::of(inlines))) {
+fn paragraph(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    inlines: &[Inline],
+    x: f64,
+    y: f64,
+    w: f64,
+    para: &Para,
+    height: f64,
+) -> f64 {
+    if d.state
+        .markdown_paragraphs
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.paragraphs.get(&ParagraphKey::of(inlines)))
+        .is_some_and(|paragraph| !paragraph.contains_images)
+    {
         return prepare_paragraph(cx, d, opts, inlines, w, para, height)
-            .map(|prepared| draw_prepared(cx, d, opts, &prepared, x, y, w, height)).unwrap_or(0.0);
+            .map(|prepared| draw_prepared(cx, d, opts, &prepared, x, y, w, height))
+            .unwrap_or(0.0);
     }
     // Images break the paragraph into text / image / text segments.
     let mut cursor = y;
     let mut start = 0;
     let mut first = true;
-    let flush = |cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, segment: &[Inline], cursor: &mut f64, first: &mut bool| {
+    let flush = |cx: &mut Cx2d,
+                 d: &mut Draw,
+                 opts: &mut MdOpts,
+                 segment: &[Inline],
+                 cursor: &mut f64,
+                 first: &mut bool| {
         if segment.is_empty() {
             return;
         }
-        let Some(prepared) = prepare_paragraph(cx, d, opts, segment, w, para, height) else { return };
+        let Some(prepared) = prepare_paragraph(cx, d, opts, segment, w, para, height) else {
+            return;
+        };
         if !*first {
             *cursor += 8.0;
         }
@@ -578,13 +1074,13 @@ fn paragraph(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, inlines: &[Inline],
         *first = false;
     };
     for (index, inline) in inlines.iter().enumerate() {
-        if let Inline::Image { url, alt } = inline {
+        if let Inline::Image { url, alt, link } = inline {
             flush(cx, d, opts, &inlines[start..index], &mut cursor, &mut first);
             start = index + 1;
             if !first {
                 cursor += 8.0;
             }
-            cursor += image(cx, d, opts, url, alt, x, cursor, w, para);
+            cursor += image(cx, d, opts, url, alt, x, cursor, w, para, link.as_ref());
             first = false;
         }
     }
@@ -592,11 +1088,29 @@ fn paragraph(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, inlines: &[Inline],
     cursor - y
 }
 
-/// markdown/images.ts: a 320 high contain box with 8px corners; the box stays
-/// reserved while loading; an unreadable image shows its alt text.
+/// Reserve a placeholder while loading, then size both layout and paint to the
+/// decoded aspect ratio, bounded by the available width and a 320px height.
 #[allow(clippy::too_many_arguments)]
-fn image(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, url: &str, alt: &str, x: f64, y: f64, w: f64, para: &Para) -> f64 {
-    let state = images::image(cx, opts.core, opts.host_id, opts.workspace_root, url, opts.key);
+fn image(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    url: &str,
+    alt: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    para: &Para,
+    link: Option<&(String, FileLinkSourceType)>,
+) -> f64 {
+    let state = images::image(
+        cx,
+        opts.core,
+        opts.host_id,
+        opts.workspace_root,
+        url,
+        opts.key,
+    );
     match state {
         ImageState::Loading => 320.0,
         ImageState::Failed => {
@@ -607,19 +1121,46 @@ fn image(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, url: &str, alt: &str, x
             rich.push(alt, Font::Regular, para.size, para.color);
             draw_rich(cx, d, opts, rich, x, y, w, 1.4)
         }
-        ImageState::Ready { texture, width, height } => {
-            let aspect = width as f64 / height.max(1) as f64;
-            let mut ih = 320.0f64;
-            let mut iw = ih * aspect;
-            if iw > w {
-                iw = w;
-                ih = iw / aspect;
-            }
-            let r = rect_xywh(x + (w - iw) * 0.5, y + (320.0 - ih) * 0.5, iw, ih);
-            d.kit.texture(cx, r, &texture, 8.0);
-            d.canvas.add_hit(r, HitTarget::Image { key: url.to_owned() });
-            320.0
+        ImageState::Error(error) => {
+            let mut rich = Rich::default();
+            rich.push(
+                &crate::common::tr_args("tailnet.imageFailed", &[("error", &error)]),
+                Font::Regular,
+                para.size,
+                para.color,
+            );
+            draw_rich(cx, d, opts, rich, x, y, w, 1.4)
         }
+        ImageState::Ready {
+            texture,
+            width,
+            height,
+        } => {
+            let r = image_bounds(width, height, x, y, w);
+            d.kit.texture(cx, r, &texture, 8.0);
+            d.canvas.add_hit(r, image_hit(url, alt, link));
+            r.size.y
+        }
+    }
+}
+
+fn image_bounds(width: usize, height: usize, x: f64, y: f64, available: f64) -> Rect {
+    let aspect = width as f64 / height.max(1) as f64;
+    let height = 320.0f64.min(available / aspect);
+    let width = height * aspect;
+    rect_xywh(x + (available - width) * 0.5, y, width, height)
+}
+
+fn image_hit(url: &str, alt: &str, link: Option<&(String, FileLinkSourceType)>) -> HitTarget {
+    match link {
+        Some((href, kind)) => HitTarget::Link {
+            href: Arc::from(href.as_str()),
+            kind: *kind,
+            text: Arc::from(alt),
+        },
+        None => HitTarget::Image {
+            key: url.to_owned(),
+        },
     }
 }
 
@@ -635,8 +1176,22 @@ fn heading_scale(level: u8) -> f64 {
 
 /// Draws `blocks`; returns the total height.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_blocks(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, blocks: &[Block], x: f64, y: f64, w: f64, color: Vec4, tight: bool) -> f64 {
-    let gap = if tight { 4.0 } else { block_gap(d.look.compact) };
+pub fn draw_blocks(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    blocks: &[Block],
+    x: f64,
+    y: f64,
+    w: f64,
+    color: Vec4,
+    tight: bool,
+) -> f64 {
+    let gap = if tight {
+        4.0
+    } else {
+        block_gap(d.look.compact)
+    };
     let mut cursor = y;
     for (index, block) in blocks.iter().enumerate() {
         if index > 0 {
@@ -666,19 +1221,61 @@ enum Marker {
 /// wider than "99.".
 fn list_columns(parent: Option<f64>, marker: f64, extra: f64) -> (f64, f64) {
     let origin = parent.map_or(0.0, |parent| 20.0 - (parent + 7.0).floor());
-    (origin + marker + extra, origin + (marker + 7.0).floor() + extra)
+    (
+        origin + marker + extra,
+        origin + (marker + 7.0).floor() + extra,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, block: &Block, x: f64, y: f64, w: f64, color: Vec4, depth: usize, parent: Option<f64>) -> f64 {
+fn draw_block(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    block: &Block,
+    x: f64,
+    y: f64,
+    w: f64,
+    color: Vec4,
+    depth: usize,
+    parent: Option<f64>,
+) -> f64 {
     let p = d.look.palette;
     let fs = opts.font_size;
     match block {
-        Block::Paragraph(inlines) => paragraph(cx, d, opts, inlines, x, y, w, &Para { size: fs, color, bold: false }, (fs * 1.4).round() / fs),
+        Block::Paragraph(inlines) => paragraph(
+            cx,
+            d,
+            opts,
+            inlines,
+            x,
+            y,
+            w,
+            &Para {
+                size: fs,
+                color,
+                bold: false,
+            },
+            (fs * 1.4).round() / fs,
+        ),
         Block::Heading { level, inlines } => {
             let size = (fs * heading_scale(*level)).round();
             let color = if *level == 6 { p.muted } else { color };
-            paragraph(cx, d, opts, inlines, x, y, w, &Para { size, color, bold: true }, (fs * heading_scale(*level) * 1.3).round() / size)
+            paragraph(
+                cx,
+                d,
+                opts,
+                inlines,
+                x,
+                y,
+                w,
+                &Para {
+                    size,
+                    color,
+                    bold: true,
+                },
+                (fs * heading_scale(*level) * 1.3).round() / size,
+            )
         }
         Block::Rule => {
             d.kit.rect(cx, rect_xywh(x, y + 8.0, w, 1.0), p.border, 0.0);
@@ -690,10 +1287,32 @@ fn draw_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, block: &Block, x: 
             let inner_w = (w - 35.0).max(1.0);
             let quote_color = with_alpha(p.foreground, p.foreground.w * 0.8);
             // Measure first so the quote box renders beneath its content.
-            let h = measured(cx, d, opts, |cx, d, opts| draw_blocks(cx, d, opts, blocks, inner_x, y + 12.0, inner_w, quote_color, false)) + 24.0;
+            let h = measured(cx, d, opts, |cx, d, opts| {
+                draw_blocks(
+                    cx,
+                    d,
+                    opts,
+                    blocks,
+                    inner_x,
+                    y + 12.0,
+                    inner_w,
+                    quote_color,
+                    false,
+                )
+            }) + 24.0;
             d.kit.rect(cx, rect_xywh(x, y, w, h), p.surface1, 0.0);
             d.kit.rect(cx, rect_xywh(x, y, 3.0, h), p.surface2, 0.0);
-            draw_blocks(cx, d, opts, blocks, inner_x, y + 12.0, inner_w, quote_color, false);
+            draw_blocks(
+                cx,
+                d,
+                opts,
+                blocks,
+                inner_x,
+                y + 12.0,
+                inner_w,
+                quote_color,
+                false,
+            );
             h
         }
         Block::Alert { kind, blocks } => {
@@ -709,22 +1328,68 @@ fn draw_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, block: &Block, x: 
             let body_y = y + 12.0 + band + (fs * 0.4).round();
             let inner_w = (w - 35.0).max(1.0);
             let quote_color = with_alpha(p.foreground, p.foreground.w * 0.8);
-            let body = measured(cx, d, opts, |cx, d, opts| draw_blocks(cx, d, opts, blocks, x + 23.0, body_y, inner_w, quote_color, false));
+            let body = measured(cx, d, opts, |cx, d, opts| {
+                draw_blocks(
+                    cx,
+                    d,
+                    opts,
+                    blocks,
+                    x + 23.0,
+                    body_y,
+                    inner_w,
+                    quote_color,
+                    false,
+                )
+            });
             let h = body + (body_y - y) + 12.0;
             d.kit.rect(cx, rect_xywh(x, y, w, h), p.surface2, 0.0);
             d.kit.rect(cx, rect_xywh(x, y, 3.0, h), tint, 0.0);
-            d.kit.icon(cx, icon, rect_xywh(x + 23.0, y + 12.0, icon_size, band), icon_size, tint);
-            d.kit.label(cx, Font::Bold, fs, 1.2, tint, dvec2(x + 23.0 + icon_size + (icon_size * 0.4).round(), y + 12.0), title, None);
-            draw_blocks(cx, d, opts, blocks, x + 23.0, body_y, inner_w, quote_color, false);
+            d.kit.icon(
+                cx,
+                icon,
+                rect_xywh(x + 23.0, y + 12.0, icon_size, band),
+                icon_size,
+                tint,
+            );
+            d.kit.label(
+                cx,
+                Font::Bold,
+                fs,
+                1.2,
+                tint,
+                dvec2(x + 23.0 + icon_size + (icon_size * 0.4).round(), y + 12.0),
+                title,
+                None,
+            );
+            draw_blocks(
+                cx,
+                d,
+                opts,
+                blocks,
+                x + 23.0,
+                body_y,
+                inner_w,
+                quote_color,
+                false,
+            );
             h
         }
-        Block::List { start, items } => list(cx, d, opts, *start, items, x, y, w, color, depth, parent),
-        Block::Table { aligns, head, rows } => table(cx, d, opts, aligns, head, rows, x, y, w, color),
+        Block::List { start, items } => {
+            list(cx, d, opts, *start, items, x, y, w, color, depth, parent)
+        }
+        Block::Table { aligns, head, rows } => {
+            table(cx, d, opts, aligns, head, rows, x, y, w, color)
+        }
     }
 }
 
 /// A measuring pass that leaves the find and key counters untouched.
-pub fn measured<R>(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, f: impl FnOnce(&mut Cx2d, &mut Draw, &mut MdOpts) -> R) -> R {
+pub fn measured<R>(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    f: impl FnOnce(&mut Cx2d, &mut Draw, &mut MdOpts) -> R,
+) -> R {
     let seen = opts.find.as_deref().map(|f| f.seen);
     let counter = opts.counter;
     let result = d.measure(|d| f(cx, d, opts));
@@ -736,7 +1401,19 @@ pub fn measured<R>(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, f: impl FnOnc
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, start: Option<u64>, items: &[ListItem], x: f64, y: f64, w: f64, color: Vec4, depth: usize, parent: Option<f64>) -> f64 {
+fn list(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    start: Option<u64>,
+    items: &[ListItem],
+    x: f64,
+    y: f64,
+    w: f64,
+    color: Vec4,
+    depth: usize,
+    parent: Option<f64>,
+) -> f64 {
     let p = d.look.palette;
     let fs = opts.font_size;
     let line = (fs * 1.4).round();
@@ -744,12 +1421,16 @@ fn list(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, start: Option<u64>, item
     // whole pixels when one of its numbers is wider.
     let ordered = start.map(|first| {
         let column = d.kit.measure(cx, Font::Medium, fs, 1.4, "99.", None).x;
-        let labels: Vec<(String, f64)> = (0..items.len() as u64).map(|index| {
-            let label = format!("{}.", first + index);
-            let width = d.kit.measure(cx, Font::Medium, fs, 1.4, &label, None).x;
-            (label, width)
-        }).collect();
-        let widest = labels.iter().fold(column, |widest, (_, width)| widest.max(*width));
+        let labels: Vec<(String, f64)> = (0..items.len() as u64)
+            .map(|index| {
+                let label = format!("{}.", first + index);
+                let width = d.kit.measure(cx, Font::Medium, fs, 1.4, &label, None).x;
+                (label, width)
+            })
+            .collect();
+        let widest = labels
+            .iter()
+            .fold(column, |widest, (_, width)| widest.max(*width));
         (column, (widest - column).ceil(), labels)
     });
     let mut cursor = y;
@@ -766,8 +1447,20 @@ fn list(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, start: Option<u64>, item
         let center = cursor + line * 0.5;
         match kind {
             Marker::Ordered => {
-                if let Some((label, width)) = ordered.as_ref().and_then(|(_, _, labels)| labels.get(index)) {
-                    d.kit.label(cx, Font::Medium, fs, 1.4, p.muted, dvec2(x + anchor - width, cursor), label, None);
+                if let Some((label, width)) = ordered
+                    .as_ref()
+                    .and_then(|(_, _, labels)| labels.get(index))
+                {
+                    d.kit.label(
+                        cx,
+                        Font::Medium,
+                        fs,
+                        1.4,
+                        p.muted,
+                        dvec2(x + anchor - width, cursor),
+                        label,
+                        None,
+                    );
                 }
             }
             Marker::Bullet => {
@@ -789,25 +1482,50 @@ fn list(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, start: Option<u64>, item
             }
         }
         // taskList.checkedTextColor: muted text for a checked item.
-        let item_color = if kind == Marker::Task(true) { p.muted } else { color };
+        let item_color = if kind == Marker::Task(true) {
+            p.muted
+        } else {
+            color
+        };
         let mut item_y = cursor;
         for (b, block) in item.blocks.iter().enumerate() {
             if b > 0 {
                 item_y += 4.0;
             }
-            item_y += draw_block(cx, d, opts, block, x + column, item_y, (w - column).max(1.0), item_color, depth + 1, Some(marker));
+            item_y += draw_block(
+                cx,
+                d,
+                opts,
+                block,
+                x + column,
+                item_y,
+                (w - column).max(1.0),
+                item_color,
+                depth + 1,
+                Some(marker),
+            );
         }
         cursor = item_y.max(cursor + line);
     }
     cursor - y
 }
 
-
 /// TableContainerView: bold header on surface2, 1px border with a 6px radius,
 /// 12x8 cell padding, columns sized to content between 60 and 300 (plus
 /// padding); body rows alternate surface0/surface1; wide tables scroll sideways.
 #[allow(clippy::too_many_arguments)]
-fn table(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, aligns: &[Alignment], head: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], x: f64, y: f64, w: f64, color: Vec4) -> f64 {
+fn table(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    aligns: &[Alignment],
+    head: &[Vec<Inline>],
+    rows: &[Vec<Vec<Inline>>],
+    x: f64,
+    y: f64,
+    w: f64,
+    color: Vec4,
+) -> f64 {
     let p = d.look.palette;
     let fs = opts.font_size;
     let height = (fs * 1.4).round() / fs;
@@ -819,17 +1537,40 @@ fn table(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, aligns: &[Alignment], h
     let mut widths = vec![84.0f64; columns];
     let matches = measured(cx, d, opts, |cx, d, opts| {
         let before = opts.find.as_ref().map_or(0, |find| find.seen);
-        for (bold, cells) in std::iter::once((true, head)).chain(rows.iter().map(|row| (false, row.as_slice()))) {
+        for (bold, cells) in
+            std::iter::once((true, head)).chain(rows.iter().map(|row| (false, row.as_slice())))
+        {
             for (c, cell) in cells.iter().enumerate() {
-                if let Some(prepared) = prepare_paragraph(cx, d, opts, cell, f64::INFINITY, &Para { size: fs, color, bold }, height) {
+                if contains_images(d, cell) {
+                    widths[c] = 324.0;
+                    continue;
+                }
+                if let Some(prepared) = prepare_paragraph(
+                    cx,
+                    d,
+                    opts,
+                    cell,
+                    f64::INFINITY,
+                    &Para {
+                        size: fs,
+                        color,
+                        bold,
+                    },
+                    height,
+                ) {
                     widths[c] = widths[c].max(laidout_size(&prepared.laidout).x + 24.0);
                 }
             }
         }
-        opts.find.as_ref().map_or(0, |find| find.seen).saturating_sub(before)
+        opts.find
+            .as_ref()
+            .map_or(0, |find| find.seen)
+            .saturating_sub(before)
     });
     if d.state.markdown_paragraphs.pending {
-        if let Some(find) = opts.find.as_deref_mut() { find.seen += matches; }
+        if let Some(find) = opts.find.as_deref_mut() {
+            find.seen += matches;
+        }
         return 0.0;
     }
     for width in &mut widths {
@@ -838,17 +1579,55 @@ fn table(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, aligns: &[Alignment], h
     let total: f64 = widths.iter().sum();
     let max_scroll = (total - w).max(0.0);
     d.state.extent_x.insert(key.clone(), max_scroll);
-    let scroll = d.state.scroll_x.get(&key).copied().unwrap_or(0.0).clamp(0.0, max_scroll);
+    let scroll = d
+        .state
+        .scroll_x
+        .get(&key)
+        .copied()
+        .unwrap_or(0.0)
+        .clamp(0.0, max_scroll);
     let view = rect_xywh(x, y, w, 0.0);
 
     // Row heights.
     let mut row_heights = Vec::with_capacity(rows.len() + 1);
-    let all_rows: Vec<(bool, &[Vec<Inline>])> = std::iter::once((true, head)).chain(rows.iter().map(|r| (false, r.as_slice()))).collect();
+    let all_rows: Vec<(bool, &[Vec<Inline>])> = std::iter::once((true, head))
+        .chain(rows.iter().map(|r| (false, r.as_slice())))
+        .collect();
     measured(cx, d, opts, |cx, d, opts| {
         for (bold, cells) in &all_rows {
             let mut h: f64 = 0.0;
             for (c, cell) in cells.iter().enumerate() {
-                if let Some(prepared) = prepare_paragraph(cx, d, opts, cell, widths[c] - 24.0, &Para { size: fs, color, bold: *bold }, height) {
+                if contains_images(d, cell) {
+                    h = h.max(paragraph(
+                        cx,
+                        d,
+                        opts,
+                        cell,
+                        0.0,
+                        0.0,
+                        widths[c] - 24.0,
+                        &Para {
+                            size: fs,
+                            color,
+                            bold: *bold,
+                        },
+                        height,
+                    ));
+                    continue;
+                }
+                if let Some(prepared) = prepare_paragraph(
+                    cx,
+                    d,
+                    opts,
+                    cell,
+                    widths[c] - 24.0,
+                    &Para {
+                        size: fs,
+                        color,
+                        bold: *bold,
+                    },
+                    height,
+                ) {
                     h = h.max(laidout_size(&prepared.laidout).y);
                 }
             }
@@ -856,39 +1635,114 @@ fn table(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, aligns: &[Alignment], h
         }
     });
     if d.state.markdown_paragraphs.pending {
-        if let Some(find) = opts.find.as_deref_mut() { find.seen += matches; }
+        if let Some(find) = opts.find.as_deref_mut() {
+            find.seen += matches;
+        }
         return 0.0;
     }
     let table_h: f64 = row_heights.iter().sum();
     // A table wider than the column reserves the scroll bar's strip below it.
-    let bar_h = if max_scroll > 0.0 { super::super::scrollbar::BAR } else { 0.0 };
-    let clip = Rect { size: dvec2(w, table_h + bar_h), ..view };
-    cx.begin_turtle(Walk { abs_pos: Some(clip.pos), margin: Margin::default(), width: Size::Fixed(w), height: Size::Fixed(clip.size.y) }, Layout::default());
+    let bar_h = if max_scroll > 0.0 {
+        super::super::scrollbar::BAR
+    } else {
+        0.0
+    };
+    let clip = Rect {
+        size: dvec2(w, table_h + bar_h),
+        ..view
+    };
+    cx.begin_turtle(
+        Walk {
+            abs_pos: Some(clip.pos),
+            margin: Margin::default(),
+            width: Size::Fixed(w),
+            height: Size::Fixed(clip.size.y),
+        },
+        Layout::default(),
+    );
     d.canvas.push_clip(clip);
     let tx = x - scroll;
-    d.kit.rect(cx, rect_xywh(tx, y, total, table_h), p.surface0, 6.0);
+    d.kit
+        .rect(cx, rect_xywh(tx, y, total, table_h), p.surface0, 6.0);
     let mut cy = y;
     for (r, (bold, cells)) in all_rows.iter().enumerate() {
         let rh = row_heights[r];
-        let fill = if *bold { p.surface2 } else if r % 2 == 0 { p.surface1 } else { p.surface0 };
-        let radii = if r == 0 { vec4(6.0, 6.0, 0.0, 0.0) } else if r + 1 == all_rows.len() { vec4(0.0, 0.0, 6.0, 6.0) } else { vec4(0.0, 0.0, 0.0, 0.0) };
-        d.kit.rect_full(cx, rect_xywh(tx, cy, total, rh), fill, radii, TRANSPARENT, 0.0);
+        let fill = if *bold {
+            p.surface2
+        } else if r % 2 == 0 {
+            p.surface1
+        } else {
+            p.surface0
+        };
+        let radii = if r == 0 {
+            vec4(6.0, 6.0, 0.0, 0.0)
+        } else if r + 1 == all_rows.len() {
+            vec4(0.0, 0.0, 6.0, 6.0)
+        } else {
+            vec4(0.0, 0.0, 0.0, 0.0)
+        };
+        d.kit.rect_full(
+            cx,
+            rect_xywh(tx, cy, total, rh),
+            fill,
+            radii,
+            TRANSPARENT,
+            0.0,
+        );
         let mut cx_pos = tx;
         for (c, &col_w) in widths.iter().enumerate().take(columns) {
             if let Some(cell) = cells.get(c) {
                 let laid_w = col_w - 24.0;
-                if let Some(prepared) = prepare_paragraph(cx, d, opts, cell, laid_w, &Para { size: fs, color, bold: *bold }, height) {
+                if contains_images(d, cell) {
+                    paragraph(
+                        cx,
+                        d,
+                        opts,
+                        cell,
+                        cx_pos + 12.0,
+                        cy + 8.0,
+                        laid_w,
+                        &Para {
+                            size: fs,
+                            color,
+                            bold: *bold,
+                        },
+                        height,
+                    );
+                } else if let Some(prepared) = prepare_paragraph(
+                    cx,
+                    d,
+                    opts,
+                    cell,
+                    laid_w,
+                    &Para {
+                        size: fs,
+                        color,
+                        bold: *bold,
+                    },
+                    height,
+                ) {
                     let size = laidout_size(&prepared.laidout);
                     let dx = match aligns.get(c) {
                         Some(Alignment::Center) => (laid_w - size.x) * 0.5,
                         Some(Alignment::Right) => laid_w - size.x,
                         _ => 0.0,
                     };
-                    draw_prepared(cx, d, opts, &prepared, cx_pos + 12.0 + dx.max(0.0), cy + 8.0, laid_w, height);
+                    draw_prepared(
+                        cx,
+                        d,
+                        opts,
+                        &prepared,
+                        cx_pos + 12.0 + dx.max(0.0),
+                        cy + 8.0,
+                        laid_w,
+                        height,
+                    );
                 }
             }
             if c > 0 {
-                d.kit.rect(cx, rect_xywh(cx_pos, cy, 1.0, rh), p.border, 0.0);
+                d.kit
+                    .rect(cx, rect_xywh(cx_pos, cy, 1.0, rh), p.border, 0.0);
             }
             cx_pos += col_w;
         }
@@ -897,49 +1751,138 @@ fn table(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, aligns: &[Alignment], h
         }
         cy += rh;
     }
-    d.kit.bordered(cx, rect_xywh(tx, y, total, table_h), TRANSPARENT, 6.0, p.border, 1.0);
+    d.kit.bordered(
+        cx,
+        rect_xywh(tx, y, total, table_h),
+        TRANSPARENT,
+        6.0,
+        p.border,
+        1.0,
+    );
     d.canvas.pop_clip();
     cx.end_turtle();
     if max_scroll > 0.0 {
         d.canvas.add_hit(clip, HitTarget::ScrollX(key.clone()));
     }
-    super::super::scrollbar::draw(cx, d, clip, Some(p.surface0), Some(super::super::scrollbar::Axis { key: &key, offset: scroll, max: max_scroll }), None);
+    super::super::scrollbar::draw(
+        cx,
+        d,
+        clip,
+        Some(p.surface0),
+        Some(super::super::scrollbar::Axis {
+            key: &key,
+            offset: scroll,
+            max: max_scroll,
+        }),
+        None,
+    );
     table_h + bar_h
 }
 
 /// Code text colored by syntax ranges, as one rich text.
-pub fn code_rich(code: &str, colors: Option<&highlight::Colored>, fg: Vec4, size: f64) -> (String, Vec<RichSpan>) {
+pub fn code_rich(
+    code: &str,
+    colors: Option<&highlight::Colored>,
+    fg: Vec4,
+    size: f64,
+) -> (String, Vec<RichSpan>) {
     let mut spans = Vec::new();
     match colors {
         Some(colors) => {
             let mut offset = 0;
             for (range, color) in colors.iter() {
                 if range.start > offset {
-                    spans.push(RichSpan { len: range.start - offset, font: Font::Mono, size_px: size, color: fg });
+                    spans.push(RichSpan {
+                        len: range.start - offset,
+                        font: Font::Mono,
+                        size_px: size,
+                        color: fg,
+                    });
                 }
                 if range.end > range.start {
-                    spans.push(RichSpan { len: range.end - range.start, font: Font::Mono, size_px: size, color: color.unwrap_or(fg) });
+                    spans.push(RichSpan {
+                        len: range.end - range.start,
+                        font: Font::Mono,
+                        size_px: size,
+                        color: color.unwrap_or(fg),
+                    });
                 }
                 offset = range.end;
             }
             if offset < code.len() {
-                spans.push(RichSpan { len: code.len() - offset, font: Font::Mono, size_px: size, color: fg });
+                spans.push(RichSpan {
+                    len: code.len() - offset,
+                    font: Font::Mono,
+                    size_px: size,
+                    color: fg,
+                });
             }
         }
-        None => spans.push(RichSpan { len: code.len(), font: Font::Mono, size_px: size, color: fg }),
+        None => spans.push(RichSpan {
+            len: code.len(),
+            font: Font::Mono,
+            size_px: size,
+            color: fg,
+        }),
     }
     (code.to_owned(), spans)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn code_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, lang: &str, text: &str, x: f64, y: f64, w: f64) -> f64 {
+fn code_block(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    lang: &str,
+    text: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+) -> f64 {
+    if lang.trim().eq_ignore_ascii_case("mermaid") {
+        let diagram = super::super::mermaid::draw(cx, d, opts, text, x, y, w);
+        if diagram.show_source {
+            return diagram.height + code_source(cx, d, opts, lang, text, x, y + diagram.height, w);
+        }
+        // Toggling source must not change keys of later code blocks or tables.
+        opts.counter += 1;
+        return diagram.height;
+    }
+    code_source(cx, d, opts, lang, text, x, y, w)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn code_source(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    opts: &mut MdOpts,
+    lang: &str,
+    text: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+) -> f64 {
     let p = d.look.palette;
     let code_size = d.look.code();
     let key = opts.next_key("code");
-    let mobile = d.look.mobile && !lang.trim().eq_ignore_ascii_case("mermaid");
-    let line_height = if mobile { (d.look.content() * 1.4).round() / code_size } else { (code_size * 1.45).round() / code_size };
-    let layout_width = if mobile { f64::INFINITY } else { (w - 24.0).max(1.0) };
-    let semantic = d.state.markdown_paragraphs.snapshot.as_ref().and_then(|snapshot| snapshot.codes.get(&(text.as_ptr() as usize))).cloned();
+    let mobile = d.look.mobile;
+    let line_height = if mobile {
+        (d.look.content() * 1.4).round() / code_size
+    } else {
+        (code_size * 1.45).round() / code_size
+    };
+    let layout_width = if mobile {
+        f64::INFINITY
+    } else {
+        (w - 24.0).max(1.0)
+    };
+    let semantic = d
+        .state
+        .markdown_paragraphs
+        .snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.codes.get(&(text.as_ptr() as usize)))
+        .cloned();
     let (laid, found, copy_text) = if let Some(semantic) = semantic {
         let colors = if d.state.markdown_paragraphs.frozen {
             None
@@ -953,20 +1896,62 @@ fn code_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, lang: &str, text: 
             }
             colors
         };
-        let cache_key = (text.as_ptr() as usize, layout_width.to_bits(), line_height.to_bits(), false);
-        let Some(prepared) = prepare_semantic(cx, d, opts, cache_key, semantic, layout_width, &Para { size: code_size, color: p.foreground, bold: false }, line_height, colors) else { return 0.0 };
+        let cache_key = (
+            text.as_ptr() as usize,
+            layout_width.to_bits(),
+            line_height.to_bits(),
+            false,
+        );
+        let Some(prepared) = prepare_semantic(
+            cx,
+            d,
+            opts,
+            cache_key,
+            semantic,
+            layout_width,
+            &Para {
+                size: code_size,
+                color: p.foreground,
+                bold: false,
+            },
+            line_height,
+            colors,
+        ) else {
+            return 0.0;
+        };
         let copy = Substr::from(prepared.rich.text.clone()).substr(..prepared.rich.copy_end);
         (prepared.laidout.clone(), prepared.found, copy)
     } else {
         let request = d.state.fence_highlights.entry(key.clone()).or_default();
         let colors = highlight::fence(request, text, lang, opts.syntax_theme, d.look.dark());
         let (code, spans) = code_rich(text, colors.as_ref(), p.foreground, code_size);
-        let mut rich = Rich { text: code, spans, ..Default::default() };
-        let matches: Vec<_> = opts.find.as_ref().map(|find| find.pattern.find_iter(text).map(|m| (m.start(), m.end())).collect()).unwrap_or_default();
+        let mut rich = Rich {
+            text: code,
+            spans,
+            ..Default::default()
+        };
+        let matches: Vec<_> = opts
+            .find
+            .as_ref()
+            .map(|find| {
+                find.pattern
+                    .find_iter(text)
+                    .map(|m| (m.start(), m.end()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let found = find_in_matches(opts, &matches);
-        if let Some((s, e)) = found { rich.recolor(s, e, p.surface0); }
-        let laid = d.kit.layout_rich(cx, &rich.text, &rich.spans, layout_width.is_finite().then_some(layout_width), line_height);
-        (laid, found, Substr::from(text.trim_end_matches('\n')))
+        if let Some((s, e)) = found {
+            rich.recolor(s, e, p.surface0);
+        }
+        let laid = d.kit.layout_rich(
+            cx,
+            &rich.text,
+            &rich.spans,
+            layout_width.is_finite().then_some(layout_width),
+            line_height,
+        );
+        (laid, found, Substr::from(text))
     };
     let copied = d.state.copied_now(&key, d.now);
     d.animating |= copied;
@@ -981,20 +1966,65 @@ fn code_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, lang: &str, text: 
         let pane_w = w - 2.0;
         let max_scroll = (size.x + 2.0 * (inset - 1.0) - pane_w).max(0.0);
         // A pane that scrolls sideways keeps the scroll bar's strip below its last line.
-        let bar_h = if max_scroll > 0.0 { super::super::scrollbar::BAR } else { 0.0 };
+        let bar_h = if max_scroll > 0.0 {
+            super::super::scrollbar::BAR
+        } else {
+            0.0
+        };
         let pane_top = y + divider + 1.0 + (header + inset - 1.0 - divider - 1.0);
         let h = (pane_top - y) + size.y + inset.max(bar_h);
-        d.kit.bordered(cx, rect_xywh(x, y, w, h), p.surface2, 8.0, p.border, 1.0);
+        d.kit
+            .bordered(cx, rect_xywh(x, y, w, h), p.surface2, 8.0, p.border, 1.0);
         let secondary = with_alpha(p.foreground, 0x99 as f32 / 255.0);
-        d.kit.label(cx, Font::Medium, label, 1.171875, secondary, dvec2(x + inset - 1.0, y + (divider - label * 1.17) * 0.5), &highlight::display_language_name(lang), Some((w - 2.0 * inset - header).max(1.0)));
+        d.kit.label(
+            cx,
+            Font::Medium,
+            label,
+            1.171875,
+            secondary,
+            dvec2(x + inset - 1.0, y + (divider - label * 1.17) * 0.5),
+            &highlight::display_language_name(lang),
+            Some((w - 2.0 * inset - header).max(1.0)),
+        );
         let copy = rect_xywh(x + w - inset + 1.0 - header, y, header, divider);
-        d.kit.icon(cx, if copied { "check" } else { "copy" }, copy, (code_size * 1.08).ceil(), secondary);
-        d.canvas.add_hit(copy, HitTarget::Copy { key: key.clone(), text: copy_text });
-        d.kit.rect(cx, rect_xywh(x + 1.0, y + divider, w - 2.0, 1.0), with_alpha(p.foreground, 0x33 as f32 / 255.0), 0.0);
+        d.kit.icon(
+            cx,
+            if copied { "check" } else { "copy" },
+            copy,
+            (code_size * 1.08).ceil(),
+            secondary,
+        );
+        d.canvas.add_hit(
+            copy,
+            HitTarget::Copy {
+                key: key.clone(),
+                text: copy_text,
+            },
+        );
+        d.kit.rect(
+            cx,
+            rect_xywh(x + 1.0, y + divider, w - 2.0, 1.0),
+            with_alpha(p.foreground, 0x33 as f32 / 255.0),
+            0.0,
+        );
         let pane = rect_xywh(x + 1.0, y + divider + 1.0, pane_w, h - divider - 2.0);
         d.state.extent_x.insert(key.clone(), max_scroll);
-        let scroll = d.state.scroll_x.get(&key).copied().unwrap_or(0.0).clamp(0.0, max_scroll);
-        cx.begin_turtle(Walk { abs_pos: Some(pane.pos), margin: Margin::default(), width: Size::Fixed(pane.size.x), height: Size::Fixed(pane.size.y) }, Layout::default());
+        let scroll = d
+            .state
+            .scroll_x
+            .get(&key)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll);
+        cx.begin_turtle(
+            Walk {
+                abs_pos: Some(pane.pos),
+                margin: Margin::default(),
+                width: Size::Fixed(pane.size.x),
+                height: Size::Fixed(pane.size.y),
+            },
+            Layout::default(),
+        );
         d.canvas.push_clip(pane);
         let origin = dvec2(x + inset - 1.0 - scroll, pane_top);
         paint_find(cx, d, &laid, origin, found);
@@ -1005,7 +2035,18 @@ fn code_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, lang: &str, text: 
         if max_scroll > 0.0 {
             d.canvas.add_hit(pane, HitTarget::ScrollX(key.clone()));
         }
-        super::super::scrollbar::draw(cx, d, pane, Some(p.surface2), Some(super::super::scrollbar::Axis { key: &key, offset: scroll, max: max_scroll }), None);
+        super::super::scrollbar::draw(
+            cx,
+            d,
+            pane,
+            Some(p.surface2),
+            Some(super::super::scrollbar::Axis {
+                key: &key,
+                offset: scroll,
+                max: max_scroll,
+            }),
+            None,
+        );
         return h;
     }
     // components/highlighted-code-block.tsx: surface2, 8px radius, 12 padding,
@@ -1022,21 +2063,47 @@ fn code_block(cx: &mut Cx2d, d: &mut Draw, opts: &mut MdOpts, lang: &str, text: 
     let copy = rect_xywh(x + w - 30.0, y + 8.0, 22.0, 22.0);
     if visible {
         let hovered = d.state.hover_hit.as_deref() == Some(key.as_str());
-        d.kit.icon(cx, if copied { "check" } else { "copy" }, copy, 14.0, if hovered { p.foreground } else { p.muted });
-        d.canvas.add_hit(copy, HitTarget::Copy { key, text: copy_text });
+        d.kit.icon(
+            cx,
+            if copied { "check" } else { "copy" },
+            copy,
+            14.0,
+            if hovered { p.foreground } else { p.muted },
+        );
+        d.canvas.add_hit(
+            copy,
+            HitTarget::Copy {
+                key,
+                text: copy_text,
+            },
+        );
     }
     h
 }
 
-fn paint_find(cx: &mut Cx2d, d: &mut Draw, laid: &LaidoutText, origin: DVec2, found: Option<(usize, usize)>) {
-    if d.dry() { return }
+fn paint_find(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    laid: &LaidoutText,
+    origin: DVec2,
+    found: Option<(usize, usize)>,
+) {
+    if d.dry() {
+        return;
+    }
     let Some((s, e)) = found else { return };
-    let location = laid.cursor_to_position(Cursor { index: s, prefer_next_row: true });
+    let location = laid.cursor_to_position(Cursor {
+        index: s,
+        prefer_next_row: true,
+    });
     if let Some(row) = laid.rows.get(location.row_index) {
-        d.state.find_y.get_or_insert(origin.y + (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64);
+        d.state
+            .find_y
+            .get_or_insert(origin.y + (row.origin_in_lpxs.y - row.ascender_in_lpxs) as f64);
     }
     for r in range_rects_visible(laid, s, e, origin, d.kit.viewport) {
-        d.kit.rect(cx, r.translate(origin), d.look.palette.warning, 2.0);
+        d.kit
+            .rect(cx, r.translate(origin), d.look.palette.warning, 2.0);
     }
 }
 
@@ -1055,8 +2122,15 @@ mod list_column_tests {
             for parent in KINDS {
                 let (anchor, text) = list_columns(Some(parent), marker, 0.0);
                 // A bullet is centred on its column edge, so its 3px radius hangs into the gap.
-                assert!(anchor + 3.0 < text, "{marker} under {parent}: marker {anchor}, text {text}");
-                assert!(text - anchor <= 7.0, "{marker} under {parent}: gap {}", text - anchor);
+                assert!(
+                    anchor + 3.0 < text,
+                    "{marker} under {parent}: marker {anchor}, text {text}"
+                );
+                assert!(
+                    text - anchor <= 7.0,
+                    "{marker} under {parent}: gap {}",
+                    text - anchor
+                );
             }
         }
     }
@@ -1078,7 +2152,10 @@ mod list_column_tests {
         for parent in [None, Some(3.0), Some(column)] {
             let (anchor, text) = list_columns(parent, column, extra);
             let (plain_anchor, plain_text) = list_columns(parent, column, 0.0);
-            assert!(anchor - widest >= plain_anchor - column, "the number starts inside its column");
+            assert!(
+                anchor - widest >= plain_anchor - column,
+                "the number starts inside its column"
+            );
             assert!(((text - anchor) - (plain_text - plain_anchor)).abs() < 1e-9);
         }
     }
@@ -1090,7 +2167,11 @@ mod preparation_pass_tests {
     use std::time::{Duration, Instant};
 
     fn pass(start: Instant) -> ParagraphCache {
-        ParagraphCache { advance_available: true, advance_deadline: Some(start + PREPARATION_PASS), ..Default::default() }
+        ParagraphCache {
+            advance_available: true,
+            advance_deadline: Some(start + PREPARATION_PASS),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1118,5 +2199,122 @@ mod preparation_pass_tests {
     fn the_published_snapshot_admits_no_advance() {
         let mut cache = ParagraphCache::default();
         assert!(!cache.take_advance(Instant::now()));
+    }
+}
+
+#[cfg(test)]
+mod font_epoch_tests {
+    use super::*;
+
+    #[test]
+    fn installed_font_arrival_invalidates_an_unchanged_published_document() {
+        let source: Arc<str> = "```\n守护进程 Հայերեն 𐐀\n```".into();
+        let snapshot = Rc::new(ParsedSnapshot {
+            revision: 1,
+            epoch: 1,
+            source,
+            replaces_previous: false,
+            find_pattern: None,
+            interactive: true,
+            codes: HashMap::new(),
+            blocks: Rc::new(Vec::new()),
+            paragraphs: HashMap::new(),
+        });
+        let look = Look {
+            palette: crate::theme::current_palette(),
+            typo: crate::theme::current_typography(),
+            compact: true,
+            mobile: true,
+            list_inset: 12.0,
+            syntax: paseo_highlight::SyntaxThemeId::One,
+        };
+        let opts = MdOpts {
+            font_size: 14.0,
+            key: "font-arrival",
+            find: None,
+            core: None,
+            host_id: "test",
+            workspace_root: None,
+            syntax_theme: "one",
+            counter: 0,
+        };
+        let published = DocumentLayout {
+            snapshot: snapshot.clone(),
+            look,
+            theme_epoch: 7,
+            width: 320.0,
+            font_size: opts.font_size,
+            occurrence: None,
+            cache: ParagraphCache::default(),
+        };
+        assert!(published.matches(&snapshot, look, 320.0, &opts, 7));
+        // Neither source, width, font size nor palette changed: only a newly
+        // discovered face changes the glyph coverage of this retained layout.
+        assert!(!published.matches(&snapshot, look, 320.0, &opts, 8));
+    }
+}
+
+#[cfg(test)]
+mod image_interaction_tests {
+    use super::*;
+
+    #[test]
+    fn decoded_image_bounds_replace_placeholder_height_in_paragraphs_and_tables() {
+        // Plain and linked images use the paragraph width; table images use
+        // the column width minus its 12px padding on each side.
+        for available in [300.0, 357.0, 720.0] {
+            let bounds = image_bounds(240, 100, 12.0, 8.0, available);
+            assert_eq!(bounds.pos.y, 8.0);
+            assert!((bounds.size.x - available).abs() < 1e-9);
+            assert!((bounds.size.y - available * 100.0 / 240.0).abs() < 1e-9);
+            assert!(bounds.size.y < 320.0);
+            // The same height returned by image() is measured by the table:
+            // only the authored 8px cell padding remains below the raster.
+            let row_height = bounds.size.y + 16.0;
+            assert!((row_height - (bounds.pos.y + bounds.size.y) - 8.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn image_geometry_recomputes_when_decoded_dimensions_or_width_change() {
+        let landscape = image_bounds(240, 100, 10.0, 20.0, 300.0);
+        let portrait = image_bounds(100, 240, 10.0, 20.0, 300.0);
+        assert_eq!(landscape.size.y, 125.0);
+        assert_eq!(portrait.size.y, 320.0);
+        assert_eq!(portrait.pos.y, landscape.pos.y);
+        assert!((portrait.size.x / portrait.size.y - 100.0 / 240.0).abs() < 1e-9);
+        assert!((portrait.pos.x - (10.0 + (300.0 - portrait.size.x) * 0.5)).abs() < 1e-9);
+        let narrow = image_bounds(240, 100, 10.0, 20.0, 120.0);
+        assert_eq!(narrow.size.x, 120.0);
+        assert_eq!(narrow.size.y, 50.0);
+    }
+
+    #[test]
+    fn linked_images_open_the_authored_link_without_changing_plain_image_actions() {
+        let blocks = super::super::model::parse(
+            "before [![설명](https://images.test/linked.png)](https://docs.test/guide) after ![plain](https://images.test/plain.png)",
+            None,
+            false,
+        );
+        let Block::Paragraph(inlines) = &blocks[0] else {
+            panic!("paragraph missing")
+        };
+        let targets: Vec<_> = inlines
+            .iter()
+            .filter_map(|inline| {
+                let Inline::Image { url, alt, link } = inline else {
+                    return None;
+                };
+                Some(image_hit(url, alt, link.as_ref()))
+            })
+            .collect();
+        assert!(matches!(&targets[0], HitTarget::Link { href, text, .. }
+            if href.as_ref() == "https://docs.test/guide" && text.as_ref() == "설명"));
+        assert_eq!(
+            targets[1],
+            HitTarget::Image {
+                key: "https://images.test/plain.png".into()
+            }
+        );
     }
 }

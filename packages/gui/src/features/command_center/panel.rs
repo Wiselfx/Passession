@@ -3,28 +3,37 @@
 //! sections, keyboard selection with reveal-once scrolling and row activation. The DSL
 //! lives in `command_center/mod.rs`.
 
-use makepad_widgets::*;
 use crate::features::workspace::kit::{WaModalWidgetExt, WaModalWidgetRefExt};
-use serde_json::{json, Value};
+use makepad_widgets::*;
+use serde_json::{Value, json};
 
 use super::matching::highlight_ranges;
-use super::results::{self, Contribution, Icon, Kind, ListRow, Projection, ResultRow, Run, Section};
+use super::results::{
+    self, Contribution, Icon, Kind, ListRow, Projection, ResultRow, Run, Section,
+};
 use super::{parse_ms, time_ago};
-use crate::common::provider_icon::ProviderIconWidgetRefExt;
 use crate::common::paint::{Font, Painter, TextSpec, rect};
-use crate::common::widgets::{agent_status_bucket, StatusMarkWidgetRefExt, SurfaceRole, SurfaceWidgetRefExt};
-use crate::features::files::kit::DrawFilesImage;
+use crate::common::provider_icon::ProviderIconWidgetRefExt;
+use crate::common::widgets::{
+    StatusMarkWidgetRefExt, SurfaceRole, SurfaceWidgetRefExt, agent_status_bucket,
+};
 use crate::common::{PanelTarget, TabPlacement, UiContext, UiEffect};
+use crate::features::files::kit::DrawFilesImage;
 use crate::features::workspace::host::{self, agent_of};
 use crate::features::workspace::i18n::{t, ta};
-use crate::features::workspace::kit::{set_optional, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt};
-use crate::features::workspace::rpc::{array_of, new_id, object_of, str_of, str_or, Pending};
+use crate::features::workspace::kit::{
+    WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt, set_optional,
+};
+use crate::features::workspace::rpc::{Pending, array_of, new_id, object_of, str_of, str_or};
 
 #[derive(Clone, Debug, DefaultNone)]
 pub enum CommandCenterAction {
     None,
     /// A shell command (`onCommand: _execute`), handled by the shell after the palette closed.
-    Command { action: String, args: Value },
+    Command {
+        action: String,
+        args: Value,
+    },
 }
 
 /// A workspace file row: (path, name, directory).
@@ -106,8 +115,16 @@ pub struct MatchSpan {
 
 impl MatchSpan {
     fn new(text: &str, query: &str, muted: bool) -> Self {
-        let marks = if query.trim().is_empty() { Vec::new() } else { highlight_ranges(query, text, false) };
-        Self { text: text.to_owned(), marks, muted }
+        let marks = if query.trim().is_empty() {
+            Vec::new()
+        } else {
+            highlight_ranges(query, text, false)
+        };
+        Self {
+            text: text.to_owned(),
+            marks,
+            muted,
+        }
     }
 }
 
@@ -142,12 +159,20 @@ impl Widget for WaMatchText {
         }
         let p = crate::theme::current_palette();
         let t = crate::theme::current_typography();
-        let walk = Walk { height: Size::Fixed(self.line_height), ..walk };
+        let walk = Walk {
+            height: Size::Fixed(self.line_height),
+            ..walk
+        };
         let r = cx.walk_turtle(walk);
         // Opens the box batch before any text so marks paint under their glyphs.
-        self.painter.capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
+        self.painter
+            .capture_box(cx, r, Vec4::default(), Vec4::default(), 0.0, 0.0);
         let spec = TextSpec::new(Font::Regular, t.ui_size(self.size), p.foreground);
-        let tail_w = if self.tail.is_empty() { 0.0 } else { self.painter.measure(cx, spec, &self.tail).x };
+        let tail_w = if self.tail.is_empty() {
+            0.0
+        } else {
+            self.painter.measure(cx, spec, &self.tail).x
+        };
         let limit = r.pos.x + (r.size.x - tail_w).max(0.0);
         let mut x = r.pos.x;
         let mut clipped = false;
@@ -172,17 +197,36 @@ impl Widget for WaMatchText {
                 chunks.push((chars[cursor..].iter().collect(), false));
             }
             for (text, marked) in chunks {
-                let color = if marked || !span.muted { p.foreground } else { p.muted };
+                let color = if marked || !span.muted {
+                    p.foreground
+                } else {
+                    p.muted
+                };
                 let spec = TextSpec { color, ..spec };
                 let room = limit - x;
                 let width = self.painter.measure(cx, spec, &text).x;
-                let shown = if width <= room + 0.5 { text } else { self.painter.fit(cx, spec, &text, room.max(0.0)) };
+                let shown = if width <= room + 0.5 {
+                    text
+                } else {
+                    self.painter.fit(cx, spec, &text, room.max(0.0))
+                };
                 let shown_w = self.painter.measure(cx, spec, &shown).x;
                 if marked {
                     let height = self.painter.line_height(cx, spec);
-                    self.painter.fill(cx, rect(x, r.pos.y + (r.size.y - height) * 0.5, shown_w, height), p.surface3, 0.0);
+                    self.painter.fill(
+                        cx,
+                        rect(x, r.pos.y + (r.size.y - height) * 0.5, shown_w, height),
+                        p.surface3,
+                        0.0,
+                    );
                 }
-                self.painter.text_in(cx, rect(x, r.pos.y, shown_w + 1.0, r.size.y), spec, &shown, 0.0);
+                self.painter.text_in(
+                    cx,
+                    rect(x, r.pos.y, shown_w + 1.0, r.size.y),
+                    spec,
+                    &shown,
+                    0.0,
+                );
                 x += shown_w;
                 if width > room + 0.5 {
                     clipped = true;
@@ -194,7 +238,16 @@ impl Widget for WaMatchText {
         let _ = clipped;
         if !self.tail.is_empty() {
             let tail = self.tail.clone();
-            self.painter.text_in(cx, rect(x, r.pos.y, tail_w + 1.0, r.size.y), TextSpec { color: p.muted, ..spec }, &tail, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(x, r.pos.y, tail_w + 1.0, r.size.y),
+                TextSpec {
+                    color: p.muted,
+                    ..spec
+                },
+                &tail,
+                0.0,
+            );
         }
         DrawStep::done()
     }
@@ -270,10 +323,18 @@ impl Widget for WaShortcutBadge {
         let spec = TextSpec::new(Font::Regular, t.ui_size(12.0), p.muted);
         // A multi-step chord is a row of chips 4px apart.
         let steps: Vec<String> = self.label.split_whitespace().map(str::to_owned).collect();
-        let sizes: Vec<DVec2> = steps.iter().map(|step| self.painter.measure(cx, spec, step)).collect();
+        let sizes: Vec<DVec2> = steps
+            .iter()
+            .map(|step| self.painter.measure(cx, spec, step))
+            .collect();
         let height = sizes.iter().map(|s| s.y).fold(0.0, f64::max) + 4.0;
-        let width = sizes.iter().map(|s| s.x + 8.0).sum::<f64>() + 4.0 * steps.len().saturating_sub(1) as f64;
-        let walk = Walk { width: Size::Fixed(width), height: Size::Fixed(height), ..walk };
+        let width = sizes.iter().map(|s| s.x + 8.0).sum::<f64>()
+            + 4.0 * steps.len().saturating_sub(1) as f64;
+        let walk = Walk {
+            width: Size::Fixed(width),
+            height: Size::Fixed(height),
+            ..walk
+        };
         let r = cx.walk_turtle(walk);
         let fill = crate::theme::with_alpha(p.surface3, p.surface3.w * 0.5);
         let mut x = r.pos.x;
@@ -297,7 +358,6 @@ impl WaShortcutBadgeRef {
         }
     }
 }
-
 
 /// Listed sessions: not archived and top level.
 fn listed_agent(agent: &Value) -> bool {
@@ -324,7 +384,10 @@ impl CommandCenterPanel {
             .as_ref()
             .filter(|t| !t.server_id.is_empty() && !t.cwd.is_empty())
             .map(|t| format!("{}\u{0}{}\u{0}{}", t.server_id, t.workspace_id, t.cwd));
-        let request = source.as_ref().filter(|_| enabled).map(|s| format!("{s}\u{0}{}", self.query));
+        let request = source
+            .as_ref()
+            .filter(|_| enabled)
+            .map(|s| format!("{s}\u{0}{}", self.query));
         if request == self.file_request {
             return;
         }
@@ -346,12 +409,24 @@ impl CommandCenterPanel {
         self.file_loading = true;
         self.file_error = None;
         let target = target.expect("source requires a target");
-        self.pending_search = Some((self.file_generation, target.server_id, target.cwd, self.query.clone(), target.workspace_id));
-        self.file_timer = cx.start_timeout(if self.query.trim().is_empty() { 0.0 } else { 0.1 });
+        self.pending_search = Some((
+            self.file_generation,
+            target.server_id,
+            target.cwd,
+            self.query.clone(),
+            target.workspace_id,
+        ));
+        self.file_timer = cx.start_timeout(if self.query.trim().is_empty() {
+            0.0
+        } else {
+            0.1
+        });
     }
 
     fn run_file_search(&mut self, ctx: &UiContext) {
-        let Some((generation, host_id, cwd, query, _)) = self.pending_search.take() else { return };
+        let Some((generation, host_id, cwd, query, _)) = self.pending_search.take() else {
+            return;
+        };
         if generation != self.file_generation {
             return;
         }
@@ -382,7 +457,10 @@ impl CommandCenterPanel {
                         self.file_error = None;
                         self.file_entries = array_of(&body, "entries")
                             .iter()
-                            .filter(|e| e.get("kind").is_none_or(|k| k.is_null() || k.as_str() == Some("file")))
+                            .filter(|e| {
+                                e.get("kind")
+                                    .is_none_or(|k| k.is_null() || k.as_str() == Some("file"))
+                            })
                             .map(|e| results::describe_file_path(str_of(e, "path")))
                             .collect();
                     } else {
@@ -414,12 +492,28 @@ impl CommandCenterPanel {
     fn contributions(&self, ctx: &UiContext) -> Vec<Contribution> {
         let compact = self.compact;
         let shortcuts = !host::is_mobile() && !compact;
-        let shortcut = |id: &str| if shortcuts { Self::shortcut(ctx, id) } else { String::new() };
+        let shortcut = |id: &str| {
+            if shortcuts {
+                Self::shortcut(ctx, id)
+            } else {
+                String::new()
+            }
+        };
         let selected = Self::target(ctx);
         let hosts = host::hosts(&ctx.state);
-        let host_id = selected.as_ref().map(|t| t.server_id.clone()).or_else(|| hosts.first().map(|h| h.id().to_owned()));
+        let host_id = selected
+            .as_ref()
+            .map(|t| t.server_id.clone())
+            .or_else(|| hosts.first().map(|h| h.id().to_owned()));
         let section = t("shell.commandCenter.actions");
-        let root = |id: &str, rank: i64, title: String, icon: &'static str, keywords: &[&str], run: Run, query_only: bool, shortcut_id: &str| Contribution {
+        let root = |id: &str,
+                    rank: i64,
+                    title: String,
+                    icon: &'static str,
+                    keywords: &[&str],
+                    run: Run,
+                    query_only: bool,
+                    shortcut_id: &str| Contribution {
             id: format!("root:{id}"),
             group: "actions".into(),
             group_rank: 0,
@@ -429,32 +523,71 @@ impl CommandCenterPanel {
             title,
             section_title: section.clone(),
             icon,
-            shortcut: if shortcut_id.is_empty() { String::new() } else { shortcut(shortcut_id) },
+            shortcut: if shortcut_id.is_empty() {
+                String::new()
+            } else {
+                shortcut(shortcut_id)
+            },
             run,
         };
         let command = |action: &str, args: Value| Run::Command(action.to_owned(), args);
         let mut out = Vec::new();
         if let Some(host_id) = &host_id {
-            let target = PanelTarget::new("new_tab", host_id, "", "").with_id(new_id()).with_data(json!({ "addProject": true }));
+            let target = PanelTarget::new("new_tab", host_id, "", "")
+                .with_id(new_id())
+                .with_data(json!({ "addProject": true }));
             out.push(root(
                 "add-project",
                 0,
                 t("shell.commandCenter.addProject"),
                 "folder-plus",
-                &["open", "project", "folder", "repo", "프로젝트", "폴더", "열기", "저장소"],
-                Run::Effect(UiEffect::OpenTab { target, placement: TabPlacement::Main }),
+                &[
+                    "open",
+                    "project",
+                    "folder",
+                    "repo",
+                    "프로젝트",
+                    "폴더",
+                    "열기",
+                    "저장소",
+                ],
+                Run::Effect(UiEffect::OpenTab {
+                    target,
+                    placement: TabPlacement::Main,
+                }),
                 true,
                 "",
             ));
         }
-        out.push(root("new-session", 1, t("sessionNavigation.newSession"), "plus", &["new", "session", "chat", "새", "세션"], command("agent.new", Value::Null), false, "new-agent"));
+        out.push(root(
+            "new-session",
+            1,
+            t("sessionNavigation.newSession"),
+            "plus",
+            &["new", "session", "chat", "새", "세션"],
+            command("agent.new", Value::Null),
+            false,
+            "new-agent",
+        ));
         if let Some(effect) = next_attention(ctx, selected.as_ref()) {
             out.push(root(
                 "next-attention",
                 3,
                 t("shell.commandCenter.nextAttention"),
                 "bell-ring",
-                &["next", "attention", "input", "permission", "waiting", "needs", "다음", "입력", "권한", "대기", "확인"],
+                &[
+                    "next",
+                    "attention",
+                    "input",
+                    "permission",
+                    "waiting",
+                    "needs",
+                    "다음",
+                    "입력",
+                    "권한",
+                    "대기",
+                    "확인",
+                ],
                 Run::Effect(effect),
                 false,
                 "next-attention",
@@ -466,7 +599,14 @@ impl CommandCenterPanel {
                 2,
                 t("importSession.title"),
                 "import",
-                &["import", "session", "terminal", "가져오기", "세션", "터미널"],
+                &[
+                    "import",
+                    "session",
+                    "terminal",
+                    "가져오기",
+                    "세션",
+                    "터미널",
+                ],
                 command("session.import", json!({ "serverId": host_id })),
                 false,
                 "",
@@ -477,7 +617,9 @@ impl CommandCenterPanel {
                 t("sidebar.sections.sessions"),
                 "history",
                 &["history", "sessions", "recent", "기록", "세션", "최근"],
-                Run::Effect(UiEffect::Navigate(crate::common::Route::Sessions { host_id: None })),
+                Run::Effect(UiEffect::Navigate(crate::common::Route::Sessions {
+                    host_id: None,
+                })),
                 false,
                 "",
             ));
@@ -487,17 +629,99 @@ impl CommandCenterPanel {
             5,
             t("sidebar.sections.schedules"),
             "calendar-clock",
-            &["schedules", "scheduled", "automation", "recurring", "일정", "예약", "자동화", "반복"],
-            Run::Effect(UiEffect::Navigate(crate::common::Route::Schedules { host_id: host_id.clone().unwrap_or_default() })),
+            &[
+                "schedules",
+                "scheduled",
+                "automation",
+                "recurring",
+                "일정",
+                "예약",
+                "자동화",
+                "반복",
+            ],
+            Run::Effect(UiEffect::Navigate(crate::common::Route::Schedules {
+                host_id: host_id.clone().unwrap_or_default(),
+            })),
             false,
             "",
         ));
-        out.push(root("settings", 6, t("sidebar.actions.settings"), "settings", &["settings", "preferences", "config", "configuration", "설정", "환경설정", "구성"], command("settings.toggle", Value::Null), false, "toggle-settings"));
+        out.push(root(
+            "settings",
+            6,
+            t("sidebar.actions.settings"),
+            "settings",
+            &[
+                "settings",
+                "preferences",
+                "config",
+                "configuration",
+                "설정",
+                "환경설정",
+                "구성",
+            ],
+            command("settings.toggle", Value::Null),
+            false,
+            "toggle-settings",
+        ));
         if shortcuts {
-            out.push(root("keyboard-shortcuts", 7, t("sidebar.help.shortcuts"), "keyboard", &["keyboard", "shortcuts", "keys", "hotkeys", "단축키", "키보드"], command("shortcuts.dialog.toggle", Value::Null), false, "show-shortcuts"));
+            out.push(root(
+                "keyboard-shortcuts",
+                7,
+                t("sidebar.help.shortcuts"),
+                "keyboard",
+                &[
+                    "keyboard",
+                    "shortcuts",
+                    "keys",
+                    "hotkeys",
+                    "단축키",
+                    "키보드",
+                ],
+                command("shortcuts.dialog.toggle", Value::Null),
+                false,
+                "show-shortcuts",
+            ));
         }
-        out.push(root("cycle-theme", 9, t("settings.shortcuts.help.cycleTheme"), "sun-moon", &["theme", "dark", "light", "appearance", "mode", "테마", "다크", "라이트", "모양"], command("theme.cycle", Value::Null), false, "cycle-theme"));
-        out.push(root("add-host", 10, t("settings.addHost"), "server", &["add", "host", "connect", "daemon", "connection", "호스트", "추가", "연결", "데몬"], Run::Effect(UiEffect::OpenHostDialog), false, ""));
+        out.push(root(
+            "cycle-theme",
+            9,
+            t("settings.shortcuts.help.cycleTheme"),
+            "sun-moon",
+            &[
+                "theme",
+                "dark",
+                "light",
+                "appearance",
+                "mode",
+                "테마",
+                "다크",
+                "라이트",
+                "모양",
+            ],
+            command("theme.cycle", Value::Null),
+            false,
+            "cycle-theme",
+        ));
+        out.push(root(
+            "add-host",
+            10,
+            t("settings.addHost"),
+            "server",
+            &[
+                "add",
+                "host",
+                "connect",
+                "daemon",
+                "connection",
+                "호스트",
+                "추가",
+                "연결",
+                "데몬",
+            ],
+            Run::Effect(UiEffect::OpenHostDialog),
+            false,
+            "",
+        ));
         if !host::is_mobile()
             && let Some(host_id) = &host_id
         {
@@ -506,8 +730,20 @@ impl CommandCenterPanel {
                 11,
                 t("openProject.tiles.pairDevice.title"),
                 "smartphone",
-                &["pair", "device", "phone", "mobile", "qr", "페어링", "기기", "휴대폰", "모바일"],
-                Run::Effect(UiEffect::OpenHostPairing { host_id: host_id.clone() }),
+                &[
+                    "pair",
+                    "device",
+                    "phone",
+                    "mobile",
+                    "qr",
+                    "페어링",
+                    "기기",
+                    "휴대폰",
+                    "모바일",
+                ],
+                Run::Effect(UiEffect::OpenHostPairing {
+                    host_id: host_id.clone(),
+                }),
                 false,
                 "",
             ));
@@ -518,7 +754,16 @@ impl CommandCenterPanel {
             8,
             t("settings.shortcuts.help.toggleLeftSidebar"),
             "panel-left",
-            &["toggle", "sidebar", "left", "panel", "sessions", "directories", "사이드바", "토글"],
+            &[
+                "toggle",
+                "sidebar",
+                "left",
+                "panel",
+                "sessions",
+                "directories",
+                "사이드바",
+                "토글",
+            ],
             command("sidebar.toggle.left", Value::Null),
             true,
             "toggle-left-sidebar",
@@ -529,18 +774,53 @@ impl CommandCenterPanel {
     }
 
     /// Actions scoped to the selected session's directory and the global pane tabs.
-    fn session_contributions(&self, ctx: &UiContext, shortcut: &dyn Fn(&str) -> String) -> Vec<Contribution> {
-        let Some(target) = Self::target(ctx).filter(|t| !t.server_id.is_empty() && !t.cwd.is_empty()) else { return Vec::new() };
+    fn session_contributions(
+        &self,
+        ctx: &UiContext,
+        shortcut: &dyn Fn(&str) -> String,
+    ) -> Vec<Contribution> {
+        let Some(target) =
+            Self::target(ctx).filter(|t| !t.server_id.is_empty() && !t.cwd.is_empty())
+        else {
+            return Vec::new();
+        };
         let host = host::host(&ctx.state, &target.server_id);
-        let workspace = if target.workspace_id.is_empty() { None } else { host.and_then(|h| h.workspace(&target.workspace_id)).cloned() };
+        let workspace = if target.workspace_id.is_empty() {
+            None
+        } else {
+            host.and_then(|h| h.workspace(&target.workspace_id))
+                .cloned()
+        };
         let section = t("shell.menu.sessionActions");
         let can_split = !host::is_mobile() && !self.compact;
-        let is_git = workspace.as_ref().is_some_and(|w| w.get("gitRuntime").is_some_and(|g| !g.is_null()) || str_of(w, "projectKind") == "git");
-        let branch = workspace.as_ref().map(|w| str_of(object_of(w, "gitRuntime"), "currentBranch").trim().to_owned()).unwrap_or_default();
-        let pane = ctx.layout.panes.iter().find(|p| p.id == ctx.layout.focused_pane);
+        let is_git = workspace.as_ref().is_some_and(|w| {
+            w.get("gitRuntime").is_some_and(|g| !g.is_null()) || str_of(w, "projectKind") == "git"
+        });
+        let branch = workspace
+            .as_ref()
+            .map(|w| {
+                str_of(object_of(w, "gitRuntime"), "currentBranch")
+                    .trim()
+                    .to_owned()
+            })
+            .unwrap_or_default();
+        let pane = ctx
+            .layout
+            .panes
+            .iter()
+            .find(|p| p.id == ctx.layout.focused_pane);
         let tab_keys: Vec<String> = pane.map(|p| p.tabs.clone()).unwrap_or_default();
-        let tab_index = pane.and_then(|p| p.selected.as_ref()).and_then(|s| tab_keys.iter().position(|k| k == s));
-        let item = |id: &str, rank: i64, title: String, icon: &'static str, keywords: Vec<String>, run: Run, query_only: bool, shortcut_id: &str| Contribution {
+        let tab_index = pane
+            .and_then(|p| p.selected.as_ref())
+            .and_then(|s| tab_keys.iter().position(|k| k == s));
+        let item = |id: &str,
+                    rank: i64,
+                    title: String,
+                    icon: &'static str,
+                    keywords: Vec<String>,
+                    run: Run,
+                    query_only: bool,
+                    shortcut_id: &str| Contribution {
             id: format!("session:{id}"),
             group: "session".into(),
             group_rank: -1,
@@ -550,7 +830,11 @@ impl CommandCenterPanel {
             title,
             section_title: section.clone(),
             icon,
-            shortcut: if shortcut_id.is_empty() { String::new() } else { shortcut(shortcut_id) },
+            shortcut: if shortcut_id.is_empty() {
+                String::new()
+            } else {
+                shortcut(shortcut_id)
+            },
             run,
         };
         let kw = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
@@ -560,23 +844,118 @@ impl CommandCenterPanel {
         let path = target.cwd.clone();
         let mut out = Vec::new();
         if !target.workspace_id.is_empty() {
-            out.push(item("tab:new-terminal", 2, t("workspace.tabs.actions.newTerminal"), "square-terminal", kw(&["terminal", "shell", "console"]), command("workspace.terminal.new", Value::Null), true, "workspace-terminal-new"));
+            out.push(item(
+                "tab:new-terminal",
+                2,
+                t("workspace.tabs.actions.newTerminal"),
+                "square-terminal",
+                kw(&["terminal", "shell", "console"]),
+                command("workspace.terminal.new", Value::Null),
+                true,
+                "workspace-terminal-new",
+            ));
         }
         if is_git {
-            out.push(item("tab:open:commit", 4, open("workspace.git.commit.title"), "git-commit-horizontal", kw(&["open", "git", "commit", "files"]), command("workspace.tab.target.gitCommit", Value::Null), true, ""));
+            out.push(item(
+                "tab:open:commit",
+                4,
+                open("workspace.git.commit.title"),
+                "git-commit-horizontal",
+                kw(&["open", "git", "commit", "files"]),
+                command("workspace.tab.target.gitCommit", Value::Null),
+                true,
+                "",
+            ));
             if host.is_some_and(|h| h.supports("gitLog")) {
-                out.push(item("tab:open:git-log", 3, t("workspace.git.log.open"), "git-graph", kw(&["open", "git", "log", "history", "graph", "branches", "commits", "dashboard", "깃", "로그", "커밋", "브랜치", "그래프"]), command("workspace.tab.target.gitLog", Value::Null), false, ""));
+                out.push(item(
+                    "tab:open:git-log",
+                    3,
+                    t("workspace.git.log.open"),
+                    "git-graph",
+                    kw(&[
+                        "open",
+                        "git",
+                        "log",
+                        "history",
+                        "graph",
+                        "branches",
+                        "commits",
+                        "dashboard",
+                        "깃",
+                        "로그",
+                        "커밋",
+                        "브랜치",
+                        "그래프",
+                    ]),
+                    command("workspace.tab.target.gitLog", Value::Null),
+                    false,
+                    "",
+                ));
             }
         }
-        out.push(item("tab:open:files", 5, open("workspace.tabs.actions.files"), "files", kw(&["open", "files", "tab", "supporting"]), command("workspace.tab.target.files", Value::Null), true, ""));
+        out.push(item(
+            "tab:open:files",
+            5,
+            open("workspace.tabs.actions.files"),
+            "files",
+            kw(&["open", "files", "tab", "supporting"]),
+            command("workspace.tab.target.files", Value::Null),
+            true,
+            "",
+        ));
         if !tab_keys.is_empty() {
-            out.push(item("tab:previous", 30, t("settings.shortcuts.help.previousTab"), "arrow-left", kw(&["tab", "previous", "switch", "navigate"]), command("workspace.tab.navigate.relative", json!({ "delta": -1 })), true, "workspace-tab-prev"));
-            out.push(item("tab:next", 31, t("settings.shortcuts.help.nextTab"), "arrow-right", kw(&["tab", "next", "switch", "navigate"]), command("workspace.tab.navigate.relative", json!({ "delta": 1 })), true, "workspace-tab-next"));
-            out.push(item("tab:close-current", 32, t("settings.shortcuts.help.closeCurrentTab"), "x", kw(&["tab", "close", "current"]), command("workspace.tab.close.current", Value::Null), true, "workspace-tab-close-current"));
-            if (target.kind == "agent" || target.kind == "terminal") && target.id.as_deref().is_some_and(|id| !id.is_empty()) {
-                let key = if target.kind == "agent" { "workspace.tabs.menu.copyAgentId" } else { "workspace.tabs.menu.copyTerminalId" };
-                let effect = UiEffect::CopyText { text: target.id.clone().unwrap_or_default(), toast: Some(copied.clone()) };
-                out.push(item("tab:copy-id", 34, t(key), "copy", kw(&["tab", "copy", "id"]), Run::Effect(effect), true, ""));
+            out.push(item(
+                "tab:previous",
+                30,
+                t("settings.shortcuts.help.previousTab"),
+                "arrow-left",
+                kw(&["tab", "previous", "switch", "navigate"]),
+                command("workspace.tab.navigate.relative", json!({ "delta": -1 })),
+                true,
+                "workspace-tab-prev",
+            ));
+            out.push(item(
+                "tab:next",
+                31,
+                t("settings.shortcuts.help.nextTab"),
+                "arrow-right",
+                kw(&["tab", "next", "switch", "navigate"]),
+                command("workspace.tab.navigate.relative", json!({ "delta": 1 })),
+                true,
+                "workspace-tab-next",
+            ));
+            out.push(item(
+                "tab:close-current",
+                32,
+                t("settings.shortcuts.help.closeCurrentTab"),
+                "x",
+                kw(&["tab", "close", "current"]),
+                command("workspace.tab.close.current", Value::Null),
+                true,
+                "workspace-tab-close-current",
+            ));
+            if (target.kind == "agent" || target.kind == "terminal")
+                && target.id.as_deref().is_some_and(|id| !id.is_empty())
+            {
+                let key = if target.kind == "agent" {
+                    "workspace.tabs.menu.copyAgentId"
+                } else {
+                    "workspace.tabs.menu.copyTerminalId"
+                };
+                let effect = UiEffect::CopyText {
+                    text: target.id.clone().unwrap_or_default(),
+                    toast: Some(copied.clone()),
+                };
+                out.push(item(
+                    "tab:copy-id",
+                    34,
+                    t(key),
+                    "copy",
+                    kw(&["tab", "copy", "id"]),
+                    Run::Effect(effect),
+                    true,
+                    "",
+                ));
             }
             if target.kind == "agent" && target.id.as_deref().is_some_and(|id| !id.is_empty()) {
                 out.push(item(
@@ -591,23 +970,81 @@ impl CommandCenterPanel {
                 ));
             }
             if target.kind == "file" {
-                let file = str_or(&target.data, "path", target.id.as_deref().unwrap_or("")).to_owned();
-                let effect = UiEffect::CopyText { text: file, toast: Some(copied.clone()) };
-                out.push(item("tab:copy-file-path", 37, t("workspace.tabs.menu.copyFilePath"), "copy", kw(&["tab", "file", "copy", "path"]), Run::Effect(effect), true, ""));
+                let file =
+                    str_or(&target.data, "path", target.id.as_deref().unwrap_or("")).to_owned();
+                let effect = UiEffect::CopyText {
+                    text: file,
+                    toast: Some(copied.clone()),
+                };
+                out.push(item(
+                    "tab:copy-file-path",
+                    37,
+                    t("workspace.tabs.menu.copyFilePath"),
+                    "copy",
+                    kw(&["tab", "file", "copy", "path"]),
+                    Run::Effect(effect),
+                    true,
+                    "",
+                ));
             }
             if tab_index.is_some_and(|i| i > 0) {
-                out.push(item("tab:close-left", 38, t("workspace.tabs.menu.closeLeft"), "x", kw(&["tab", "close", "left"]), command("workspace.tab.close-left", Value::Null), true, ""));
+                out.push(item(
+                    "tab:close-left",
+                    38,
+                    t("workspace.tabs.menu.closeLeft"),
+                    "x",
+                    kw(&["tab", "close", "left"]),
+                    command("workspace.tab.close-left", Value::Null),
+                    true,
+                    "",
+                ));
             }
             if tab_index.is_some_and(|i| i + 1 < tab_keys.len()) {
-                out.push(item("tab:close-right", 39, t("workspace.tabs.menu.closeRight"), "x", kw(&["tab", "close", "right"]), command("workspace.tab.close-right", Value::Null), true, ""));
+                out.push(item(
+                    "tab:close-right",
+                    39,
+                    t("workspace.tabs.menu.closeRight"),
+                    "x",
+                    kw(&["tab", "close", "right"]),
+                    command("workspace.tab.close-right", Value::Null),
+                    true,
+                    "",
+                ));
             }
             if tab_keys.len() > 1 {
-                out.push(item("tab:close-others", 40, t("workspace.tabs.menu.closeOthers"), "x", kw(&["tab", "close", "others"]), command("workspace.tab.close-others", Value::Null), true, ""));
+                out.push(item(
+                    "tab:close-others",
+                    40,
+                    t("workspace.tabs.menu.closeOthers"),
+                    "x",
+                    kw(&["tab", "close", "others"]),
+                    command("workspace.tab.close-others", Value::Null),
+                    true,
+                    "",
+                ));
             }
         }
         if can_split {
-            out.push(item("pane:split-right", 50, t("workspace.tabs.actions.splitRight"), "columns-2", kw(&["split", "pane", "vertical"]), command("workspace.pane.split.right", Value::Null), true, "workspace-pane-split-right"));
-            out.push(item("pane:split-down", 51, t("workspace.tabs.actions.splitDown"), "rows-2", kw(&["split", "pane", "horizontal"]), command("workspace.pane.split.down", Value::Null), true, "workspace-pane-split-down"));
+            out.push(item(
+                "pane:split-right",
+                50,
+                t("workspace.tabs.actions.splitRight"),
+                "columns-2",
+                kw(&["split", "pane", "vertical"]),
+                command("workspace.pane.split.right", Value::Null),
+                true,
+                "workspace-pane-split-right",
+            ));
+            out.push(item(
+                "pane:split-down",
+                51,
+                t("workspace.tabs.actions.splitDown"),
+                "rows-2",
+                kw(&["split", "pane", "horizontal"]),
+                command("workspace.pane.split.down", Value::Null),
+                true,
+                "workspace-pane-split-down",
+            ));
             for (index, direction) in ["left", "right", "up", "down"].iter().enumerate() {
                 let capital = format!("{}{}", direction[..1].to_uppercase(), &direction[1..]);
                 out.push(item(
@@ -634,24 +1071,86 @@ impl CommandCenterPanel {
                     "",
                 ));
             }
-            out.push(item("pane:close", 60, t("settings.shortcuts.help.closePane"), "x", kw(&["pane", "close"]), command("workspace.pane.close", Value::Null), true, "workspace-pane-close"));
-            out.push(item("pane:focus-mode-toggle", 62, t("settings.shortcuts.help.toggleFocusMode"), "arrow-down-to-line", kw(&["pane", "focus", "mode", "toggle"]), command("view.toggle.focus", Value::Null), true, "toggle-focus"));
+            out.push(item(
+                "pane:close",
+                60,
+                t("settings.shortcuts.help.closePane"),
+                "x",
+                kw(&["pane", "close"]),
+                command("workspace.pane.close", Value::Null),
+                true,
+                "workspace-pane-close",
+            ));
+            out.push(item(
+                "pane:focus-mode-toggle",
+                62,
+                t("settings.shortcuts.help.toggleFocusMode"),
+                "arrow-down-to-line",
+                kw(&["pane", "focus", "mode", "toggle"]),
+                command("view.toggle.focus", Value::Null),
+                true,
+                "toggle-focus",
+            ));
         }
         let copy_path = if path.is_empty() {
             Run::Error(t("sidebar.workspace.toasts.workspacePathUnavailable"))
         } else {
-            Run::Effect(UiEffect::CopyText { text: path.clone(), toast: Some(t("sidebar.workspace.toasts.pathCopied")) })
+            Run::Effect(UiEffect::CopyText {
+                text: path.clone(),
+                toast: Some(t("sidebar.workspace.toasts.pathCopied")),
+            })
         };
-        out.push(item("copy-path", 22, t("workspace.header.actions.copyPath"), "copy", kw(&["copy", "path", "directory", "folder", "cwd"]), copy_path, true, ""));
+        out.push(item(
+            "copy-path",
+            22,
+            t("workspace.header.actions.copyPath"),
+            "copy",
+            kw(&["copy", "path", "directory", "folder", "cwd"]),
+            copy_path,
+            true,
+            "",
+        ));
         if !branch.is_empty() {
             let mut words = kw(&["copy", "branch", "git"]);
             words.push(branch.clone());
-            let effect = UiEffect::CopyText { text: branch.clone(), toast: Some(t("sidebar.workspace.toasts.branchNameCopied")) };
-            out.push(item("copy-branch-name", 23, t("workspace.header.actions.copyBranchName"), "git-branch", words, Run::Effect(effect), true, ""));
+            let effect = UiEffect::CopyText {
+                text: branch.clone(),
+                toast: Some(t("sidebar.workspace.toasts.branchNameCopied")),
+            };
+            out.push(item(
+                "copy-branch-name",
+                23,
+                t("workspace.header.actions.copyBranchName"),
+                "git-branch",
+                words,
+                Run::Effect(effect),
+                true,
+                "",
+            ));
         }
-        out.push(item("toggle-explorer-sidebar", 25, t("workspace.tabs.explorerSidebar.toggle"), "panel-right", kw(&["toggle", "sidebar", "explorer", "files", "git", "log", "commit"]), command("sidebar.toggle.right", Value::Null), true, "toggle-right-sidebar"));
+        out.push(item(
+            "toggle-explorer-sidebar",
+            25,
+            t("workspace.tabs.explorerSidebar.toggle"),
+            "panel-right",
+            kw(&[
+                "toggle", "sidebar", "explorer", "files", "git", "log", "commit",
+            ]),
+            command("sidebar.toggle.right", Value::Null),
+            true,
+            "toggle-right-sidebar",
+        ));
         if !can_split {
-            out.push(item("toggle-focus-mode", 26, t("settings.shortcuts.help.toggleFocusMode"), "focus", kw(&["toggle", "focus", "zen", "distraction", "fullscreen"]), command("view.toggle.focus", Value::Null), true, "toggle-focus"));
+            out.push(item(
+                "toggle-focus-mode",
+                26,
+                t("settings.shortcuts.help.toggleFocusMode"),
+                "focus",
+                kw(&["toggle", "focus", "zen", "distraction", "fullscreen"]),
+                command("view.toggle.focus", Value::Null),
+                true,
+                "toggle-focus",
+            ));
         }
         out
     }
@@ -669,23 +1168,44 @@ impl CommandCenterPanel {
                     continue;
                 }
                 let directory = super::shorten(str_of(agent, "cwd"));
-                let target = crate::shell::commands::navigation_agent_target(host.id(), agent, None);
+                let target =
+                    crate::shell::commands::navigation_agent_target(host.id(), agent, None);
                 let mut row = ResultRow::new(
                     format!("agent:{}:{}", host.id(), str_of(agent, "id")),
                     Kind::Agent,
-                    results::agent_label(str_of(agent, "title")).unwrap_or_else(|| t("workspace.tabs.loading")),
-                    Run::Effect(UiEffect::OpenTab { target, placement: TabPlacement::Main }),
+                    results::agent_label(str_of(agent, "title"))
+                        .unwrap_or_else(|| t("workspace.tabs.loading")),
+                    Run::Effect(UiEffect::OpenTab {
+                        target,
+                        placement: TabPlacement::Main,
+                    }),
                 );
-                row.subtitle = results::join_subtitle(&[show_host.then_some(label.as_str()), Some(&directory)]);
+                row.subtitle = results::join_subtitle(&[
+                    show_host.then_some(label.as_str()),
+                    Some(&directory),
+                ]);
                 row.hidden = vec![str_of(agent, "cwd").to_owned()];
-                row.activity_at = parse_ms(agent.get("lastActivityAt").filter(|v| !v.is_null()).or_else(|| agent.get("updatedAt")));
-                row.icon = Icon::Provider { provider: str_of(agent, "provider").to_owned(), bucket: Some(agent_status_bucket(agent)) };
+                row.activity_at = parse_ms(
+                    agent
+                        .get("lastActivityAt")
+                        .filter(|v| !v.is_null())
+                        .or_else(|| agent.get("updatedAt")),
+                );
+                row.icon = Icon::Provider {
+                    provider: str_of(agent, "provider").to_owned(),
+                    bucket: Some(agent_status_bucket(agent)),
+                };
                 agents.push(row);
             }
         }
-        vec![
-            Section { id: "agents".into(), band: 1, rank: 3, title: Some(t("shell.commandCenter.agents")), results: results::rank_built_in(agents, &self.query), score: None },
-        ]
+        vec![Section {
+            id: "agents".into(),
+            band: 1,
+            rank: 3,
+            title: Some(t("shell.commandCenter.agents")),
+            results: results::rank_built_in(agents, &self.query),
+            score: None,
+        }]
     }
 
     /// Daemon-matched file rows carry no client score, so they are pinned (rank 4).
@@ -696,8 +1216,17 @@ impl CommandCenterPanel {
                 .file_entries
                 .iter()
                 .map(|(path, name, directory)| {
-                    let effect = UiEffect::OpenFile { host_id: target.server_id.clone(), workspace_id: target.workspace_id.clone(), path: path.clone() };
-                    let mut row = ResultRow::new(format!("file:{path}"), Kind::File, name.clone(), Run::Effect(effect));
+                    let effect = UiEffect::OpenFile {
+                        host_id: target.server_id.clone(),
+                        workspace_id: target.workspace_id.clone(),
+                        path: path.clone(),
+                    };
+                    let mut row = ResultRow::new(
+                        format!("file:{path}"),
+                        Kind::File,
+                        name.clone(),
+                        Run::Effect(effect),
+                    );
                     row.subtitle = directory.clone();
                     row.icon = Icon::File(name.clone());
                     row
@@ -705,21 +1234,33 @@ impl CommandCenterPanel {
                 .collect(),
             None => Vec::new(),
         };
-        Section { id: "files".into(), band: 1, rank: 4, title: Some(t("shell.commandCenter.files")), results: rows, score: None }
+        Section {
+            id: "files".into(),
+            band: 1,
+            rank: 4,
+            title: Some(t("shell.commandCenter.files")),
+            results: rows,
+            score: None,
+        }
     }
 
     fn rebuild(&mut self, ctx: &UiContext) {
         let sections = if self.files_scope {
             vec![self.file_section(ctx)]
         } else {
-            let mut sections = results::contribution_sections(&self.contributions(ctx), &self.query);
+            let mut sections =
+                results::contribution_sections(&self.contributions(ctx), &self.query);
             sections.push(self.file_section(ctx));
             sections.extend(self.built_in_sections(ctx));
             sections
         };
         let projection = results::project_rows(sections);
         if !self.selection_frozen() {
-            let ids: Vec<String> = projection.selectable.iter().filter_map(|i| row_id(&projection.rows[*i])).collect();
+            let ids: Vec<String> = projection
+                .selectable
+                .iter()
+                .filter_map(|i| row_id(&projection.rows[*i]))
+                .collect();
             if !self.active_id.as_ref().is_some_and(|id| ids.contains(id)) {
                 self.active_id = ids.first().cloned();
             }
@@ -732,12 +1273,21 @@ impl CommandCenterPanel {
     }
 
     fn move_active(&mut self, delta: isize) {
-        let Some(projection) = &self.projection else { return };
+        let Some(projection) = &self.projection else {
+            return;
+        };
         if self.selection_frozen() || projection.selectable.is_empty() {
             return;
         }
-        let ids: Vec<String> = projection.selectable.iter().filter_map(|i| row_id(&projection.rows[*i])).collect();
-        let current = self.active_id.as_ref().and_then(|id| ids.iter().position(|i| i == id));
+        let ids: Vec<String> = projection
+            .selectable
+            .iter()
+            .filter_map(|i| row_id(&projection.rows[*i]))
+            .collect();
+        let current = self
+            .active_id
+            .as_ref()
+            .and_then(|id| ids.iter().position(|i| i == id));
         let start = match current {
             None if delta < 0 => 0,
             None => ids.len() - 1,
@@ -752,9 +1302,16 @@ impl CommandCenterPanel {
         self.close_panel(cx);
         let uid = self.widget_uid();
         match row.run {
-            Run::Command(action, args) => cx.widget_action(uid, &scope.path, CommandCenterAction::Command { action, args }),
+            Run::Command(action, args) => cx.widget_action(
+                uid,
+                &scope.path,
+                CommandCenterAction::Command { action, args },
+            ),
             Run::Effect(effect) => self.pending_effects.push(effect),
-            Run::Error(message) => self.pending_effects.push(UiEffect::Toast { message, is_error: true }),
+            Run::Error(message) => self.pending_effects.push(UiEffect::Toast {
+                message,
+                is_error: true,
+            }),
         }
         if let Some(ctx) = scope.data.get_mut::<UiContext>() {
             ctx.effects.append(&mut self.pending_effects);
@@ -768,7 +1325,10 @@ impl CommandCenterPanel {
             self.pending_search = None;
             let query = self.view.wa_input(id!(query));
             query.input().release_focus(cx);
-            self.pending_effects.push(UiEffect::SetFocusScope { owner: query.widget_uid(), scope: None });
+            self.pending_effects.push(UiEffect::SetFocusScope {
+                owner: query.widget_uid(),
+                scope: None,
+            });
             self.view.wa_modal(id!(modal)).close(cx);
             cx.stop_timer(self.file_timer);
             self.file_timer = Timer::default();
@@ -791,14 +1351,39 @@ impl CommandCenterPanel {
         let view = self.root();
         self.compact = ctx.compact;
         self.rebuild(ctx);
-        view.widget(id!(scope_chip)).set_visible(cx, self.files_scope);
-        view.wa_button(id!(scope_chip)).set_text(cx, &t("shell.commandCenter.files"));
-        view.wa_input(id!(query)).set_empty_text(cx, t(if self.files_scope { "shell.commandCenter.filePlaceholder" } else { "shell.commandCenter.placeholder" }));
-        view.widget(id!(file_spinner)).set_visible(cx, self.file_loading);
-        let error = self.file_error.as_ref().map(|e| format!("{}: {e}", t("common.errors.error"))).unwrap_or_default();
+        view.widget(id!(scope_chip))
+            .set_visible(cx, self.files_scope);
+        view.wa_button(id!(scope_chip))
+            .set_text(cx, &t("shell.commandCenter.files"));
+        view.wa_input(id!(query)).set_empty_text(
+            cx,
+            t(if self.files_scope {
+                "shell.commandCenter.filePlaceholder"
+            } else {
+                "shell.commandCenter.placeholder"
+            }),
+        );
+        view.widget(id!(file_spinner))
+            .set_visible(cx, self.file_loading);
+        let error = self
+            .file_error
+            .as_ref()
+            .map(|e| format!("{}: {e}", t("common.errors.error")))
+            .unwrap_or_default();
         set_optional(cx, &view.widget(id!(file_error)), &error);
-        let empty = self.projection.as_ref().is_some_and(|p| p.rows.is_empty()) && !self.file_loading && self.file_error.is_none();
-        set_optional(cx, &view.widget(id!(no_matches)), if empty { t("shell.commandCenter.noMatches") } else { String::new() }.as_str());
+        let empty = self.projection.as_ref().is_some_and(|p| p.rows.is_empty())
+            && !self.file_loading
+            && self.file_error.is_none();
+        set_optional(
+            cx,
+            &view.widget(id!(no_matches)),
+            if empty {
+                t("shell.commandCenter.noMatches")
+            } else {
+                String::new()
+            }
+            .as_str(),
+        );
         // Key-hint footer: desktop layouts only (phones and compact windows have no keys to hint).
         let footer = if host::is_mobile() || self.compact {
             String::new()
@@ -806,15 +1391,24 @@ impl CommandCenterPanel {
             let mut text = t("shell.commandCenter.keyHints");
             let files = Self::shortcut(ctx, "search-files");
             if !self.files_scope && !files.is_empty() {
-                text = format!("{text} · {}", ta("shell.commandCenter.filesHint", &[("shortcut", &files)]));
+                text = format!(
+                    "{text} · {}",
+                    ta("shell.commandCenter.filesHint", &[("shortcut", &files)])
+                );
             }
             text
         };
-        view.widget(id!(footer_rule)).set_visible(cx, !footer.is_empty());
+        view.widget(id!(footer_rule))
+            .set_visible(cx, !footer.is_empty());
         set_optional(cx, &view.widget(id!(footer)), &footer);
         // Reveal the active row once per user command.
         if self.reveal_pending {
-            if let (Some(projection), Some(active)) = (&self.projection, &self.active_id) && let Some(index) = projection.rows.iter().position(|r| row_id(r).as_deref() == Some(active.as_str())) {
+            if let (Some(projection), Some(active)) = (&self.projection, &self.active_id)
+                && let Some(index) = projection
+                    .rows
+                    .iter()
+                    .position(|r| row_id(r).as_deref() == Some(active.as_str()))
+            {
                 let list = view.portal_list(id!(list));
                 let first = list.first_id();
                 let visible = list.visible_items().max(1);
@@ -830,13 +1424,23 @@ impl CommandCenterPanel {
         }
     }
 
-    fn draw_rows(&mut self, cx: &mut Cx2d, scope: &mut Scope, list: &mut PortalList, ctx_compact: bool) {
-        let Some(projection) = &self.projection else { return };
+    fn draw_rows(
+        &mut self,
+        cx: &mut Cx2d,
+        scope: &mut Scope,
+        list: &mut PortalList,
+        ctx_compact: bool,
+    ) {
+        let Some(projection) = &self.projection else {
+            return;
+        };
         list.set_item_range(cx, 0, projection.rows.len());
         let now = chrono::Utc::now();
         let inset = if ctx_compact { 12.0 } else { 6.0 };
         while let Some(index) = list.next_visible_item(cx) {
-            let Some(row) = projection.rows.get(index) else { continue };
+            let Some(row) = projection.rows.get(index) else {
+                continue;
+            };
             match row {
                 ListRow::Section { title, divider } => {
                     let item = list.item(cx, index, live_id!(SectionRow));
@@ -852,7 +1456,14 @@ impl CommandCenterPanel {
                     };
                     let item = list.item(cx, index, template);
                     let active = self.active_id.as_deref() == Some(result.id.as_str());
-                    item.as_surface().set_role(cx, if active { SurfaceRole::Surface1 } else { SurfaceRole::Transparent });
+                    item.as_surface().set_role(
+                        cx,
+                        if active {
+                            SurfaceRole::Surface1
+                        } else {
+                            SurfaceRole::Transparent
+                        },
+                    );
                     item.apply_over(cx, live! { padding: { top: (inset), bottom: (inset) } });
                     let query = self.query.as_str();
                     let title = item.wa_match_text(id!(title));
@@ -860,7 +1471,11 @@ impl CommandCenterPanel {
                         Kind::File => {
                             let mut spans = vec![MatchSpan::new(&result.title, query, false)];
                             if !result.subtitle.is_empty() {
-                                spans.push(MatchSpan { text: " ".into(), marks: Vec::new(), muted: true });
+                                spans.push(MatchSpan {
+                                    text: " ".into(),
+                                    marks: Vec::new(),
+                                    muted: true,
+                                });
                                 spans.push(MatchSpan::new(&result.subtitle, query, true));
                             }
                             title.set(cx, spans, "");
@@ -870,20 +1485,39 @@ impl CommandCenterPanel {
                             // The timestamp is its own text so a long subtitle truncates without
                             // pushing it out of view, and it is never matched.
                             let time = time_ago(result.activity_at, now);
-                            let tail = if time.is_empty() { String::new() } else if result.subtitle.is_empty() { time } else { format!("\u{a0}· {time}") };
-                            item.wa_match_text(id!(subtitle)).set(cx, vec![MatchSpan::new(&result.subtitle, query, true)], &tail);
+                            let tail = if time.is_empty() {
+                                String::new()
+                            } else if result.subtitle.is_empty() {
+                                time
+                            } else {
+                                format!("\u{a0}· {time}")
+                            };
+                            item.wa_match_text(id!(subtitle)).set(
+                                cx,
+                                vec![MatchSpan::new(&result.subtitle, query, true)],
+                                &tail,
+                            );
                         }
                         Kind::Action => {
                             // A one-line action keeps the 20px line; with a subtitle 18 + 16.
                             let single = result.subtitle.is_empty();
-                            title.apply_over(cx, live! { line_height: (if single { 20.0 } else { 18.0 }) });
+                            title.apply_over(
+                                cx,
+                                live! { line_height: (if single { 20.0 } else { 18.0 }) },
+                            );
                             title.set(cx, vec![MatchSpan::new(&result.title, query, false)], "");
                             let subtitle = item.wa_match_text(id!(subtitle));
                             subtitle.set_visible(cx, !single);
-                            subtitle.set(cx, vec![MatchSpan::new(&result.subtitle, query, true)], "");
+                            subtitle.set(
+                                cx,
+                                vec![MatchSpan::new(&result.subtitle, query, true)],
+                                "",
+                            );
                             let shortcut = item.widget(id!(shortcut));
                             shortcut.set_visible(cx, !result.shortcut.is_empty());
-                            shortcut.wa_shortcut_badge(id!(badge)).set_label(cx, &result.shortcut);
+                            shortcut
+                                .wa_shortcut_badge(id!(badge))
+                                .set_label(cx, &result.shortcut);
                         }
                     }
                     let glyph = item.wa_icon(id!(glyph));
@@ -904,9 +1538,13 @@ impl CommandCenterPanel {
                             file.set_visible(cx, true);
                             file.set_name(cx, name);
                         }
-                        Icon::Provider { provider: name, bucket } => {
+                        Icon::Provider {
+                            provider: name,
+                            bucket,
+                        } => {
                             provider.set_visible(cx, true);
-                            item.provider_icon(id!(provider)).set_provider(cx, name, None);
+                            item.provider_icon(id!(provider))
+                                .set_provider(cx, name, None);
                             mark.set_visible(cx, bucket.is_some());
                             item.status_mark(id!(mark)).set_status(cx, *bucket);
                         }
@@ -928,47 +1566,252 @@ fn row_id(row: &ListRow) -> Option<String> {
 /// "Next session needing input": across hosts, the top-level session that needs attention
 /// most (permission, error, finished; oldest first), skipping the session already shown.
 fn next_attention(ctx: &UiContext, selected: Option<&PanelTarget>) -> Option<UiEffect> {
-    let current = selected.filter(|t| t.kind == "agent").and_then(|t| t.id.clone().map(|id| (t.server_id.clone(), id)));
+    let current = selected
+        .filter(|t| t.kind == "agent")
+        .and_then(|t| t.id.clone().map(|id| (t.server_id.clone(), id)));
     let mut candidates: Vec<(String, &Value)> = Vec::new();
     let hosts = host::hosts(&ctx.state);
     for h in &hosts {
         for entry in h.agents() {
             let agent = agent_of(entry);
-            if !listed_agent(agent) || !str_of(object_of(agent, "labels"), "paseo.parent-agent-id").trim().is_empty() {
+            if !listed_agent(agent)
+                || !str_of(object_of(agent, "labels"), "paseo.parent-agent-id")
+                    .trim()
+                    .is_empty()
+            {
                 continue;
             }
-            if current.as_ref().is_some_and(|(server, id)| server == h.id() && id == str_of(agent, "id")) {
+            if current
+                .as_ref()
+                .is_some_and(|(server, id)| server == h.id() && id == str_of(agent, "id"))
+            {
                 continue;
             }
             candidates.push((h.id().to_owned(), agent));
         }
     }
     let chosen = results::pick_attention_agent(candidates.iter().map(|(_, agent)| *agent))?;
-    let (host_id, agent) = candidates.iter().find(|(_, agent)| std::ptr::eq(*agent, chosen))?;
+    let (host_id, agent) = candidates
+        .iter()
+        .find(|(_, agent)| std::ptr::eq(*agent, chosen))?;
     let target = crate::shell::commands::navigation_agent_target(host_id, agent, None);
-    Some(UiEffect::OpenTab { target, placement: TabPlacement::Main })
+    Some(UiEffect::OpenTab {
+        target,
+        placement: TabPlacement::Main,
+    })
 }
 
 /// Settings pages as query-only rows: (route page, label key, icon, English + Korean keywords).
 const SETTINGS_PAGES: &[(&str, &str, &str, &[&str])] = &[
-    ("general", "settings.sections.general", "settings", &["general", "language", "send", "terminal", "scrollback", "일반", "언어", "전송", "터미널", "스크롤백"]),
-    ("appearance", "settings.sections.appearance", "palette", &["appearance", "theme", "dark", "light", "font", "모양", "테마", "다크", "라이트", "글꼴"]),
-    ("sidebar", "settings.sections.sidebar", "panel-left", &["sidebar", "navigation", "사이드바", "탐색"]),
-    ("chat", "settings.sections.chat", "message-square", &["chat", "reasoning", "outline", "tool", "채팅", "추론", "개요", "도구"]),
-    ("files", "settings.sections.files", "files", &["files", "file", "panels", "markdown", "파일", "패널"]),
-    ("shortcuts", "settings.sections.shortcuts", "keyboard", &["shortcuts", "keys", "keybindings", "hotkeys", "단축키", "키보드"]),
-    ("notifications", "settings.sections.notifications", "bell", &["notifications", "sound", "alerts", "permission", "알림", "소리", "권한"]),
-    ("diagnostics", "settings.sections.diagnostics", "stethoscope", &["diagnostics", "debug", "logs", "진단", "디버그", "로그"]),
-    ("about", "settings.sections.about", "info", &["about", "version", "update", "정보", "버전", "업데이트"]),
-    ("host/host", "settings.hostSections.host", "server", &["host", "overview", "daemon", "restart", "relay", "호스트", "개요", "데몬", "재시작", "릴레이"]),
-    ("host/projects", "settings.hostSections.projects", "folder-git-2", &["projects", "directories", "folders", "프로젝트", "폴더"]),
-    ("host/connections", "settings.hostSections.connections", "network", &["connections", "pair", "qr", "device", "ssh", "relay", "연결", "페어링", "기기", "휴대폰"]),
-    ("host/agents", "settings.hostSections.agents", "bot", &["agents", "skills", "prompt", "profiles", "mcp", "에이전트", "스킬", "프롬프트", "프로필"]),
-    ("host/metadata", "settings.hostSections.metadata", "sparkles", &["metadata", "titles", "generation", "메타데이터", "제목", "생성"]),
-    ("host/providers", "settings.hostSections.providers", "boxes", &["providers", "models", "claude", "codex", "프로바이더", "모델"]),
-    ("host/usage", "settings.hostSections.usage", "gauge", &["usage", "limits", "tokens", "cost", "사용량", "한도", "토큰", "비용"]),
-    ("host/terminals", "settings.hostSections.terminals", "square-terminal", &["terminals", "profiles", "hooks", "터미널", "프로필", "훅"]),
-    ("host/plugins", "settings.hostSections.plugins", "plug", &["plugins", "extensions", "플러그인", "확장"]),
+    (
+        "general",
+        "settings.sections.general",
+        "settings",
+        &[
+            "general",
+            "language",
+            "send",
+            "terminal",
+            "scrollback",
+            "일반",
+            "언어",
+            "전송",
+            "터미널",
+            "스크롤백",
+        ],
+    ),
+    (
+        "appearance",
+        "settings.sections.appearance",
+        "palette",
+        &[
+            "appearance",
+            "theme",
+            "dark",
+            "light",
+            "font",
+            "모양",
+            "테마",
+            "다크",
+            "라이트",
+            "글꼴",
+        ],
+    ),
+    (
+        "sidebar",
+        "settings.sections.sidebar",
+        "panel-left",
+        &["sidebar", "navigation", "사이드바", "탐색"],
+    ),
+    (
+        "chat",
+        "settings.sections.chat",
+        "message-square",
+        &[
+            "chat",
+            "reasoning",
+            "outline",
+            "tool",
+            "채팅",
+            "추론",
+            "개요",
+            "도구",
+        ],
+    ),
+    (
+        "files",
+        "settings.sections.files",
+        "files",
+        &["files", "file", "panels", "markdown", "파일", "패널"],
+    ),
+    (
+        "shortcuts",
+        "settings.sections.shortcuts",
+        "keyboard",
+        &[
+            "shortcuts",
+            "keys",
+            "keybindings",
+            "hotkeys",
+            "단축키",
+            "키보드",
+        ],
+    ),
+    (
+        "notifications",
+        "settings.sections.notifications",
+        "bell",
+        &[
+            "notifications",
+            "sound",
+            "alerts",
+            "permission",
+            "알림",
+            "소리",
+            "권한",
+        ],
+    ),
+    (
+        "diagnostics",
+        "settings.sections.diagnostics",
+        "stethoscope",
+        &["diagnostics", "debug", "logs", "진단", "디버그", "로그"],
+    ),
+    (
+        "about",
+        "settings.sections.about",
+        "info",
+        &["about", "version", "update", "정보", "버전", "업데이트"],
+    ),
+    (
+        "host/host",
+        "settings.hostSections.host",
+        "server",
+        &[
+            "host",
+            "overview",
+            "daemon",
+            "restart",
+            "relay",
+            "호스트",
+            "개요",
+            "데몬",
+            "재시작",
+            "릴레이",
+        ],
+    ),
+    (
+        "host/projects",
+        "settings.hostSections.projects",
+        "folder-git-2",
+        &["projects", "directories", "folders", "프로젝트", "폴더"],
+    ),
+    (
+        "host/connections",
+        "settings.hostSections.connections",
+        "network",
+        &[
+            "connections",
+            "pair",
+            "qr",
+            "device",
+            "ssh",
+            "relay",
+            "연결",
+            "페어링",
+            "기기",
+            "휴대폰",
+        ],
+    ),
+    (
+        "host/agents",
+        "settings.hostSections.agents",
+        "bot",
+        &[
+            "agents",
+            "skills",
+            "prompt",
+            "profiles",
+            "mcp",
+            "에이전트",
+            "스킬",
+            "프롬프트",
+            "프로필",
+        ],
+    ),
+    (
+        "host/metadata",
+        "settings.hostSections.metadata",
+        "sparkles",
+        &[
+            "metadata",
+            "titles",
+            "generation",
+            "메타데이터",
+            "제목",
+            "생성",
+        ],
+    ),
+    (
+        "host/providers",
+        "settings.hostSections.providers",
+        "boxes",
+        &[
+            "providers",
+            "models",
+            "claude",
+            "codex",
+            "프로바이더",
+            "모델",
+        ],
+    ),
+    (
+        "host/usage",
+        "settings.hostSections.usage",
+        "gauge",
+        &[
+            "usage",
+            "limits",
+            "tokens",
+            "cost",
+            "사용량",
+            "한도",
+            "토큰",
+            "비용",
+        ],
+    ),
+    (
+        "host/terminals",
+        "settings.hostSections.terminals",
+        "square-terminal",
+        &["terminals", "profiles", "hooks", "터미널", "프로필", "훅"],
+    ),
+    (
+        "host/plugins",
+        "settings.hostSections.plugins",
+        "plug",
+        &["plugins", "extensions", "플러그인", "확장"],
+    ),
 ];
 
 /// One query-only row per settings page; host pages need a host and open on `host_id`.
@@ -981,10 +1824,24 @@ fn settings_pages(host_id: Option<&str>) -> Vec<Contribution> {
         if (host::is_mobile() && DESKTOP_ONLY.contains(&page)) || (host_page && host_id.is_none()) {
             continue;
         }
-        let title = ta(if host_page { "shell.commandCenter.hostSettingsPage" } else { "shell.commandCenter.settingsPage" }, &[("name", &t(label))]);
+        let title = ta(
+            if host_page {
+                "shell.commandCenter.hostSettingsPage"
+            } else {
+                "shell.commandCenter.settingsPage"
+            },
+            &[("name", &t(label))],
+        );
         let mut words: Vec<String> = keywords.iter().map(|k| k.to_string()).collect();
         words.extend(["settings", "설정"].map(String::from));
-        let route = crate::common::Route::Settings { host_id: if host_page { host_id.map(str::to_owned) } else { None }, page: page.to_owned() };
+        let route = crate::common::Route::Settings {
+            host_id: if host_page {
+                host_id.map(str::to_owned)
+            } else {
+                None
+            },
+            page: page.to_owned(),
+        };
         out.push(Contribution {
             id: format!("settings:{page}"),
             group: "settings".into(),
@@ -1001,7 +1858,6 @@ fn settings_pages(host_id: Option<&str>) -> Vec<Contribution> {
     }
     out
 }
-
 
 impl Widget for CommandCenterPanel {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
@@ -1021,7 +1877,10 @@ impl Widget for CommandCenterPanel {
             }
         }
         if !self.open {
-            if matches!(event, Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)) {
+            if matches!(
+                event,
+                Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)
+            ) {
                 self.view.handle_event(cx, event, scope);
             }
             return;
@@ -1029,21 +1888,29 @@ impl Widget for CommandCenterPanel {
         // Backspace in an empty scoped query drops the Files scope.
         if let Event::KeyDown(key) = event {
             let input = self.view.wa_input(id!(query));
-            if key.key_code == KeyCode::Backspace && self.files_scope && self.query.trim().is_empty() && input.key_focus(cx) {
+            if key.key_code == KeyCode::Backspace
+                && self.files_scope
+                && self.query.trim().is_empty()
+                && input.key_focus(cx)
+            {
                 let ctx = scope.data.get_mut::<UiContext>();
                 self.set_files_scope(cx, ctx.as_deref(), false);
                 return;
             }
         }
         self.view.handle_event(cx, event, scope);
-        let Event::Actions(actions) = event else { return };
+        let Event::Actions(actions) = event else {
+            return;
+        };
         let view = self.root();
         if !view.wa_modal(id!(modal)).is_open() {
             self.close_panel(cx);
             return;
         }
         let input = view.wa_input(id!(query));
-        if let Some(text) = input.changed(actions) && text != self.query {
+        if let Some(text) = input.changed(actions)
+            && text != self.query
+        {
             self.query = text;
             self.active_id = None;
             self.reveal_pending = true;
@@ -1072,15 +1939,27 @@ impl Widget for CommandCenterPanel {
             self.active_id.clone()
         } else {
             let list = view.portal_list(id!(list));
-            list.items_with_actions(actions).into_iter().find_map(|(index, item)| {
-                item.as_surface().clicked(actions).then(|| self.projection.as_ref().and_then(|p| p.rows.get(index)).and_then(row_id)).flatten()
-            })
+            list.items_with_actions(actions)
+                .into_iter()
+                .find_map(|(index, item)| {
+                    item.as_surface()
+                        .clicked(actions)
+                        .then(|| {
+                            self.projection
+                                .as_ref()
+                                .and_then(|p| p.rows.get(index))
+                                .and_then(row_id)
+                        })
+                        .flatten()
+                })
         };
         if let Some(id) = chosen {
-            let row = self.projection.as_ref().and_then(|p| p.rows.iter().find_map(|r| match r {
-                ListRow::Result(result) if result.id == id => Some((**result).clone()),
-                _ => None,
-            }));
+            let row = self.projection.as_ref().and_then(|p| {
+                p.rows.iter().find_map(|r| match r {
+                    ListRow::Result(result) if result.id == id => Some((**result).clone()),
+                    _ => None,
+                })
+            });
             if let Some(row) = row {
                 self.select(cx, scope, row);
             }
@@ -1100,18 +1979,35 @@ impl Widget for CommandCenterPanel {
         let sheet = host::is_mobile() && compact.unwrap_or(false);
         // The panel lies in the safe area above the keyboard; the backdrop still fills the pass.
         let insets = crate::shell::platform::safe_insets();
-        let inset = [insets.top, insets.right, insets.bottom_occlusion(), insets.left];
+        let inset = [
+            insets.top,
+            insets.right,
+            insets.bottom_occlusion(),
+            insets.left,
+        ];
         if self.panel_bounds != Some((sheet, size, inset)) {
             self.panel_bounds = Some((sheet, size, inset));
             let [top_inset, right_inset, bottom_inset, left_inset] = inset;
-            let available = dvec2((size.x - left_inset - right_inset).max(0.0), (size.y - top_inset - bottom_inset).max(0.0));
+            let available = dvec2(
+                (size.x - left_inset - right_inset).max(0.0),
+                (size.y - top_inset - bottom_inset).max(0.0),
+            );
             let (align_y, top, width, height) = if sheet {
                 (1.0, top_inset, available.x, (size.y * 0.6).min(available.y))
             } else {
                 // Flutter's desktop container has a fixed height, not a content-sized maximum.
-                (0.0, top_inset + 48.0, 640.0_f64.min(available.x * 0.92), 560.0_f64.min(available.y * 0.8).min((available.y - 48.0).max(0.0)))
+                (
+                    0.0,
+                    top_inset + 48.0,
+                    640.0_f64.min(available.x * 0.92),
+                    560.0_f64
+                        .min(available.y * 0.8)
+                        .min((available.y - 48.0).max(0.0)),
+                )
             };
-            self.view.widget(id!(modal)).apply_over(cx, live! { align: { y: (align_y) } });
+            self.view
+                .widget(id!(modal))
+                .apply_over(cx, live! { align: { y: (align_y) } });
             self.view.widget(id!(panel)).apply_over(cx, live! {
                 width: (width), height: (height),
                 margin: { top: (top), right: (right_inset), bottom: (bottom_inset), left: (left_inset) }
@@ -1134,7 +2030,9 @@ impl Widget for CommandCenterPanel {
 impl CommandCenterPanelRef {
     /// Opens the palette, optionally in the Files scope.
     pub fn open(&self, cx: &mut Cx, files: bool) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.open = true;
         inner.files_scope = files;
         inner.query.clear();

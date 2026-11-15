@@ -7,18 +7,20 @@
 pub mod action;
 pub mod audio;
 pub mod deep_link;
+mod facade;
+mod fonts;
 pub mod image;
 pub mod legacy_prefs;
 pub mod notification_policy;
 pub mod paths;
-mod facade;
-mod fonts;
 mod platform;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub(crate) mod prefs;
 pub mod qr;
+mod tailnet_keys;
 
 pub use facade::{appearance, notifications};
+pub use tailnet_keys::tailnet_key_store;
 
 /// Desktop host internals; `available()` / `invoke()` are its public facade.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -49,22 +51,23 @@ pub(crate) mod ios;
 /// The OS backend selected for this target. Every backend implements the same
 /// set of functions; there is no runtime fallback between them.
 pub(crate) mod native {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    pub(crate) use crate::desktop::native::*;
     #[cfg(target_os = "android")]
     pub(crate) use crate::android::native::*;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    pub(crate) use crate::desktop::native::*;
     #[cfg(target_os = "ios")]
     pub(crate) use crate::ios::native::*;
 }
 
 pub use action::{
-    CloseDecision, ClipboardContent, ClipboardImage, EditorTarget, PermissionState, PickedFile, PlatformAction,
-    PlatformError, PlatformEvent, PlatformRequestId, PlatformRoute, PlatformValue, QuitReason, SafeInsets,
+    ClipboardContent, ClipboardImage, CloseDecision, EditorTarget, PermissionState, PickedFile,
+    PlatformAction, PlatformError, PlatformEvent, PlatformRequestId, PlatformRoute, PlatformValue,
+    QuitReason, SafeInsets,
 };
 pub use notification_policy::{AttentionView, NotificationRequest};
 pub use platform::{
-    dropped_file_paths, platform, Capabilities, OpenEditorRequest, PickFilesOptions, Platform, PlatformConfig,
-    PlatformHandle, WindowGeometry,
+    Capabilities, OpenEditorRequest, PickFilesOptions, Platform, PlatformConfig, PlatformHandle,
+    WindowGeometry, dropped_file_paths, platform,
 };
 
 /// Desktop single-instance handling; mobile processes are always primary.
@@ -72,7 +75,9 @@ pub use platform::{
 pub enum Bootstrap {
     Primary,
     /// Another instance received this launch's arguments; exit with this code.
-    Forwarded { exit_code: i32 },
+    Forwarded {
+        exit_code: i32,
+    },
 }
 
 /// Call before any window is created. A secondary desktop launch forwards its

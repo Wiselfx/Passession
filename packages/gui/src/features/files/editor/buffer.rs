@@ -3,8 +3,8 @@
 //! navigation, grouped undo/redo and literal find/replace. All offsets are UTF-8 byte offsets on
 //! char boundaries.
 
-use unicode_segmentation::UnicodeSegmentation;
 use makepad_widgets::event::TextImeEvent;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Selection {
@@ -14,7 +14,10 @@ pub struct Selection {
 
 impl Selection {
     pub fn caret(offset: usize) -> Selection {
-        Selection { anchor: offset, head: offset }
+        Selection {
+            anchor: offset,
+            head: offset,
+        }
     }
 
     pub fn start(&self) -> usize {
@@ -70,7 +73,11 @@ pub struct TextBuffer {
 
 impl TextBuffer {
     pub fn new(text: String) -> TextBuffer {
-        let mut buffer = TextBuffer { text, line_starts: Vec::new(), ..TextBuffer::default() };
+        let mut buffer = TextBuffer {
+            text,
+            line_starts: Vec::new(),
+            ..TextBuffer::default()
+        };
         buffer.index();
         buffer
     }
@@ -179,12 +186,22 @@ impl TextBuffer {
     /// Move one semantic endpoint without swapping the fixed end when handles cross.
     /// Layout hit tests use source byte offsets; clamp through the same UTF-8 boundary
     /// path as keyboard selection without editing text or disturbing IME composition.
-    pub fn move_selection_handle(&mut self, endpoint: makepad_widgets::TextHandleEndpoint, offset: usize) {
+    pub fn move_selection_handle(
+        &mut self,
+        endpoint: makepad_widgets::TextHandleEndpoint,
+        offset: usize,
+    ) {
         use makepad_widgets::TextHandleEndpoint;
         let selection = match endpoint {
             TextHandleEndpoint::Caret => Selection::caret(offset),
-            TextHandleEndpoint::Anchor => Selection { anchor: offset, head: self.selection.head },
-            TextHandleEndpoint::Cursor => Selection { anchor: self.selection.anchor, head: offset },
+            TextHandleEndpoint::Anchor => Selection {
+                anchor: offset,
+                head: self.selection.head,
+            },
+            TextHandleEndpoint::Cursor => Selection {
+                anchor: self.selection.anchor,
+                head: offset,
+            },
         };
         let composing_group = self.ime_composing && self.open_group;
         self.set_selection(selection);
@@ -200,7 +217,10 @@ impl TextBuffer {
     pub fn move_head(&mut self, head: usize, extend: bool) {
         let head = floor_boundary(&self.text, head.min(self.text.len()));
         self.selection = if extend {
-            Selection { anchor: self.selection.anchor, head }
+            Selection {
+                anchor: self.selection.anchor,
+                head,
+            }
         } else {
             Selection::caret(head)
         };
@@ -212,7 +232,11 @@ impl TextBuffer {
         self.text.replace_range(start..end, inserted);
         self.index();
         self.revision = self.revision.wrapping_add(1);
-        Edit { start, removed, inserted: inserted.to_owned() }
+        Edit {
+            start,
+            removed,
+            inserted: inserted.to_owned(),
+        }
     }
 
     /// Replaces `start..end` with `text`, recording undo; the caret lands after the insertion.
@@ -229,13 +253,21 @@ impl TextBuffer {
         self.redo.clear();
         let extend = self.open_group
             && kind != EditKind::Other
-            && self.undo.last().is_some_and(|group| group.kind == kind && group.after == before);
+            && self
+                .undo
+                .last()
+                .is_some_and(|group| group.kind == kind && group.after == before);
         if extend {
             let group = self.undo.last_mut().unwrap();
             group.edits.push(edit);
             group.after = after;
         } else {
-            self.undo.push(Group { kind, edits: vec![edit], before, after });
+            self.undo.push(Group {
+                kind,
+                edits: vec![edit],
+                before,
+                after,
+            });
             if self.undo.len() > 500 {
                 self.undo.remove(0);
             }
@@ -254,7 +286,9 @@ impl TextBuffer {
         let changed = self.text != event.text;
         let composition = self.ime_composing || event.composing.is_some();
         if changed {
-            if !self.ime_composing && composition { self.open_group = false; }
+            if !self.ime_composing && composition {
+                self.open_group = false;
+            }
             let (start, end, replacement) = event.replacement(&self.text);
             let replacement = if single_line && replacement.contains(['\n', '\r']) {
                 std::borrow::Cow::Owned(replacement.replace(['\n', '\r'], " "))
@@ -268,7 +302,11 @@ impl TextBuffer {
             } else if start == end && replacement.chars().count() == 1 {
                 EditKind::Insert
             } else if replacement.is_empty() && self.selection.is_empty() {
-                if end == self.selection.head { EditKind::Backspace } else { EditKind::Delete }
+                if end == self.selection.head {
+                    EditKind::Backspace
+                } else {
+                    EditKind::Delete
+                }
             } else {
                 EditKind::Other
             };
@@ -279,9 +317,13 @@ impl TextBuffer {
             anchor: floor_boundary(&self.text, anchor.min(self.text.len())),
             head: floor_boundary(&self.text, head.min(self.text.len())),
         };
-        if changed && let Some(group) = self.undo.last_mut() { group.after = self.selection; }
+        if changed && let Some(group) = self.undo.last_mut() {
+            group.after = self.selection;
+        }
         self.ime_composing = event.composing.is_some();
-        if !self.ime_composing && (composition || !changed) { self.open_group = false; }
+        if !self.ime_composing && (composition || !changed) {
+            self.open_group = false;
+        }
     }
 
     pub fn backspace(&mut self, word: bool) {
@@ -290,7 +332,11 @@ impl TextBuffer {
             self.replace(start, end, "", EditKind::Backspace);
             return;
         }
-        let from = if word { self.word_left(start) } else { prev_grapheme(&self.text, start) };
+        let from = if word {
+            self.word_left(start)
+        } else {
+            prev_grapheme(&self.text, start)
+        };
         self.replace(from, start, "", EditKind::Backspace);
     }
 
@@ -300,12 +346,18 @@ impl TextBuffer {
             self.replace(start, end, "", EditKind::Delete);
             return;
         }
-        let to = if word { self.word_right(end) } else { next_grapheme(&self.text, end) };
+        let to = if word {
+            self.word_right(end)
+        } else {
+            next_grapheme(&self.text, end)
+        };
         self.replace(end, to, "", EditKind::Delete);
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(group) = self.undo.pop() else { return false };
+        let Some(group) = self.undo.pop() else {
+            return false;
+        };
         for edit in group.edits.iter().rev() {
             let end = edit.start + edit.inserted.len();
             self.text.replace_range(edit.start..end, &edit.removed);
@@ -319,7 +371,9 @@ impl TextBuffer {
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(group) = self.redo.pop() else { return false };
+        let Some(group) = self.redo.pop() else {
+            return false;
+        };
         for edit in &group.edits {
             let end = edit.start + edit.removed.len();
             self.text.replace_range(edit.start..end, &edit.inserted);
@@ -391,7 +445,11 @@ impl TextBuffer {
     /// The whole line around `offset`, including its `\n` (triple click).
     pub fn line_range_at(&self, offset: usize) -> (usize, usize) {
         let line = self.line_of(offset);
-        let end = self.line_starts.get(line + 1).copied().unwrap_or(self.text.len());
+        let end = self
+            .line_starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.text.len());
         (self.line_start(line), end)
     }
 
@@ -418,7 +476,9 @@ pub fn find_matches(text: &str, needle: &str, match_case: bool) -> Vec<usize> {
         let mut j = 0;
         let mut k = i;
         while j < needle.len() {
-            let Some(&(_, c)) = chars.get(k) else { break 'outer };
+            let Some(&(_, c)) = chars.get(k) else {
+                break 'outer;
+            };
             let mut lower = c.to_lowercase();
             let mut matched = true;
             for lc in lower.by_ref() {
@@ -473,7 +533,11 @@ pub fn prev_grapheme(text: &str, offset: usize) -> usize {
     if start == offset {
         return offset - 1;
     }
-    text[start..offset].grapheme_indices(true).next_back().map(|(i, _)| start + i).unwrap_or(start)
+    text[start..offset]
+        .grapheme_indices(true)
+        .next_back()
+        .map(|(i, _)| start + i)
+        .unwrap_or(start)
 }
 
 pub fn next_grapheme(text: &str, offset: usize) -> usize {
@@ -483,8 +547,15 @@ pub fn next_grapheme(text: &str, offset: usize) -> usize {
     if text.as_bytes()[offset] == b'\n' {
         return offset + 1;
     }
-    let end = text[offset..].find('\n').map(|i| offset + i).unwrap_or(text.len());
-    text[offset..end].graphemes(true).next().map(|g| offset + g.len()).unwrap_or(end)
+    let end = text[offset..]
+        .find('\n')
+        .map(|i| offset + i)
+        .unwrap_or(text.len());
+    text[offset..end]
+        .graphemes(true)
+        .next()
+        .map(|g| offset + g.len())
+        .unwrap_or(end)
 }
 
 #[cfg(test)]
@@ -503,7 +574,13 @@ mod tests {
         assert_eq!(buffer.selection, Selection { anchor: 7, head: 3 });
         assert_eq!(buffer.selected_text(), "😀");
         buffer.move_selection_handle(Cursor, usize::MAX);
-        assert_eq!(buffer.selection, Selection { anchor: 7, head: 10 });
+        assert_eq!(
+            buffer.selection,
+            Selection {
+                anchor: 7,
+                head: 10
+            }
+        );
         buffer.move_selection_handle(Caret, 5);
         assert_eq!(buffer.selection, Selection::caret(3));
         assert_eq!(buffer.revision, revision);
@@ -515,16 +592,30 @@ mod tests {
     fn selection_handles_preserve_hangul_composition_undo_group() {
         let mut buffer = TextBuffer::new("A😀".into());
         buffer.set_selection(Selection::caret(buffer.len()));
-        buffer.apply_ime(&TextImeEvent {
-            session: 1, revision: 1, text: "A😀ㅎ".into(),
-            selection_start: 4, selection_end: 4, composing: Some((3, 4)),
-        }, false);
+        buffer.apply_ime(
+            &TextImeEvent {
+                session: 1,
+                revision: 1,
+                text: "A😀ㅎ".into(),
+                selection_start: 4,
+                selection_end: 4,
+                composing: Some((3, 4)),
+            },
+            false,
+        );
         buffer.move_selection_handle(makepad_widgets::TextHandleEndpoint::Caret, 1);
         assert!(buffer.ime_composing);
-        buffer.apply_ime(&TextImeEvent {
-            session: 1, revision: 2, text: "A😀한".into(),
-            selection_start: 4, selection_end: 4, composing: None,
-        }, false);
+        buffer.apply_ime(
+            &TextImeEvent {
+                session: 1,
+                revision: 2,
+                text: "A😀한".into(),
+                selection_start: 4,
+                selection_end: 4,
+                composing: None,
+            },
+            false,
+        );
         assert_eq!(buffer.text(), "A😀한");
         assert!(buffer.undo());
         assert_eq!(buffer.text(), "A😀");
@@ -538,13 +629,23 @@ mod tests {
     fn android_ime_composition_is_one_undo_group_and_commit_is_not_duplicated() {
         let mut buffer = TextBuffer::new("A😀Z".into());
         buffer.set_selection(Selection::caret(5));
-        for (text, composing) in [("A😀ㅎZ", true), ("A😀하Z", true),
-            ("A😀한Z", true), ("A😀한Z", false)] {
-            buffer.apply_ime(&TextImeEvent {
-                session: 1, revision: 1, text: text.into(),
-                selection_start: 4, selection_end: 4,
-                composing: composing.then_some((3, 4)),
-            }, false);
+        for (text, composing) in [
+            ("A😀ㅎZ", true),
+            ("A😀하Z", true),
+            ("A😀한Z", true),
+            ("A😀한Z", false),
+        ] {
+            buffer.apply_ime(
+                &TextImeEvent {
+                    session: 1,
+                    revision: 1,
+                    text: text.into(),
+                    selection_start: 4,
+                    selection_end: 4,
+                    composing: composing.then_some((3, 4)),
+                },
+                false,
+            );
         }
         assert_eq!(buffer.text(), "A😀한Z");
         assert_eq!(buffer.selection, Selection::caret(8));
@@ -558,13 +659,23 @@ mod tests {
     #[test]
     fn android_ime_deletion_selection_and_ascii_paste() {
         let mut buffer = TextBuffer::new("한국어".into());
-        for (text, start, end, composing) in [("한국", 2, 2, true), ("한", 1, 1, false),
-            ("한", 0, 1, false), ("ASCII paste 😀", 14, 14, false)] {
-            buffer.apply_ime(&TextImeEvent {
-                session: 1, revision: 1, text: text.into(),
-                selection_start: start, selection_end: end,
-                composing: composing.then_some((0, end)),
-            }, false);
+        for (text, start, end, composing) in [
+            ("한국", 2, 2, true),
+            ("한", 1, 1, false),
+            ("한", 0, 1, false),
+            ("ASCII paste 😀", 14, 14, false),
+        ] {
+            buffer.apply_ime(
+                &TextImeEvent {
+                    session: 1,
+                    revision: 1,
+                    text: text.into(),
+                    selection_start: start,
+                    selection_end: end,
+                    composing: composing.then_some((0, end)),
+                },
+                false,
+            );
             assert_eq!(buffer.text(), text);
         }
         buffer.undo();

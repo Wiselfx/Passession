@@ -41,8 +41,20 @@ impl Track {
         let len = len.max(1.0);
         let thumb_len = (len * visible / (visible + max).max(1.0)).clamp(MIN_THUMB.min(len), len);
         let travel = (len - thumb_len).max(0.0);
-        let thumb_start = start + if max > 0.0 { travel * (offset / max).clamp(0.0, 1.0) } else { 0.0 };
-        Track { start, len, thumb_start, thumb_len, max, page: visible }
+        let thumb_start = start
+            + if max > 0.0 {
+                travel * (offset / max).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        Track {
+            start,
+            len,
+            thumb_start,
+            thumb_len,
+            max,
+            page: visible,
+        }
     }
 
     /// The offset that puts the thumb's grab point under `along`.
@@ -60,9 +72,19 @@ impl Track {
         if along >= self.thumb_start && along <= self.thumb_start + self.thumb_len {
             return (current, along - self.thumb_start);
         }
-        let next = if along < self.thumb_start { current - self.page } else { current + self.page }.clamp(0.0, self.max);
+        let next = if along < self.thumb_start {
+            current - self.page
+        } else {
+            current + self.page
+        }
+        .clamp(0.0, self.max);
         let travel = (self.len - self.thumb_len).max(0.0);
-        let thumb_start = self.start + if self.max > 0.0 { travel * next / self.max } else { 0.0 };
+        let thumb_start = self.start
+            + if self.max > 0.0 {
+                travel * next / self.max
+            } else {
+                0.0
+            };
         (next, along - thumb_start)
     }
 }
@@ -80,21 +102,41 @@ impl BarDrag {
     /// Starts a drag for a press at `rel` on a `ScrollBar` hit and applies
     /// any paging to `state`. Returns None for other targets.
     pub fn press(target: &HitTarget, rel: DVec2, state: &mut RowState) -> Option<Self> {
-        let HitTarget::ScrollBar { key, vertical, track } = target else { return None };
+        let HitTarget::ScrollBar {
+            key,
+            vertical,
+            track,
+        } = target
+        else {
+            return None;
+        };
         let along = if *vertical { rel.y } else { rel.x };
-        let offsets = if *vertical { &mut state.scroll_y } else { &mut state.scroll_x };
+        let offsets = if *vertical {
+            &mut state.scroll_y
+        } else {
+            &mut state.scroll_x
+        };
         let current = offsets.get(key).copied().unwrap_or(0.0);
         let (next, grab) = track.press(along, current);
         offsets.insert(key.clone(), next);
         state.dragging_bar = Some(key.clone());
-        Some(BarDrag { key: key.clone(), vertical: *vertical, track: *track, grab })
+        Some(BarDrag {
+            key: key.clone(),
+            vertical: *vertical,
+            track: *track,
+            grab,
+        })
     }
 
     /// Moves the thumb to the pointer at `rel`; returns true when the offset changed.
     pub fn drag_to(&self, rel: DVec2, state: &mut RowState) -> bool {
         let along = if self.vertical { rel.y } else { rel.x };
         let next = self.track.offset_at(along, self.grab);
-        let offsets = if self.vertical { &mut state.scroll_y } else { &mut state.scroll_x };
+        let offsets = if self.vertical {
+            &mut state.scroll_y
+        } else {
+            &mut state.scroll_x
+        };
         let current = offsets.get(&self.key).copied().unwrap_or(0.0);
         if (next - current).abs() < 0.01 {
             return false;
@@ -111,7 +153,14 @@ pub fn hover_key(key: &str) -> String {
 
 /// Draws the bars and side fades of `view` (absolute) above the region's content and
 /// registers the bar hits. `bg` is the region's background for the fades (None: no fades).
-pub fn draw(cx: &mut Cx2d, d: &mut Draw, view: Rect, bg: Option<Vec4>, x: Option<Axis>, y: Option<Axis>) {
+pub fn draw(
+    cx: &mut Cx2d,
+    d: &mut Draw,
+    view: Rect,
+    bg: Option<Vec4>,
+    x: Option<Axis>,
+    y: Option<Axis>,
+) {
     let x = x.filter(|a| a.max > 0.0);
     let y = y.filter(|a| a.max > 0.0);
     if x.is_none() && y.is_none() {
@@ -123,22 +172,54 @@ pub fn draw(cx: &mut Cx2d, d: &mut Draw, view: Rect, bg: Option<Vec4>, x: Option
         // 1px inside the region so a bordered pane keeps its border.
         let (top, h) = (view.pos.y + 1.0, (view.size.y - 2.0).max(0.0));
         if axis.offset < axis.max - 0.5 {
-            fade(&mut rects, rect_xywh(view.pos.x + view.size.x - 1.0 - FADE, top, FADE, h), bg, true);
+            fade(
+                &mut rects,
+                rect_xywh(view.pos.x + view.size.x - 1.0 - FADE, top, FADE, h),
+                bg,
+                true,
+            );
         }
         if axis.offset > 0.5 {
-            fade(&mut rects, rect_xywh(view.pos.x + 1.0, top, FADE, h), bg, false);
+            fade(
+                &mut rects,
+                rect_xywh(view.pos.x + 1.0, top, FADE, h),
+                bg,
+                false,
+            );
         }
     }
     if let Some(axis) = &x {
         let reserve = if y.is_some() { BAR } else { 0.0 };
-        let strip = rect_xywh(view.pos.x, view.pos.y + view.size.y - BAR, view.size.x - reserve, BAR);
-        let track = Track::new(strip.pos.x + INSET - d.canvas.origin.x, strip.size.x - 2.0 * INSET, view.size.x, axis.offset, axis.max);
+        let strip = rect_xywh(
+            view.pos.x,
+            view.pos.y + view.size.y - BAR,
+            view.size.x - reserve,
+            BAR,
+        );
+        let track = Track::new(
+            strip.pos.x + INSET - d.canvas.origin.x,
+            strip.size.x - 2.0 * INSET,
+            view.size.x,
+            axis.offset,
+            axis.max,
+        );
         bar(d, &mut rects, &mut hits, strip, axis.key, false, track);
     }
     if let Some(axis) = &y {
         let reserve = if x.is_some() { BAR } else { 0.0 };
-        let strip = rect_xywh(view.pos.x + view.size.x - BAR, view.pos.y, BAR, view.size.y - reserve);
-        let track = Track::new(strip.pos.y + INSET - d.canvas.origin.y, strip.size.y - 2.0 * INSET, view.size.y, axis.offset, axis.max);
+        let strip = rect_xywh(
+            view.pos.x + view.size.x - BAR,
+            view.pos.y,
+            BAR,
+            view.size.y - reserve,
+        );
+        let track = Track::new(
+            strip.pos.y + INSET - d.canvas.origin.y,
+            strip.size.y - 2.0 * INSET,
+            view.size.y,
+            axis.offset,
+            axis.max,
+        );
         bar(d, &mut rects, &mut hits, strip, axis.key, true, track);
     }
     d.kit.rects_on_top(cx, |kit, cx| {
@@ -151,22 +232,53 @@ pub fn draw(cx: &mut Cx2d, d: &mut Draw, view: Rect, bg: Option<Vec4>, x: Option
     }
 }
 
-fn bar(d: &Draw, rects: &mut Vec<(Rect, Vec4, f64)>, hits: &mut Vec<(Rect, HitTarget)>, strip: Rect, key: &str, vertical: bool, track: Track) {
-    let active = d.state.hover_hit.as_deref() == Some(hover_key(key).as_str()) || d.state.dragging_bar.as_deref() == Some(key);
+fn bar(
+    d: &Draw,
+    rects: &mut Vec<(Rect, Vec4, f64)>,
+    hits: &mut Vec<(Rect, HitTarget)>,
+    strip: Rect,
+    key: &str,
+    vertical: bool,
+    track: Track,
+) {
+    let active = d.state.hover_hit.as_deref() == Some(hover_key(key).as_str())
+        || d.state.dragging_bar.as_deref() == Some(key);
     let thickness = if active { 6.0 } else { 4.0 };
     let alpha = if active { 0.8 } else { 0.5 };
     let muted = d.look.palette.muted;
-    let start = track.thumb_start + if vertical { d.canvas.origin.y } else { d.canvas.origin.x };
+    let start = track.thumb_start
+        + if vertical {
+            d.canvas.origin.y
+        } else {
+            d.canvas.origin.x
+        };
     let thumb = if vertical {
-        rect_xywh(strip.pos.x + strip.size.x - INSET - thickness, start, thickness, track.thumb_len)
+        rect_xywh(
+            strip.pos.x + strip.size.x - INSET - thickness,
+            start,
+            thickness,
+            track.thumb_len,
+        )
     } else {
-        rect_xywh(start, strip.pos.y + strip.size.y - INSET - thickness, track.thumb_len, thickness)
+        rect_xywh(
+            start,
+            strip.pos.y + strip.size.y - INSET - thickness,
+            track.thumb_len,
+            thickness,
+        )
     };
     if active {
         rects.push((strip, with_alpha(muted, 0.12), 0.0));
     }
     rects.push((thumb, with_alpha(muted, alpha), thickness * 0.5));
-    hits.push((strip, HitTarget::ScrollBar { key: key.to_owned(), vertical, track }));
+    hits.push((
+        strip,
+        HitTarget::ScrollBar {
+            key: key.to_owned(),
+            vertical,
+            track,
+        },
+    ));
 }
 
 /// A horizontal fade to `bg`: opaque at the region edge (`right`: the right edge).
@@ -174,8 +286,16 @@ fn fade(rects: &mut Vec<(Rect, Vec4, f64)>, r: Rect, bg: Vec4, right: bool) {
     let step = r.size.x / FADE_STEPS as f64;
     for i in 0..FADE_STEPS {
         let t = (i + 1) as f32 / FADE_STEPS as f32;
-        let x = if right { r.pos.x + step * i as f64 } else { r.pos.x + r.size.x - step * (i + 1) as f64 };
-        rects.push((rect_xywh(x, r.pos.y, step + 0.5, r.size.y), with_alpha(bg, bg.w * t * t * 0.9), 0.0));
+        let x = if right {
+            r.pos.x + step * i as f64
+        } else {
+            r.pos.x + r.size.x - step * (i + 1) as f64
+        };
+        rects.push((
+            rect_xywh(x, r.pos.y, step + 0.5, r.size.y),
+            with_alpha(bg, bg.w * t * t * 0.9),
+            0.0,
+        ));
     }
 }
 
@@ -191,7 +311,10 @@ mod tests {
         let end = Track::new(0.0, 100.0, 100.0, 100.0, 100.0);
         assert_eq!(end.thumb_start, 50.0);
         // A huge content keeps a grabbable thumb.
-        assert_eq!(Track::new(0.0, 100.0, 10.0, 0.0, 10_000.0).thumb_len, MIN_THUMB);
+        assert_eq!(
+            Track::new(0.0, 100.0, 10.0, 0.0, 10_000.0).thumb_len,
+            MIN_THUMB
+        );
     }
 
     #[test]

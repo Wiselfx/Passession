@@ -2,6 +2,7 @@
 //! authority; extension fields are preserved rather than discarded by DTO casts.
 //! Crypto is socket-independent and never performs application authentication.
 pub mod binary_frames;
+pub mod components;
 pub mod crypto;
 pub mod helpers;
 pub mod providers;

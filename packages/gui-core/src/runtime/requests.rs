@@ -10,10 +10,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use paseo_client::{
-    DaemonClient,
-    transport::decode_frame,
-};
+use paseo_client::{DaemonClient, transport::decode_frame};
 use paseo_protocol::binary_frames::{
     TerminalOpcode, decode_terminal_frame, decode_terminal_resize, decode_terminal_snapshot,
 };
@@ -70,8 +67,8 @@ pub(crate) struct Conn {
 impl Conn {
     pub fn new(generation: u64, opened: &Opened) -> Rc<Self> {
         let info = opened.client.server_info();
-        let legacy = (info["features"]["workspaceMultiplicity"] != true)
-            .then(LegacyWorkspaces::default);
+        let legacy =
+            (info["features"]["workspaceMultiplicity"] != true).then(LegacyWorkspaces::default);
         Rc::new(Self {
             generation,
             client: opened.client.clone(),
@@ -246,7 +243,11 @@ impl Conn {
         let id = match message.get("requestId") {
             Some(Value::String(id)) if !id.is_empty() => id.clone(),
             None | Some(Value::Null) => ids::new_id(),
-            Some(_) => return Err(invalid_request("Request identity must be unique and nonempty")),
+            Some(_) => {
+                return Err(invalid_request(
+                    "Request identity must be unique and nonempty",
+                ));
+            }
         };
         message["requestId"] = Value::String(id.clone());
         if self.closed.get() {
@@ -256,7 +257,9 @@ impl Conn {
         {
             let mut pending = self.pending.borrow_mut();
             if pending.contains_key(&id) {
-                return Err(invalid_request("Request identity must be unique and nonempty"));
+                return Err(invalid_request(
+                    "Request identity must be unique and nonempty",
+                ));
             }
             let mut fields = message.clone();
             if let Some(map) = fields.as_object_mut() {
@@ -281,7 +284,9 @@ impl Conn {
         let started = Instant::now();
         let deadline = async {
             match timeout {
-                Some(timeout) if !timeout.is_zero() => tokio::time::sleep_until((started + timeout).into()).await,
+                Some(timeout) if !timeout.is_zero() => {
+                    tokio::time::sleep_until((started + timeout).into()).await
+                }
                 _ => std::future::pending::<()>().await,
             }
         };
@@ -341,17 +346,19 @@ impl Conn {
                 .map(|_| body.clone())
         };
         if let Ok(body) = &result
-            && response_error(body, &pending.request_type).is_none() {
-                if kind == "subscribe_terminal_response"
-                    && let Some(slot) = body["slot"].as_u64() {
-                        self.terminal_slots
-                            .borrow_mut()
-                            .insert(slot as u8, SlotText::default());
-                    }
-                if let Some(accept) = pending.accept {
-                    accept(body);
-                }
+            && response_error(body, &pending.request_type).is_none()
+        {
+            if kind == "subscribe_terminal_response"
+                && let Some(slot) = body["slot"].as_u64()
+            {
+                self.terminal_slots
+                    .borrow_mut()
+                    .insert(slot as u8, SlotText::default());
             }
+            if let Some(accept) = pending.accept {
+                accept(body);
+            }
+        }
         let _ = pending.reply.send(result);
     }
 
@@ -362,7 +369,9 @@ impl Conn {
             .pending
             .borrow()
             .iter()
-            .filter(|(_, p)| p.request_type == "subscribe_terminals_request" && p.fields["cwd"] == *cwd)
+            .filter(|(_, p)| {
+                p.request_type == "subscribe_terminals_request" && p.fields["cwd"] == *cwd
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in ids {
@@ -475,9 +484,10 @@ fn forward(core: &Rc<Core>, host: &Rc<Host>, conn: &Rc<Conn>, mut message: Value
     let mut matched: Vec<Value> = Vec::new();
     if conn.supports("ownedSubscriptions") {
         if let Some(subscription) = body["subscriptionId"].as_str()
-            && let Some(id) = conn.subscriptions.borrow().get(subscription) {
-                matched.push(Value::String(id.clone()));
-            }
+            && let Some(id) = conn.subscriptions.borrow().get(subscription)
+        {
+            matched.push(Value::String(id.clone()));
+        }
     } else {
         let observations = core.observations.borrow();
         let mut ids: Vec<&RequestId> = observations
@@ -493,9 +503,10 @@ fn forward(core: &Rc<Core>, host: &Rc<Host>, conn: &Rc<Conn>, mut message: Value
         matched.extend(ids.into_iter().map(|id| Value::String(id.clone())));
     }
     if !matched.is_empty()
-        && let Some(map) = message.as_object_mut() {
-            map.insert("observations".into(), Value::Array(matched));
-        }
+        && let Some(map) = message.as_object_mut()
+    {
+        map.insert("observations".into(), Value::Array(matched));
+    }
     core.host_event(&host.server_id(), message);
 }
 
@@ -535,7 +546,8 @@ pub(crate) fn handle_binary(core: &Rc<Core>, host: &Rc<Host>, conn: &Rc<Conn>, b
                 }
                 TerminalOpcode::Snapshot => {
                     payload["opcode"] = "snapshot".into();
-                    payload["snapshot"] = decode_terminal_snapshot(frame.payload).unwrap_or(Value::Null);
+                    payload["snapshot"] =
+                        decode_terminal_snapshot(frame.payload).unwrap_or(Value::Null);
                 }
                 TerminalOpcode::Resize => {
                     let Ok(size) = decode_terminal_resize(frame.payload) else {
@@ -560,7 +572,10 @@ pub(crate) fn handle_binary(core: &Rc<Core>, host: &Rc<Host>, conn: &Rc<Conn>, b
 // ---------------------------------------------------------------------------------------------
 // GUI commands
 
-fn deadline_left(started: Instant, timeout: Option<Duration>) -> Result<Option<Duration>, CoreError> {
+fn deadline_left(
+    started: Instant,
+    timeout: Option<Duration>,
+) -> Result<Option<Duration>, CoreError> {
     match timeout {
         None => Ok(None),
         Some(timeout) => {
@@ -611,14 +626,20 @@ pub(crate) fn gui_request(
     timeout: Option<Duration>,
 ) {
     let Some(host) = core.host_for(&host_id) else {
-        core.respond(&host_id, &request_id, Err(crate::error::host_unknown(&host_id)));
+        core.respond(
+            &host_id,
+            &request_id,
+            Err(crate::error::host_unknown(&host_id)),
+        );
         return;
     };
     let Some(kind) = message["type"].as_str().map(str::to_owned) else {
         core.respond(
             &host_id,
             &request_id,
-            Err(invalid_request("A request is a JSON object with a string type")),
+            Err(invalid_request(
+                "A request is a JSON object with a string type",
+            )),
         );
         return;
     };
@@ -660,9 +681,18 @@ pub(crate) fn gui_request(
     });
 }
 
-pub(crate) fn gui_operation(core: &Rc<Core>, host_id: String, request_id: RequestId, run: Operation) {
+pub(crate) fn gui_operation(
+    core: &Rc<Core>,
+    host_id: String,
+    request_id: RequestId,
+    run: Operation,
+) {
     let Some(host) = core.host_for(&host_id) else {
-        core.respond(&host_id, &request_id, Err(crate::error::host_unknown(&host_id)));
+        core.respond(
+            &host_id,
+            &request_id,
+            Err(crate::error::host_unknown(&host_id)),
+        );
         return;
     };
     let token = CancellationToken::new();
@@ -715,7 +745,12 @@ pub(crate) fn notify(core: &Rc<Core>, host_id: String, message: Value) {
     });
 }
 
-pub(crate) fn terminal_input(core: &Rc<Core>, host_id: String, subscription_id: String, data: Vec<u8>) {
+pub(crate) fn terminal_input(
+    core: &Rc<Core>,
+    host_id: String,
+    subscription_id: String,
+    data: Vec<u8>,
+) {
     let Some(host) = core.host_for(&host_id) else {
         core.error(Some(&host_id), crate::error::host_unknown(&host_id));
         return;
@@ -724,15 +759,30 @@ pub(crate) fn terminal_input(core: &Rc<Core>, host_id: String, subscription_id: 
         core.error(Some(&host_id), not_connected());
         return;
     };
-    let slot = conn.subscriptions.borrow().get(&subscription_id).and_then(|id| {
-        core.observations.borrow().get(id).and_then(|observation| observation.terminal_slot)
-    });
+    let slot = conn
+        .subscriptions
+        .borrow()
+        .get(&subscription_id)
+        .and_then(|id| {
+            core.observations
+                .borrow()
+                .get(id)
+                .and_then(|observation| observation.terminal_slot)
+        });
     let Some(slot) = slot else {
-        core.error(Some(&host_id), invalid_request("Terminal observation is no longer attached"));
+        core.error(
+            Some(&host_id),
+            invalid_request("Terminal observation is no longer attached"),
+        );
         return;
     };
-    let frame = paseo_protocol::binary_frames::encode_terminal_frame(TerminalOpcode::Input, slot, &data);
-    if conn.control.send(Control::TerminalInput(frame.into())).is_err() {
+    let frame =
+        paseo_protocol::binary_frames::encode_terminal_frame(TerminalOpcode::Input, slot, &data);
+    if conn
+        .control
+        .send(Control::TerminalInput(frame.into()))
+        .is_err()
+    {
         core.error(Some(&host_id), not_connected());
     }
 }
@@ -779,7 +829,12 @@ impl Observation {
         self.starting = false;
     }
 
-    fn new(host_key: u64, mut message: Value, response_type: String, internal: Option<Internal>) -> Self {
+    fn new(
+        host_key: u64,
+        mut message: Value,
+        response_type: String,
+        internal: Option<Internal>,
+    ) -> Self {
         let request_type = message["type"].as_str().unwrap_or_default().to_owned();
         if let Some(map) = message.as_object_mut() {
             map.remove("type");
@@ -814,14 +869,20 @@ pub(crate) fn gui_observe(
     response_type: String,
 ) {
     let Some(host) = core.host_for(&host_id) else {
-        core.respond(&host_id, &request_id, Err(crate::error::host_unknown(&host_id)));
+        core.respond(
+            &host_id,
+            &request_id,
+            Err(crate::error::host_unknown(&host_id)),
+        );
         return;
     };
     let Some(kind) = message["type"].as_str().map(str::to_owned) else {
         core.respond(
             &host_id,
             &request_id,
-            Err(invalid_request("A subscription is a JSON object with a string type")),
+            Err(invalid_request(
+                "A subscription is a JSON object with a string type",
+            )),
         );
         return;
     };
@@ -849,12 +910,13 @@ pub(crate) fn gui_observe(
     let core = core.clone();
     tokio::task::spawn_local(async move {
         if host.conn().is_none()
-            && let Err(error) = hosts::connect(&core, &host).await {
-                if core.observations.borrow_mut().remove(&request_id).is_some() {
-                    core.respond(&host.server_id(), &request_id, Err(error));
-                }
-                return;
+            && let Err(error) = hosts::connect(&core, &host).await
+        {
+            if core.observations.borrow_mut().remove(&request_id).is_some() {
+                core.respond(&host.server_id(), &request_id, Err(error));
             }
+            return;
+        }
         start_observation(&core, &request_id, false).await;
     });
 }
@@ -932,9 +994,10 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
         if internal_first {
             // A directory refresh fails now; GUI observations start on the next admission.
             if let Some(mut internal) = observations.remove(id).and_then(|o| o.internal)
-                && let Some(first) = internal.first.take() {
-                    let _ = first.send(Err(not_connected()));
-                }
+                && let Some(first) = internal.first.take()
+            {
+                let _ = first.send(Err(not_connected()));
+            }
         } else if let Some(observation) = observations.get_mut(id) {
             observation.starting = false;
         }
@@ -947,18 +1010,22 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
     }
     if legacy {
         match request_type.as_str() {
-            "fetch_agents_request" | "fetch_workspaces_request" | "workspace.label.list.request" => {
+            "fetch_agents_request"
+            | "fetch_workspaces_request"
+            | "workspace.label.list.request" => {
                 fields["subscribe"] = json!({"subscriptionId": local_id});
             }
             "fs.file.subscribe.request" | "subscribe_checkout_diff_request" => {
                 fields["subscriptionId"] = local_id.clone().into();
             }
             "agent.timeline.set_subscription.request" => {
-                fields["agentIds"] = legacy_members(core, host_key, &request_type, "agentIds").into();
+                fields["agentIds"] =
+                    legacy_members(core, host_key, &request_type, "agentIds").into();
             }
             "session.events.set_subscription.request" => {
                 fields["events"] =
-                    legacy_event_filter(legacy_members(core, host_key, &request_type, "events")).into();
+                    legacy_event_filter(legacy_members(core, host_key, &request_type, "events"))
+                        .into();
             }
             _ => {}
         }
@@ -983,7 +1050,10 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
             let subscription = if legacy {
                 Some(local_id)
             } else {
-                body["subscriptionId"].as_str().filter(|s| !s.is_empty()).map(str::to_owned)
+                body["subscriptionId"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
             };
             let Some(subscription) = subscription else {
                 return;
@@ -992,7 +1062,11 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
                 Some(observation) => {
                     observation.subscription_id = Some(subscription.clone());
                     observation.terminal_slot = (request_type == "subscribe_terminal_request")
-                        .then(|| body["slot"].as_u64().and_then(|slot| u8::try_from(slot).ok()))
+                        .then(|| {
+                            body["slot"]
+                                .as_u64()
+                                .and_then(|slot| u8::try_from(slot).ok())
+                        })
                         .flatten();
                     true
                 }
@@ -1004,7 +1078,8 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
                 // Released while subscribing.
                 let core = core.clone();
                 tokio::task::spawn_local(async move {
-                    release_subscription(&core, &host, &conn, &request_type, &sent, &subscription).await;
+                    release_subscription(&core, &host, &conn, &request_type, &sent, &subscription)
+                        .await;
                 });
             }
         }
@@ -1040,12 +1115,21 @@ pub(crate) async fn start_observation(core: &Rc<Core>, id: &str, restored: bool)
     settle_start(core, &host, id, restored, outcome);
 }
 
-fn settle_start(core: &Rc<Core>, host: &Rc<Host>, id: &str, restored: bool, outcome: Result<Value, CoreError>) {
+fn settle_start(
+    core: &Rc<Core>,
+    host: &Rc<Host>,
+    id: &str,
+    restored: bool,
+    outcome: Result<Value, CoreError>,
+) {
     enum Next {
         Respond(Result<Value, CoreError>),
         Restored(Value),
         RestoreFailed(CoreError),
-        Internal(oneshot::Sender<Result<Value, CoreError>>, Result<Value, CoreError>),
+        Internal(
+            oneshot::Sender<Result<Value, CoreError>>,
+            Result<Value, CoreError>,
+        ),
         InternalRestored(u64),
         InternalFailed(CoreError),
         Nothing,

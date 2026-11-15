@@ -34,6 +34,11 @@ Hit maps resolve the last registered target first. A row or card registers its o
 
 Markdown and source editing are native. Historical commit diffs are summary-first and load patch bodies lazily. Supporting tabs are Files, Git Log and Commit; there is no working-tree Changes view or session line-count badge. Commit provides file selection, a multiline message and explicit submission while preserving unrelated staging. Preserve drafts and selection through transient errors. Interactive terminals are native terminal tabs; display script output as read-only logs, with real lifecycle state and exit errors. The app does not contain a browser.
 
+Commit lists files owned by the current checkout. Git's opaque untracked nested
+repositories are not traversed; they must not block unrelated files. Directory
+and gitlink selections are rejected explicitly rather than implying that a
+nested checkout's changes were committed. Use Git directly for those entries.
+
 The Git Log tab (`git_log`, IntelliJ's Git Log) follows the same tiers. From 900px a pane shows the ref tree (HEAD, local branches with ahead/behind, remotes grouped by remote, tags), the commit table (lane graph, ref pills, author, date, hash) and the selected commit's changed files above its message, author, hash and parents; the details move under the table below 1100px. Between 600px and 900px the ref tree folds into the Branch filter and the author column drops. Phones get the stacked flow in [compact panels](mobile-panels.md). The graph is laid out client-side from `parents` in `--date-order`, so appending a page never changes earlier rows; with text or author filters only commit dots are drawn, because a filtered list has gaps in its parent chains. A changed file opens the existing commit diff tab. History comes from the daemon's `checkout.log`, `checkout.refs` and `checkout.commit.get` requests behind the `gitLog` feature; an older daemon shows an update notice instead of an empty log.
 
 Loading, empty, unavailable, failed, pending and successful states are separate. A disconnected host must not look like an empty host. A failed save must not look like a completed save. A permission request must not disappear merely because a different pane is selected.

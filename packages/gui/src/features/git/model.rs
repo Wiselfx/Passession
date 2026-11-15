@@ -117,7 +117,6 @@ pub fn utf16_cmp(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChangeKind {
     Added,
@@ -155,7 +154,11 @@ pub fn format_diff_count(value: i64) -> String {
     } else {
         format!("{rounded:.1}")
     };
-    format!("{}{text}{}", if value < 0 { "-" } else { "" }, SUFFIXES[magnitude])
+    format!(
+        "{}{text}{}",
+        if value < 0 { "-" } else { "" },
+        SUFFIXES[magnitude]
+    )
 }
 
 /// Original `formatBaseRefLabel` / `computeBaseRefLabel`.
@@ -171,7 +174,10 @@ pub fn format_base_ref_label(base_ref: &str, fallback: &str) -> String {
         }
     }
     let trimmed = trimmed.trim();
-    trimmed.strip_prefix("origin/").unwrap_or(trimmed).to_owned()
+    trimmed
+        .strip_prefix("origin/")
+        .unwrap_or(trimmed)
+        .to_owned()
 }
 
 /// Original `buildAbsoluteExplorerPath`: Windows roots keep their separator.
@@ -281,7 +287,10 @@ impl ChangeFolder {
 
 /// Original tree rows: compressed single-child folder chains, folders before
 /// files (each sorted by code unit), collapsed folders hide their subtree.
-pub fn changed_tree_rows(files: &[Value], collapsed: &std::collections::HashSet<String>) -> Vec<TreeRow> {
+pub fn changed_tree_rows(
+    files: &[Value],
+    collapsed: &std::collections::HashSet<String>,
+) -> Vec<TreeRow> {
     let mut root = ChangeFolder::new("", "");
     for (index, file) in files.iter().enumerate() {
         let path = text(file, "path");
@@ -328,7 +337,6 @@ pub fn changed_tree_rows(files: &[Value], collapsed: &std::collections::HashSet<
     walk(&mut root, 0, files, collapsed, &mut rows);
     rows
 }
-
 
 // ---------------------------------------------------------------------------
 // Time formatting.
@@ -451,7 +459,10 @@ mod tests {
         ]}]});
         let lines = number_diff(&file);
         assert_eq!(lines[0].content, "@@ -3,2 +3,3 @@");
-        assert_eq!((lines[1].old_number, lines[1].new_number), (Some(3), Some(3)));
+        assert_eq!(
+            (lines[1].old_number, lines[1].new_number),
+            (Some(3), Some(3))
+        );
         assert_eq!((lines[2].old_number, lines[2].new_number), (Some(4), None));
         assert_eq!((lines[3].old_number, lines[3].new_number), (None, Some(4)));
         assert_eq!((lines[4].old_number, lines[4].new_number), (None, Some(5)));
@@ -463,7 +474,6 @@ mod tests {
         paths.sort_by(|a, b| compare_diff_paths(a, b));
         assert_eq!(paths, ["a/b/c.txt", "a/z.txt", "A.txt", "b.txt"]);
     }
-
 
     #[test]
     fn diff_counts_use_compact_notation() {
@@ -515,7 +525,10 @@ mod tests {
 
     #[test]
     fn base_ref_labels_strip_ref_prefixes_and_origin() {
-        assert_eq!(format_base_ref_label("refs/remotes/origin/main", "base"), "main");
+        assert_eq!(
+            format_base_ref_label("refs/remotes/origin/main", "base"),
+            "main"
+        );
         assert_eq!(format_base_ref_label("", "base"), "base");
     }
 }

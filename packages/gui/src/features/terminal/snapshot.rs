@@ -23,7 +23,10 @@ pub fn render_terminal_snapshot(state: &Value) -> String {
     if !has_wraps {
         out.push_str("\x1b[?7l");
     }
-    let blank = Value::Object(serde_json::Map::from_iter([("char".to_owned(), Value::String(" ".into()))]));
+    let blank = Value::Object(serde_json::Map::from_iter([(
+        "char".to_owned(),
+        Value::String(" ".into()),
+    )]));
     for (i, row) in rows.iter().enumerate() {
         let cells = row.as_array().map(Vec::as_slice).unwrap_or(&[]);
         let continues = has_wraps && wraps[i] == &Value::Bool(true);
@@ -75,8 +78,16 @@ pub fn render_terminal_snapshot(state: &Value) -> String {
         let steady = cursor.get("blink") == Some(&Value::Bool(false));
         out.push_str(&format!("\x1b[{} q", base + usize::from(steady)));
     }
-    out.push_str(&format!("\x1b[{};{}H", int_of(cursor, "row") + 1, int_of(cursor, "col") + 1));
-    out.push_str(if flag(cursor, "hidden") { "\x1b[?25l" } else { "\x1b[?25h" });
+    out.push_str(&format!(
+        "\x1b[{};{}H",
+        int_of(cursor, "row") + 1,
+        int_of(cursor, "col") + 1
+    ));
+    out.push_str(if flag(cursor, "hidden") {
+        "\x1b[?25l"
+    } else {
+        "\x1b[?25h"
+    });
     if !has_wraps {
         out.push_str("\x1b[?7h");
     }
@@ -84,15 +95,31 @@ pub fn render_terminal_snapshot(state: &Value) -> String {
 }
 
 fn styled(cell: &Value) -> bool {
-    ["fg", "bg", "fgMode", "bgMode"].iter().any(|key| cell.get(*key).is_some_and(|v| !v.is_null()))
-        || ["bold", "dim", "italic", "underline", "inverse", "strikethrough"]
-            .iter()
-            .any(|key| cell.get(*key) == Some(&Value::Bool(true)))
+    ["fg", "bg", "fgMode", "bgMode"]
+        .iter()
+        .any(|key| cell.get(*key).is_some_and(|v| !v.is_null()))
+        || [
+            "bold",
+            "dim",
+            "italic",
+            "underline",
+            "inverse",
+            "strikethrough",
+        ]
+        .iter()
+        .any(|key| cell.get(*key) == Some(&Value::Bool(true)))
 }
 
 fn style(cell: &Value) -> String {
     let mut codes: Vec<i64> = vec![0];
-    for (key, code) in [("bold", 1), ("dim", 2), ("italic", 3), ("underline", 4), ("inverse", 7), ("strikethrough", 9)] {
+    for (key, code) in [
+        ("bold", 1),
+        ("dim", 2),
+        ("italic", 3),
+        ("underline", 4),
+        ("inverse", 7),
+        ("strikethrough", 9),
+    ] {
         if flag(cell, key) {
             codes.push(code);
         }
@@ -100,7 +127,8 @@ fn style(cell: &Value) -> String {
     for background in [false, true] {
         let key = if background { "bg" } else { "fg" };
         let mode_key = if background { "bgMode" } else { "fgMode" };
-        if cell.get(key).is_none_or(Value::is_null) || cell.get(mode_key).is_none_or(Value::is_null) {
+        if cell.get(key).is_none_or(Value::is_null) || cell.get(mode_key).is_none_or(Value::is_null)
+        {
             continue;
         }
         let value = int_of(cell, key);
@@ -141,7 +169,10 @@ mod tests {
             "cursor": {"row": 1, "col": 1, "style": "block", "blink": false}
         });
         let text = render_terminal_snapshot(&state);
-        assert_eq!(text, "a\r\n\x1b[0;1mb\x1b[0m\x1b[0m\x1b[2 q\x1b[2;2H\x1b[?25h");
+        assert_eq!(
+            text,
+            "a\r\n\x1b[0;1mb\x1b[0m\x1b[0m\x1b[2 q\x1b[2;2H\x1b[?25h"
+        );
     }
 
     #[test]
@@ -166,7 +197,9 @@ mod tests {
             "cursor": {"row":0, "col":1}
         });
         let mut screen = crate::features::terminal::screen::Screen::new(100).unwrap();
-        screen.replace(&render_terminal_snapshot(&state), Some((2, 10)), None).unwrap();
+        screen
+            .replace(&render_terminal_snapshot(&state), Some((2, 10)), None)
+            .unwrap();
         assert!(screen.modes().alternate_screen);
         assert_eq!(screen.read(0, 1)[0].text, "x");
     }

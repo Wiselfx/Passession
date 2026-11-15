@@ -12,9 +12,9 @@ use super::rows::{RowContext, RowItem, RowKind, draw_row};
 use super::scrollbar;
 use crate::common::widgets::PTextFieldWidgetRefExt;
 use crate::common::{UiContext, UiEffect};
-use makepad_widgets::*;
 use makepad_widgets::makepad_draw::event::{DigitDevice, TAP_COUNT_DISTANCE, TouchState};
 use makepad_widgets::scroll_bars::TouchScroll;
+use makepad_widgets::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -153,7 +153,9 @@ impl ChatRow {
     /// Prepare the snapshot used by both passes and obtain its exact height.
     /// No draw list, hit area, selection run or glyph batch is replaced here.
     pub fn measure(&mut self, cx: &mut Cx2d, width: f64) -> f64 {
-        let Some(model) = self.model.clone() else { return 0.0 };
+        let Some(model) = self.model.clone() else {
+            return 0.0;
+        };
         if width.is_finite() && width > 0.0 {
             self.last_width = width;
         }
@@ -186,7 +188,11 @@ impl ChatRow {
     }
 
     pub fn set_model(&mut self, cx: &mut Cx, model: RowModel) {
-        if self.model.as_ref().is_none_or(|old| old.panel != model.panel || old.item.id != model.item.id) {
+        if self
+            .model
+            .as_ref()
+            .is_none_or(|old| old.panel != model.panel || old.item.id != model.item.id)
+        {
             self.clear_selection(cx);
             model.state.borrow_mut().selection = None;
         }
@@ -196,12 +202,22 @@ impl ChatRow {
     /// Moves the dragged inner region (`drag_key` along `drag_vertical`);
     /// returns true when its offset changed.
     fn pan(&mut self, cx: &mut Cx, delta: f64) -> bool {
-        let Some(model) = &self.model else { return false };
+        let Some(model) = &self.model else {
+            return false;
+        };
         let mut state = model.state.borrow_mut();
         let state = &mut *state;
-        let (extents, offsets) = if self.drag_vertical { (&state.extent_y, &mut state.scroll_y) } else { (&state.extent_x, &mut state.scroll_x) };
+        let (extents, offsets) = if self.drag_vertical {
+            (&state.extent_y, &mut state.scroll_y)
+        } else {
+            (&state.extent_x, &mut state.scroll_x)
+        };
         let max = extents.get(&self.drag_key).copied().unwrap_or(0.0);
-        let mut position = offsets.get(&self.drag_key).copied().unwrap_or(0.0).clamp(0.0, max);
+        let mut position = offsets
+            .get(&self.drag_key)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max);
         if !self.touch_scroll.apply_delta(&mut position, delta, max) {
             return false;
         }
@@ -221,17 +237,33 @@ impl ChatRow {
     fn vertical_target(&self, rel: DVec2, delta: f64) -> Option<String> {
         let model = self.model.as_ref()?;
         let state = model.state.borrow();
-        self.canvas.scroll_regions_at(rel, true).find(|key| {
-            let max = state.extent_y.get(*key).copied().unwrap_or(0.0);
-            let current = state.scroll_y.get(*key).copied().unwrap_or(0.0).clamp(0.0, max);
-            if delta > 0.0 { current < max - 0.01 } else { current > 0.01 }
-        }).map(str::to_owned)
+        self.canvas
+            .scroll_regions_at(rel, true)
+            .find(|key| {
+                let max = state.extent_y.get(*key).copied().unwrap_or(0.0);
+                let current = state
+                    .scroll_y
+                    .get(*key)
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, max);
+                if delta > 0.0 {
+                    current < max - 0.01
+                } else {
+                    current > 0.01
+                }
+            })
+            .map(str::to_owned)
     }
 
     /// A touch move while an inner region owns the drag: pans it and keeps
     /// the move from the list.
     fn drag_inner(&mut self, cx: &mut Cx, event: &Event, abs: DVec2, time: f64) {
-        let point = if self.drag_vertical { abs } else { dvec2(abs.y, abs.x) };
+        let point = if self.drag_vertical {
+            abs
+        } else {
+            dvec2(abs.y, abs.x)
+        };
         if let Some(delta) = self.touch_scroll.move_to(point, time) {
             self.pressed = None;
             if let Event::TouchUpdate(update) = event {
@@ -251,7 +283,11 @@ impl ChatRow {
 
     fn post(&self, cx: &mut Cx, kind: RowEventKind) {
         if let Some(model) = &self.model {
-            cx.action(ChatRowEvent { panel: model.panel, row: model.item.id.clone(), kind });
+            cx.action(ChatRowEvent {
+                panel: model.panel,
+                row: model.item.id.clone(),
+                kind,
+            });
         }
     }
 
@@ -259,7 +295,9 @@ impl ChatRow {
     /// direction: scrolls the deepest such region and reports true (the
     /// panel then keeps the event from the list).
     pub fn scroll_inner(&mut self, cx: &mut Cx, abs: DVec2, delta: DVec2) -> bool {
-        let Some(model) = &self.model else { return false };
+        let Some(model) = &self.model else {
+            return false;
+        };
         let rect = self.area.rect(cx);
         if !rect.contains(abs) {
             return false;
@@ -271,7 +309,11 @@ impl ChatRow {
         let vertical = delta.x.abs() <= delta.y.abs();
         let amount = if vertical { delta.y } else { delta.x };
         for key in self.canvas.scroll_regions_at(rel, vertical) {
-            let (extents, offsets) = if vertical { (&state.extent_y, &mut state.scroll_y) } else { (&state.extent_x, &mut state.scroll_x) };
+            let (extents, offsets) = if vertical {
+                (&state.extent_y, &mut state.scroll_y)
+            } else {
+                (&state.extent_x, &mut state.scroll_x)
+            };
             let max = extents.get(key).copied().unwrap_or(0.0);
             let current = offsets.get(key).copied().unwrap_or(0.0).clamp(0.0, max);
             let next = (current + amount).clamp(0.0, max);
@@ -291,7 +333,15 @@ impl ChatRow {
     /// navigation. Returns false when the panel must handle the tap. A
     /// question card that switched questions asks to show its header.
     fn tap_local(&mut self, cx: &mut Cx, scope: &mut Scope, target: &HitTarget) -> bool {
-        let active = |row: &Self| row.model.as_ref().and_then(|m| m.state.borrow().permission.as_ref().map(|c| c.active_question));
+        let active = |row: &Self| {
+            row.model.as_ref().and_then(|m| {
+                m.state
+                    .borrow()
+                    .permission
+                    .as_ref()
+                    .map(|c| c.active_question)
+            })
+        };
         let before = active(self);
         let handled = self.tap_row(cx, scope, target);
         if before.is_some() && active(self) != before {
@@ -301,8 +351,14 @@ impl ChatRow {
     }
 
     fn tap_row(&mut self, cx: &mut Cx, scope: &mut Scope, target: &HitTarget) -> bool {
-        let Some(model) = self.model.clone() else { return true };
+        let Some(model) = self.model.clone() else {
+            return true;
+        };
         let now = now_seconds();
+        if super::mermaid::tap(&mut model.state.borrow_mut(), target) {
+            self.area.redraw(cx);
+            return true;
+        }
         match target {
             HitTarget::Toggle(key) => {
                 let mut state = model.state.borrow_mut();
@@ -329,8 +385,12 @@ impl ChatRow {
                 true
             }
             HitTarget::QuestionOption { index, .. } => {
-                let RowKind::Permission { request, .. } = &model.item.kind else { return true };
-                let Some(qs) = permission::questions(request) else { return true };
+                let RowKind::Permission { request, .. } = &model.item.kind else {
+                    return true;
+                };
+                let Some(qs) = permission::questions(request) else {
+                    return true;
+                };
                 let mut state = model.state.borrow_mut();
                 if let Some(card) = state.permission.as_mut() {
                     let active = card.active_question.min(qs.len().saturating_sub(1));
@@ -344,10 +404,16 @@ impl ChatRow {
                 true
             }
             HitTarget::QuestionPrimary { key } => {
-                let RowKind::Permission { request, .. } = &model.item.kind else { return true };
-                let Some(qs) = permission::questions(request) else { return true };
+                let RowKind::Permission { request, .. } = &model.item.kind else {
+                    return true;
+                };
+                let Some(qs) = permission::questions(request) else {
+                    return true;
+                };
                 let mut state = model.state.borrow_mut();
-                let Some(card) = state.permission.as_mut() else { return true };
+                let Some(card) = state.permission.as_mut() else {
+                    return true;
+                };
                 if card.pending {
                     return true;
                 }
@@ -363,14 +429,32 @@ impl ChatRow {
                     return true;
                 }
                 drop(state);
-                self.post(cx, RowEventKind::Answer { key: key.clone(), dismiss: false });
+                self.post(
+                    cx,
+                    RowEventKind::Answer {
+                        key: key.clone(),
+                        dismiss: false,
+                    },
+                );
                 true
             }
             HitTarget::QuestionDismiss { key } => {
-                if model.state.borrow().permission.as_ref().is_some_and(|c| c.pending) {
+                if model
+                    .state
+                    .borrow()
+                    .permission
+                    .as_ref()
+                    .is_some_and(|c| c.pending)
+                {
                     return true;
                 }
-                self.post(cx, RowEventKind::Answer { key: key.clone(), dismiss: true });
+                self.post(
+                    cx,
+                    RowEventKind::Answer {
+                        key: key.clone(),
+                        dismiss: true,
+                    },
+                );
                 true
             }
             HitTarget::ScrollX(_) | HitTarget::ScrollY(_) | HitTarget::ScrollBar { .. } => true,
@@ -399,7 +483,11 @@ impl ChatRow {
             self.area.redraw(cx);
         }
         if hovered {
-            cx.set_cursor(if cursor_hand { MouseCursor::Hand } else { MouseCursor::Text });
+            cx.set_cursor(if cursor_hand {
+                MouseCursor::Hand
+            } else {
+                MouseCursor::Text
+            });
         }
     }
 
@@ -435,16 +523,24 @@ impl ChatRow {
     }
 
     fn move_handle(&mut self, cx: &mut Cx, endpoint: TextHandleEndpoint, abs: DVec2) {
-        if let (Some(offset), Some((anchor, cursor))) = (self.canvas.offset_at_handle(self.rel(cx, abs)), self.canvas.selection) {
-            self.set_selection(cx, Some(match endpoint {
-                TextHandleEndpoint::Anchor => (offset, cursor),
-                TextHandleEndpoint::Cursor | TextHandleEndpoint::Caret => (anchor, offset),
-            }));
+        if let (Some(offset), Some((anchor, cursor))) = (
+            self.canvas.offset_at_handle(self.rel(cx, abs)),
+            self.canvas.selection,
+        ) {
+            self.set_selection(
+                cx,
+                Some(match endpoint {
+                    TextHandleEndpoint::Anchor => (offset, cursor),
+                    TextHandleEndpoint::Cursor | TextHandleEndpoint::Caret => (anchor, offset),
+                }),
+            );
         }
     }
 
     fn handle_selection_event(&mut self, cx: &mut Cx, event: &Event) -> bool {
-        let Some(action) = self.selection_handles.handle_event(cx, event, self.area) else { return false };
+        let Some(action) = self.selection_handles.handle_event(cx, event, self.area) else {
+            return false;
+        };
         self.touch_scroll.reset();
         self.show_actions = false;
         self.drag = Drag::None;
@@ -456,31 +552,56 @@ impl ChatRow {
         if action.phase != TextHandlePhase::Cancel {
             let owner = self.area.clipped_rect(cx);
             let mut scroll_point = dvec2(
-                action.abs.x.clamp(owner.pos.x, (owner.pos.x + owner.size.x - 0.5).max(owner.pos.x)),
-                action.abs.y.clamp(owner.pos.y, (owner.pos.y + owner.size.y - 0.5).max(owner.pos.y)),
+                action.abs.x.clamp(
+                    owner.pos.x,
+                    (owner.pos.x + owner.size.x - 0.5).max(owner.pos.x),
+                ),
+                action.abs.y.clamp(
+                    owner.pos.y,
+                    (owner.pos.y + owner.size.y - 0.5).max(owner.pos.y),
+                ),
             );
             if let Some((anchor, cursor)) = self.canvas.selection {
-                let active = if action.endpoint == TextHandleEndpoint::Anchor { anchor } else { cursor };
-                if let Some(clip) = self.canvas.runs.iter()
+                let active = if action.endpoint == TextHandleEndpoint::Anchor {
+                    anchor
+                } else {
+                    cursor
+                };
+                if let Some(clip) = self
+                    .canvas
+                    .runs
+                    .iter()
                     .find(|run| active >= run.offset && active <= run.offset + run.len)
                     .and_then(|run| run.clip)
                 {
                     let clip = clip.translate(self.area.rect(cx).pos);
-                    scroll_point.x = scroll_point.x.clamp(clip.pos.x, (clip.pos.x + clip.size.x - 0.5).max(clip.pos.x));
-                    scroll_point.y = scroll_point.y.clamp(clip.pos.y, (clip.pos.y + clip.size.y - 0.5).max(clip.pos.y));
+                    scroll_point.x = scroll_point
+                        .x
+                        .clamp(clip.pos.x, (clip.pos.x + clip.size.x - 0.5).max(clip.pos.x));
+                    scroll_point.y = scroll_point
+                        .y
+                        .clamp(clip.pos.y, (clip.pos.y + clip.size.y - 0.5).max(clip.pos.y));
                 }
             }
             self.move_handle(cx, action.endpoint, action.abs);
             if action.scroll.x != 0.0 {
                 self.scroll_inner(cx, scroll_point, dvec2(action.scroll.x, 0.0));
             }
-            if action.scroll.y != 0.0 && !self.scroll_inner(cx, scroll_point, dvec2(0.0, action.scroll.y)) {
-                self.post(cx, RowEventKind::SelectionScroll { delta: action.scroll.y });
+            if action.scroll.y != 0.0
+                && !self.scroll_inner(cx, scroll_point, dvec2(0.0, action.scroll.y))
+            {
+                self.post(
+                    cx,
+                    RowEventKind::SelectionScroll {
+                        delta: action.scroll.y,
+                    },
+                );
             }
         }
         if matches!(action.phase, TextHandlePhase::End | TextHandlePhase::Cancel) {
             self.handle_endpoint = None;
-            self.show_actions = action.phase == TextHandlePhase::End && self.canvas.selected_range().is_some();
+            self.show_actions =
+                action.phase == TextHandlePhase::End && self.canvas.selected_range().is_some();
         }
         self.area.redraw(cx);
         true
@@ -529,7 +650,13 @@ impl Widget for ChatRow {
                 }
             }
         }
-        match event.hits(cx, self.area) {
+        // Final-position rows retain their full area for selection geometry.
+        // Only the visible stream may start a gesture, not fixed chrome above it.
+        let viewport = self.canvas.viewport;
+        match event.hits_with_test(cx, self.area, |abs, rect, margin| {
+            viewport.is_some_and(|viewport| viewport.contains(abs))
+                && Margin::rect_contains_with_margin(abs, rect, margin)
+        }) {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
                 let rel = self.rel(cx, e.abs);
                 self.set_hover(cx, Some(rel));
@@ -568,7 +695,9 @@ impl Widget for ChatRow {
                 if e.device.is_touch() {
                     // An inner region takes the drag only along an axis it can
                     // scroll; otherwise the list keeps the gesture.
-                    if self.canvas.scroll_region_at(rel, false).is_some() || self.canvas.scroll_region_at(rel, true).is_some() {
+                    if self.canvas.scroll_region_at(rel, false).is_some()
+                        || self.canvas.scroll_region_at(rel, true).is_some()
+                    {
                         self.drag = Drag::Pending;
                         self.drag_start = (e.abs, e.time);
                     }
@@ -604,13 +733,16 @@ impl Widget for ChatRow {
             }
             Hit::FingerMove(e) => match self.drag {
                 Drag::Select => {
-                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) = (e.device, event)
+                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) =
+                        (e.device, event)
                         && let Some(touch) = update.touches.iter().find(|touch| touch.uid == uid)
                     {
                         touch.handled.set(self.area);
                     }
                     let rel = self.rel(cx, e.abs);
-                    if let (Some(offset), Some((anchor, _))) = (self.canvas.offset_at(rel), self.canvas.selection) {
+                    if let (Some(offset), Some((anchor, _))) =
+                        (self.canvas.offset_at(rel), self.canvas.selection)
+                    {
                         self.set_selection(cx, Some((anchor, offset)));
                     }
                 }
@@ -621,22 +753,37 @@ impl Widget for ChatRow {
                         self.drag = Drag::None;
                         let rel = self.rel(cx, start);
                         let target = if moved.x.abs() > moved.y.abs() {
-                            self.canvas.scroll_region_at(rel, false).map(|key| (key.to_owned(), false))
+                            self.canvas
+                                .scroll_region_at(rel, false)
+                                .map(|key| (key.to_owned(), false))
                         } else {
                             self.vertical_target(rel, -moved.y).map(|key| (key, true))
                         };
                         if let Some((key, vertical)) = target {
-                            self.drag = if vertical { Drag::ScrollY } else { Drag::ScrollX };
+                            self.drag = if vertical {
+                                Drag::ScrollY
+                            } else {
+                                Drag::ScrollX
+                            };
                             self.drag_key = key;
                             self.drag_vertical = vertical;
-                            self.touch_scroll.begin(if vertical { start } else { dvec2(start.y, start.x) }, time, true);
+                            self.touch_scroll.begin(
+                                if vertical {
+                                    start
+                                } else {
+                                    dvec2(start.y, start.x)
+                                },
+                                time,
+                                true,
+                            );
                             self.drag_inner(cx, event, e.abs, e.time);
                         }
                     }
                 }
                 Drag::ScrollX | Drag::ScrollY => self.drag_inner(cx, event, e.abs, e.time),
                 Drag::Bar => {
-                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) = (e.device, event)
+                    if let (DigitDevice::Touch { uid }, Event::TouchUpdate(update)) =
+                        (e.device, event)
                         && let Some(touch) = update.touches.iter().find(|touch| touch.uid == uid)
                     {
                         touch.handled.set(self.area);
@@ -655,7 +802,10 @@ impl Widget for ChatRow {
                 self.touch_scroll.schedule(cx);
                 if let Some((target, rect)) = self.pressed.take() {
                     let rel = self.rel(cx, e.abs);
-                    if e.is_over && (!e.device.is_touch() || e.was_tap()) && self.canvas.hit_at(rel) == Some(&target) {
+                    if e.is_over
+                        && (!e.device.is_touch() || e.was_tap())
+                        && self.canvas.hit_at(rel) == Some(&target)
+                    {
                         self.clear_selection(cx);
                         if !self.tap_local(cx, scope, &target) {
                             self.post(cx, RowEventKind::Tap { target, rect });
@@ -682,7 +832,9 @@ impl Widget for ChatRow {
                     *ce.response.borrow_mut() = Some(text);
                 }
             }
-            Hit::KeyDown(ke) if ke.key_code == KeyCode::KeyA && (ke.modifiers.control || ke.modifiers.logo) => {
+            Hit::KeyDown(ke)
+                if ke.key_code == KeyCode::KeyA && (ke.modifiers.control || ke.modifiers.logo) =>
+            {
                 self.set_selection(cx, Some((0, self.canvas.source_len())));
             }
             Hit::KeyFocusLost(_) => self.clear_selection(cx),
@@ -691,7 +843,9 @@ impl Widget for ChatRow {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let Some(model) = self.model.clone() else { return DrawStep::done() };
+        let Some(model) = self.model.clone() else {
+            return DrawStep::done();
+        };
         self.draw_list.begin_always(cx);
         cx.begin_turtle(walk, Layout::default());
         let origin = cx.turtle().pos();
@@ -718,7 +872,15 @@ impl Widget for ChatRow {
                 area: self.area,
                 animating: false,
             };
-            let (h, field) = draw_row(cx, &mut d, &model.ctx, &model.item, origin.x, origin.y, width);
+            let (h, field) = draw_row(
+                cx,
+                &mut d,
+                &model.ctx,
+                &model.item,
+                origin.x,
+                origin.y,
+                width,
+            );
             let animating = d.animating;
             state.height = h;
             if let Some(y) = state.find_y {
@@ -748,35 +910,79 @@ impl Widget for ChatRow {
             if text != field.text {
                 self.answer.set_text(cx, &field.text);
             }
-            self.answer.as_ptext_field().set_placeholder(cx, &field.placeholder);
-            self.answer.as_ptext_field().set_read_only(cx, !field.enabled);
-            let inner = Rect { pos: field.rect.pos + dvec2(1.0, 1.0), size: field.rect.size - dvec2(2.0, 2.0) };
+            self.answer
+                .as_ptext_field()
+                .set_placeholder(cx, &field.placeholder);
+            self.answer
+                .as_ptext_field()
+                .set_read_only(cx, !field.enabled);
+            let inner = Rect {
+                pos: field.rect.pos + dvec2(1.0, 1.0),
+                size: field.rect.size - dvec2(2.0, 2.0),
+            };
             let _ = self.answer.draw_walk(
                 cx,
                 scope,
-                Walk { abs_pos: Some(inner.pos), margin: Margin::default(), width: Size::Fixed(inner.size.x), height: Size::Fixed(inner.size.y) },
+                Walk {
+                    abs_pos: Some(inner.pos),
+                    margin: Margin::default(),
+                    width: Size::Fixed(inner.size.x),
+                    height: Size::Fixed(inner.size.y),
+                },
             );
         }
         self.answer_field = field;
-        cx.walk_turtle(Walk { abs_pos: None, margin: Margin::default(), width: Size::Fill, height: Size::Fixed(height) });
+        cx.walk_turtle(Walk {
+            abs_pos: None,
+            margin: Margin::default(),
+            width: Size::Fill,
+            height: Size::Fixed(height),
+        });
         cx.end_turtle_with_area(&mut self.area);
-        if self.touch_selection && let Some((anchor, cursor)) = self.canvas.selection {
-            let a = self.canvas.caret_rect(anchor, anchor <= cursor).unwrap_or_default();
-            let b = self.canvas.caret_rect(cursor, cursor < anchor).unwrap_or_default();
-            let active = if self.handle_endpoint == Some(TextHandleEndpoint::Anchor) { anchor } else { cursor };
-            let viewport = self.canvas.runs.iter()
+        if self.touch_selection
+            && let Some((anchor, cursor)) = self.canvas.selection
+        {
+            let a = self
+                .canvas
+                .caret_rect(anchor, anchor <= cursor)
+                .unwrap_or_default();
+            let b = self
+                .canvas
+                .caret_rect(cursor, cursor < anchor)
+                .unwrap_or_default();
+            let active = if self.handle_endpoint == Some(TextHandleEndpoint::Anchor) {
+                anchor
+            } else {
+                cursor
+            };
+            let viewport = self
+                .canvas
+                .runs
+                .iter()
                 .find(|run| active >= run.offset && active <= run.offset + run.len)
                 .and_then(|run| run.clip)
                 .map(|clip| clip.translate(origin))
-                .unwrap_or(Rect { pos: origin, size: dvec2(width, height) });
-            self.selection_handles.draw(cx, self.area, viewport, a, b, anchor == cursor, false);
+                .unwrap_or(Rect {
+                    pos: origin,
+                    size: dvec2(width, height),
+                });
+            self.selection_handles
+                .draw(cx, self.area, viewport, a, b, anchor == cursor, false);
         }
         self.draw_list.end(cx);
-        if !self.selection_handles.is_dragging() && (self.show_actions || cx.text_actions_active(self.area)) {
+        if !self.selection_handles.is_dragging()
+            && (self.show_actions || cx.text_actions_active(self.area))
+        {
             self.show_actions = false;
-            cx.show_text_actions_for_area(self.area, selection_area, TextActionCapabilities {
-                copy: true, select_all: true, ..Default::default()
-            });
+            cx.show_text_actions_for_area(
+                self.area,
+                selection_area,
+                TextActionCapabilities {
+                    copy: true,
+                    select_all: true,
+                    ..Default::default()
+                },
+            );
         }
         if animating {
             self.next_frame = cx.new_next_frame();
@@ -793,7 +999,8 @@ impl ChatRowRef {
     }
 
     pub fn measure(&self, cx: &mut Cx2d, width: f64) -> f64 {
-        self.borrow_mut().map_or(0.0, |mut row| row.measure(cx, width))
+        self.borrow_mut()
+            .map_or(0.0, |mut row| row.measure(cx, width))
     }
 
     /// Paint only after PortalList resolves this frame's exact row positions.
@@ -806,15 +1013,19 @@ impl ChatRowRef {
     }
 
     pub fn scroll_inner(&self, cx: &mut Cx, abs: DVec2, delta: DVec2) -> bool {
-        self.borrow_mut().is_some_and(|mut row| row.scroll_inner(cx, abs, delta))
+        self.borrow_mut()
+            .is_some_and(|mut row| row.scroll_inner(cx, abs, delta))
     }
 
     /// The current find match's y inside this row, after its last draw.
     pub fn find_y(&self) -> Option<f64> {
-        self.borrow().and_then(|row| row.model.as_ref().and_then(|m| m.state.borrow().find_y))
+        self.borrow()
+            .and_then(|row| row.model.as_ref().and_then(|m| m.state.borrow().find_y))
     }
 
     pub fn rect(&self, cx: &Cx) -> Rect {
-        self.borrow().map(|row| row.area.rect(cx)).unwrap_or_default()
+        self.borrow()
+            .map(|row| row.area.rect(cx))
+            .unwrap_or_default()
     }
 }

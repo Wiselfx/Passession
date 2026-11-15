@@ -1,13 +1,11 @@
-use crate::{
-    cli::{
-        Context, flag, option,
-        output::{Output, OutputOptions},
-        parse_duration, positional, provider_model, required, string, switch,
-    },
+use crate::cli::{
+    Context, flag, option,
+    output::{Output, OutputOptions},
+    parse_duration, positional, provider_model, required, string, switch,
 };
-use paseo_client::{ClientError, DaemonClient, DaemonTarget};
 use anyhow::{Result, anyhow, bail, ensure};
 use clap::{ArgMatches, Command};
+use paseo_client::{ClientError, DaemonClient, DaemonTarget};
 use serde_json::{Value, json};
 use std::time::Duration;
 const RPC: Duration = Duration::from_secs(30);

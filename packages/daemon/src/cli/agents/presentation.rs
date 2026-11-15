@@ -67,9 +67,10 @@ pub(super) fn inspect(
             .unwrap_or_else(|| data[key].to_string());
         if key == "Cwd"
             && let Ok(home) = std::env::var("HOME")
-                && let Some(rest) = value.strip_prefix(&home) {
-                    value = format!("~{rest}");
-                }
+            && let Some(rest) = value.strip_prefix(&home)
+        {
+            value = format!("~{rest}");
+        }
         rows.push(json!({"key":key,"value":value}));
     }
     if data["LastUsage"].is_object() {
@@ -91,7 +92,9 @@ pub(super) fn inspect(
     }
     let permissions = array(&data["PendingPermissions"]);
     rows.push(json!({"key":"PendingPermissions","value":if permissions.is_empty(){"[]".into()}else{permissions.iter().map(|p|format!("{} ({})",text(p,"id"),text(p,"tool"))).collect::<Vec<_>>().join(", ")}}));
-    rows.push(json!({"key":"ParentAgentId","value":data["ParentAgentId"].as_str().unwrap_or("null")}));
+    rows.push(
+        json!({"key":"ParentAgentId","value":data["ParentAgentId"].as_str().unwrap_or("null")}),
+    );
     let quiet = rows
         .iter()
         .map(|r| text(r, "key"))

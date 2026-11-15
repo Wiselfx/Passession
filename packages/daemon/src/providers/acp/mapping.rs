@@ -159,8 +159,9 @@ pub fn features(family: &str, state: &Value, config: &Value) -> Vec<Value> {
             } else {
                 None
             }
-        }) {
-            let values: Vec<Value> = choice_rows(o).map(|(c,group)| {
+        })
+    {
+        let values: Vec<Value> = choice_rows(o).map(|(c,group)| {
                 let name=text(&c["name"]).trim();
                 let label=if !name.is_empty(){name}else if id=="agent"&&c["value"]==""{"Default"}else{text(&c["value"])};
                 let mut value=json!({"id":c["value"],"label":label,"isDefault":c["value"]==o["currentValue"]});
@@ -168,12 +169,12 @@ pub fn features(family: &str, state: &Value, config: &Value) -> Vec<Value> {
                 if let Some(group)=group.filter(|v|!v.is_null()&&v.as_str()!=Some("")){value["metadata"]=json!({"group":group});}
                 value
             }).collect();
-            let mut feature = json!({"type":"select","id":id,"label":label,"description":description,"tooltip":tooltip,"value":o["currentValue"],"options":values});
-            if id == "fast" {
-                feature["icon"] = json!("zap");
-            }
-            result.push(feature);
+        let mut feature = json!({"type":"select","id":id,"label":label,"description":description,"tooltip":tooltip,"value":o["currentValue"],"options":values});
+        if id == "fast" {
+            feature["icon"] = json!("zap");
         }
+        result.push(feature);
+    }
     result
 }
 pub fn mcp(servers: &Value) -> Vec<Value> {
@@ -272,9 +273,10 @@ pub fn tool_detail(snapshot: &Value, terminal: Option<Value>) -> Value {
         _ => json!({"type":"unknown","input":input,"output":output}),
     };
     if detail["type"] != "unknown"
-        && let Some(o) = detail.as_object_mut() {
-            o.retain(|_, v| !v.is_null());
-        }
+        && let Some(o) = detail.as_object_mut()
+    {
+        o.retain(|_, v| !v.is_null());
+    }
     detail
 }
 fn stringify(v: &Value) -> Value {

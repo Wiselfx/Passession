@@ -171,9 +171,10 @@ pub fn prepare_agent_message(
     id: Option<&str>,
 ) -> Result<(Value, Option<String>)> {
     if let Some(source) = source
-        && !source_valid(source) {
-            bail!("Invalid agent message source");
-        }
+        && !source_valid(source)
+    {
+        bail!("Invalid agent message source");
+    }
     if source.is_none() {
         let submitted = if let Some(text) = prompt.as_str() {
             text.to_owned()

@@ -14,7 +14,6 @@ pub(crate) const STANDALONE_LOCAL: &str = "standalone-local";
 /// Official release archive verified against the configured repository.
 pub(crate) const STANDALONE_ARCHIVE: &str = "standalone-archive";
 const PROVENANCE: &str = "bundle-provenance.json";
-const DESKTOP_DESCRIPTOR: &str = "desktop-runtime.json";
 const NOTICES: [&str; 4] = [
     "LICENSE",
     "THIRD-PARTY-NOTICES.txt",
@@ -157,6 +156,7 @@ fn classify_source(source: &Path) -> Result<(PathBuf, Option<&'static str>)> {
 pub async fn prepare_release(
     current_executable: &Path,
     destination: &Path,
+    expected: Option<&ReleaseIdentity>,
 ) -> Result<RuntimeIdentity> {
     let current_executable = current_executable.canonicalize()?;
     let current_root = runtime_root(&current_executable)?;
@@ -170,6 +170,9 @@ pub async fn prepare_release(
     let stage = Stage::begin(destination, &[current_root.as_path()])?;
     let client = http()?;
     let release = discover(&client).await?;
+    if let Some(expected) = expected {
+        release.require_identity(expected)?;
+    }
     if semver::Version::parse(&release.version)? <= semver::Version::parse(&current.version)? {
         bail!("No newer native daemon release is available")
     }
@@ -186,6 +189,10 @@ pub async fn prepare_release(
     })
     .await??;
     let identity = examine(&stage.runtime, Some(STANDALONE_ARCHIVE), None).await?;
+    anyhow::ensure!(
+        identity.executable_sha256 == release.component.executable_sha256,
+        "Daemon executable differs from its pinned component inventory"
+    );
     validate_marker(
         &read_marker(&stage.runtime)?,
         &release.version,
@@ -372,7 +379,10 @@ fn rename_new(from: &Path, to: &Path) -> Result<()> {
         }
     }
     if fs::symlink_metadata(to).is_ok() {
-        bail!("Runtime destination appeared during staging: {}", to.display())
+        bail!(
+            "Runtime destination appeared during staging: {}",
+            to.display()
+        )
     }
     fs::rename(from, to).context("Cannot publish staged runtime")
 }
@@ -436,7 +446,11 @@ fn scan_directory(source: &Path) -> Result<(Vec<SourceEntry>, u64)> {
         if entries.len() >= MAX_ENTRIES {
             bail!("Local runtime has too many entries")
         }
-        let size = if metadata.is_file() { metadata.len() } else { 0 };
+        let size = if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        };
         total = total.checked_add(size).context("Runtime size overflow")?;
         if total > MAX_EXPANDED {
             bail!("Local runtime exceeds size limit")
@@ -479,11 +493,12 @@ fn copy_directory(source: &Path, root: &Path, entries: &[SourceEntry]) -> Result
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = if entry.mode & 0o111 != 0 { 0o755 } else { 0o644 };
-            fs::set_permissions(
-                root.join(&entry.relative),
-                fs::Permissions::from_mode(mode),
-            )?;
+            let mode = if entry.mode & 0o111 != 0 {
+                0o755
+            } else {
+                0o644
+            };
+            fs::set_permissions(root.join(&entry.relative), fs::Permissions::from_mode(mode))?;
         }
     }
     Ok(())
@@ -500,7 +515,10 @@ fn open_regular(path: &Path) -> Result<File> {
     }
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
-        bail!("Local runtime input is not a regular file: {}", path.display())
+        bail!(
+            "Local runtime input is not a regular file: {}",
+            path.display()
+        )
     }
     Ok(file)
 }
@@ -689,9 +707,6 @@ struct Claimed {
 /// Marker, bundle provenance, executable image and complete assets must agree.
 fn claimed_identity(root: &Path, expected: Option<&str>) -> Result<Claimed> {
     let (platform, arch) = platform()?;
-    if fs::symlink_metadata(root.join(DESKTOP_DESCRIPTOR)).is_ok() {
-        bail!(DESKTOP_MANAGED)
-    }
     let marker = read_identity_file(root, MARKER)?;
     let kind = marker["installationKind"].as_str().unwrap_or_default();
     match kind {
@@ -798,8 +813,8 @@ fn ensure_complete(root: &Path, platform: &str) -> Result<()> {
         bail!("Runtime skills/ is empty")
     }
     for name in NOTICES {
-        let metadata =
-            fs::symlink_metadata(root.join(name)).with_context(|| format!("Runtime is missing {name}"))?;
+        let metadata = fs::symlink_metadata(root.join(name))
+            .with_context(|| format!("Runtime is missing {name}"))?;
         if !metadata.is_file() || metadata.len() == 0 {
             bail!("Runtime notice {name} is invalid")
         }
@@ -832,8 +847,7 @@ async fn examine(
     staged_digest: Option<String>,
 ) -> Result<RuntimeIdentity> {
     let path = root.to_owned();
-    let claimed =
-        tokio::task::spawn_blocking(move || claimed_identity(&path, expected)).await??;
+    let claimed = tokio::task::spawn_blocking(move || claimed_identity(&path, expected)).await??;
     validate_binary(&root.join(executable_name(&claimed.platform))).await?;
     let tree_digest = match staged_digest {
         Some(digest) => digest,
@@ -864,7 +878,11 @@ mod tests {
     fn elf(suffix: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0u8; 128];
         bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
-        let machine: u16 = if platform().unwrap().1 == "x64" { 62 } else { 183 };
+        let machine: u16 = if platform().unwrap().1 == "x64" {
+            62
+        } else {
+            183
+        };
         bytes[18..20].copy_from_slice(&machine.to_le_bytes());
         bytes.extend_from_slice(suffix);
         bytes
@@ -899,7 +917,11 @@ mod tests {
         write(&root.join(MARKER), marker.to_string().as_bytes(), 0o644);
         let executable = sha256_file(&root.join("paseo")).unwrap();
         let provenance = json!({"schemaVersion":1,"runtime":"rust","installationKind":STANDALONE_LOCAL,"version":version,"sourceSha":source,"platform":platform,"arch":arch,"release":false,"channel":null,"repository":null,"profile":"release","sourceDirty":true,"executableSha256":executable,"sourceExecutableSha256":executable});
-        write(&root.join(PROVENANCE), provenance.to_string().as_bytes(), 0o644);
+        write(
+            &root.join(PROVENANCE),
+            provenance.to_string().as_bytes(),
+            0o644,
+        );
         // Independent of the test process umask.
         for entry in walkdir::WalkDir::new(root) {
             let entry = entry.unwrap();
@@ -936,6 +958,19 @@ mod tests {
         ));
         tar.append_dir_all(".", source).unwrap();
         tar.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[tokio::test]
+    async fn dual_use_component_descriptor_does_not_change_standalone_ownership() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("component");
+        local_runtime(&root, "2.0.0", &elf(b"shared daemon component"));
+        write(&root.join("desktop-runtime.json"),
+            br#"{"executable":"paseo","cliShimPath":"paseo","workingDirectory":"."}"#, 0o644);
+        let identity = inspect_runtime(&root).await.unwrap();
+        assert_eq!(identity.version, "2.0.0");
+        edit_identity(&root, "installationKind", json!("desktop-bundled"));
+        assert!(inspect_runtime(&root).await.is_err());
     }
 
     #[tokio::test]
@@ -1007,10 +1042,9 @@ mod tests {
         }
         let pin = input_digest(&private).await.unwrap();
         assert!(pin.starts_with("directory:sha512:"), "{pin}");
-        let identity =
-            prepare_local_pinned(&private, &runtimes.join("private"), &executable, &pin)
-                .await
-                .unwrap();
+        let identity = prepare_local_pinned(&private, &runtimes.join("private"), &executable, &pin)
+            .await
+            .unwrap();
         assert_eq!(pin, directory_label(&identity.tree_digest));
 
         // A directory modified between admission and staging is refused.
@@ -1048,30 +1082,40 @@ mod tests {
             edit: fn(&Path),
         }
         let cases = [
-            InvalidRuntimeCase { name: "symlink", edit: |root| {
-                std::os::unix::fs::symlink("/etc/passwd", root.join("skills/link")).unwrap()
-            }},
-            InvalidRuntimeCase { name: "missing notice", edit: |root| {
-                fs::remove_file(root.join("LICENSE")).unwrap()
-            }},
-            InvalidRuntimeCase { name: "missing libraries", edit: |root| {
-                fs::remove_dir_all(root.join("lib")).unwrap()
-            }},
-            InvalidRuntimeCase { name: "desktop bundle", edit: |root| {
-                write(&root.join(DESKTOP_DESCRIPTOR), b"{}", 0o644)
-            }},
-            InvalidRuntimeCase { name: "executable changed after packaging", edit: |root| {
-                write(&root.join("paseo"), &elf(b"swapped"), 0o755)
-            }},
-            InvalidRuntimeCase { name: "claims official release", edit: |root| {
-                edit_identity(root, "release", json!(true))
-            }},
-            InvalidRuntimeCase { name: "claims official archive", edit: |root| {
-                edit_identity(root, "installationKind", json!(STANDALONE_ARCHIVE))
-            }},
-            InvalidRuntimeCase { name: "legacy desktop marker", edit: |root| {
-                edit_identity(root, "installationKind", json!("desktop-bundled"))
-            }},
+            InvalidRuntimeCase {
+                name: "symlink",
+                edit: |root| {
+                    std::os::unix::fs::symlink("/etc/passwd", root.join("skills/link")).unwrap()
+                },
+            },
+            InvalidRuntimeCase {
+                name: "missing notice",
+                edit: |root| fs::remove_file(root.join("LICENSE")).unwrap(),
+            },
+            InvalidRuntimeCase {
+                name: "missing libraries",
+                edit: |root| fs::remove_dir_all(root.join("lib")).unwrap(),
+            },
+            InvalidRuntimeCase {
+                name: "desktop bundle",
+                edit: |root| edit_identity(root, "installationKind", json!("desktop-bundled")),
+            },
+            InvalidRuntimeCase {
+                name: "executable changed after packaging",
+                edit: |root| write(&root.join("paseo"), &elf(b"swapped"), 0o755),
+            },
+            InvalidRuntimeCase {
+                name: "claims official release",
+                edit: |root| edit_identity(root, "release", json!(true)),
+            },
+            InvalidRuntimeCase {
+                name: "claims official archive",
+                edit: |root| edit_identity(root, "installationKind", json!(STANDALONE_ARCHIVE)),
+            },
+            InvalidRuntimeCase {
+                name: "legacy desktop marker",
+                edit: |root| edit_identity(root, "installationKind", json!("desktop-bundled")),
+            },
         ];
         for (index, InvalidRuntimeCase { name, edit }) in cases.iter().enumerate() {
             let source = temp.path().join(format!("bad-{index}"));
@@ -1101,17 +1145,17 @@ mod tests {
                 .is_err()
         );
         assert!(
-            prepare_local(&good, &executable.parent().unwrap().join("nested"), &executable)
-                .await
-                .is_err()
+            prepare_local(
+                &good,
+                &executable.parent().unwrap().join("nested"),
+                &executable
+            )
+            .await
+            .is_err()
         );
         let existing = runtimes.join("existing");
         fs::create_dir(&existing).unwrap();
-        assert!(
-            prepare_local(&good, &existing, &executable)
-                .await
-                .is_err()
-        );
+        assert!(prepare_local(&good, &existing, &executable).await.is_err());
         assert_eq!(fs::read_dir(&existing).unwrap().count(), 0);
     }
 }

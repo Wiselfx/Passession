@@ -18,9 +18,15 @@ pub enum PlatformAction {
 
 impl PlatformAction {
     /// The result for `request`, if this action completes it.
-    pub fn completed(&self, request: PlatformRequestId) -> Option<&Result<PlatformValue, PlatformError>> {
+    pub fn completed(
+        &self,
+        request: PlatformRequestId,
+    ) -> Option<&Result<PlatformValue, PlatformError>> {
         match self {
-            Self::Completed { request: id, result } if *id == request => Some(result),
+            Self::Completed {
+                request: id,
+                result,
+            } if *id == request => Some(result),
             _ => None,
         }
     }
@@ -34,7 +40,10 @@ pub struct PlatformError {
 
 impl PlatformError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
     pub fn unsupported(message: impl Into<String>) -> Self {
         Self::new("unsupported", message)
@@ -150,6 +159,8 @@ pub enum QuitReason {
     Quit,
     Shutdown,
     AppUpdate,
+    /// Unattended update: dirty documents veto without opening a discard prompt.
+    RemoteAppUpdate,
 }
 
 impl QuitReason {
@@ -158,6 +169,7 @@ impl QuitReason {
             Self::Quit => "quit",
             Self::Shutdown => "shutdown",
             Self::AppUpdate => "app_update",
+            Self::RemoteAppUpdate => "remote_app_update",
         }
     }
 }
@@ -176,7 +188,11 @@ impl SafeInsets {
     /// Occlusion remaining inside the render surface. The IME and navigation
     /// bar cover the same bottom edge, so reserve their union, not their sum.
     pub fn bottom_occlusion(self) -> f64 {
-        if self.keyboard_visible { self.bottom.max(self.keyboard) } else { self.bottom }
+        if self.keyboard_visible {
+            self.bottom.max(self.keyboard)
+        } else {
+            self.bottom
+        }
     }
 }
 
@@ -186,7 +202,12 @@ mod inset_tests {
 
     #[test]
     fn keyboard_and_navigation_share_the_bottom_edge() {
-        let mut insets = SafeInsets { bottom: 34.0, keyboard: 320.0, keyboard_visible: true, ..SafeInsets::default() };
+        let mut insets = SafeInsets {
+            bottom: 34.0,
+            keyboard: 320.0,
+            keyboard_visible: true,
+            ..SafeInsets::default()
+        };
         assert_eq!(insets.bottom_occlusion(), 320.0);
         insets.keyboard_visible = false;
         assert_eq!(insets.bottom_occlusion(), 34.0);
@@ -194,17 +215,34 @@ mod inset_tests {
 
     #[test]
     fn consumed_or_floating_keyboard_keeps_remaining_navigation_inset() {
-        let insets = SafeInsets { bottom: 34.0, keyboard: 0.0, keyboard_visible: true, ..SafeInsets::default() };
+        let insets = SafeInsets {
+            bottom: 34.0,
+            keyboard: 0.0,
+            keyboard_visible: true,
+            ..SafeInsets::default()
+        };
         assert_eq!(insets.bottom_occlusion(), 34.0);
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlatformRoute {
-    Agent { server_id: String, agent_id: String },
-    ExecutionLog { server_id: String, workspace_id: String, terminal_id: String },
-    Project { path: String, server_id: Option<String> },
-    HostNewTab { server_id: String },
+    Agent {
+        server_id: String,
+        agent_id: String,
+    },
+    ExecutionLog {
+        server_id: String,
+        workspace_id: String,
+        terminal_id: String,
+    },
+    Project {
+        path: String,
+        server_id: Option<String>,
+    },
+    HostNewTab {
+        server_id: String,
+    },
 }
 
 impl PlatformRoute {
@@ -220,10 +258,17 @@ impl PlatformRoute {
         };
         let server_id = text("serverId")?;
         if let (Some(workspace_id), Some(terminal_id)) = (text("workspaceId"), text("terminalId")) {
-            return Some(Self::ExecutionLog { server_id, workspace_id, terminal_id });
+            return Some(Self::ExecutionLog {
+                server_id,
+                workspace_id,
+                terminal_id,
+            });
         }
         if let Some(agent_id) = text("agentId") {
-            return Some(Self::Agent { server_id, agent_id });
+            return Some(Self::Agent {
+                server_id,
+                agent_id,
+            });
         }
         Some(Self::HostNewTab { server_id })
     }
@@ -232,33 +277,53 @@ impl PlatformRoute {
 #[derive(Debug, Clone)]
 pub enum PlatformEvent {
     Route(PlatformRoute),
-    ConnectionLink { url: String },
+    ConnectionLink {
+        url: String,
+    },
     ShowWindow,
     /// The guarded quit flow: run every window's close guard, then call
     /// `PlatformHandle::respond_quit(token, allowed)`. Forced quits (OS shutdown,
     /// update installation) skip this and go straight to `QuitReady`.
-    QuitRequested { token: u64, reason: QuitReason },
+    QuitRequested {
+        token: u64,
+        reason: QuitReason,
+    },
     /// The desktop-host helper is closed; call `cx.quit()`.
     QuitReady,
     QuitCancelled,
     /// A later launch asked for a new window, optionally opening a route in it.
-    OpenWindow { route: Option<PlatformRoute> },
-    LocalDaemonStatus { status: Value },
-    HostError { message: String },
+    OpenWindow {
+        route: Option<PlatformRoute>,
+    },
+    LocalDaemonStatus {
+        status: Value,
+    },
+    HostError {
+        message: String,
+    },
     Insets(SafeInsets),
     /// System theme or locale changed; refresh the app's resolved appearance.
     AppearanceChanged,
     AudioInterrupted,
     CameraFrame,
-    QrScanned { link: String },
+    QrScanned {
+        link: String,
+    },
 }
 
 pub(crate) fn post_event(event: PlatformEvent) {
     Cx::post_action(PlatformAction::Event(event));
 }
 
-pub(crate) fn post_result(request: PlatformRequestId, result: Result<PlatformValue, PlatformError>) {
-    let waiter = WAITERS.lock().unwrap().as_mut().and_then(|waiters| waiters.remove(&request));
+pub(crate) fn post_result(
+    request: PlatformRequestId,
+    result: Result<PlatformValue, PlatformError>,
+) {
+    let waiter = WAITERS
+        .lock()
+        .unwrap()
+        .as_mut()
+        .and_then(|waiters| waiters.remove(&request));
     if let Some(waiter) = waiter {
         let _ = waiter.send(result);
         return;
@@ -267,12 +332,19 @@ pub(crate) fn post_result(request: PlatformRequestId, result: Result<PlatformVal
 }
 
 type Waiter = std::sync::mpsc::Sender<Result<PlatformValue, PlatformError>>;
-static WAITERS: std::sync::Mutex<Option<std::collections::HashMap<PlatformRequestId, Waiter>>> = std::sync::Mutex::new(None);
+static WAITERS: std::sync::Mutex<Option<std::collections::HashMap<PlatformRequestId, Waiter>>> =
+    std::sync::Mutex::new(None);
 
 /// Routes the result of `request` to the returned receiver instead of the UI.
 /// Register before the request can complete.
-pub(crate) fn wait_for(request: PlatformRequestId) -> std::sync::mpsc::Receiver<Result<PlatformValue, PlatformError>> {
+pub(crate) fn wait_for(
+    request: PlatformRequestId,
+) -> std::sync::mpsc::Receiver<Result<PlatformValue, PlatformError>> {
     let (tx, rx) = std::sync::mpsc::channel();
-    WAITERS.lock().unwrap().get_or_insert_with(Default::default).insert(request, tx);
+    WAITERS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(Default::default)
+        .insert(request, tx);
     rx
 }

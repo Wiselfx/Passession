@@ -1,17 +1,13 @@
-use crate::{
-    cli::{Context, flag, option, output::Output, positional, required, string, strings, switch},
+use crate::cli::{
+    Context, flag, option, output::Output, positional, required, string, strings, switch,
 };
-use paseo_client::{ClientError, DaemonClient};
 use anyhow::{Result, anyhow, bail, ensure};
 use clap::{ArgAction, ArgMatches, Command};
+use paseo_client::{ClientError, DaemonClient};
 use serde_json::{Value, json};
 use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(30);
-const TERMINALS: &[(&str, &str)] = &[
-    ("ID", "id"),
-    ("NAME", "name"),
-    ("CWD", "cwd"),
-];
+const TERMINALS: &[(&str, &str)] = &[("ID", "id"), ("NAME", "name"), ("CWD", "cwd")];
 const SCRIPTS: &[(&str, &str)] = &[
     ("NAME", "scriptName"),
     ("TYPE", "type"),
@@ -94,9 +90,7 @@ fn project_terminal(value: &Value) -> Result<Value> {
     for key in ["id", "cwd", "name"] {
         ensure!(value[key].is_string(), "Invalid terminal metadata: {key}");
     }
-    Ok(
-        json!({"id":value["id"],"cwd":value["cwd"],"name":value["name"]}),
-    )
+    Ok(json!({"id":value["id"],"cwd":value["cwd"],"name":value["name"]}))
 }
 async fn terminal(
     action: &str,
@@ -365,21 +359,52 @@ fn script_output(data: Value) -> Output {
 }
 
 async fn session(client: &DaemonClient, context: &Context, id: &str) -> Result<Value> {
-    let response = request(client, json!({"type":"fetch_agent_request","agentId":id}), "fetch_agent_response", context).await?;
+    let response = request(
+        client,
+        json!({"type":"fetch_agent_request","agentId":id}),
+        "fetch_agent_response",
+        context,
+    )
+    .await?;
     let agent = &response["agent"];
-    ensure!(agent["cwd"].is_string() && agent["workspaceId"].is_string(), "Agent not found: {id}");
+    ensure!(
+        agent["cwd"].is_string() && agent["workspaceId"].is_string(),
+        "Agent not found: {id}"
+    );
     Ok(agent.clone())
 }
 
-async fn directory_owner(m: &ArgMatches, client: &DaemonClient, context: &Context) -> Result<(String, String)> {
+async fn directory_owner(
+    m: &ArgMatches,
+    client: &DaemonClient,
+    context: &Context,
+) -> Result<(String, String)> {
     let ambient = std::env::var("PASEO_AGENT_ID").ok();
-    if let Some(id) = string(m, "agent").or_else(|| string(m, "cwd").is_none().then_some(ambient.as_deref()).flatten()) {
+    if let Some(id) = string(m, "agent").or_else(|| {
+        string(m, "cwd")
+            .is_none()
+            .then_some(ambient.as_deref())
+            .flatten()
+    }) {
         let agent = session(client, context, id).await?;
-        return Ok((agent["workspaceId"].as_str().unwrap().to_owned(), agent["cwd"].as_str().unwrap().to_owned()));
+        return Ok((
+            agent["workspaceId"].as_str().unwrap().to_owned(),
+            agent["cwd"].as_str().unwrap().to_owned(),
+        ));
     }
-    let cwd = string(m, "cwd").map(str::to_owned).unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned());
-    let opened = request(client, json!({"type":"open_project_request","cwd":cwd}), "open_project_response", context).await?;
-    let owner = opened["workspace"]["id"].as_str().ok_or_else(|| anyhow!("Unable to open directory {cwd}"))?;
+    let cwd = string(m, "cwd")
+        .map(str::to_owned)
+        .unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned());
+    let opened = request(
+        client,
+        json!({"type":"open_project_request","cwd":cwd}),
+        "open_project_response",
+        context,
+    )
+    .await?;
+    let owner = opened["workspace"]["id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Unable to open directory {cwd}"))?;
     Ok((owner.to_owned(), cwd))
 }
 #[cfg(test)]

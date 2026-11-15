@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 use super::View;
 use crate::features::settings::i18n::{t, ta};
 use crate::features::settings::json::{arr, obj, str_of};
-use crate::features::settings::model::preferences::{file_panel_rows, language_preference, nav_rows, selector_label, sidebar_nav_preferences};
+use crate::features::settings::model::preferences::{
+    file_panel_rows, language_preference, nav_rows, selector_label, sidebar_nav_preferences,
+};
 use crate::features::settings::platform::{DESKTOP, MOBILE};
 use crate::features::settings::rpc::{Env, handler};
 use crate::features::settings::state::Settings;
@@ -19,8 +21,25 @@ use crate::features::settings::ui::overlay::{Menu, item};
 pub type Pick = Rc<dyn Fn(&mut Settings, &mut Env, String)>;
 
 /// A `SettingsDropdown` trigger opening an end-aligned menu of `options`.
-pub fn select_ctl(key: &str, title: String, value: &str, options: Vec<(String, String)>, width: f64, enabled: bool, on_pick: Pick) -> Ctl {
-    select_ctl_lead(key, title, value, options, Vec::new(), width, enabled, on_pick)
+pub fn select_ctl(
+    key: &str,
+    title: String,
+    value: &str,
+    options: Vec<(String, String)>,
+    width: f64,
+    enabled: bool,
+    on_pick: Pick,
+) -> Ctl {
+    select_ctl_lead(
+        key,
+        title,
+        value,
+        options,
+        Vec::new(),
+        width,
+        enabled,
+        on_pick,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -34,8 +53,15 @@ pub fn select_ctl_lead(
     enabled: bool,
     on_pick: Pick,
 ) -> Ctl {
-    let label = options.iter().find(|(v, _)| v == value).map(|(_, l)| l.clone()).unwrap_or_else(|| value.to_string());
-    let current_lead = leads.iter().find(|(v, _, _)| v == value).map(|(_, l, _)| l.clone());
+    let label = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .map(|(_, l)| l.clone())
+        .unwrap_or_else(|| value.to_string());
+    let current_lead = leads
+        .iter()
+        .find(|(v, _, _)| v == value)
+        .map(|(_, l, _)| l.clone());
     let current = value.to_string();
     let act = enabled.then(|| {
         handler(move |s, _| {
@@ -44,7 +70,11 @@ pub fn select_ctl_lead(
                 .map(|(v, l)| {
                     let pick = on_pick.clone();
                     let picked = v.clone();
-                    let mut entry = item(l.clone(), handler(move |s, env| pick(s, env, picked.clone()))).selected(*v == current);
+                    let mut entry = item(
+                        l.clone(),
+                        handler(move |s, env| pick(s, env, picked.clone())),
+                    )
+                    .selected(*v == current);
                     if let Some((_, lead, separator)) = leads.iter().find(|(id, _, _)| id == v) {
                         entry = entry.lead(lead.clone()).separator(*separator);
                     }
@@ -55,17 +85,40 @@ pub fn select_ctl_lead(
             s.open_menu(menu);
         })
     });
-    Ctl::Dropdown { key: key.to_string(), label, lead: current_lead, act, max_w: 220.0 }
+    Ctl::Dropdown {
+        key: key.to_string(),
+        label,
+        lead: current_lead,
+        act,
+        max_w: 220.0,
+    }
 }
 
 pub fn pref_pick(key: &'static str) -> Pick {
-    Rc::new(move |s: &mut Settings, env: &mut Env, value: String| s.save_pref(env, key, Some(Value::String(value))))
+    Rc::new(move |s: &mut Settings, env: &mut Env, value: String| {
+        s.save_pref(env, key, Some(Value::String(value)))
+    })
 }
 
-fn pref_switch(ui: &mut Ui, v: &View, key: &'static str, label: String, hint: Option<String>, fallback: bool) {
-    let on = v.prefs.get(key).and_then(Value::as_bool).unwrap_or(fallback);
+fn pref_switch(
+    ui: &mut Ui,
+    v: &View,
+    key: &'static str,
+    label: String,
+    hint: Option<String>,
+    fallback: bool,
+) {
+    let on = v
+        .prefs
+        .get(key)
+        .and_then(Value::as_bool)
+        .unwrap_or(fallback);
     let act = handler(move |s, env| s.save_pref(env, key, Some(Value::Bool(!on))));
-    ui.row(row(label).hint_opt(hint).control(switch(format!("pref.{key}"), on, Some(act))));
+    ui.row(
+        row(label)
+            .hint_opt(hint)
+            .control(switch(format!("pref.{key}"), on, Some(act))),
+    );
 }
 
 fn card_section(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
@@ -88,47 +141,136 @@ pub fn draw_app_section(ui: &mut Ui, s: &Settings, v: &View, section: &str) {
 fn draw_general(ui: &mut Ui, v: &View) {
     let language = language_preference(v.prefs.get("language").unwrap_or(&Value::Null));
     card_section(ui, &t("settings.general.title"), |ui| {
-        let options = ["system", "en", "ko"].iter().map(|o| (o.to_string(), t(&format!("settings.general.language.options.{o}")))).collect();
-        let ctl = select_ctl("pref.language", t("settings.general.language.label"), language, options, 300.0, true, pref_pick("language"));
-        ui.row(row(t("settings.general.language.label")).hint(t("settings.general.language.description")).control(ctl));
+        let options = ["system", "en", "ko"]
+            .iter()
+            .map(|o| {
+                (
+                    o.to_string(),
+                    t(&format!("settings.general.language.options.{o}")),
+                )
+            })
+            .collect();
+        let ctl = select_ctl(
+            "pref.language",
+            t("settings.general.language.label"),
+            language,
+            options,
+            300.0,
+            true,
+            pref_pick("language"),
+        );
+        ui.row(
+            row(t("settings.general.language.label"))
+                .hint(t("settings.general.language.description"))
+                .control(ctl),
+        );
     });
     let send = match v.prefs.get("sendBehavior").and_then(Value::as_str) {
         Some(value @ ("interrupt" | "steer" | "queue")) => value.to_string(),
         _ => "steer".to_string(),
     };
     card_section(ui, &t("settings.general.sending"), |ui| {
-        let options = ["interrupt", "steer", "queue"].iter().map(|o| (o.to_string(), t(&format!("settings.general.defaultSend.options.{o}")))).collect();
-        let ctl = select_ctl("pref.sendBehavior", t("settings.general.defaultSend.label"), &send, options, 220.0, true, pref_pick("sendBehavior"));
-        ui.row(row(t("settings.general.defaultSend.label")).hint(t(&format!("settings.general.defaultSend.descriptions.{send}"))).control(ctl));
+        let options = ["interrupt", "steer", "queue"]
+            .iter()
+            .map(|o| {
+                (
+                    o.to_string(),
+                    t(&format!("settings.general.defaultSend.options.{o}")),
+                )
+            })
+            .collect();
+        let ctl = select_ctl(
+            "pref.sendBehavior",
+            t("settings.general.defaultSend.label"),
+            &send,
+            options,
+            220.0,
+            true,
+            pref_pick("sendBehavior"),
+        );
+        ui.row(
+            row(t("settings.general.defaultSend.label"))
+                .hint(t(&format!(
+                    "settings.general.defaultSend.descriptions.{send}"
+                )))
+                .control(ctl),
+        );
     });
-    card_section(ui, &t("settings.sections.terminal"), |ui| draw_scrollback(ui, v));
+    card_section(ui, &t("settings.sections.terminal"), |ui| {
+        draw_scrollback(ui, v)
+    });
     if DESKTOP {
-        let open = v.prefs.get("openInSidePane").cloned().unwrap_or_else(|| json!({}));
+        let open = v
+            .prefs
+            .get("openInSidePane")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         let destinations = vec![
-            ("main".to_string(), t("settings.layout.openInSidePane.destinations.main")),
-            ("side".to_string(), t("settings.layout.openInSidePane.destinations.side")),
+            (
+                "main".to_string(),
+                t("settings.layout.openInSidePane.destinations.main"),
+            ),
+            (
+                "side".to_string(),
+                t("settings.layout.openInSidePane.destinations.side"),
+            ),
         ];
         card_section(ui, &t("settings.layout.openInSidePane.title"), |ui| {
-            for source in ["explorerFiles", "diffs", "chatFiles", "diffFiles", "subagents"] {
-                let value = if open.get(source).and_then(Value::as_bool) == Some(true) { "side" } else { "main" };
-                let label = t(&format!("settings.layout.openInSidePane.sources.{source}.label"));
+            for source in [
+                "explorerFiles",
+                "diffs",
+                "chatFiles",
+                "diffFiles",
+                "subagents",
+            ] {
+                let value = if open.get(source).and_then(Value::as_bool) == Some(true) {
+                    "side"
+                } else {
+                    "main"
+                };
+                let label = t(&format!(
+                    "settings.layout.openInSidePane.sources.{source}.label"
+                ));
                 let base = open.clone();
                 let pick: Pick = Rc::new(move |s, env, picked| {
                     let mut next = base.as_object().cloned().unwrap_or_default();
                     next.insert(source.into(), Value::Bool(picked == "side"));
                     s.save_pref(env, "openInSidePane", Some(Value::Object(next)));
                 });
-                let ctl = select_ctl(&format!("pref.openInSidePane.{source}"), label.clone(), value, destinations.clone(), 220.0, true, pick);
+                let ctl = select_ctl(
+                    &format!("pref.openInSidePane.{source}"),
+                    label.clone(),
+                    value,
+                    destinations.clone(),
+                    220.0,
+                    true,
+                    pick,
+                );
                 ui.row(row(label).control(ctl));
             }
-            let location = match v.prefs.get("pullRequestOpenLocation").and_then(Value::as_str) {
+            let location = match v
+                .prefs
+                .get("pullRequestOpenLocation")
+                .and_then(Value::as_str)
+            {
                 Some(value) if !value.is_empty() => value.to_string(),
                 _ => "explorer".into(),
             };
             let mut options = destinations.clone();
-            options.push(("explorer".into(), t("settings.layout.openInSidePane.destinations.explorer")));
+            options.push((
+                "explorer".into(),
+                t("settings.layout.openInSidePane.destinations.explorer"),
+            ));
             let label = t("settings.layout.openInSidePane.sources.pullRequests.label");
-            let ctl = select_ctl("pref.pullRequestOpenLocation", label.clone(), &location, options, 220.0, true, pref_pick("pullRequestOpenLocation"));
+            let ctl = select_ctl(
+                "pref.pullRequestOpenLocation",
+                label.clone(),
+                &location,
+                options,
+                220.0,
+                true,
+                pref_pick("pullRequestOpenLocation"),
+            );
             ui.row(row(label).control(ctl));
         });
     }
@@ -158,28 +300,85 @@ fn draw_scrollback(ui: &mut Ui, v: &View) {
         values.push(current);
         values.sort_unstable();
     }
-    let options = values.iter().map(|n| (n.to_string(), ta("settingsNative.scrollbackLines", &[("count", &grouped(*n))]))).collect();
+    let options = values
+        .iter()
+        .map(|n| {
+            (
+                n.to_string(),
+                ta("settingsNative.scrollbackLines", &[("count", &grouped(*n))]),
+            )
+        })
+        .collect();
     let pick: Pick = Rc::new(|s, env, picked| {
         if let Ok(lines) = picked.parse::<u64>() {
             s.save_pref(env, "terminalScrollbackLines", Some(Value::from(lines)));
         }
     });
     let label = t("settings.general.terminalScrollback.label");
-    let ctl = select_ctl("pref.terminalScrollbackLines", label.clone(), &current.to_string(), options, 220.0, true, pick);
-    ui.row(row(label).hint(t("settings.general.terminalScrollback.description")).control(ctl));
+    let ctl = select_ctl(
+        "pref.terminalScrollbackLines",
+        label.clone(),
+        &current.to_string(),
+        options,
+        220.0,
+        true,
+        pick,
+    );
+    ui.row(
+        row(label)
+            .hint(t("settings.general.terminalScrollback.description"))
+            .control(ctl),
+    );
 }
 
 fn draw_chat(ui: &mut Ui, v: &View) {
     card_section(ui, &t("settings.appearance.detailLevel.title"), |ui| {
-        pref_switch(ui, v, "autoExpandReasoning", t("settings.general.autoExpandReasoning.label"), Some(t("settings.general.autoExpandReasoning.description")), false);
-        let detail = if str_of(&v.prefs, "toolCallDetailLevel") == "overview" { "overview" } else { "detailed" };
-        let options = ["detailed", "overview"].iter().map(|o| (o.to_string(), t(&format!("settings.general.toolCallDetail.options.{o}")))).collect();
-        let ctl = select_ctl("pref.toolCallDetailLevel", t("settings.general.toolCallDetail.label"), detail, options, 220.0, true, pref_pick("toolCallDetailLevel"));
-        ui.row(row(t("settings.general.toolCallDetail.label")).hint(t("settings.general.toolCallDetail.description")).control(ctl));
+        pref_switch(
+            ui,
+            v,
+            "autoExpandReasoning",
+            t("settings.general.autoExpandReasoning.label"),
+            Some(t("settings.general.autoExpandReasoning.description")),
+            false,
+        );
+        let detail = if str_of(&v.prefs, "toolCallDetailLevel") == "overview" {
+            "overview"
+        } else {
+            "detailed"
+        };
+        let options = ["detailed", "overview"]
+            .iter()
+            .map(|o| {
+                (
+                    o.to_string(),
+                    t(&format!("settings.general.toolCallDetail.options.{o}")),
+                )
+            })
+            .collect();
+        let ctl = select_ctl(
+            "pref.toolCallDetailLevel",
+            t("settings.general.toolCallDetail.label"),
+            detail,
+            options,
+            220.0,
+            true,
+            pref_pick("toolCallDetailLevel"),
+        );
+        ui.row(
+            row(t("settings.general.toolCallDetail.label"))
+                .hint(t("settings.general.toolCallDetail.description"))
+                .control(ctl),
+        );
         if !MOBILE {
             let on = v.prefs.get("chatOutlineEnabled").and_then(Value::as_bool) != Some(false);
-            let act = handler(move |s, env| s.save_pref(env, "chatOutlineEnabled", Some(Value::Bool(!on))));
-            ui.row(row(t("settings.appearance.chatOutline.title")).hint(t("settings.appearance.chatOutline.description")).control(switch("pref.chatOutlineEnabled", on, Some(act))));
+            let act = handler(move |s, env| {
+                s.save_pref(env, "chatOutlineEnabled", Some(Value::Bool(!on)))
+            });
+            ui.row(
+                row(t("settings.appearance.chatOutline.title"))
+                    .hint(t("settings.appearance.chatOutline.description"))
+                    .control(switch("pref.chatOutlineEnabled", on, Some(act))),
+            );
         }
     });
 }
@@ -204,7 +403,15 @@ fn nav_icon(key: &str) -> Icon {
     }
 }
 
-fn nav_card(ui: &mut Ui, s: &Settings, v: &View, pref_key: &'static str, defaults: &'static [&'static str], title: String, info: String) {
+fn nav_card(
+    ui: &mut Ui,
+    s: &Settings,
+    v: &View,
+    pref_key: &'static str,
+    defaults: &'static [&'static str],
+    title: String,
+    info: String,
+) {
     let _ = s;
     let stored: Vec<Value> = arr(&v.prefs, pref_key).to_vec();
     let rows = nav_rows(&stored, defaults);
@@ -216,7 +423,13 @@ fn nav_card(ui: &mut Ui, s: &Settings, v: &View, pref_key: &'static str, default
         let id = str_of(entry, "key").to_string();
         let visible = entry.get("visible").and_then(Value::as_bool) != Some(false);
         let persist = |next: Vec<Value>, stored: Vec<Value>| {
-            handler(move |s, env| s.save_pref(env, pref_key, Some(Value::Array(sidebar_nav_preferences(&next, &stored)))))
+            handler(move |s, env| {
+                s.save_pref(
+                    env,
+                    pref_key,
+                    Some(Value::Array(sidebar_nav_preferences(&next, &stored))),
+                )
+            })
         };
         let up = (i > 0).then(|| {
             let mut next = rows.clone();
@@ -235,13 +448,36 @@ fn nav_card(ui: &mut Ui, s: &Settings, v: &View, pref_key: &'static str, default
         let toggle = persist(toggled, stored.clone());
         let controls = Ctl::Row(
             vec![
-                Ctl::IconButton { key: format!("pref.{pref_key}.{id}.up"), icon: Icon::ArrowUp, act: up, destructive: false, size: 32.0, tip: None },
-                Ctl::IconButton { key: format!("pref.{pref_key}.{id}.down"), icon: Icon::ArrowDown, act: down, destructive: false, size: 32.0, tip: None },
-                switch(format!("pref.{pref_key}.{id}.visible"), visible, Some(toggle)),
+                Ctl::IconButton {
+                    key: format!("pref.{pref_key}.{id}.up"),
+                    icon: Icon::ArrowUp,
+                    act: up,
+                    destructive: false,
+                    size: 32.0,
+                    tip: None,
+                },
+                Ctl::IconButton {
+                    key: format!("pref.{pref_key}.{id}.down"),
+                    icon: Icon::ArrowDown,
+                    act: down,
+                    destructive: false,
+                    size: 32.0,
+                    tip: None,
+                },
+                switch(
+                    format!("pref.{pref_key}.{id}.visible"),
+                    visible,
+                    Some(toggle),
+                ),
             ],
             8.0,
         );
-        ui.row(row(nav_label(&id)).one_line().leading(Ctl::Glyph(nav_icon(&id), 16.0, muted)).control(controls));
+        ui.row(
+            row(nav_label(&id))
+                .one_line()
+                .leading(Ctl::Glyph(nav_icon(&id), 16.0, muted))
+                .control(controls),
+        );
     }
     ui.card_end();
     ui.gap(24.0);
@@ -257,14 +493,28 @@ fn draw_sidebar(ui: &mut Ui, s: &Settings, v: &View) {
         t("settings.appearance.sidebar.header.title"),
         t("settings.appearance.sidebar.header.description"),
     );
-    nav_card(ui, s, v, "sidebarFooterItems", &["usage"], t("settings.appearance.sidebar.footer.title"), t("settings.appearance.sidebar.footer.description"));
+    nav_card(
+        ui,
+        s,
+        v,
+        "sidebarFooterItems",
+        &["usage"],
+        t("settings.appearance.sidebar.footer.title"),
+        t("settings.appearance.sidebar.footer.description"),
+    );
 }
 
 fn panel_label(id: &str) -> String {
     let name = id.strip_prefix("builtin:").unwrap_or(id);
     ta(
         "panels.file.filePanels.option",
-        &[("title", &t(&format!("panels.file.filePanels.builtin.{name}"))), ("owner", &t("panels.file.filePanels.builtin.owner"))],
+        &[
+            (
+                "title",
+                &t(&format!("panels.file.filePanels.builtin.{name}")),
+            ),
+            ("owner", &t("panels.file.filePanels.builtin.owner")),
+        ],
     )
 }
 
@@ -277,14 +527,28 @@ fn draw_files(ui: &mut Ui, v: &View) {
             ui.card_row_separator();
             let w = ui.w - 32.0;
             let text = t("settings.files.empty");
-            let size = ui.measure(crate::features::settings::ui::draw::Font::Regular, 14.0, &text, Some(w));
+            let size = ui.measure(
+                crate::features::settings::ui::draw::Font::Regular,
+                14.0,
+                &text,
+                Some(w),
+            );
             let (x, y) = (ui.x + (ui.w - size.x) / 2.0, ui.y + 16.0);
-            ui.text(crate::features::settings::ui::draw::Font::Regular, 14.0, muted, makepad_widgets::dvec2(x, y), Some(w), &text);
+            ui.text(
+                crate::features::settings::ui::draw::Font::Regular,
+                14.0,
+                muted,
+                makepad_widgets::dvec2(x, y),
+                Some(w),
+                &text,
+            );
             ui.gap(size.y + 32.0);
         }
         for (key, candidates, associated) in rows {
             let label = selector_label(&key);
-            let current = candidates.iter().find(|c| Some(c.id) == associated.as_deref());
+            let current = candidates
+                .iter()
+                .find(|c| Some(c.id) == associated.as_deref());
             let value_label = match (&associated, current) {
                 (None, _) => t("settings.files.askEveryTime"),
                 (Some(_), None) => t("settings.files.unavailable"),
@@ -308,7 +572,15 @@ fn draw_files(ui: &mut Ui, v: &View) {
                 s.save_pref(env, "filePanelAssociations", Some(Value::Object(next)));
             });
             let value = current.map(|c| c.id.to_string()).unwrap_or_default();
-            let dropdown = select_ctl(&format!("pref.files.{key}"), format!("{label}: {value_label}"), &value, options, 260.0, !candidates.is_empty(), pick);
+            let dropdown = select_ctl(
+                &format!("pref.files.{key}"),
+                format!("{label}: {value_label}"),
+                &value,
+                options,
+                260.0,
+                !candidates.is_empty(),
+                pick,
+            );
             let base = associations.clone();
             let forget = key.clone();
             let ask_again = associated.is_some().then(|| {
@@ -318,7 +590,14 @@ fn draw_files(ui: &mut Ui, v: &View) {
                     s.save_pref(env, "filePanelAssociations", Some(Value::Object(next)));
                 })
             });
-            let again = button(format!("pref.files.{key}.again"), t("settings.files.askAgain"), ask_again).size(BSize::Sm).variant(Variant::Outline).ctl();
+            let again = button(
+                format!("pref.files.{key}.again"),
+                t("settings.files.askAgain"),
+                ask_again,
+            )
+            .size(BSize::Sm)
+            .variant(Variant::Outline)
+            .ctl();
             ui.row(row(label).control(Ctl::Row(vec![dropdown, again], 8.0)));
         }
     });

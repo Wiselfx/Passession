@@ -1,9 +1,9 @@
 mod notices;
 mod permissions;
 mod session;
-mod timeline;
 #[cfg(test)]
 mod tests;
+mod timeline;
 
 use super::{
     catalog,
@@ -12,8 +12,8 @@ use super::{
     runtime::{Runtime, RuntimeManager},
 };
 use crate::providers::api::{
-    AgentSession, EventSink, HistoryCoverage, ProviderSpec, RewindTarget,
-    SubagentHistoryRequest, subagent_row,
+    AgentSession, EventSink, HistoryCoverage, ProviderSpec, RewindTarget, SubagentHistoryRequest,
+    subagent_row,
 };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -23,9 +23,9 @@ use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
 };
+use timeline::{Timeline, timestamp};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use timeline::{Timeline, timestamp};
 
 pub(super) fn s<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
@@ -261,7 +261,13 @@ pub(super) async fn attach(
     spec: ProviderSpec,
     launch: super::SessionLaunch,
 ) -> Result<Arc<dyn AgentSession>> {
-    let super::SessionLaunch { info, mut config, context, options, sink } = launch;
+    let super::SessionLaunch {
+        info,
+        mut config,
+        context,
+        options,
+        sink,
+    } = launch;
     let id = s(&info, "id").to_owned();
     if id.is_empty() {
         bail!("OpenCode session response omitted its id");
@@ -300,7 +306,13 @@ pub(super) async fn attach(
         runtime,
         manager,
         id,
-        super::SessionLaunch { info, config, context, options, sink },
+        super::SessionLaunch {
+            info,
+            config,
+            context,
+            options,
+            sink,
+        },
         &facade,
     );
     let (ready, initialized) = oneshot::channel();
@@ -372,7 +384,10 @@ impl AgentSession for V2Session {
     async fn steer_active_turn(&self, prompt: Value, options: Value) -> Result<Value> {
         self.call(Operation::Steer(prompt, options)).await
     }
-    async fn stream_history(&self, sink: EventSink) -> Result<crate::providers::api::HistoryCoverage> {
+    async fn stream_history(
+        &self,
+        sink: EventSink,
+    ) -> Result<crate::providers::api::HistoryCoverage> {
         self.call(Operation::History(sink)).await?;
         Ok(crate::providers::api::HistoryCoverage::Complete)
     }

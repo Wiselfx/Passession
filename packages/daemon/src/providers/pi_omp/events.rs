@@ -338,17 +338,20 @@ impl Mapper {
         v
     }
     fn stream_events(&self, items: Vec<Value>) -> Vec<Value> {
-        items.into_iter().map(|mut item| {
-            if item["type"] == "omp_authoritative_message" {
-                let mut event = self.event("timeline_reconcile");
-                for key in ["messageId", "items", "diagnostic"] {
-                    event[key] = item[key].take();
+        items
+            .into_iter()
+            .map(|mut item| {
+                if item["type"] == "omp_authoritative_message" {
+                    let mut event = self.event("timeline_reconcile");
+                    for key in ["messageId", "items", "diagnostic"] {
+                        event[key] = item[key].take();
+                    }
+                    event
+                } else {
+                    self.timeline(item)
                 }
-                event
-            } else {
-                self.timeline(item)
-            }
-        }).collect()
+            })
+            .collect()
     }
     fn subagents(&self, events: Vec<Value>) -> Vec<Value> {
         events
@@ -730,9 +733,12 @@ mod tests {
         let result = json!({"content":[{"type":"text","text":"example error"}],
             "details":{"title":"not the request title","exitCode":1}});
         let tool = |events: Vec<Value>| {
-            events.into_iter().find_map(|event| {
-                (event["item"]["type"] == "tool_call").then(|| event["item"].clone())
-            }).expect("tool timeline item")
+            events
+                .into_iter()
+                .find_map(|event| {
+                    (event["item"]["type"] == "tool_call").then(|| event["item"].clone())
+                })
+                .expect("tool timeline item")
         };
         let mut live = Mapper::new("omp", "omp");
         let started = tool(live.map(&json!({"type":"tool_execution_start",
@@ -752,12 +758,18 @@ mod tests {
         assert_eq!(finished["error"], "example error");
 
         let mut replay = Mapper::new("omp", "omp");
-        replay.replay_message(&json!({"role":"assistant","content":[
-            {"type":"toolCall","id":"eval-call","name":"eval","arguments":args}
-        ]}), None);
-        let restored = tool(replay.replay_message(&json!({"role":"toolResult",
+        replay.replay_message(
+            &json!({"role":"assistant","content":[
+                {"type":"toolCall","id":"eval-call","name":"eval","arguments":args}
+            ]}),
+            None,
+        );
+        let restored = tool(replay.replay_message(
+            &json!({"role":"toolResult",
             "toolCallId":"eval-call","toolName":"eval","content":result["content"],
-            "details":result["details"],"isError":true}), None));
+            "details":result["details"],"isError":true}),
+            None,
+        ));
         assert_eq!(restored["detail"], finished["detail"]);
         assert_eq!(restored["status"], "failed");
         assert_eq!(restored["error"], finished["error"]);
@@ -918,31 +930,37 @@ mod tests {
 
     #[test]
     fn omp_task_completion_identity_preserves_native_alias_precedence() {
-        for (role, tool_name, custom_type) in [
-            ("toolResult", "wait", ""),
-            ("custom", "", "async-result"),
-        ] {
+        for (role, tool_name, custom_type) in
+            [("toolResult", "wait", ""), ("custom", "", "async-result")]
+        {
             let message = json!({"role":role,"toolName":tool_name,"customType":custom_type,
-                "details":{"jobs":[
-                    {"type":"task","agentId":"agent","jobId":"job","id":"fallback","status":"completed"},
-                    {"type":"task","agentId":"","jobId":"job","id":"fallback","status":"failed"},
-                    {"type":"task","agentId":" ","jobId":"","id":"fallback","status":"canceled"},
-                    {"type":"task","id":"","status":"completed"}
-                ]}});
-            assert_eq!(omp_task_completions(&message).collect::<Vec<_>>(), [
-                ("agent", "completed"), ("job", "failed"), ("fallback", "canceled")
-            ]);
+            "details":{"jobs":[
+                {"type":"task","agentId":"agent","jobId":"job","id":"fallback","status":"completed"},
+                {"type":"task","agentId":"","jobId":"job","id":"fallback","status":"failed"},
+                {"type":"task","agentId":" ","jobId":"","id":"fallback","status":"canceled"},
+                {"type":"task","id":"","status":"completed"}
+            ]}});
+            assert_eq!(
+                omp_task_completions(&message).collect::<Vec<_>>(),
+                [
+                    ("agent", "completed"),
+                    ("job", "failed"),
+                    ("fallback", "canceled")
+                ]
+            );
         }
     }
 
     #[test]
     fn omp_task_wait_delivery_requires_native_terminal_jobs_and_preserves_respawns() {
         let mut mapper = Mapper::new("omp", "omp");
-        let spawn = |owner: &str| json!({"type":"tool_execution_end","toolCallId":owner,"toolName":"task",
+        let spawn = |owner: &str| {
+            json!({"type":"tool_execution_end","toolCallId":owner,"toolName":"task",
             "result":{"details":{"progress":[
                 {"id":"done","status":"pending"},{"id":"bad","status":"pending"},
                 {"id":"stopped","status":"pending"},{"id":"active","status":"pending"}
-            ]}}});
+            ]}}})
+        };
         let delivery = json!({"role":"toolResult","toolName":"wait","details":{"jobs":[
             {"type":"task","id":"done","status":"completed"},
             {"type":"task","id":"bad","status":"failed"},
@@ -954,25 +972,61 @@ mod tests {
             {"type":"task","id":"active","status":"queued"},
             {"type":"task","id":"active","status":"unknown"}
         ]},"content":[{"type":"text","text":"<task-result id=\"active\" status=\"completed\">"}]});
-        assert!(mapper.map(&json!({"type":"message_end","message":delivery})).is_empty());
+        assert!(
+            mapper
+                .map(&json!({"type":"message_end","message":delivery}))
+                .is_empty()
+        );
         mapper.map(&spawn("first"));
-        for (role, name) in [("user", "wait"), ("assistant", "wait"), ("toolResult", "bash")] {
+        for (role, name) in [
+            ("user", "wait"),
+            ("assistant", "wait"),
+            ("toolResult", "bash"),
+        ] {
             let mut foreign = delivery.clone();
             foreign["role"] = json!(role);
             foreign["toolName"] = json!(name);
-            assert!(!mapper.map(&json!({"type":"message_end","message":foreign}))
-                .iter().any(|e| e["type"] == "provider_subagent"));
+            assert!(
+                !mapper
+                    .map(&json!({"type":"message_end","message":foreign}))
+                    .iter()
+                    .any(|e| e["type"] == "provider_subagent")
+            );
         }
         let events = mapper.map(&json!({"type":"message_end","message":delivery}));
-        let statuses: Vec<_> = events.iter().map(|e|
-            (e["event"]["id"].as_str().unwrap(), e["event"]["status"].as_str().unwrap())).collect();
-        assert_eq!(statuses, [("done", "completed"), ("bad", "failed"), ("stopped", "canceled")]);
-        assert!(mapper.map(&json!({"type":"message_end","message":delivery})).is_empty());
+        let statuses: Vec<_> = events
+            .iter()
+            .map(|e| {
+                (
+                    e["event"]["id"].as_str().unwrap(),
+                    e["event"]["status"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("done", "completed"),
+                ("bad", "failed"),
+                ("stopped", "canceled")
+            ]
+        );
+        assert!(
+            mapper
+                .map(&json!({"type":"message_end","message":delivery}))
+                .is_empty()
+        );
         let restarted = mapper.map(&spawn("second"));
-        let children: Vec<_> = restarted.iter().filter(|e| e["type"] == "provider_subagent").collect();
+        let children: Vec<_> = restarted
+            .iter()
+            .filter(|e| e["type"] == "provider_subagent")
+            .collect();
         assert_eq!(children.len(), 4);
-        assert!(children.iter().all(|e| e["event"]["status"] == "running"
-            && e["event"]["toolCallId"] == "second"));
+        assert!(
+            children
+                .iter()
+                .all(|e| e["event"]["status"] == "running" && e["event"]["toolCallId"] == "second")
+        );
         let closed = mapper.close_work();
         assert_eq!(closed.len(), 4);
     }

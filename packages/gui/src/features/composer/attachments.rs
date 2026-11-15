@@ -2,7 +2,7 @@
 //! helpers of `attachment_pill.dart`.
 
 use super::json::*;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// attachments/upload-limit.ts FILE_UPLOAD_MAX_BYTES.
 pub const FILE_UPLOAD_MAX_BYTES: u64 = 50 * 1024 * 1024;
@@ -24,7 +24,10 @@ const RASTER_IMAGE_MIME_TYPES: &[(&str, &str)] = &[
 
 /// The extensions an image picker accepts (RASTER_IMAGE_FILE_EXTENSIONS).
 pub fn raster_image_extensions() -> Vec<String> {
-    RASTER_IMAGE_MIME_TYPES.iter().map(|(ext, _)| ext[1..].to_owned()).collect()
+    RASTER_IMAGE_MIME_TYPES
+        .iter()
+        .map(|(ext, _)| ext[1..].to_owned())
+        .collect()
 }
 
 /// file-types.ts getFileExtension: lower-cased extension with its dot, without query/fragment.
@@ -58,10 +61,14 @@ pub struct FileTooLarge {
 }
 
 /// Every selected file is size-checked before any upload starts.
-pub fn check_upload_sizes<'a>(files: impl IntoIterator<Item = (&'a str, u64)>) -> Result<(), FileTooLarge> {
+pub fn check_upload_sizes<'a>(
+    files: impl IntoIterator<Item = (&'a str, u64)>,
+) -> Result<(), FileTooLarge> {
     for (name, size) in files {
         if size > FILE_UPLOAD_MAX_BYTES {
-            return Err(FileTooLarge { file_name: name.to_owned() });
+            return Err(FileTooLarge {
+                file_name: name.to_owned(),
+            });
         }
     }
     Ok(())
@@ -92,7 +99,11 @@ pub fn forge_attachment(item: &Value, legacy: bool) -> Value {
     out.insert("type".into(), json!(kind_name));
     out.insert("mimeType".into(), json!(mime));
     if !legacy {
-        let forge = item.get("forge").filter(|v| !v.is_null()).cloned().unwrap_or(json!("github"));
+        let forge = item
+            .get("forge")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(json!("github"));
         out.insert("forge".into(), forge);
     }
     for key in ["number", "title", "url"] {
@@ -115,19 +126,36 @@ pub fn forge_attachment(item: &Value, legacy: bool) -> Value {
 
 /// forge_picker.dart forgeItemKey: `change_request:N` / `issue:N` of an item or attachment.
 pub fn forge_item_key(item: &Value) -> String {
-    let kind = item.get("kind").filter(|v| !v.is_null()).unwrap_or(get(item, "type"));
-    let change = matches!(s(kind), "change_request" | "pr" | "github_pr" | "forge_change_request");
-    format!("{}:{}", if change { "change_request" } else { "issue" }, display(get(item, "number")))
+    let kind = item
+        .get("kind")
+        .filter(|v| !v.is_null())
+        .unwrap_or(get(item, "type"));
+    let change = matches!(
+        s(kind),
+        "change_request" | "pr" | "github_pr" | "forge_change_request"
+    );
+    format!(
+        "{}:{}",
+        if change { "change_request" } else { "issue" },
+        display(get(item, "number"))
+    )
 }
 
 /// git/forge.ts getForgePresentation: GitLab says "MR" with "!", others "PR" with "#".
 pub fn forge_change_request(forge: &Value) -> (&'static str, &'static str) {
-    if forge.as_str() == Some("gitlab") { ("MR", "!") } else { ("PR", "#") }
+    if forge.as_str() == Some("gitlab") {
+        ("MR", "!")
+    } else {
+        ("PR", "#")
+    }
 }
 
 /// Accessibility kind and number of a forge attachment, None for other attachments.
 pub fn forge_labels(attachment: &Value) -> Option<(String, String)> {
-    let kind = attachment.get("kind").filter(|v| !v.is_null()).unwrap_or(get(attachment, "type"));
+    let kind = attachment
+        .get("kind")
+        .filter(|v| !v.is_null())
+        .unwrap_or(get(attachment, "type"));
     let kind = s(kind);
     let change = kind == "github_pr" || kind == "forge_change_request";
     if !change && kind != "github_issue" && kind != "forge_issue" {
@@ -153,16 +181,27 @@ pub enum AttachmentGlyph {
 /// attachment_pill.dart describe: title, type subtitle (None: localized "File"), glyph.
 pub fn describe(attachment: &Value) -> (String, Option<String>, AttachmentGlyph) {
     let path = s(get(attachment, "path"));
-    let kind = attachment.get("kind").filter(|v| !v.is_null()).unwrap_or(get(attachment, "type"));
+    let kind = attachment
+        .get("kind")
+        .filter(|v| !v.is_null())
+        .unwrap_or(get(attachment, "type"));
     match s(kind) {
         "workspace_file" => {
             let selection = get(attachment, "selection");
             let subtitle = if s(get(selection, "kind")) == "line_range" {
-                format!("{path} · {}-{}", display(get(selection, "startLine")), display(get(selection, "endLine")))
+                format!(
+                    "{path} · {}-{}",
+                    display(get(selection, "startLine")),
+                    display(get(selection, "endLine"))
+                )
             } else {
                 path.to_owned()
             };
-            (remote_basename(path), Some(subtitle), AttachmentGlyph::FileText)
+            (
+                remote_basename(path),
+                Some(subtitle),
+                AttachmentGlyph::FileText,
+            )
         }
         "github_issue" | "forge_issue" => {
             let number = display(get(attachment, "number"));
@@ -187,7 +226,11 @@ pub fn describe(attachment: &Value) -> (String, Option<String>, AttachmentGlyph)
             } else {
                 path.rsplit('/').next().unwrap_or(path).to_owned()
             };
-            let name = s_or(get(attachment, "fileName"), s_or(get(attachment, "title"), &fallback)).to_owned();
+            let name = s_or(
+                get(attachment, "fileName"),
+                s_or(get(attachment, "title"), &fallback),
+            )
+            .to_owned();
             let label = file_type_label(&name);
             (name, label, AttachmentGlyph::FileText)
         }
@@ -226,7 +269,11 @@ pub fn wire_attachment(attachment: &Value) -> Value {
     let path = s(get(attachment, "path"));
     let selection = get(attachment, "selection");
     let lines = if s(get(selection, "kind")) == "line_range" {
-        format!("\nLines: {}-{}", display(get(selection, "startLine")), display(get(selection, "endLine")))
+        format!(
+            "\nLines: {}-{}",
+            display(get(selection, "startLine")),
+            display(get(selection, "endLine"))
+        )
     } else {
         String::new()
     };

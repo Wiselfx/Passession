@@ -75,7 +75,9 @@ Confirm when prompted. Paseo prints a QR code and pairing link. Scan the QR code
 
 ## Tailscale
 
-Install [Tailscale](https://tailscale.com/download) on the daemon machine and your phone. Sign in to the same tailnet on both devices.
+The native app can join your tailnet itself using embedded libtailscale. This does **not** enable a phone-wide VPN or change other apps' network access. Normal Passession hosts and external internet connections still work while it is enabled.
+
+Install [Tailscale](https://tailscale.com/download) on the **daemon machine** and sign it into your tailnet. The app's embedded node does not automatically expose a daemon bound only to `127.0.0.1`.
 
 ### 1. Find the daemon machine's Tailscale IP
 
@@ -115,19 +117,30 @@ If Paseo Desktop manages the daemon, use **Settings → your host → Overview �
 
 ### 3. Connect the phone app
 
-1. Connect Tailscale on your phone.
-2. Open Paseo and go to **Settings → Add host → Direct connection**.
-3. Enter the Tailscale IP in **Host**.
-4. Enter `6767` in **Port**.
-5. Leave **Use SSL** off and select **Connect**.
+1. In Passession, open **Settings → Tailscale** and enable **Enable embedded Tailscale**.
+2. Select **Log in with browser**, approve the app's node in your Tailscale account, then return and refresh status. Complete device approval in the tailnet admin console if required.
+3. Open **Settings → Add host → Direct connection** and select **Embedded Tailscale** under **Connection network**.
+4. Enter the daemon's Tailscale IP or MagicDNS name and port `6767`. Use TLS only if that daemon endpoint is configured for it.
+5. Connect. Tailnet ACLs and the daemon machine's firewall must permit the app node to reach that port.
 
-If the host was already paired through the relay, Paseo adds the direct connection to the same host.
+Only hosts selected as **Embedded Tailscale** use this app-owned node. Their failures do not silently switch to Normal or relay connections. Other hosts can remain **Normal** and use the ordinary network, including a separately installed system Tailscale app if desired. Embedded mode accepts direct `ws://` and `wss://` endpoints, not SSH, relay/pairing links or local IPC.
+
+### Account and connection controls
+
+**Settings → Tailscale** shows account, tailnet, device name, IPs and connection errors. **Disconnect** pauses the app's tailnet connections without stopping daemon sessions or forgetting login; **Reconnect** resumes them. **Log out** requests expiry of this app node's key and removes its local identity only after confirmation. Failed logout retains encrypted identity for retry. Removing the device's admin-console entry is a separate operation.
+
+The device hostname is configurable. **Advanced control server** defaults to the official Tailscale service; a custom server requires HTTPS. Log out before changing servers. HTTP is accepted only for literal loopback development fixtures, not ordinary remote services.
+
+Encrypted node state depends on OS secure storage: Linux Secret Service, Apple Keychain, Windows Credential Manager or Android Keystore. Unlock/restore the original store if it reports an error; copying only the encrypted state to another installation is not a portable login backup.
 
 ## Troubleshooting
 
 - **SSH authentication failed:** Run `ssh user@host` in a terminal and fix the key, agent, host key, or `~/.ssh/config` entry there. Paseo does not prompt for SSH passwords.
 - **SSH connects but Paseo is refused:** Run `paseo daemon status` on the remote host. SSH transport does not start the daemon.
 - **SSH connects but Paseo reports "Password required":** The remote daemon is password-protected. Remove the SSH connection from the host and add it again, this time entering the daemon password in **Daemon password**.
-- **Connection timed out:** Check that Tailscale is connected on both devices and that you used the daemon machine's Tailscale IP.
+- **Connection timed out:** Check the app's **Settings → Tailscale** status, the daemon machine's Tailscale connection, and tailnet ACL/firewall access. Confirm that this host is using the intended Normal or Embedded Tailscale mode.
 - **Connection refused:** Run `paseo daemon status` and confirm the daemon is running on the configured IP and port.
 - **Config change has no effect:** Run `paseo reload`. `daemon.listen` is a startup setting, so restart when the command reports it.
+- **Embedded library missing:** Use a complete native app bundle built by `cargo xtask build-gui`; the standalone Rust GUI executable does not include its adjacent native library.
+- **Secure storage unavailable:** Unlock the OS credential store. Linux additionally needs a running Secret Service and session bus. Passession does not fall back to plaintext keys.
+- **Unknown embedded host:** Use a peer's Tailscale IP or MagicDNS name. Unrelated public hosts should use Normal mode; enabling Tailscale does not make the entire internet a tailnet route.

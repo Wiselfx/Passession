@@ -208,7 +208,10 @@ const CATALOG: &str = "packages/gui/src/features/settings/model/acp_catalog.json
 
 fn catalog(source: &str) -> Result<Vec<Literal>> {
     let root = Parser { source, at: 0 }.literal()?;
-    ensure!(root.value.is_array(), "The ACP catalog must be a JSON array");
+    ensure!(
+        root.value.is_array(),
+        "The ACP catalog must be a JSON array"
+    );
     for entry in &root.items {
         ensure!(entry.value.is_object(), "Catalog entries must be maps");
         if let Some(command) = entry.fields.get("command") {
@@ -227,10 +230,10 @@ fn package(command: &[Value]) -> Option<(&'static str, usize, bool)> {
         "npx" | "uvx" => 1,
         _ => return None,
     };
-    if first == "uvx" {
-        if let Some(index) = command.iter().position(|v| v == "--from") {
-            return (index + 1 < command.len()).then_some(("pypi", index + 1, true));
-        }
+    if first == "uvx"
+        && let Some(index) = command.iter().position(|v| v == "--from")
+    {
+        return (index + 1 < command.len()).then_some(("pypi", index + 1, true));
     }
     (start..command.len())
         .find(|&index| {
@@ -361,20 +364,20 @@ pub(super) async fn run(args: &[String]) -> Result<()> {
             ));
             result
         });
-        if has("--update") {
-            if let (Some(latest), Some(updated)) = (&latest, &updated) {
-                let version = entry
-                    .fields
-                    .get("version")
-                    .context("Cannot update entry without version")?;
-                let command_literal = entry.fields.get("command").unwrap();
-                replacements.push((version.range.clone(), json_string(latest)?));
-                if updated[index] != command[index] {
-                    replacements.push((
-                        command_literal.items[index].range.clone(),
-                        json_string(updated[index].as_str().unwrap())?,
-                    ));
-                }
+        if has("--update")
+            && let (Some(latest), Some(updated)) = (&latest, &updated)
+        {
+            let version = entry
+                .fields
+                .get("version")
+                .context("Cannot update entry without version")?;
+            let command_literal = entry.fields.get("command").unwrap();
+            replacements.push((version.range.clone(), json_string(latest)?));
+            if updated[index] != command[index] {
+                replacements.push((
+                    command_literal.items[index].range.clone(),
+                    json_string(updated[index].as_str().unwrap())?,
+                ));
             }
         }
         results.push(json!({"id":entry.value["id"],"title":entry.value["title"],"registry":registry,"packageName":name,"selector":selector,"catalogVersion":entry.value["version"],"latestVersion":latest,"currentCommand":command,"updatedCommand":updated,"checked":true,"status":if reasons.is_empty(){"ok"}else{"drift"},"reasons":reasons,"registryError":error}));

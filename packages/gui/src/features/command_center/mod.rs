@@ -14,7 +14,10 @@ use serde_json::Value;
 
 use crate::features::workspace::i18n::{l, lf};
 
-pub use panel::{CommandCenterAction, CommandCenterPanel, CommandCenterPanelRef, CommandCenterPanelWidgetExt, CommandCenterPanelWidgetRefExt};
+pub use panel::{
+    CommandCenterAction, CommandCenterPanel, CommandCenterPanelRef, CommandCenterPanelWidgetExt,
+    CommandCenterPanelWidgetRefExt,
+};
 
 /// Nothing beyond this module's DSL; kept so the shell registers every feature the same way.
 pub fn register_modules(_cx: &mut Cx) {}
@@ -22,7 +25,9 @@ pub fn register_modules(_cx: &mut Cx) {}
 /// RFC 3339 text to ms since epoch.
 pub fn parse_ms(value: Option<&Value>) -> Option<i64> {
     let text = value?.as_str()?;
-    DateTime::parse_from_rfc3339(text).ok().map(|t| t.timestamp_millis())
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|t| t.timestamp_millis())
 }
 
 /// `describeTimeAgo` (`paseoTimeAgo`): never sub-minute, then the date after a week.
@@ -42,7 +47,12 @@ pub fn time_ago(at: Option<i64>, now: DateTime<Utc>) -> String {
         return lf("{n}d ago", &[("n", &(elapsed / 86_400_000).to_string())]);
     }
     let local = DateTime::from_timestamp_millis(at).map(|t| t.with_timezone(&Local));
-    local.map(|t| { use chrono::Datelike; crate::common::month_day(t.month0(), t.day()) }).unwrap_or_default()
+    local
+        .map(|t| {
+            use chrono::Datelike;
+            crate::common::month_day(t.month0(), t.day())
+        })
+        .unwrap_or_default()
 }
 
 /// `shortenPath`: the home directory as `~`.

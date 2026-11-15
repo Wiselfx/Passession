@@ -200,9 +200,10 @@ impl AgentProvider for AntigravityProvider {
         let mut error = None;
         for session in sessions.into_iter().filter_map(|s| s.upgrade()) {
             if let Err(next) = session.close().await
-                && error.is_none() {
-                    error = Some(next);
-                }
+                && error.is_none()
+            {
+                error = Some(next);
+            }
         }
         match error {
             Some(error) => Err(error),

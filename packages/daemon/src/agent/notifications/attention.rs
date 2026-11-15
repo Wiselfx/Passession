@@ -117,13 +117,14 @@ impl FinishSubscriptions {
             permission,
         );
         if decision.push
-            && let Err(error) = self.push.enqueue(notification.clone()).await {
-                tracing::warn!(
-                    ?error,
-                    agent_id = id,
-                    "Failed to schedule push notification"
-                );
-            }
+            && let Err(error) = self.push.enqueue(notification.clone()).await
+        {
+            tracing::warn!(
+                ?error,
+                agent_id = id,
+                "Failed to schedule push notification"
+            );
+        }
         let notify_source = decision
             .recipient
             .map(|index| notification_sources[index].source_id());
@@ -187,13 +188,13 @@ impl FinishSubscriptions {
                 .push
                 .enqueue(json!({"title":title,"body":body,"data":data}))
                 .await
-            {
-                tracing::warn!(
-                    ?error,
-                    terminal_id = id,
-                    "Failed to schedule terminal push notification"
-                );
-            }
+        {
+            tracing::warn!(
+                ?error,
+                terminal_id = id,
+                "Failed to schedule terminal push notification"
+            );
+        }
         let mut payload = data;
         payload["reason"] = json!(reason);
         payload["title"] = json!(title);

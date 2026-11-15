@@ -6,8 +6,11 @@
 //! coordinates through `CTFontCopyVariation`.
 
 use crate::{
-    apple::{ns_string, rust_string, Id},
-    fonts::{bcp47, build_sfnt, finish_face, resolve, Backend, Family, FontFace, FontRequest, Role, SystemFonts, HANGUL_PROBE, LATIN_PROBE},
+    apple::{Id, ns_string, rust_string},
+    fonts::{
+        Backend, Family, FontFace, FontRequest, LATIN_PROBE, Role, SystemFonts, bcp47, build_sfnt,
+        finish_face, resolve, resolve_fallbacks,
+    },
 };
 use objc2::{class, msg_send, rc::autoreleasepool};
 use std::{collections::HashMap, ffi::c_void, sync::Arc};
@@ -44,9 +47,27 @@ unsafe extern "C" {
 
     fn CTFontCreateUIFontForLanguage(ui_type: u32, size: f64, language: CFTypeRef) -> CFTypeRef;
     fn CTFontDescriptorCreateWithAttributes(attributes: CFTypeRef) -> CFTypeRef;
-    fn CTFontCreateWithFontDescriptor(descriptor: CFTypeRef, size: f64, matrix: *const c_void) -> CFTypeRef;
-    fn CTFontCreateCopyWithSymbolicTraits(font: CFTypeRef, size: f64, matrix: *const c_void, value: u32, mask: u32) -> CFTypeRef;
+    fn CTFontCreateWithFontDescriptor(
+        descriptor: CFTypeRef,
+        size: f64,
+        matrix: *const c_void,
+    ) -> CFTypeRef;
+    fn CTFontCreateCopyWithSymbolicTraits(
+        font: CFTypeRef,
+        size: f64,
+        matrix: *const c_void,
+        value: u32,
+        mask: u32,
+    ) -> CFTypeRef;
     fn CTFontCreateForString(font: CFTypeRef, string: CFTypeRef, range: CFRange) -> CFTypeRef;
+    fn CTFontCollectionCreateFromAvailableFonts(options: CFTypeRef) -> CFTypeRef;
+    fn CTFontCollectionCreateMatchingFontDescriptors(collection: CFTypeRef) -> CFTypeRef;
+    fn CTFontGetGlyphsForCharacters(
+        font: CFTypeRef,
+        characters: *const u16,
+        glyphs: *mut u16,
+        count: CFIndex,
+    ) -> u8;
     fn CTFontCopyFamilyName(font: CFTypeRef) -> CFTypeRef;
     fn CTFontCopyPostScriptName(font: CFTypeRef) -> CFTypeRef;
     fn CTFontCopyAvailableTables(font: CFTypeRef, options: u32) -> CFTypeRef;
@@ -60,7 +81,11 @@ unsafe extern "C" {
     fn CFDataGetLength(data: CFTypeRef) -> CFIndex;
     fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
     fn CFDictionaryGetCount(dictionary: CFTypeRef) -> CFIndex;
-    fn CFDictionaryGetKeysAndValues(dictionary: CFTypeRef, keys: *mut *const c_void, values: *mut *const c_void);
+    fn CFDictionaryGetKeysAndValues(
+        dictionary: CFTypeRef,
+        keys: *mut *const c_void,
+        values: *mut *const c_void,
+    );
     fn CFNumberGetValue(number: CFTypeRef, kind: CFIndex, value: *mut c_void) -> u8;
 }
 
@@ -101,12 +126,14 @@ fn data_bytes(data: &Cf) -> Vec<u8> {
 
 fn number_i64(number: *const c_void) -> Option<i64> {
     let mut value = 0i64;
-    (unsafe { CFNumberGetValue(number, NUMBER_SINT64, (&raw mut value).cast()) } != 0).then_some(value)
+    (unsafe { CFNumberGetValue(number, NUMBER_SINT64, (&raw mut value).cast()) } != 0)
+        .then_some(value)
 }
 
 fn number_f64(number: *const c_void) -> Option<f64> {
     let mut value = 0f64;
-    (unsafe { CFNumberGetValue(number, NUMBER_FLOAT64, (&raw mut value).cast()) } != 0).then_some(value)
+    (unsafe { CFNumberGetValue(number, NUMBER_FLOAT64, (&raw mut value).cast()) } != 0)
+        .then_some(value)
 }
 
 /// `NSFontWeight` / `UIFontWeight` and the `kCTFontWeightTrait` scale.
@@ -119,16 +146,26 @@ fn with_slant(font: Cf, role: Role) -> Cf {
     if !role.italic() {
         return font;
     }
-    let italic = unsafe { CTFontCreateCopyWithSymbolicTraits(font.0, 0.0, std::ptr::null(), ITALIC_TRAIT, ITALIC_TRAIT) };
+    let italic = unsafe {
+        CTFontCreateCopyWithSymbolicTraits(
+            font.0,
+            0.0,
+            std::ptr::null(),
+            ITALIC_TRAIT,
+            ITALIC_TRAIT,
+        )
+    };
     Cf::new(italic).unwrap_or(font)
 }
 
 /// `[NSFont|UIFont systemFontOfSize:weight:]` (toll-free bridged to `CTFontRef`).
 fn system_ui_font(role: Role) -> Option<Cf> {
     #[cfg(target_os = "macos")]
-    let font: Id = unsafe { msg_send![class!(NSFont), systemFontOfSize: SIZE, weight: weight_trait(role)] };
+    let font: Id =
+        unsafe { msg_send![class!(NSFont), systemFontOfSize: SIZE, weight: weight_trait(role)] };
     #[cfg(target_os = "ios")]
-    let font: Id = unsafe { msg_send![class!(UIFont), systemFontOfSize: SIZE, weight: weight_trait(role)] };
+    let font: Id =
+        unsafe { msg_send![class!(UIFont), systemFontOfSize: SIZE, weight: weight_trait(role)] };
     Some(with_slant(Cf::retain(font)?, role))
 }
 
@@ -137,14 +174,25 @@ fn named_font(name: &str, role: Role) -> Option<Cf> {
     unsafe {
         let trait_keys: [Id; 2] = [kCTFontWeightTrait as Id, kCTFontSymbolicTrait as Id];
         let symbolic: u32 = if role.italic() { ITALIC_TRAIT } else { 0 };
-        let trait_values: [Id; 2] =
-            [msg_send![class!(NSNumber), numberWithDouble: weight_trait(role)], msg_send![class!(NSNumber), numberWithUnsignedInt: symbolic]];
+        let trait_values: [Id; 2] = [
+            msg_send![class!(NSNumber), numberWithDouble: weight_trait(role)],
+            msg_send![class!(NSNumber), numberWithUnsignedInt: symbolic],
+        ];
         let traits: Id = msg_send![class!(NSDictionary), dictionaryWithObjects: trait_values.as_ptr(), forKeys: trait_keys.as_ptr(), count: 2usize];
-        let keys: [Id; 2] = [kCTFontFamilyNameAttribute as Id, kCTFontTraitsAttribute as Id];
+        let keys: [Id; 2] = [
+            kCTFontFamilyNameAttribute as Id,
+            kCTFontTraitsAttribute as Id,
+        ];
         let values: [Id; 2] = [ns_string(name), traits];
         let attributes: Id = msg_send![class!(NSDictionary), dictionaryWithObjects: values.as_ptr(), forKeys: keys.as_ptr(), count: 2usize];
-        let descriptor = Cf::new(CTFontDescriptorCreateWithAttributes(attributes as CFTypeRef))?;
-        let font = Cf::new(CTFontCreateWithFontDescriptor(descriptor.0, SIZE, std::ptr::null()))?;
+        let descriptor = Cf::new(CTFontDescriptorCreateWithAttributes(
+            attributes as CFTypeRef,
+        ))?;
+        let font = Cf::new(CTFontCreateWithFontDescriptor(
+            descriptor.0,
+            SIZE,
+            std::ptr::null(),
+        ))?;
         let family = Cf::new(CTFontCopyFamilyName(font.0)).and_then(|family| cf_string(&family))?;
         family.eq_ignore_ascii_case(name).then_some(font)
     }
@@ -156,9 +204,10 @@ fn family_name(font: &Cf) -> Option<String> {
 
 struct CoreText {
     language: String,
-    /// Rebuilt sfnts keyed by table list + `head` bytes, so instances of one
-    /// variable font (SF regular/semibold) share their bytes.
-    sfnts: HashMap<(Vec<u32>, Vec<u8>), Arc<Vec<u8>>>,
+    /// Regional collection faces may share `head` and table tags but have
+    /// different cmaps/outlines. Include the selected face's PostScript name.
+    sfnts: HashMap<(String, Vec<u32>, Vec<u8>), Arc<Vec<u8>>>,
+    installed: Option<Cf>,
 }
 
 impl CoreText {
@@ -168,34 +217,59 @@ impl CoreText {
         let tags: Vec<u32> = (0..unsafe { CFArrayGetCount(tables.0) })
             .map(|index| unsafe { CFArrayGetValueAtIndex(tables.0, index) } as usize as u32)
             .collect();
-        let table = |tag: u32| Cf::new(unsafe { CTFontCopyTable(font.0, tag, 0) }).map(|data| data_bytes(&data));
+        let table = |tag: u32| {
+            Cf::new(unsafe { CTFontCopyTable(font.0, tag, 0) }).map(|data| data_bytes(&data))
+        };
         let head = table(u32::from_be_bytes(*b"head"))?;
-        let key = (tags.clone(), head);
+        let name = Cf::new(unsafe { CTFontCopyPostScriptName(font.0) })
+            .and_then(|name| cf_string(&name))?;
+        let key = (name, tags.clone(), head);
         if let Some(data) = self.sfnts.get(&key) {
             return Some(data.clone());
         }
-        let tables: Vec<([u8; 4], Vec<u8>)> = tags.iter().filter_map(|tag| Some((tag.to_be_bytes(), table(*tag)?))).collect();
+        let tables: Vec<([u8; 4], Vec<u8>)> = tags
+            .iter()
+            .filter_map(|tag| Some((tag.to_be_bytes(), table(*tag)?)))
+            .collect();
         let data = Arc::new(build_sfnt(&tables));
         self.sfnts.insert(key, data.clone());
         Some(data)
     }
 
     fn variations(font: &Cf) -> Vec<([u8; 4], f32)> {
-        let Some(variation) = Cf::new(unsafe { CTFontCopyVariation(font.0) }) else { return Vec::new() };
+        let Some(variation) = Cf::new(unsafe { CTFontCopyVariation(font.0) }) else {
+            return Vec::new();
+        };
         let count = unsafe { CFDictionaryGetCount(variation.0) }.max(0) as usize;
         let mut keys = vec![std::ptr::null(); count];
         let mut values = vec![std::ptr::null(); count];
-        unsafe { CFDictionaryGetKeysAndValues(variation.0, keys.as_mut_ptr(), values.as_mut_ptr()) };
+        unsafe {
+            CFDictionaryGetKeysAndValues(variation.0, keys.as_mut_ptr(), values.as_mut_ptr())
+        };
         keys.into_iter()
             .zip(values)
-            .filter_map(|(key, value)| Some(((number_i64(key)? as u32).to_be_bytes(), number_f64(value)? as f32)))
+            .filter_map(|(key, value)| {
+                Some((
+                    (number_i64(key)? as u32).to_be_bytes(),
+                    number_f64(value)? as f32,
+                ))
+            })
             .collect()
     }
 
     fn load(&mut self, font: &Cf, role: Role, probe: char) -> Option<FontFace> {
         let data = self.sfnt(font)?;
-        let name = Cf::new(unsafe { CTFontCopyPostScriptName(font.0) }).and_then(|name| cf_string(&name)).unwrap_or_default();
-        finish_face(data, 0, &Self::variations(font), role, probe, format!("CoreText {name}"))
+        let name = Cf::new(unsafe { CTFontCopyPostScriptName(font.0) })
+            .and_then(|name| cf_string(&name))
+            .unwrap_or_default();
+        finish_face(
+            data,
+            0,
+            &Self::variations(font),
+            role,
+            probe,
+            format!("CoreText {name}"),
+        )
     }
 
     fn font(&self, family: Family<'_>, role: Role) -> Option<Cf> {
@@ -203,7 +277,13 @@ impl CoreText {
             Family::SystemUi => system_ui_font(role),
             Family::SystemMono => {
                 let language = ns_string(&self.language);
-                Cf::new(unsafe { CTFontCreateUIFontForLanguage(UI_FONT_USER_FIXED_PITCH, SIZE, language as CFTypeRef) })
+                Cf::new(unsafe {
+                    CTFontCreateUIFontForLanguage(
+                        UI_FONT_USER_FIXED_PITCH,
+                        SIZE,
+                        language as CFTypeRef,
+                    )
+                })
             }
             Family::Named(name) => named_font(name, role),
         }
@@ -217,29 +297,116 @@ impl Backend for CoreText {
         Some((self.load(&font, role, LATIN_PROBE)?, name))
     }
 
-    /// CoreText's cascade for 한 from the UI font (Apple SD Gothic Neo).
-    fn hangul(&mut self, ui_family: Option<&str>, role: Role) -> Option<FontFace> {
+    /// CoreText's cascade accepts arbitrary Unicode, including supplementary planes.
+    fn fallback(&mut self, ui_family: Option<&str>, role: Role, probe: char) -> Option<FontFace> {
         let base = ui_family
             .and_then(|name| named_font(name, role))
             .or_else(|| system_ui_font(role))
             .or_else(|| {
                 let language = ns_string(&self.language);
-                Cf::new(unsafe { CTFontCreateUIFontForLanguage(UI_FONT_SYSTEM, SIZE, language as CFTypeRef) })
+                Cf::new(unsafe {
+                    CTFontCreateUIFontForLanguage(UI_FONT_SYSTEM, SIZE, language as CFTypeRef)
+                })
             })?;
-        let text = ns_string(&HANGUL_PROBE.to_string());
-        let font = Cf::new(unsafe { CTFontCreateForString(base.0, text as CFTypeRef, CFRange { location: 0, length: 1 }) })?;
-        self.load(&font, role, HANGUL_PROBE)
+        let text = ns_string(&probe.to_string());
+        if let Some(font) = Cf::new(unsafe {
+            CTFontCreateForString(
+                base.0,
+                text as CFTypeRef,
+                CFRange {
+                    location: 0,
+                    length: probe.len_utf16() as CFIndex,
+                },
+            )
+        }) && let Some(face) = self.load(&font, role, probe)
+        {
+            return Some(face);
+        }
+        // The preferred cascade can choose an unsupported outline format. Check
+        // the remaining installed descriptors by cmap before copying any tables.
+        if self.installed.is_none() {
+            let collection =
+                Cf::new(unsafe { CTFontCollectionCreateFromAvailableFonts(std::ptr::null()) })?;
+            self.installed =
+                Cf::new(unsafe { CTFontCollectionCreateMatchingFontDescriptors(collection.0) });
+        }
+        let descriptors = self.installed.as_ref()?.0;
+        let mut units = [0u16; 2];
+        let units = probe.encode_utf16(&mut units);
+        for index in 0..unsafe { CFArrayGetCount(descriptors) } {
+            let descriptor = unsafe { CFArrayGetValueAtIndex(descriptors, index) };
+            let Some(font) = Cf::new(unsafe {
+                CTFontCreateWithFontDescriptor(descriptor, SIZE, std::ptr::null())
+            }) else {
+                continue;
+            };
+            let mut glyphs = [0u16; 2];
+            unsafe {
+                CTFontGetGlyphsForCharacters(
+                    font.0,
+                    units.as_ptr(),
+                    glyphs.as_mut_ptr(),
+                    units.len() as CFIndex,
+                )
+            };
+            if !glyphs.iter().any(|glyph| *glyph != 0) {
+                continue;
+            }
+            if let Some(styled) = family_name(&font).and_then(|name| named_font(&name, role))
+                && let Some(face) = self.load(&styled, role, probe)
+            {
+                return Some(face);
+            }
+            if let Some(face) = self.load(&font, role, probe) {
+                return Some(face);
+            }
+        }
+        None
     }
 }
 
 /// CoreText resolution: `systemFontOfSize:weight:` (SF) for the UI roles,
 /// `kCTFontUIFontUserFixedPitch` for `monospace`, family descriptors for named
-/// families, and `CTFontCreateForString(…, "한")` for Hangul.
+/// families, and `CTFontCreateForString` for missing glyphs.
 pub(crate) fn system_fonts(request: &FontRequest) -> SystemFonts {
     autoreleasepool(|_| {
         let language = bcp47(&request.locale);
-        let language = if language.is_empty() { crate::apple::preferred_language() } else { language };
-        resolve(&mut CoreText { language, sfnts: HashMap::new() }, request)
+        let language = if language.is_empty() {
+            crate::apple::preferred_language()
+        } else {
+            language
+        };
+        resolve(
+            &mut CoreText {
+                language,
+                sfnts: HashMap::new(),
+                installed: None,
+            },
+            request,
+        )
+    })
+}
+
+pub(crate) fn fallback_fonts(
+    request: &FontRequest,
+    probes: &[(Role, char)],
+) -> Vec<Option<FontFace>> {
+    autoreleasepool(|_| {
+        let language = bcp47(&request.locale);
+        let language = if language.is_empty() {
+            crate::apple::preferred_language()
+        } else {
+            language
+        };
+        resolve_fallbacks(
+            &mut CoreText {
+                language,
+                sfnts: HashMap::new(),
+                installed: None,
+            },
+            request,
+            probes,
+        )
     })
 }
 

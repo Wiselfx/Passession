@@ -31,6 +31,7 @@ pub use host_config::{HostConfigInfo, inspect_host_config};
 pub use protocol::{response_error, response_type_for};
 
 use events::EventQueue;
+pub use paseo_client::transport::http::HostHttpResponse;
 
 pub type RequestId = String;
 
@@ -45,6 +46,8 @@ pub struct CoreConfig {
     pub daemon_home: Option<PathBuf>,
     /// An endpoint that must be present as a saved host (development daemons).
     pub default_endpoint: Option<String>,
+    /// Platform-protected encryption key for the embedded node. Normal hosts need no key store.
+    pub tailnet_key_store: Option<Arc<dyn paseo_tailnet::KeyStore>>,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +83,18 @@ pub(crate) type Operation =
     Box<dyn FnOnce(Arc<paseo_client::DaemonClient>) -> OperationFuture + Send>;
 
 pub(crate) enum Command {
+    Tailnet {
+        request_id: RequestId,
+        message: Value,
+    },
+    HostHttp {
+        host_id: String,
+        request_id: RequestId,
+        url: String,
+        max_bytes: usize,
+        reply: Option<tokio::sync::oneshot::Sender<Result<HostHttpResponse, CoreError>>>,
+        cancel: tokio_util::sync::CancellationToken,
+    },
     Request {
         host_id: String,
         request_id: RequestId,
@@ -156,6 +171,56 @@ impl CoreHandle {
     fn send(&self, command: Command) {
         // A closed channel means the core is shutting down; there is nobody left to answer.
         let _ = self.commands.send(command);
+    }
+
+    /// Runs a local embedded-Tailscale operation; never sends a daemon RPC.
+    pub fn tailnet_request(&self, message: Value) -> RequestId {
+        let request_id = requested_id(&message);
+        self.send(Command::Tailnet {
+            request_id: request_id.clone(),
+            message,
+        });
+        request_id
+    }
+
+    /// Fetches a bounded image/icon. Same-origin daemon resources use that host's selected
+    /// network; unrelated web resources never receive daemon credentials.
+    pub fn host_http_get(&self, host_id: &str, url: &str, max_bytes: usize) -> RequestId {
+        let request_id = ids::new_id();
+        self.send(Command::HostHttp {
+            host_id: host_id.to_owned(),
+            request_id: request_id.clone(),
+            url: url.to_owned(),
+            max_bytes,
+            reply: None,
+            cancel: tokio_util::sync::CancellationToken::new(),
+        });
+        request_id
+    }
+
+    /// Loads icon/website bytes without daemon credentials, including every redirect and
+    /// HTML-discovered candidate. Hostname routing still uses the selected host network.
+    /// Dropping this future cancels its socket; no GUI response event is posted.
+    pub async fn host_http_get_uncredentialed(
+        &self,
+        host_id: &str,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<HostHttpResponse, CoreError> {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let _guard = cancel.clone().drop_guard();
+        let (reply, response) = tokio::sync::oneshot::channel();
+        self.send(Command::HostHttp {
+            host_id: host_id.to_owned(),
+            request_id: ids::new_id(),
+            url: url.to_owned(),
+            max_bytes,
+            reply: Some(reply),
+            cancel,
+        });
+        response
+            .await
+            .map_err(|_| CoreError::new("CORE_CLOSED", "Client runtime closed", false))?
     }
 
     /// Sends one correlated request. A string `requestId` in `message` is used verbatim.
@@ -384,9 +449,10 @@ impl Drop for GuiCore {
     fn drop(&mut self) {
         self.handle.send(Command::Shutdown);
         if self.done.recv_timeout(Duration::from_secs(3)).is_ok()
-            && let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
+            && let Some(thread) = self.thread.take()
+        {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -397,11 +463,19 @@ mod terminal_input_tests {
     #[test]
     fn raw_terminal_input_keeps_bytes_and_enqueue_order() {
         let (commands, mut receiver) = mpsc::unbounded_channel();
-        let handle = CoreHandle { commands, state_dir: Arc::new(PathBuf::new()) };
+        let handle = CoreHandle {
+            commands,
+            state_dir: Arc::new(PathBuf::new()),
+        };
         handle.terminal_input("host", "subscription", &[27, b'[', b'M', 96, 133, 37]);
         handle.terminal_input("host", "subscription", b"next");
         for expected in [&[27, b'[', b'M', 96, 133, 37][..], &b"next"[..]] {
-            let Command::TerminalInput { host_id, subscription_id, data } = receiver.try_recv().unwrap() else {
+            let Command::TerminalInput {
+                host_id,
+                subscription_id,
+                data,
+            } = receiver.try_recv().unwrap()
+            else {
                 panic!("expected terminal input");
             };
             assert_eq!(host_id, "host");

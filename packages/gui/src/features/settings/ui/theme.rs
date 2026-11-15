@@ -112,4 +112,6 @@ pub fn identity_foreground(name: &str, dark: bool) -> Option<Vec4> {
     Some(rgb(if dark { darkc } else { light }))
 }
 
-pub const IDENTITY_COLORS: [&str; 10] = ["violet", "sky", "emerald", "orange", "pink", "indigo", "teal", "red", "amber", "blue"];
+pub const IDENTITY_COLORS: [&str; 10] = [
+    "violet", "sky", "emerald", "orange", "pink", "indigo", "teal", "red", "amber", "blue",
+];

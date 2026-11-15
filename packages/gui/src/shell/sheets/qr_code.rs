@@ -24,7 +24,8 @@ fn raw_data_modules(version: i32) -> i32 {
 }
 
 fn data_codewords(version: i32) -> i32 {
-    raw_data_modules(version) / 8 - ECC_CODEWORDS_PER_BLOCK[version as usize] * NUM_ERROR_CORRECTION_BLOCKS[version as usize]
+    raw_data_modules(version) / 8
+        - ECC_CODEWORDS_PER_BLOCK[version as usize] * NUM_ERROR_CORRECTION_BLOCKS[version as usize]
 }
 
 /// Modules (`[y][x]`, `true` = dark) of `text`, or an error when it does not fit version 40.
@@ -60,13 +61,20 @@ pub fn encode(text: &str) -> Result<Vec<Vec<bool>>, String> {
         append(&mut bits, pad, 8);
         pad ^= 0xEC ^ 0x11;
     }
-    let data: Vec<u8> = bits.chunks(8).map(|chunk| chunk.iter().fold(0u8, |a, b| (a << 1) | *b as u8)).collect();
+    let data: Vec<u8> = bits
+        .chunks(8)
+        .map(|chunk| chunk.iter().fold(0u8, |a, b| (a << 1) | *b as u8))
+        .collect();
     let codewords = add_ecc_and_interleave(&data, version);
 
     let size = (version * 4 + 17) as usize;
     let mut modules = vec![vec![false; size]; size];
     let mut function = vec![vec![false; size]; size];
-    let set = |modules: &mut Vec<Vec<bool>>, function: &mut Vec<Vec<bool>>, x: usize, y: usize, dark: bool| {
+    let set = |modules: &mut Vec<Vec<bool>>,
+               function: &mut Vec<Vec<bool>>,
+               x: usize,
+               y: usize,
+               dark: bool| {
         modules[y][x] = dark;
         function[y][x] = true;
     };
@@ -82,7 +90,13 @@ pub fn encode(text: &str) -> Result<Vec<Vec<bool>>, String> {
                 let distance = dx.abs().max(dy.abs());
                 let (x, y) = (cx + dx, cy + dy);
                 if x >= 0 && (x as usize) < size && y >= 0 && (y as usize) < size {
-                    set(&mut modules, &mut function, x as usize, y as usize, distance != 2 && distance != 4);
+                    set(
+                        &mut modules,
+                        &mut function,
+                        x as usize,
+                        y as usize,
+                        distance != 2 && distance != 4,
+                    );
                 }
             }
         }
@@ -96,7 +110,13 @@ pub fn encode(text: &str) -> Result<Vec<Vec<bool>>, String> {
             }
             for dy in -2..=2i32 {
                 for dx in -2..=2i32 {
-                    set(&mut modules, &mut function, (positions[i] + dx) as usize, (positions[j] + dy) as usize, dx.abs().max(dy.abs()) != 1);
+                    set(
+                        &mut modules,
+                        &mut function,
+                        (positions[i] + dx) as usize,
+                        (positions[j] + dy) as usize,
+                        dx.abs().max(dy.abs()) != 1,
+                    );
                 }
             }
         }
@@ -153,7 +173,11 @@ pub fn encode(text: &str) -> Result<Vec<Vec<bool>>, String> {
             for j in 0..2 {
                 let x = (right - j) as usize;
                 let upward = (right + 1) & 2 == 0;
-                let y = if upward { size - 1 - vertical } else { vertical };
+                let y = if upward {
+                    size - 1 - vertical
+                } else {
+                    vertical
+                };
                 if !function[y][x] && index < codewords.len() * 8 {
                     modules[y][x] = (codewords[index >> 3] >> (7 - (index & 7))) & 1 != 0;
                     index += 1;
@@ -241,7 +265,8 @@ fn divisor(degree: usize) -> Vec<u32> {
 }
 
 fn remainder(data: &[u8], divisor: &[u32]) -> Vec<u8> {
-    let mut result: std::collections::VecDeque<u32> = std::iter::repeat_n(0, divisor.len()).collect();
+    let mut result: std::collections::VecDeque<u32> =
+        std::iter::repeat_n(0, divisor.len()).collect();
     for byte in data {
         let factor = *byte as u32 ^ result.pop_front().unwrap_or(0);
         result.push_back(0);
@@ -307,14 +332,24 @@ fn penalty(modules: &[Vec<bool>]) -> i64 {
             // Finder-like 1:1:3:1:1 runs with four light modules on either side.
             let mut j = 0;
             while j + 10 < size {
-                if (0..7).all(|k| at(i, j + k + 4) == PATTERN[k]) && !at(i, j) && !at(i, j + 1) && !at(i, j + 2) && !at(i, j + 3) {
+                if (0..7).all(|k| at(i, j + k + 4) == PATTERN[k])
+                    && !at(i, j)
+                    && !at(i, j + 1)
+                    && !at(i, j + 2)
+                    && !at(i, j + 3)
+                {
                     penalty += 40;
                 }
                 j += 1;
             }
             let mut j = 0;
             while j + 10 < size {
-                if (0..7).all(|k| at(i, j + k) == PATTERN[k]) && !at(i, j + 7) && !at(i, j + 8) && !at(i, j + 9) && !at(i, j + 10) {
+                if (0..7).all(|k| at(i, j + k) == PATTERN[k])
+                    && !at(i, j + 7)
+                    && !at(i, j + 8)
+                    && !at(i, j + 9)
+                    && !at(i, j + 10)
+                {
                     penalty += 40;
                 }
                 j += 1;
@@ -327,7 +362,10 @@ fn penalty(modules: &[Vec<bool>]) -> i64 {
     for y in 0..size.saturating_sub(1) {
         for x in 0..size.saturating_sub(1) {
             let color = modules[y][x];
-            if color == modules[y][x + 1] && color == modules[y + 1][x] && color == modules[y + 1][x + 1] {
+            if color == modules[y][x + 1]
+                && color == modules[y + 1][x]
+                && color == modules[y + 1][x + 1]
+            {
                 result += 3;
             }
         }

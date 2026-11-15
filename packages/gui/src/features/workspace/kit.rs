@@ -12,7 +12,9 @@ use makepad_widgets::*;
 use crate::common::paint::{Font, Painter, TextSpec, rect};
 use crate::common::widgets::{PLabelWidgetExt, PLabelWidgetRefExt, TextRole};
 use crate::common::{UiContext, UiEffect, clock, overlay};
-use crate::theme::{self, ControlSize, Palette, control_height, control_icon_size, fade, with_alpha};
+use crate::theme::{
+    self, ControlSize, Palette, control_height, control_icon_size, fade, with_alpha,
+};
 
 live_design! {
     use link::theme::*;
@@ -387,7 +389,13 @@ impl WaButton {
         match self.kind {
             WaButtonKind::Icon => {
                 let extent = if compact { 32.0 } else { 26.0 };
-                ButtonGeometry { height: extent, pad: (extent - 16.0) * 0.5, radius: 6.0, icon: 16.0, font: 14.0 }
+                ButtonGeometry {
+                    height: extent,
+                    pad: (extent - 16.0) * 0.5,
+                    radius: 6.0,
+                    icon: 16.0,
+                    font: 14.0,
+                }
             }
             WaButtonKind::Field => {
                 let md = self.field_size.is_md(compact);
@@ -399,19 +407,79 @@ impl WaButton {
                     font: 14.0,
                 }
             }
-            WaButtonKind::Glyph => ButtonGeometry { height: 22.0, pad: 4.0, radius: 4.0, icon: 14.0, font: 12.0 },
-            WaButtonKind::Submit => ButtonGeometry { height: 28.0, pad: 12.0, radius: 14.0, icon: if mobile { 20.0 } else { 16.0 }, font: 14.0 },
-            WaButtonKind::Round => ButtonGeometry { height: 28.0, pad: 6.0, radius: 14.0, icon: if mobile { 20.0 } else { 16.0 }, font: 14.0 },
-            WaButtonKind::Toolbar => ButtonGeometry { height: 28.0, pad: 8.0, radius: 14.0, icon: if mobile { 20.0 } else { 16.0 }, font: 14.0 },
-            WaButtonKind::Menu => ButtonGeometry { height: 22.0, pad: 4.0, radius: 4.0, icon: 14.0, font: 14.0 },
-            WaButtonKind::Chip => ButtonGeometry { height: 28.0, pad: 8.0, radius: 6.0, icon: 14.0, font: 14.0 },
+            WaButtonKind::Glyph => ButtonGeometry {
+                height: 22.0,
+                pad: 4.0,
+                radius: 4.0,
+                icon: 14.0,
+                font: 12.0,
+            },
+            WaButtonKind::Submit => ButtonGeometry {
+                height: 28.0,
+                pad: 12.0,
+                radius: 14.0,
+                icon: if mobile { 20.0 } else { 16.0 },
+                font: 14.0,
+            },
+            WaButtonKind::Round => ButtonGeometry {
+                height: 28.0,
+                pad: 6.0,
+                radius: 14.0,
+                icon: if mobile { 20.0 } else { 16.0 },
+                font: 14.0,
+            },
+            WaButtonKind::Toolbar => ButtonGeometry {
+                height: 28.0,
+                pad: 8.0,
+                radius: 14.0,
+                icon: if mobile { 20.0 } else { 16.0 },
+                font: 14.0,
+            },
+            WaButtonKind::Menu => ButtonGeometry {
+                height: 22.0,
+                pad: 4.0,
+                radius: 4.0,
+                icon: 14.0,
+                font: 14.0,
+            },
+            WaButtonKind::Chip => ButtonGeometry {
+                height: 28.0,
+                pad: 8.0,
+                radius: 6.0,
+                icon: 14.0,
+                font: 14.0,
+            },
             WaButtonKind::Tool => {
                 let (extent, glyph) = if compact { (32.0, 18.0) } else { (20.0, 14.0) };
-                ButtonGeometry { height: extent, pad: (extent - glyph) * 0.5, radius: 6.0, icon: glyph, font: 12.0 }
+                ButtonGeometry {
+                    height: extent,
+                    pad: (extent - glyph) * 0.5,
+                    radius: 6.0,
+                    icon: glyph,
+                    font: 12.0,
+                }
             }
-            WaButtonKind::Filter => ButtonGeometry { height: 32.0, pad: 12.0, radius: 6.0, icon: 14.0, font: 14.0 },
-            WaButtonKind::Badge => ButtonGeometry { height: 28.0, pad: 8.0, radius: 14.0, icon: 14.0, font: 14.0 },
-            WaButtonKind::Link => ButtonGeometry { height: 24.0, pad: 4.0, radius: 4.0, icon: 12.0, font: 12.0 },
+            WaButtonKind::Filter => ButtonGeometry {
+                height: 32.0,
+                pad: 12.0,
+                radius: 6.0,
+                icon: 14.0,
+                font: 14.0,
+            },
+            WaButtonKind::Badge => ButtonGeometry {
+                height: 28.0,
+                pad: 8.0,
+                radius: 14.0,
+                icon: 14.0,
+                font: 14.0,
+            },
+            WaButtonKind::Link => ButtonGeometry {
+                height: 24.0,
+                pad: 4.0,
+                radius: 4.0,
+                icon: 12.0,
+                font: 12.0,
+            },
             _ => {
                 let (pad, radius) = match self.size {
                     ControlSize::Xs | ControlSize::Sm => (12.0, 12.0),
@@ -423,7 +491,11 @@ impl WaButton {
                     pad,
                     radius,
                     icon: control_icon_size(self.size),
-                    font: if self.size == ControlSize::Xs { 12.0 } else { 14.0 },
+                    font: if self.size == ControlSize::Xs {
+                        12.0
+                    } else {
+                        14.0
+                    },
                 }
             }
         }
@@ -439,33 +511,81 @@ impl WaButton {
             WaButtonKind::Secondary => (p.surface3, p.surface3, p.foreground),
             WaButtonKind::Outline => (clear, p.border_accent, p.foreground),
             WaButtonKind::Ghost => (clear, clear, if lit { p.foreground } else { p.muted }),
-            WaButtonKind::Danger => (p.destructive, p.destructive, if p.is_dark { vec4(1.0, 1.0, 1.0, 1.0) } else { p.surface0 }),
+            WaButtonKind::Danger => (
+                p.destructive,
+                p.destructive,
+                if p.is_dark {
+                    vec4(1.0, 1.0, 1.0, 1.0)
+                } else {
+                    p.surface0
+                },
+            ),
             WaButtonKind::Field => (p.surface2, if lit { p.muted } else { clear }, p.foreground),
-            WaButtonKind::Badge => (if lit { p.surface2 } else { clear }, clear, if lit { p.foreground } else { p.muted }),
+            WaButtonKind::Badge => (
+                if lit { p.surface2 } else { clear },
+                clear,
+                if lit { p.foreground } else { p.muted },
+            ),
             WaButtonKind::Link => (clear, clear, if lit { p.foreground } else { p.muted }),
             WaButtonKind::Glyph => (clear, clear, p.muted),
             WaButtonKind::Submit => (p.accent, clear, p.on_tertiary),
-            WaButtonKind::Round => (if lit { p.surface2 } else { clear }, clear, if lit { p.foreground } else { p.muted }),
-            WaButtonKind::Menu => (if lit { p.surface2 } else { clear }, clear, if lit { p.foreground } else { p.muted }),
+            WaButtonKind::Round => (
+                if lit { p.surface2 } else { clear },
+                clear,
+                if lit { p.foreground } else { p.muted },
+            ),
+            WaButtonKind::Menu => (
+                if lit { p.surface2 } else { clear },
+                clear,
+                if lit { p.foreground } else { p.muted },
+            ),
             WaButtonKind::Chip => (p.surface2, p.border_accent, p.foreground),
             WaButtonKind::Tool => {
-                let highlight = if p.is_dark { theme::argb(0x14ffffff) } else { theme::argb(0x0f000000) };
-                (if lit || (self.selected && !disabled) { highlight } else { clear }, clear, p.muted)
+                let highlight = if p.is_dark {
+                    theme::argb(0x14ffffff)
+                } else {
+                    theme::argb(0x0f000000)
+                };
+                (
+                    if lit || (self.selected && !disabled) {
+                        highlight
+                    } else {
+                        clear
+                    },
+                    clear,
+                    p.muted,
+                )
             }
             WaButtonKind::Filter => (
-                if self.pressed && !disabled { p.surface3 } else if lit { p.surface2 } else { p.surface1 },
+                if self.pressed && !disabled {
+                    p.surface3
+                } else if lit {
+                    p.surface2
+                } else {
+                    p.surface1
+                },
                 p.border,
                 p.foreground,
             ),
             WaButtonKind::Toolbar => (
-                if self.pressed && !disabled { p.surface0 } else if lit { p.surface2 } else { clear },
+                if self.pressed && !disabled {
+                    p.surface0
+                } else if lit {
+                    p.surface2
+                } else {
+                    clear
+                },
                 clear,
                 p.muted,
             ),
             WaButtonKind::Icon => (
                 if lit { p.interaction_highlight } else { clear },
                 clear,
-                if self.strong || lit { p.foreground } else { p.muted },
+                if self.strong || lit {
+                    p.foreground
+                } else {
+                    p.muted
+                },
             ),
         };
         (fill, border, self.color.unwrap_or(content))
@@ -480,7 +600,11 @@ impl Widget for WaButton {
         let disabled = !self.enabled || self.busy;
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(fe) => {
-                cx.set_cursor(if disabled { MouseCursor::Default } else { MouseCursor::Hand });
+                cx.set_cursor(if disabled {
+                    MouseCursor::Default
+                } else {
+                    MouseCursor::Hand
+                });
                 self.hovered = true;
                 if let Some(ui) = scope.data.get_mut::<UiContext>()
                     && !self.tooltip.as_ref().is_empty()
@@ -510,8 +634,16 @@ impl Widget for WaButton {
                 self.redraw(cx);
             }
             Hit::FingerUp(fe) => {
-                if std::mem::take(&mut self.pressed) && fe.is_over && !disabled && (!fe.device.is_touch() || fe.was_tap()) {
-                    cx.widget_action(self.widget_uid(), &scope.path, WaButtonAction::Clicked(fe.modifiers));
+                if std::mem::take(&mut self.pressed)
+                    && fe.is_over
+                    && !disabled
+                    && (!fe.device.is_touch() || fe.was_tap())
+                {
+                    cx.widget_action(
+                        self.widget_uid(),
+                        &scope.path,
+                        WaButtonAction::Clicked(fe.modifiers),
+                    );
                 }
                 self.redraw(cx);
             }
@@ -527,21 +659,44 @@ impl Widget for WaButton {
         let t = theme::current_typography();
         let g = self.geometry(crate::common::is_compact_layout(cx), t.mobile);
         let disabled = !self.enabled || self.busy;
-        let font = if matches!(self.kind, WaButtonKind::Submit | WaButtonKind::Filter | WaButtonKind::Chip) { Font::Medium } else { Font::Regular };
+        let font = if matches!(
+            self.kind,
+            WaButtonKind::Submit | WaButtonKind::Filter | WaButtonKind::Chip
+        ) {
+            Font::Medium
+        } else {
+            Font::Regular
+        };
         let spec = TextSpec::new(font, t.ui_size(g.font), p.foreground);
         let label = self.text.as_ref().to_string();
         let icon = self.icon.as_ref().to_string();
         let trailing = self.trailing.as_ref().to_string();
         let has_icon = !icon.is_empty() || self.busy || self.dot.is_some();
-        let text_w = if label.is_empty() { 0.0 } else { self.painter.measure(cx, spec, &label).x };
+        let text_w = if label.is_empty() {
+            0.0
+        } else {
+            self.painter.measure(cx, spec, &label).x
+        };
         let gap = match self.kind {
             WaButtonKind::Link | WaButtonKind::Toolbar => 4.0,
             WaButtonKind::Filter | WaButtonKind::Chip => 6.0,
             _ => 8.0,
         };
-        let trail_size = if self.kind == WaButtonKind::Chip { 12.0 } else { g.icon };
-        let lead_w = if has_icon { g.icon + if label.is_empty() { 0.0 } else { gap } } else { 0.0 };
-        let trail_w = if trailing.is_empty() { 0.0 } else { gap + trail_size };
+        let trail_size = if self.kind == WaButtonKind::Chip {
+            12.0
+        } else {
+            g.icon
+        };
+        let lead_w = if has_icon {
+            g.icon + if label.is_empty() { 0.0 } else { gap }
+        } else {
+            0.0
+        };
+        let trail_w = if trailing.is_empty() {
+            0.0
+        } else {
+            gap + trail_size
+        };
         let content_w = self.lead_space + lead_w + text_w + trail_w;
         let square = matches!(
             self.kind,
@@ -554,21 +709,53 @@ impl Widget for WaButton {
                 | WaButtonKind::Tool
         ) && label.is_empty()
             && trailing.is_empty();
-        let natural_w = if square { g.height } else { content_w + g.pad * 2.0 };
+        let natural_w = if square {
+            g.height
+        } else {
+            content_w + g.pad * 2.0
+        };
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(natural_w) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(g.height) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(natural_w)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(g.height)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
         let (fill, border, content) = self.colors(&p);
-        let opacity = if disabled { 0.5 } else if self.pressed { 0.85 } else { 1.0 };
-        let base_radius = if self.radius > 0.0 { self.radius } else { g.radius };
-        let (border, radius) = if self.pill { (p.border_accent, r.size.y * 0.5) } else { (border, base_radius.min(r.size.y * 0.5)) };
+        let opacity = if disabled {
+            0.5
+        } else if self.pressed {
+            0.85
+        } else {
+            1.0
+        };
+        let base_radius = if self.radius > 0.0 {
+            self.radius
+        } else {
+            g.radius
+        };
+        let (border, radius) = if self.pill {
+            (p.border_accent, r.size.y * 0.5)
+        } else {
+            (border, base_radius.min(r.size.y * 0.5))
+        };
         let border_w = if border.w > 0.0 { 1.0 } else { 0.0 };
         // The pill outline is a foreground decoration: it keeps full opacity.
-        let border = if self.pill { border } else { fade(border, opacity) };
-        self.area = self.painter.capture_box(cx, r, fade(fill, opacity), border, border_w, radius);
+        let border = if self.pill {
+            border
+        } else {
+            fade(border, opacity)
+        };
+        self.area = self
+            .painter
+            .capture_box(cx, r, fade(fill, opacity), border, border_w, radius);
         let content = fade(content, opacity);
         // Field triggers start at the padding; square icon buttons centre the glyph exactly
         // (a 20px mobile glyph in a 28px circle); every other kind centres its content but
@@ -584,20 +771,54 @@ impl Widget for WaButton {
         if has_icon {
             let icon_rect = rect(x, r.pos.y + (r.size.y - g.icon) * 0.5, g.icon, g.icon);
             if self.busy {
-                let ring = if self.kind == WaButtonKind::Submit { rect(icon_rect.pos.x + (g.icon - 14.0) * 0.5, icon_rect.pos.y + (g.icon - 14.0) * 0.5, 14.0, 14.0) } else { icon_rect };
-                self.painter.ring(cx, ring, content, if self.kind == WaButtonKind::Submit { 2.0 } else { 1.5 }, 0.25, clock::phase(900));
+                let ring = if self.kind == WaButtonKind::Submit {
+                    rect(
+                        icon_rect.pos.x + (g.icon - 14.0) * 0.5,
+                        icon_rect.pos.y + (g.icon - 14.0) * 0.5,
+                        14.0,
+                        14.0,
+                    )
+                } else {
+                    icon_rect
+                };
+                self.painter.ring(
+                    cx,
+                    ring,
+                    content,
+                    if self.kind == WaButtonKind::Submit {
+                        2.0
+                    } else {
+                        1.5
+                    },
+                    0.25,
+                    clock::phase(900),
+                );
                 clock::register(cx, self.area);
             } else if let Some(status) = self.dot {
-                self.painter.dot(cx, icon_rect.center(), 8.0, fade(status_color(&p, status), opacity));
+                self.painter.dot(
+                    cx,
+                    icon_rect.center(),
+                    8.0,
+                    fade(status_color(&p, status), opacity),
+                );
             } else if icon == MOBILE_MENU {
                 // Original MobileMenuIcon: 16/16/8 x 1.5 lines in a 16x12 box.
                 let left = icon_rect.pos.x + (icon_rect.size.x - 16.0) * 0.5;
                 let top = icon_rect.pos.y + (icon_rect.size.y - 12.0) * 0.5;
                 for (index, width) in [16.0, 16.0, 8.0].into_iter().enumerate() {
-                    self.painter.fill(cx, rect(left, top + index as f64 * 5.25, width, 1.5), content, 1.0);
+                    self.painter.fill(
+                        cx,
+                        rect(left, top + index as f64 * 5.25, width, 1.5),
+                        content,
+                        1.0,
+                    );
                 }
             } else {
-                let base = if self.kind == WaButtonKind::Field { fade(p.muted, opacity) } else { content };
+                let base = if self.kind == WaButtonKind::Field {
+                    fade(p.muted, opacity)
+                } else {
+                    content
+                };
                 let tint = self.icon_color.map(|c| fade(c, opacity)).unwrap_or(base);
                 self.painter.icon(cx, icon_rect, &icon, g.icon, tint);
             }
@@ -605,13 +826,28 @@ impl Widget for WaButton {
         }
         let right = r.pos.x + r.size.x - g.pad;
         if !trailing.is_empty() {
-            let trail_rect = rect(right - trail_size, r.pos.y + (r.size.y - trail_size) * 0.5, trail_size, trail_size);
+            let trail_rect = rect(
+                right - trail_size,
+                r.pos.y + (r.size.y - trail_size) * 0.5,
+                trail_size,
+                trail_size,
+            );
             let muted = fade(p.muted, opacity);
-            self.painter.icon(cx, trail_rect, &trailing, trail_size, muted);
+            self.painter
+                .icon(cx, trail_rect, &trailing, trail_size, muted);
         }
         if !label.is_empty() {
             let avail = (right - trail_w - x).max(0.0);
-            self.painter.text_in(cx, rect(x, r.pos.y, avail, r.size.y), TextSpec { color: content, ..spec }, &label, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(x, r.pos.y, avail, r.size.y),
+                TextSpec {
+                    color: content,
+                    ..spec
+                },
+                &label,
+                0.0,
+            );
         }
         DrawStep::done()
     }
@@ -807,7 +1043,11 @@ impl WaTrigger {
     /// Width the desktop badge wants for its value, before any cap: 8px
     /// insets, the 16px lead, 4px gaps, the value and the 14px chevron.
     fn badge_width(&mut self, cx: &mut Cx) -> f64 {
-        let spec = TextSpec::new(Font::Regular, theme::current_typography().ui_size(14.0), Vec4::default());
+        let spec = TextSpec::new(
+            Font::Regular,
+            theme::current_typography().ui_size(14.0),
+            Vec4::default(),
+        );
         8.0 * 2.0 + 16.0 + 4.0 + self.painter.measure(cx, spec, &self.value).x + 4.0 + 14.0
     }
 }
@@ -819,7 +1059,11 @@ impl Widget for WaTrigger {
         }
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(fe) => {
-                cx.set_cursor(if self.enabled { MouseCursor::Hand } else { MouseCursor::Default });
+                cx.set_cursor(if self.enabled {
+                    MouseCursor::Hand
+                } else {
+                    MouseCursor::Default
+                });
                 self.hovered = true;
                 if let Some(ui) = scope.data.get_mut::<UiContext>()
                     && !self.tooltip.is_empty()
@@ -847,8 +1091,16 @@ impl Widget for WaTrigger {
                 self.redraw(cx);
             }
             Hit::FingerUp(fe) => {
-                if std::mem::take(&mut self.pressed) && fe.is_over && self.enabled && (!fe.device.is_touch() || fe.was_tap()) {
-                    cx.widget_action(self.widget_uid(), &scope.path, WaButtonAction::Clicked(fe.modifiers));
+                if std::mem::take(&mut self.pressed)
+                    && fe.is_over
+                    && self.enabled
+                    && (!fe.device.is_touch() || fe.was_tap())
+                {
+                    cx.widget_action(
+                        self.widget_uid(),
+                        &scope.path,
+                        WaButtonAction::Clicked(fe.modifiers),
+                    );
                 }
                 self.redraw(cx);
             }
@@ -875,60 +1127,118 @@ impl Widget for WaTrigger {
         } else {
             rest
         };
-        let value_spec = TextSpec::new(Font::Regular, t.ui_size(14.0), fade(if field { p.foreground } else { p.muted }, opacity));
-        let (height, pad, radius, gap) = if field { (56.0, 12.0, 12.0, 8.0) } else { (28.0, 8.0, 16.0, 4.0) };
-        let natural = self.badge_width(cx).min(self.max_width.unwrap_or(TRIGGER_MAX_W).min(TRIGGER_MAX_W));
+        let value_spec = TextSpec::new(
+            Font::Regular,
+            t.ui_size(14.0),
+            fade(if field { p.foreground } else { p.muted }, opacity),
+        );
+        let (height, pad, radius, gap) = if field {
+            (56.0, 12.0, 12.0, 8.0)
+        } else {
+            (28.0, 8.0, 16.0, 4.0)
+        };
+        let natural = self
+            .badge_width(cx)
+            .min(self.max_width.unwrap_or(TRIGGER_MAX_W).min(TRIGGER_MAX_W));
         let walk = Walk {
-            width: if field { Size::Fill } else if matches!(walk.width, Size::Fit) { Size::Fixed(natural) } else { walk.width },
+            width: if field {
+                Size::Fill
+            } else if matches!(walk.width, Size::Fit) {
+                Size::Fixed(natural)
+            } else {
+                walk.width
+            },
             height: Size::Fixed(height),
             ..walk
         };
         let r = cx.walk_turtle(walk);
-        self.area = self.painter.capture_box(cx, r, fade(fill, opacity), Vec4::default(), 0.0, radius);
-        let chevron = rect(r.pos.x + r.size.x - pad - 14.0, r.pos.y + (r.size.y - 14.0) * 0.5 + 1.0, 14.0, 14.0);
-        self.painter.icon(cx, chevron, "chevron-down", 14.0, fade(p.muted, opacity));
+        self.area =
+            self.painter
+                .capture_box(cx, r, fade(fill, opacity), Vec4::default(), 0.0, radius);
+        let chevron = rect(
+            r.pos.x + r.size.x - pad - 14.0,
+            r.pos.y + (r.size.y - 14.0) * 0.5 + 1.0,
+            14.0,
+            14.0,
+        );
+        self.painter
+            .icon(cx, chevron, "chevron-down", 14.0, fade(p.muted, opacity));
         let (row_y, value_x_gap) = if field {
             let label_spec = TextSpec::new(Font::Regular, t.ui_size(12.0), fade(p.muted, opacity));
             let label_h = self.painter.line_height(cx, label_spec);
             let value_h = 20.0f64.max(self.painter.line_height(cx, value_spec));
             let top = r.pos.y + (r.size.y - label_h - 2.0 - value_h) * 0.5;
             let label = self.label.clone();
-            self.painter.text_in(cx, rect(r.pos.x + pad, top, r.size.x - pad * 2.0 - 14.0 - gap, label_h), label_spec, &label, 0.0);
+            self.painter.text_in(
+                cx,
+                rect(
+                    r.pos.x + pad,
+                    top,
+                    r.size.x - pad * 2.0 - 14.0 - gap,
+                    label_h,
+                ),
+                label_spec,
+                &label,
+                0.0,
+            );
             (top + label_h + 2.0 + (value_h - 16.0) * 0.5, 6.0)
         } else {
             (r.pos.y + (r.size.y - 16.0) * 0.5, gap)
         };
         let lead = rect(r.pos.x + pad, row_y, 16.0, 16.0);
         match &self.lead {
-            Some(TriggerLead::Icon(name)) => self.painter.icon(cx, lead, name, 14.0, fade(p.muted, opacity)),
+            Some(TriggerLead::Icon(name)) => {
+                self.painter
+                    .icon(cx, lead, name, 14.0, fade(p.muted, opacity))
+            }
             Some(TriggerLead::Project { fill, initial }) => {
                 self.painter.fill(cx, lead, fade(*fill, opacity), 4.0);
-                let spec = TextSpec::new(Font::Medium, 10.0, fade(vec4(1.0, 1.0, 1.0, 1.0), opacity));
+                let spec =
+                    TextSpec::new(Font::Medium, 10.0, fade(vec4(1.0, 1.0, 1.0, 1.0), opacity));
                 let initial = initial.clone();
                 self.painter.text_in(cx, lead, spec, &initial, 0.5);
             }
             Some(TriggerLead::Status(status)) => {
-                self.painter.dot(cx, lead.center(), 8.0, fade(status_color(&p, *status), opacity));
+                self.painter.dot(
+                    cx,
+                    lead.center(),
+                    8.0,
+                    fade(status_color(&p, *status), opacity),
+                );
             }
             None => {}
         }
         let value_x = lead.pos.x + 16.0 + value_x_gap;
         let value_w = (chevron.pos.x - gap - value_x).max(0.0);
         let value = self.value.clone();
-        self.painter.text_in(cx, rect(value_x, row_y - 2.0, value_w, 20.0), value_spec, &value, 0.0);
+        self.painter.text_in(
+            cx,
+            rect(value_x, row_y - 2.0, value_w, 20.0),
+            value_spec,
+            &value,
+            0.0,
+        );
         DrawStep::done()
     }
 }
 
 impl WaTriggerRef {
     pub fn clicked(&self, actions: &Actions) -> bool {
-        self.borrow().is_some_and(|b| matches!(actions.find_widget_action(b.widget_uid()).cast_ref(), WaButtonAction::Clicked(_)))
+        self.borrow().is_some_and(|b| {
+            matches!(
+                actions.find_widget_action(b.widget_uid()).cast_ref(),
+                WaButtonAction::Clicked(_)
+            )
+        })
     }
 
     /// Label (compact field only), value, tooltip (desktop badge only) and leading slot.
     pub fn set(&self, cx: &mut Cx, label: &str, value: &str, tooltip: &str, lead: TriggerLead) {
         if let Some(mut b) = self.borrow_mut()
-            && (b.label != label || b.value != value || b.tooltip != tooltip || b.lead.as_ref() != Some(&lead))
+            && (b.label != label
+                || b.value != value
+                || b.tooltip != tooltip
+                || b.lead.as_ref() != Some(&lead))
         {
             b.label = label.to_owned();
             b.value = value.to_owned();
@@ -949,7 +1259,9 @@ impl WaTriggerRef {
 
     /// Width the desktop badge wants for its current value, before any cap.
     pub fn badge_width(&self, cx: &mut Cx) -> f64 {
-        self.borrow_mut().map(|mut b| b.badge_width(cx)).unwrap_or(0.0)
+        self.borrow_mut()
+            .map(|mut b| b.badge_width(cx))
+            .unwrap_or(0.0)
     }
 
     /// Caps a Fit desktop badge below its 240px maximum; `None` restores it.
@@ -1017,7 +1329,9 @@ pub struct WaInput {
 
 impl Widget for WaInput {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
+        self.view
+            .text_input(id!(input))
+            .set_is_multiline(cx, self.multiline);
         self.view.handle_event(cx, event, scope);
         if let Event::Actions(actions) = event {
             let input = self.view.text_input(id!(input));
@@ -1040,7 +1354,9 @@ impl Widget for WaInput {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.view.text_input(id!(input)).set_is_multiline(cx, self.multiline);
+        self.view
+            .text_input(id!(input))
+            .set_is_multiline(cx, self.multiline);
         self.apply_theme(cx);
         self.apply_empty(cx);
         let step = self.view.draw_walk(cx, scope, walk);
@@ -1075,7 +1391,11 @@ impl WaInput {
         let p = theme::current_palette();
         // The shader mixes `color_focus` over the empty colour, so a focused empty field
         // would show its hint in the text colour.
-        let color = if empty { if self.faint_hint { p.surface4 } else { p.muted } } else { p.foreground };
+        let color = if empty {
+            if self.faint_hint { p.surface4 } else { p.muted }
+        } else {
+            p.foreground
+        };
         input.apply_over(cx, live! { draw_text: { color: (color), color_focus: (color), color_hover: (color), color_down: (color) } });
     }
 
@@ -1154,14 +1474,21 @@ impl WaInput {
         input.apply_over(cx, &theme::text_selection(with_alpha(p.accent, 0.35)));
         match self.look {
             WaInputLook::Field => {
-                let pad_v = if self.multiline { 12.0 } else { self.field_pad(md) };
+                let pad_v = if self.multiline {
+                    12.0
+                } else {
+                    self.field_pad(md)
+                };
                 let pad_h = if md { 16.0 } else { 12.0 };
                 let pad_r = pad_h + self.trailing_space;
                 input.apply_over(cx, live! { padding: { left: (pad_h), right: (pad_r), top: (pad_v), bottom: (pad_v) } });
             }
             // The card's 16/12 padding plus the field's 16/12 content padding.
             WaInputLook::Area => {
-                input.apply_over(cx, live! { padding: { left: 32., right: 32., top: 24., bottom: 24. } });
+                input.apply_over(
+                    cx,
+                    live! { padding: { left: 32., right: 32., top: 24., bottom: 24. } },
+                );
             }
             WaInputLook::Bare => {}
         }
@@ -1172,7 +1499,9 @@ impl WaInput {
 impl WaInputRef {
     /// The wrapped Makepad input.
     pub fn input(&self) -> TextInputRef {
-        self.borrow().map(|f| f.view.text_input(id!(input))).unwrap_or_else(|| WidgetRef::empty().as_text_input())
+        self.borrow()
+            .map(|f| f.view.text_input(id!(input)))
+            .unwrap_or_else(|| WidgetRef::empty().as_text_input())
     }
 
     pub fn set_multiline(&self, cx: &mut Cx, multiline: bool) {
@@ -1180,7 +1509,10 @@ impl WaInputRef {
             && inner.multiline != multiline
         {
             inner.multiline = multiline;
-            inner.view.text_input(id!(input)).set_is_multiline(cx, multiline);
+            inner
+                .view
+                .text_input(id!(input))
+                .set_is_multiline(cx, multiline);
             inner.applied = None;
             inner.line_height = None;
             inner.redraw(cx);
@@ -1275,18 +1607,31 @@ impl Widget for WaFrame {
             glyph.set_icon(cx, icon);
             glyph.set_color(cx, Some(accent));
             glyph.set_size(cx, size);
-            self.view.widget(id!(body)).apply_over(cx, live! { padding: { left: (size + 12.0) } });
-            self.view.plabel(id!(head.title.text)).set_color(cx, Some(accent));
+            self.view
+                .widget(id!(body))
+                .apply_over(cx, live! { padding: { left: (size + 12.0) } });
+            self.view
+                .plabel(id!(head.title.text))
+                .set_color(cx, Some(accent));
         }
         let actions = self.view.view(id!(body.actions));
         let has_actions = actions.child_count() > 0;
         actions.set_visible(cx, has_actions);
         let has_description = self.view.widget(id!(body.description)).visible();
-        self.view.widget(id!(body)).set_visible(cx, has_actions || has_description);
+        self.view
+            .widget(id!(body))
+            .set_visible(cx, has_actions || has_description);
         let step = self.view.draw_walk(cx, scope, walk);
         if step.is_done() {
             let r = self.view.area().rect(cx);
-            self.painter.outline(cx, r, Vec4::default(), with_alpha(accent, accent.w * 0.5), 1.0, 16.0);
+            self.painter.outline(
+                cx,
+                r,
+                Vec4::default(),
+                with_alpha(accent, accent.w * 0.5),
+                1.0,
+                16.0,
+            );
         }
         step
     }
@@ -1324,8 +1669,16 @@ impl Widget for WaIcon {
         }
         let p = theme::current_palette();
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(self.size) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(self.size) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(self.size)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(self.size)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
@@ -1407,7 +1760,10 @@ impl Widget for WaDot {
         }
         let p = theme::current_palette();
         let r = cx.walk_turtle(walk);
-        let color = status_color(&p, self.status.unwrap_or(super::host::Connection::Disconnected));
+        let color = status_color(
+            &p,
+            self.status.unwrap_or(super::host::Connection::Disconnected),
+        );
         self.painter.dot(cx, r.center(), self.diameter, color);
         DrawStep::done()
     }
@@ -1460,7 +1816,11 @@ impl Widget for WaProjectIcon {
         let fill = self.fill.unwrap_or_else(|| super::identity::rgb(0x7a6aa8));
         let side = r.size.x.min(r.size.y);
         self.painter.fill(cx, r, fill, (side * 0.25).round());
-        let initial = if self.initial.is_empty() { "?".to_string() } else { self.initial.clone() };
+        let initial = if self.initial.is_empty() {
+            "?".to_string()
+        } else {
+            self.initial.clone()
+        };
         // 16px icons carry the 10px semibold initial, larger ones the base medium one.
         let px = if side <= 16.0 { 10.0 } else { t.ui_size(14.0) };
         let spec = TextSpec::new(Font::Medium, px, vec4(1.0, 1.0, 1.0, 1.0));
@@ -1528,8 +1888,16 @@ impl Widget for WaBadge {
         let size = self.painter.measure(cx, spec, &self.label);
         let (pad_x, pad_y) = if self.xs { (6.0, 1.0) } else { (8.0, 3.0) };
         let walk = Walk {
-            width: if matches!(walk.width, Size::Fit) { Size::Fixed(size.x + pad_x * 2.0 + 2.0) } else { walk.width },
-            height: if matches!(walk.height, Size::Fit) { Size::Fixed(size.y + pad_y * 2.0 + 2.0) } else { walk.height },
+            width: if matches!(walk.width, Size::Fit) {
+                Size::Fixed(size.x + pad_x * 2.0 + 2.0)
+            } else {
+                walk.width
+            },
+            height: if matches!(walk.height, Size::Fit) {
+                Size::Fixed(size.y + pad_y * 2.0 + 2.0)
+            } else {
+                walk.height
+            },
             ..walk
         };
         let r = cx.walk_turtle(walk);
@@ -1538,7 +1906,14 @@ impl Widget for WaBadge {
             Some(tone) => (with_alpha(tone, tint), Vec4::default()),
             None => (p.surface3, p.border),
         };
-        self.painter.outline(cx, r, fill, border, if border.w > 0.0 { 1.0 } else { 0.0 }, r.size.y * 0.5);
+        self.painter.outline(
+            cx,
+            r,
+            fill,
+            border,
+            if border.w > 0.0 { 1.0 } else { 0.0 },
+            r.size.y * 0.5,
+        );
         let label = self.label.clone();
         self.painter.text_in(cx, r, spec, &label, 0.5);
         DrawStep::done()
@@ -1582,8 +1957,16 @@ pub fn set_error_card(cx: &mut Cx, card: &WidgetRef, text: &str) {
 pub fn set_alert(cx: &mut Cx, alert: &WidgetRef, title: &str, description: &str) {
     let has_title = !title.is_empty();
     set_optional(cx, &alert.widget(id!(head.title)), title);
-    set_optional(cx, &alert.widget(id!(head.lead)), if has_title { "" } else { description });
-    set_optional(cx, &alert.widget(id!(body.description)), if has_title { description } else { "" });
+    set_optional(
+        cx,
+        &alert.widget(id!(head.lead)),
+        if has_title { "" } else { description },
+    );
+    set_optional(
+        cx,
+        &alert.widget(id!(body.description)),
+        if has_title { description } else { "" },
+    );
 }
 
 /// Sets an input's text only when it differs, so the caret, selection and any IME
@@ -1665,10 +2048,15 @@ impl Widget for WaModal {
         self.sync_window(scope);
         // Focus transitions and their actions synchronize retained fields even when
         // their modal is closed or covered; they are not interactive input.
-        if matches!(event, Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)) {
+        if matches!(
+            event,
+            Event::KeyFocus(_) | Event::KeyFocusLost(_) | Event::Actions(_)
+        ) {
             if let Event::KeyFocus(focus) | Event::KeyFocusLost(focus) = event {
                 let content = self.content.area().rect(cx);
-                self.field_focus = self.opened && focus.focus != Area::Empty && content.contains(focus.focus.rect(cx).pos);
+                self.field_focus = self.opened
+                    && focus.focus != Area::Empty
+                    && content.contains(focus.focus.rect(cx).pos);
             }
             self.content.handle_event(cx, event, scope);
             return;
@@ -1686,7 +2074,11 @@ impl Widget for WaModal {
         if let Event::KeyDown(key) = event
             && key.key_code == KeyCode::Escape
         {
-            if MODAL_STACK.with(|stack| stack.borrow_mut().claim_escape(self.window_id.as_deref(), event)) {
+            if MODAL_STACK.with(|stack| {
+                stack
+                    .borrow_mut()
+                    .claim_escape(self.window_id.as_deref(), event)
+            }) {
                 if self.field_focus {
                     // The focused field gets this Escape (cancelling its edit); the next
                     // one dismisses the modal.
@@ -1694,7 +2086,11 @@ impl Widget for WaModal {
                     self.content.handle_event(cx, event, scope);
                     cx.set_key_focus(Area::Empty);
                 } else {
-                    cx.widget_action(self.content.widget_uid(), &scope.path, ModalAction::Dismissed);
+                    cx.widget_action(
+                        self.content.widget_uid(),
+                        &scope.path,
+                        ModalAction::Dismissed,
+                    );
                     self.close(cx);
                 }
             }
@@ -1725,7 +2121,9 @@ impl Widget for WaModal {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         self.sync_window(scope);
         if self.draw_state.begin(cx, true) {
-            if self.opened && let Some(ui) = scope.data.get::<UiContext>() {
+            if self.opened
+                && let Some(ui) = scope.data.get::<UiContext>()
+            {
                 let owner = self.widget_uid().0;
                 overlay::WindowModal::sync(&mut self.window_modal, ui, owner, true);
             }
@@ -1750,7 +2148,9 @@ impl Widget for WaModal {
             }
             self.draw_bg.begin(cx, self.walk, self.layout);
             if self.opened {
-                let _ = self.bg_view.draw_walk(cx, scope, Walk::size(Size::Fill, Size::Fill));
+                let _ = self
+                    .bg_view
+                    .draw_walk(cx, scope, Walk::size(Size::Fill, Size::Fill));
             }
             cx.begin_turtle(Walk::size(Size::Fill, Size::Fill), layout);
         }
@@ -1761,12 +2161,13 @@ impl Widget for WaModal {
             if !sheet.is_empty() {
                 // Keep authored desktop width; constrain the viewport, not the form's
                 // natural height, so even a short keyboard viewport can scroll to its footer.
-                let preferred = *self.preferred_sheet_width.get_or_insert_with(|| {
-                    match sheet.walk(cx).width {
-                        Size::Fixed(width) => width,
-                        _ => 520.0,
-                    }
-                });
+                let preferred =
+                    *self
+                        .preferred_sheet_width
+                        .get_or_insert_with(|| match sheet.walk(cx).width {
+                            Size::Fixed(width) => width,
+                            _ => 520.0,
+                        });
                 if matches!(sheet.walk(cx).width, Size::Fixed(_)) {
                     sheet.apply_over(cx, live! { width: Fill });
                 }
@@ -1778,11 +2179,15 @@ impl Widget for WaModal {
                 );
                 if let Size::Fixed(height) = body.walk(cx).height {
                     // A select can author a new preferred height when its options change.
-                    if self.applied_body_height.is_none_or(|applied| (applied - height).abs() > 0.5) {
+                    if self
+                        .applied_body_height
+                        .is_none_or(|applied| (applied - height).abs() > 0.5)
+                    {
                         self.preferred_body_height = Some(height);
                     }
                     let preferred = self.preferred_body_height.unwrap_or(height);
-                    let constrained = self.sheet_chrome_height
+                    let constrained = self
+                        .sheet_chrome_height
                         .map(|chrome| preferred.min((available.y - chrome).max(0.0)))
                         .unwrap_or(preferred);
                     if (constrained - height).abs() > 0.5 {
@@ -1792,7 +2197,12 @@ impl Widget for WaModal {
                 }
                 content_walk.width = Size::Fixed(preferred.min(available.x).max(0.0));
                 content_walk.height = Size::Fixed(
-                    if self.sheet_height > 0.0 { self.sheet_height.min(available.y) } else { available.y }.max(0.0),
+                    if self.sheet_height > 0.0 {
+                        self.sheet_height.min(available.y)
+                    } else {
+                        available.y
+                    }
+                    .max(0.0),
                 );
             }
             self.content.draw_walk(cx, scope, content_walk)?;
@@ -1800,7 +2210,10 @@ impl Widget for WaModal {
                 let height = sheet.area().rect(cx).size.y;
                 if self.preferred_body_height.is_some() {
                     let chrome = (height - body.area().rect(cx).size.y).max(0.0);
-                    if self.sheet_chrome_height.is_none_or(|old| (old - chrome).abs() > 0.5) {
+                    if self
+                        .sheet_chrome_height
+                        .is_none_or(|old| (old - chrome).abs() > 0.5)
+                    {
                         self.sheet_chrome_height = Some(chrome);
                         cx.redraw_list_in_draw(self.draw_list.draw_list_id());
                     }
@@ -1828,13 +2241,20 @@ impl Widget for WaModal {
 
 impl WaModal {
     fn sync_window(&mut self, scope: &mut Scope) {
-        let Some(ui) = scope.data.get::<UiContext>() else { return };
+        let Some(ui) = scope.data.get::<UiContext>() else {
+            return;
+        };
         if self.window_id.as_deref() == Some(ui.window_id.as_str()) {
             return;
         }
         self.window_id = Some(ui.window_id.clone());
         MODAL_STACK.with(|stack| {
-            if let Some(entry) = stack.borrow_mut().entries.iter_mut().find(|entry| entry.uid == self.widget_uid()) {
+            if let Some(entry) = stack
+                .borrow_mut()
+                .entries
+                .iter_mut()
+                .find(|entry| entry.uid == self.widget_uid())
+            {
                 entry.window_id.clone_from(&self.window_id);
             }
         });
@@ -1849,7 +2269,9 @@ impl WaModal {
                     NavItem::Stop(stop) if cx.clear_key_focus_if(stop.area) => return true,
                     // A nested modal owns its own focus, even if its draw list is
                     // linked into this modal's navigation subtree.
-                    NavItem::Child(child) if !stack.entries.iter().any(|entry| entry.draw_list == *child) => {
+                    NavItem::Child(child)
+                        if !stack.entries.iter().any(|entry| entry.draw_list == *child) =>
+                    {
                         if clear(cx, tree, *child, stack) {
                             return true;
                         }
@@ -1863,7 +2285,12 @@ impl WaModal {
         if self.nav_ready && cx.has_global::<CxNavTreeRc>() {
             let tree = cx.get_global::<CxNavTreeRc>().clone();
             MODAL_STACK.with(|stack| {
-                clear(cx, &tree.0.borrow(), self.draw_list.draw_list_id(), &stack.borrow());
+                clear(
+                    cx,
+                    &tree.0.borrow(),
+                    self.draw_list.draw_list_id(),
+                    &stack.borrow(),
+                );
             });
         }
     }
@@ -1888,7 +2315,11 @@ impl WaModal {
         self.clear_content_focus(cx);
         self.field_focus = false;
         self.window_modal = None;
-        self.content.handle_event(cx, &Event::Actions(vec![Box::new(ModalAction::Dismissed)]), &mut Scope::empty());
+        self.content.handle_event(
+            cx,
+            &Event::Actions(vec![Box::new(ModalAction::Dismissed)]),
+            &mut Scope::empty(),
+        );
         let uid = self.widget_uid();
         MODAL_STACK.with(|stack| stack.borrow_mut().remove(uid));
         self.opened = false;
@@ -1923,15 +2354,23 @@ impl ModalStack {
     }
 
     fn is_top(&self, uid: WidgetUid, window_id: Option<&str>) -> bool {
-        let Some(window_id) = window_id else { return false };
-        self.entries.iter().rev()
+        let Some(window_id) = window_id else {
+            return false;
+        };
+        self.entries
+            .iter()
+            .rev()
             .find(|entry| entry.window_id.as_deref() == Some(window_id))
             .is_some_and(|entry| entry.uid == uid)
     }
 
     fn claim_escape(&mut self, window_id: Option<&str>, event: &Event) -> bool {
-        let Some(window_id) = window_id else { return false };
-        let Event::KeyDown(key) = event else { return false };
+        let Some(window_id) = window_id else {
+            return false;
+        };
+        let Event::KeyDown(key) = event else {
+            return false;
+        };
         if key.key_code != KeyCode::Escape || key.is_repeat {
             return false;
         }
@@ -2006,7 +2445,9 @@ pub struct WaRepeat {
 impl Widget for WaRepeat {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         for (index, item) in self.items.iter().take(self.count).enumerate() {
-            scope.with_id(LiveId(index as u64), |scope| item.handle_event(cx, event, scope));
+            scope.with_id(LiveId(index as u64), |scope| {
+                item.handle_event(cx, event, scope)
+            });
         }
     }
 
@@ -2031,7 +2472,9 @@ impl WaRepeat {
 impl WaRepeatRef {
     /// Shows `count` items (creating missing ones from the template).
     pub fn set_count(&self, cx: &mut Cx, count: usize) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.ensure(cx, count);
         if inner.count != count {
             inner.count = count;
@@ -2042,19 +2485,25 @@ impl WaRepeatRef {
     /// Item `index`, created when missing. Dropping items past the count keeps their state
     /// for when the list grows again.
     pub fn item(&self, cx: &mut Cx, index: usize) -> WidgetRef {
-        let Some(mut inner) = self.borrow_mut() else { return WidgetRef::empty() };
+        let Some(mut inner) = self.borrow_mut() else {
+            return WidgetRef::empty();
+        };
         inner.ensure(cx, index + 1);
         inner.items[index].clone()
     }
 
     /// The shown items, for matching their actions.
     pub fn items(&self) -> Vec<WidgetRef> {
-        self.borrow().map(|inner| inner.items.iter().take(inner.count).cloned().collect()).unwrap_or_default()
+        self.borrow()
+            .map(|inner| inner.items.iter().take(inner.count).cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Drops every item (a different list identity).
     pub fn reset(&self, cx: &mut Cx) {
-        let Some(mut inner) = self.borrow_mut() else { return };
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
         inner.items.clear();
         inner.count = 0;
         inner.area.redraw(cx);
@@ -2063,16 +2512,20 @@ impl WaRepeatRef {
 
 /// The index of the first item in `repeat` whose `path` button was clicked.
 pub fn clicked_in(repeat: &WaRepeatRef, path: &[LiveId], actions: &Actions) -> Option<usize> {
-    repeat.items().iter().position(|item| item.wa_button(path).clicked(actions))
+    repeat
+        .items()
+        .iter()
+        .position(|item| item.wa_button(path).clicked(actions))
 }
 
 /// The index of the first item whose `path` view (a `cursor: Hand` tap area without a hover
 /// fill, Flutter `GestureDetector`) received a primary tap (`FingerUp` over it).
 pub fn tapped_in(repeat: &WaRepeatRef, path: &[LiveId], actions: &Actions) -> Option<usize> {
-    repeat
-        .items()
-        .iter()
-        .position(|item| item.view(path).finger_up(actions).is_some_and(|up| row_tapped(&up)))
+    repeat.items().iter().position(|item| {
+        item.view(path)
+            .finger_up(actions)
+            .is_some_and(|up| row_tapped(&up))
+    })
 }
 
 fn row_tapped(up: &FingerUpEvent) -> bool {
@@ -2084,7 +2537,12 @@ mod modal_input_tests {
     use super::*;
 
     fn escape(time: f64, is_repeat: bool) -> Event {
-        Event::KeyDown(KeyEvent { key_code: KeyCode::Escape, time, is_repeat, ..Default::default() })
+        Event::KeyDown(KeyEvent {
+            key_code: KeyCode::Escape,
+            time,
+            is_repeat,
+            ..Default::default()
+        })
     }
 
     #[test]
@@ -2094,9 +2552,14 @@ mod modal_input_tests {
         // A lower modal sees the same dispatch after the upper modal was removed.
         assert!(!stack.claim_escape(Some("main"), &escape(1.0, false)));
         assert!(!stack.claim_escape(Some("main"), &escape(2.0, true)));
-        assert!(!stack.claim_escape(Some("main"), &Event::KeyUp(KeyEvent {
-            key_code: KeyCode::Escape, time: 3.0, ..Default::default()
-        })));
+        assert!(!stack.claim_escape(
+            Some("main"),
+            &Event::KeyUp(KeyEvent {
+                key_code: KeyCode::Escape,
+                time: 3.0,
+                ..Default::default()
+            })
+        ));
         assert!(stack.claim_escape(Some("main"), &escape(4.0, false)));
     }
 
@@ -2127,18 +2590,40 @@ mod modal_input_tests {
     fn row_release_requires_a_real_touch_tap() {
         let up = FingerUpEvent {
             window_id: CxWindowPool::id_zero(),
-            abs: dvec2(0.0, 0.0), abs_start: dvec2(0.0, 0.0),
-            capture_time: 0.0, time: 0.1, digit_id: live_id_num!(touch, 1).into(),
+            abs: dvec2(0.0, 0.0),
+            abs_start: dvec2(0.0, 0.0),
+            capture_time: 0.0,
+            time: 0.1,
+            digit_id: live_id_num!(touch, 1).into(),
             device: DigitDevice::Touch { uid: 1 },
-            has_long_press_occurred: false, tap_cancelled: false, tap_count: 1,
-            modifiers: KeyModifiers::default(), rect: Rect::default(),
-            is_over: true, is_sweep: false,
+            has_long_press_occurred: false,
+            tap_cancelled: false,
+            tap_count: 1,
+            modifiers: KeyModifiers::default(),
+            rect: Rect::default(),
+            is_over: true,
+            is_sweep: false,
         };
         assert!(row_tapped(&up));
-        assert!(!row_tapped(&FingerUpEvent { tap_cancelled: true, ..up.clone() }));
-        assert!(!row_tapped(&FingerUpEvent { has_long_press_occurred: true, ..up.clone() }));
-        assert!(!row_tapped(&FingerUpEvent { abs: dvec2(100.0, 0.0), ..up.clone() }));
-        assert!(!row_tapped(&FingerUpEvent { time: 10.0, ..up.clone() }));
-        assert!(!row_tapped(&FingerUpEvent { is_over: false, ..up }));
+        assert!(!row_tapped(&FingerUpEvent {
+            tap_cancelled: true,
+            ..up.clone()
+        }));
+        assert!(!row_tapped(&FingerUpEvent {
+            has_long_press_occurred: true,
+            ..up.clone()
+        }));
+        assert!(!row_tapped(&FingerUpEvent {
+            abs: dvec2(100.0, 0.0),
+            ..up.clone()
+        }));
+        assert!(!row_tapped(&FingerUpEvent {
+            time: 10.0,
+            ..up.clone()
+        }));
+        assert!(!row_tapped(&FingerUpEvent {
+            is_over: false,
+            ..up
+        }));
     }
 }

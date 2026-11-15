@@ -407,7 +407,9 @@ mod tests {
         assert_eq!(leases[0].token, "a");
         assert_eq!(
             leases[0].expires_at,
-            DateTime::parse_from_rfc3339("2021-01-01T00:00:00Z").unwrap().timestamp_millis()
+            DateTime::parse_from_rfc3339("2021-01-01T00:00:00Z")
+                .unwrap()
+                .timestamp_millis()
         );
     }
     #[tokio::test]

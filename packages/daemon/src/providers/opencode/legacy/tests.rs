@@ -20,17 +20,29 @@ fn assistant(session: &str, id: &str, text: &str, completed: bool) -> Value {
 /// root spawned alpha (running) and beta; alpha spawned grand.
 fn family() -> FakeNative {
     FakeNative::default()
-        .reply("/session/root/children?directory=/work", json!([session("alpha", "root"), session("beta", "root")]))
-        .reply("/session/alpha/children?directory=/work", json!([session("grand", "alpha")]))
+        .reply(
+            "/session/root/children?directory=/work",
+            json!([session("alpha", "root"), session("beta", "root")]),
+        )
+        .reply(
+            "/session/alpha/children?directory=/work",
+            json!([session("grand", "alpha")]),
+        )
         .reply("/session/beta/children?directory=/work", json!([]))
         .reply("/session/grand/children?directory=/work", json!([]))
-        .reply("/session/status?directory=/work", json!({"alpha":{"type":"busy"}}))
+        .reply(
+            "/session/status?directory=/work",
+            json!({"alpha":{"type":"busy"}}),
+        )
         .reply("/session/alpha?directory=/work", session("alpha", "root"))
         .reply("/session/beta?directory=/work", session("beta", "root"))
         .reply("/session/grand?directory=/work", session("grand", "alpha"))
         .reply(
             "/session/alpha/message?directory=/work",
-            json!([user("alpha", "a1", "Review the parser"), assistant("alpha", "a2", "Parser is fine", true)]),
+            json!([
+                user("alpha", "a1", "Review the parser"),
+                assistant("alpha", "a2", "Parser is fine", true)
+            ]),
         )
         .reply(
             "/session/beta/message?directory=/work",
@@ -55,7 +67,10 @@ async fn parent_discovery_announces_descendants_without_reading_bodies() {
     let native = family();
     let found = discover(&native, "root", "/work").await.unwrap();
     let reads = native.reads();
-    assert!(reads.iter().all(|read| !read.contains("/message")), "{reads:?}");
+    assert!(
+        reads.iter().all(|read| !read.contains("/message")),
+        "{reads:?}"
+    );
 
     let mut projection = Projection::new("root".into(), "/work".into());
     let announced: Vec<Value> = found
@@ -63,18 +78,36 @@ async fn parent_discovery_announces_descendants_without_reading_bodies() {
         .flat_map(|child| {
             projection.detect(
                 &child.info,
-                Some(if child.active() { "running" } else { "completed" }),
+                Some(if child.active() {
+                    "running"
+                } else {
+                    "completed"
+                }),
             )
         })
         .collect();
-    assert!(announced.iter().all(|e| e["type"] == "provider_subagent" && e["event"]["type"] == "upsert"), "{announced:?}");
-    let ids: Vec<_> = announced.iter().map(|e| e["event"]["id"].as_str().unwrap()).collect();
+    assert!(
+        announced
+            .iter()
+            .all(|e| e["type"] == "provider_subagent" && e["event"]["type"] == "upsert"),
+        "{announced:?}"
+    );
+    let ids: Vec<_> = announced
+        .iter()
+        .map(|e| e["event"]["id"].as_str().unwrap())
+        .collect();
     assert_eq!(ids, ["alpha", "beta", "grand"]);
-    let statuses: Vec<_> = announced.iter().map(|e| e["event"]["status"].as_str().unwrap()).collect();
+    let statuses: Vec<_> = announced
+        .iter()
+        .map(|e| e["event"]["status"].as_str().unwrap())
+        .collect();
     assert_eq!(statuses, ["running", "completed", "completed"]);
     assert_eq!(announced[0]["event"]["parentSubagentId"], Value::Null);
     assert_eq!(announced[2]["event"]["parentSubagentId"], "alpha");
-    assert_eq!(announced[0]["event"]["source"], json!({"sessionId":"alpha","directory":"/work"}));
+    assert_eq!(
+        announced[0]["event"]["source"],
+        json!({"sessionId":"alpha","directory":"/work"})
+    );
 }
 
 #[tokio::test]
@@ -86,20 +119,34 @@ async fn opened_child_replays_only_its_own_body_and_announces_what_it_spawned() 
     assert!(coverage == HistoryCoverage::Complete);
     let reads = native.reads();
     assert!(
-        !reads.iter().any(|read| read.starts_with("/session/beta") || read.starts_with("/session/grand/message")),
+        !reads
+            .iter()
+            .any(|read| read.starts_with("/session/beta")
+                || read.starts_with("/session/grand/message")),
         "{reads:?}"
     );
-    assert_eq!(rows(&events, "alpha"), ["Review the parser", "Parser is fine"]);
-    assert!(events
+    assert_eq!(
+        rows(&events, "alpha"),
+        ["Review the parser", "Parser is fine"]
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|e| e["event"]["type"] == "timeline")
+            .all(|e| e["event"]["historyComplete"] == true && e["event"]["timestamp"].is_string())
+    );
+    let spawned: Vec<_> = events
         .iter()
-        .filter(|e| e["event"]["type"] == "timeline")
-        .all(|e| e["event"]["historyComplete"] == true && e["event"]["timestamp"].is_string()));
-    let spawned: Vec<_> = events.iter().filter(|e| e["event"]["type"] == "upsert").collect();
+        .filter(|e| e["event"]["type"] == "upsert")
+        .collect();
     assert_eq!(spawned.len(), 1);
     assert_eq!(spawned[0]["event"]["id"], "grand");
     assert_eq!(spawned[0]["event"]["parentSubagentId"], "alpha");
     assert_eq!(spawned[0]["event"]["status"], "completed");
-    assert_eq!(spawned[0]["event"]["source"], json!({"sessionId":"grand","directory":"/work"}));
+    assert_eq!(
+        spawned[0]["event"]["source"],
+        json!({"sessionId":"grand","directory":"/work"})
+    );
 }
 
 #[tokio::test]
@@ -111,13 +158,25 @@ async fn nested_child_resolves_through_its_ancestry_and_strangers_are_refused() 
     assert_eq!(rows(&events, "grand"), ["grandchild body"]);
 
     let native = FakeNative::default()
-        .reply("/session/stray?directory=/work", session("stray", "elsewhere"))
-        .reply("/session/elsewhere?directory=/work", json!({"id":"elsewhere"}))
-        .reply("/session/stray/message?directory=/work", json!([assistant("stray", "s1", "foreign", true)]));
+        .reply(
+            "/session/stray?directory=/work",
+            session("stray", "elsewhere"),
+        )
+        .reply(
+            "/session/elsewhere?directory=/work",
+            json!({"id":"elsewhere"}),
+        )
+        .reply(
+            "/session/stray/message?directory=/work",
+            json!([assistant("stray", "s1", "foreign", true)]),
+        );
     let error = replay_child(&native, "opencode", "root", "stray", "/work")
         .await
         .expect_err("a session outside the parent family is refused");
-    assert!(error.to_string().contains("not a subagent of root"), "{error}");
+    assert!(
+        error.to_string().contains("not a subagent of root"),
+        "{error}"
+    );
     assert!(!native.reads().iter().any(|read| read.contains("/message")));
 }
 
@@ -132,14 +191,21 @@ async fn unreadable_child_body_is_an_error_not_an_empty_replay() {
     assert!(error.to_string().contains("404"), "{error}");
 
     let missing = FakeNative::default();
-    assert!(replay_child(&missing, "opencode", "root", "beta", "/work").await.is_err());
+    assert!(
+        replay_child(&missing, "opencode", "root", "beta", "/work")
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
 async fn running_child_replay_is_unverified_and_keys_the_partial_turn_by_message_id() {
     let native = family().reply(
         "/session/alpha/message?directory=/work",
-        json!([user("alpha", "a1", "Review the parser"), assistant("alpha", "a2", "Pars", false)]),
+        json!([
+            user("alpha", "a1", "Review the parser"),
+            assistant("alpha", "a2", "Pars", false)
+        ]),
     );
     let (events, coverage) = replay_child(&native, "opencode", "root", "alpha", "/work")
         .await
@@ -151,10 +217,12 @@ async fn running_child_replay_is_unverified_and_keys_the_partial_turn_by_message
         .find(|e| e["event"]["item"]["text"] == "Pars")
         .unwrap();
     assert_eq!(partial["event"]["item"]["messageId"], "a2");
-    assert!(events
-        .iter()
-        .filter(|e| e["event"]["type"] == "timeline")
-        .all(|e| e["event"]["historyComplete"] == false));
+    assert!(
+        events
+            .iter()
+            .filter(|e| e["event"]["type"] == "timeline")
+            .all(|e| e["event"]["historyComplete"] == false)
+    );
 }
 
 #[test]
@@ -176,7 +244,12 @@ fn live_child_events_stream_after_descriptor_only_discovery() {
     let terminal: Vec<_> = live
         .iter()
         .filter(|e| e["event"]["status"].is_string() && e["event"]["status"] != "running")
-        .map(|e| (e["event"]["id"].as_str().unwrap(), e["event"]["status"].as_str().unwrap()))
+        .map(|e| {
+            (
+                e["event"]["id"].as_str().unwrap(),
+                e["event"]["status"].as_str().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(terminal, [("alpha", "completed"), ("beta", "failed")]);
 }
@@ -204,7 +277,8 @@ fn identified(events: &[Value]) -> Vec<(String, String, String)> {
             let id = item["messageId"].as_str().filter(|id| !id.is_empty());
             (
                 item["type"].as_str().unwrap().to_owned(),
-                id.expect("every replayed or live row carries native identity").to_owned(),
+                id.expect("every replayed or live row carries native identity")
+                    .to_owned(),
                 item["text"].as_str().unwrap().to_owned(),
             )
         })
@@ -238,11 +312,17 @@ async fn running_child_replay_and_later_live_updates_share_native_identity() {
     let replayed = identified(&replayed);
     // Each live row resolves to exactly one replay row of its type by native id.
     for (kind, id, _) in &before {
-        let matches = replayed.iter().filter(|(k, i, _)| k == kind && i == id).count();
+        let matches = replayed
+            .iter()
+            .filter(|(k, i, _)| k == kind && i == id)
+            .count();
         assert_eq!(matches, 1, "{kind} {id} in {replayed:?}");
     }
     assert_eq!(
-        before.iter().map(|(k, i, _)| (k.as_str(), i.as_str())).collect::<Vec<_>>(),
+        before
+            .iter()
+            .map(|(k, i, _)| (k.as_str(), i.as_str()))
+            .collect::<Vec<_>>(),
         [("reasoning", "r1"), ("assistant_message", "a2")]
     );
 
@@ -258,7 +338,10 @@ async fn running_child_replay_and_later_live_updates_share_native_identity() {
     let after = identified(&after);
     // The replayed snapshot followed by later live rows rebuilds each native part
     // exactly once: nothing duplicated, nothing truncated.
-    for (kind, id, full) in [("reasoning", "r1", "Think"), ("assistant_message", "a2", "Parsed")] {
+    for (kind, id, full) in [
+        ("reasoning", "r1", "Think"),
+        ("assistant_message", "a2", "Parsed"),
+    ] {
         let text: String = replayed
             .iter()
             .chain(&after)
@@ -288,7 +371,9 @@ async fn live_collection_rebased_on_a_replay_continues_after_the_snapshot() {
         "parts":[part("reasoning", "r1", "Think", true), part("text", "t1", "Pars", false)]}]);
     let native = family().reply("/session/alpha/message?directory=/work", snapshot);
     let (events, messages_coverage, messages) =
-        read_child(&native, "opencode", "root", "alpha", "/work").await.unwrap();
+        read_child(&native, "opencode", "root", "alpha", "/work")
+            .await
+            .unwrap();
     assert!(messages_coverage == HistoryCoverage::Unverified);
     projection.rebase("alpha", &messages);
     let replayed = identified(&events);
@@ -304,7 +389,10 @@ async fn live_collection_rebased_on_a_replay_continues_after_the_snapshot() {
         after.extend(projection.translate(&event));
     }
     let after = identified(&after);
-    for (kind, id, full) in [("reasoning", "r1", "Think"), ("assistant_message", "a2", "Parsed")] {
+    for (kind, id, full) in [
+        ("reasoning", "r1", "Think"),
+        ("assistant_message", "a2", "Parsed"),
+    ] {
         let text: String = replayed
             .iter()
             .chain(&after)
@@ -336,7 +424,11 @@ fn retained_replay_keeps_live_collection_on_its_previous_state() {
     }
     // The daemon retained its rows for a snapshot holding "Pars": no rebase, so the
     // same-id deltas held behind the marker continue the stored rows.
-    for event in [delta("t1", "rs"), delta("t1", "ed"), part_event("text", "t1", "Parsed", true)] {
+    for event in [
+        delta("t1", "rs"),
+        delta("t1", "ed"),
+        part_event("text", "t1", "Parsed", true),
+    ] {
         stored.extend(projection.translate(&event));
     }
     let text: String = identified(&stored)
@@ -348,8 +440,16 @@ fn retained_replay_keeps_live_collection_on_its_previous_state() {
 }
 
 /// What `Inner::consume` does before translating: a held child's events wait.
-fn deliver(projection: &mut Projection, held: &mut family::HeldEvents, event: &Value) -> Vec<Value> {
-    if held.intercept(session_id(event), s(&event["properties"]["info"]["parentID"]), event) {
+fn deliver(
+    projection: &mut Projection,
+    held: &mut family::HeldEvents,
+    event: &Value,
+) -> Vec<Value> {
+    if held.intercept(
+        session_id(event),
+        s(&event["properties"]["info"]["parentID"]),
+        event,
+    ) {
         return vec![];
     }
     projection.translate(event)
@@ -373,8 +473,9 @@ async fn held_child_settles_once_while_its_parent_keeps_streaming() {
         let snapshot = json!([{"info":{"id":"a2","sessionID":"alpha","role":"assistant","time":{"created":1_700_000_001_000i64}},
             "parts":[part("text", "t1", "Pars", false)]}]);
         let native = family().reply("/session/alpha/message?directory=/work", snapshot);
-        let (replayed, _, messages) =
-            read_child(&native, "opencode", "root", "alpha", "/work").await.unwrap();
+        let (replayed, _, messages) = read_child(&native, "opencode", "root", "alpha", "/work")
+            .await
+            .unwrap();
         held.hold("alpha");
 
         let mut parent = Vec::new();
@@ -385,11 +486,21 @@ async fn held_child_settles_once_while_its_parent_keeps_streaming() {
             parent.extend(deliver(&mut projection, &mut held, &event));
         }
         let mut early = Vec::new();
-        for event in [delta("t1", "rs"), delta("t1", "ed"), part_event("text", "t1", "Parsed", true)] {
+        for event in [
+            delta("t1", "rs"),
+            delta("t1", "ed"),
+            part_event("text", "t1", "Parsed", true),
+        ] {
             early.extend(deliver(&mut projection, &mut held, &event));
         }
-        assert!(parent.iter().any(|e| e["item"]["text"] == "Hi"), "{parent:?}");
-        assert!(early.is_empty(), "held child rows wait for the outcome: {early:?}");
+        assert!(
+            parent.iter().any(|e| e["item"]["text"] == "Hi"),
+            "{parent:?}"
+        );
+        assert!(
+            early.is_empty(),
+            "held child rows wait for the outcome: {early:?}"
+        );
 
         // Settlement: rebase only when applied, then translate the held events once.
         if applied {
@@ -399,7 +510,11 @@ async fn held_child_settles_once_while_its_parent_keeps_streaming() {
         for event in held.release("alpha") {
             after.extend(deliver(&mut projection, &mut held, &event));
         }
-        let kept = if applied { identified(&replayed) } else { identified(&stored) };
+        let kept = if applied {
+            identified(&replayed)
+        } else {
+            identified(&stored)
+        };
         let text: String = kept
             .iter()
             .chain(&identified(&after))
@@ -428,13 +543,19 @@ async fn live_parent_keeps_serving_while_an_opened_child_replay_awaits_its_outco
     for (route, reply) in [
         ("GET /session/root/message", json!([])),
         ("GET /provider", json!({"all":[],"connected":[]})),
-        ("GET /session/root/children", json!([session("alpha", "root")])),
+        (
+            "GET /session/root/children",
+            json!([session("alpha", "root")]),
+        ),
         ("GET /session/alpha/children", json!([])),
         ("GET /session/grand/children", json!([])),
         ("GET /session/status", json!({"alpha":{"type":"busy"}})),
         ("GET /permission", json!([])),
         ("GET /question", json!([])),
-        ("GET /session/root", json!({"id":"root","directory":"/work"})),
+        (
+            "GET /session/root",
+            json!({"id":"root","directory":"/work"}),
+        ),
         ("GET /session/alpha", session("alpha", "root")),
     ] {
         server.reply(route, reply);
@@ -461,7 +582,10 @@ async fn live_parent_keeps_serving_while_an_opened_child_replay_awaits_its_outco
     .unwrap();
     server.streaming().await;
     server.push(root_event("server.connected", json!({})));
-    loopback::until(&mut live, |e| e["event"]["type"] == "upsert" && e["event"]["id"] == "alpha").await;
+    loopback::until(&mut live, |e| {
+        e["event"]["type"] == "upsert" && e["event"]["id"] == "alpha"
+    })
+    .await;
     server.push(json!({"type":"message.updated","properties":{"info":{"id":"a2","sessionID":"alpha","role":"assistant","time":{"created":1}}}}));
     server.push(part_event("text", "t1", "", false));
     server.push(delta("t1", "Pa"));
@@ -494,12 +618,19 @@ async fn live_parent_keeps_serving_while_an_opened_child_replay_awaits_its_outco
     assert_eq!(marker["id"], "alpha");
     assert_eq!(
         loopback::child_rows(marker["events"].as_array().unwrap(), "alpha"),
-        [("assistant_message".to_owned(), "a2".to_owned(), "Pars".to_owned())]
+        [(
+            "assistant_message".to_owned(),
+            "a2".to_owned(),
+            "Pars".to_owned()
+        )]
     );
 
     // Behind the marker: same-id deltas already in the snapshot, the final text,
     // a task the child starts, and the session that task spawns.
-    server.reply("GET /session/alpha/children", json!([session("grand", "alpha")]));
+    server.reply(
+        "GET /session/alpha/children",
+        json!([session("grand", "alpha")]),
+    );
     for event in [
         delta("t1", "rs"),
         delta("t1", "ed"),
@@ -518,27 +649,45 @@ async fn live_parent_keeps_serving_while_an_opened_child_replay_awaits_its_outco
         .await
         .expect("parent history completes while the child is held")
         .unwrap();
-    let turn = tokio::time::timeout(Duration::from_secs(5), parent.start_turn(json!("go"), json!({})))
-        .await
-        .expect("turn admission completes while the child is held")
-        .unwrap();
+    let turn = tokio::time::timeout(
+        Duration::from_secs(5),
+        parent.start_turn(json!("go"), json!({})),
+    )
+    .await
+    .expect("turn admission completes while the child is held")
+    .unwrap();
     assert!(turn["turnId"].is_string());
     server.push(json!({"type":"message.updated","properties":{"info":{"id":"p1","sessionID":"root","role":"assistant","time":{"created":3}}}}));
     server.push(json!({"type":"message.part.delta","properties":{"sessionID":"root","messageID":"p1","partID":"pt","field":"text","delta":"Hi"}}));
     let during = loopback::until(&mut live, |e| e["item"]["text"] == "Hi").await;
-    assert!(loopback::child_rows(&during, "alpha").is_empty(), "{during:?}");
-    assert!(!during.iter().any(|e| e["event"]["id"] == "grand"), "{during:?}");
+    assert!(
+        loopback::child_rows(&during, "alpha").is_empty(),
+        "{during:?}"
+    );
+    assert!(
+        !during.iter().any(|e| e["event"]["id"] == "grand"),
+        "{during:?}"
+    );
 
     outcome.send(Some(ReplayOutcome::Applied)).unwrap();
-    let mut settled =
-        loopback::until(&mut live, |e| e["event"]["type"] == "upsert" && e["event"]["id"] == "grand").await;
+    let mut settled = loopback::until(&mut live, |e| {
+        e["event"]["type"] == "upsert" && e["event"]["id"] == "grand"
+    })
+    .await;
     server.push(json!({"type":"message.part.delta","properties":{"sessionID":"root","messageID":"p1","partID":"pt","field":"text","delta":"!"}}));
     settled.extend(loopback::until(&mut live, |e| e["item"]["text"] == "!").await);
     let text: Vec<_> = loopback::child_rows(&settled, "alpha")
         .into_iter()
         .filter(|(kind, _, _)| kind == "assistant_message")
         .collect();
-    assert_eq!(text, [("assistant_message".to_owned(), "a2".to_owned(), "ed".to_owned())]);
+    assert_eq!(
+        text,
+        [(
+            "assistant_message".to_owned(),
+            "a2".to_owned(),
+            "ed".to_owned()
+        )]
+    );
     let grand = settled
         .iter()
         .find(|e| e["event"]["type"] == "upsert" && e["event"]["id"] == "grand")

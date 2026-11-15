@@ -6,14 +6,14 @@ use std::path::Path;
 #[path = "timeline_stream.rs"]
 mod stream;
 pub use stream::{StreamCoalescer, SubagentStorageUnavailable, SubagentStore, public_subagent};
-#[path = "timeline_search.rs"]
-mod search;
-#[path = "timeline_storage.rs"]
-mod storage;
 #[path = "timeline_history.rs"]
 mod history;
 #[path = "timeline_reconcile.rs"]
 mod reconcile;
+#[path = "timeline_search.rs"]
+mod search;
+#[path = "timeline_storage.rs"]
+mod storage;
 
 pub(super) fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -84,10 +84,11 @@ fn merge_metadata(target: &mut Value, incoming: &Value, collapse: &str) {
     if let Some(next) = incoming["sourceSeqRanges"].as_array() {
         for range in next {
             if let Some(last) = ranges.last_mut()
-                && num(range, "startSeq") <= num(last, "endSeq") + 1 {
-                    last["endSeq"] = json!(num(last, "endSeq").max(num(range, "endSeq")));
-                    continue;
-                }
+                && num(range, "startSeq") <= num(last, "endSeq") + 1
+            {
+                last["endSeq"] = json!(num(last, "endSeq").max(num(range, "endSeq")));
+                continue;
+            }
             ranges.push(range.clone());
         }
     }
@@ -173,9 +174,10 @@ pub fn project_rows(rows: &[Value]) -> Vec<Value> {
         let entry = canonical(row.clone());
         if let Some(id) = identity(&entry["item"]) {
             if let Some(&index) = identities.get(&id)
-                && merge_identity(&mut collapsed[index], &entry) {
-                    continue;
-                }
+                && merge_identity(&mut collapsed[index], &entry)
+            {
+                continue;
+            }
             identities.insert(id, collapsed.len());
         }
         collapsed.push(entry);
@@ -322,9 +324,10 @@ impl Timeline {
         }
         if let Some(id) = identity(&entry["item"]) {
             if let Some(&index) = self.identities.get(&id)
-                && merge_identity(&mut self.rows[index], &entry) {
-                    return index;
-                }
+                && merge_identity(&mut self.rows[index], &entry)
+            {
+                return index;
+            }
             self.identities.insert(id, self.rows.len());
         }
         if self
@@ -338,9 +341,9 @@ impl Timeline {
             && let Some(id) = entry["item"]["clientMessageId"]
                 .as_str()
                 .filter(|s| !s.is_empty())
-            {
-                self.submitted.entry(id.into()).or_insert(self.rows.len());
-            }
+        {
+            self.submitted.entry(id.into()).or_insert(self.rows.len());
+        }
         self.rows.push(entry);
         self.rows.len() - 1
     }
@@ -470,14 +473,22 @@ impl Timeline {
     /// Each projected sub-agent card's recorded log, and its log-entry
     /// identities where recorded, by call ID. A resumed provider keeps these
     /// instead of reading child transcripts.
-    pub fn subagent_card_logs(&self) -> (serde_json::Map<String, Value>, serde_json::Map<String, Value>) {
+    pub fn subagent_card_logs(
+        &self,
+    ) -> (
+        serde_json::Map<String, Value>,
+        serde_json::Map<String, Value>,
+    ) {
         let mut logs = serde_json::Map::new();
         let mut entries = serde_json::Map::new();
         for item in self.rows.iter().map(|row| &row["item"]) {
             if item["type"] != "tool_call" || item["detail"]["type"] != "sub_agent" {
                 continue;
             }
-            let (Some(call), Some(log)) = (item["callId"].as_str(), item["detail"]["log"].as_str().filter(|log| !log.is_empty())) else {
+            let (Some(call), Some(log)) = (
+                item["callId"].as_str(),
+                item["detail"]["log"].as_str().filter(|log| !log.is_empty()),
+            ) else {
                 continue;
             };
             logs.insert(call.to_owned(), json!(log));

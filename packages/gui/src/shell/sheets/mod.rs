@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::common::widgets::PTextFieldWidgetRefExt;
 use crate::common::{UiContext, UiEffect};
 use crate::shell::ui::Ui;
-use crate::shell::{PaseoShell, Page, Pending};
+use crate::shell::{Page, PaseoShell, Pending};
 
 pub fn live_design(_cx: &mut Cx) {}
 
@@ -69,7 +69,14 @@ pub struct Field {
 
 impl Field {
     pub fn new(text: &str, placeholder: &str) -> Self {
-        Self { widget: None, text: text.to_string(), placeholder: placeholder.to_string(), password: false, focus: false, read_only: false }
+        Self {
+            widget: None,
+            text: text.to_string(),
+            placeholder: placeholder.to_string(),
+            password: false,
+            focus: false,
+            read_only: false,
+        }
     }
 
     /// Hides the text (passwords).
@@ -85,7 +92,9 @@ impl Field {
     }
 
     pub fn text(&self) -> String {
-        self.widget.as_ref().map_or_else(|| self.text.clone(), |w| w.text())
+        self.widget
+            .as_ref()
+            .map_or_else(|| self.text.clone(), |w| w.text())
     }
 
     pub fn set_text(&mut self, cx: &mut Cx, text: &str) {
@@ -141,10 +150,17 @@ impl Field {
         }
     }
 
-    pub fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) -> Option<FieldEvent> {
+    pub fn handle_event(
+        &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        scope: &mut Scope,
+    ) -> Option<FieldEvent> {
         let widget = self.widget.clone()?;
         widget.handle_event(cx, event, scope);
-        let Event::Actions(actions) = event else { return None };
+        let Event::Actions(actions) = event else {
+            return None;
+        };
         let field = widget.as_ptext_field();
         if let Some(text) = field.returned(actions) {
             self.text = text.clone();
@@ -193,10 +209,20 @@ pub enum ShellOp {
     OpenSheet(Box<dyn Sheet>),
     ShowPage(Page),
     /// Close every tab of these workspaces on `host` (archived/removed workspaces).
-    CloseWorkspaceTabs { host_id: String, workspace_ids: Vec<String> },
-    Toast { message: String, error: bool },
+    CloseWorkspaceTabs {
+        host_id: String,
+        workspace_ids: Vec<String>,
+    },
+    Toast {
+        message: String,
+        error: bool,
+    },
     /// Answer to a sheet waiting on another sheet (confirmation result).
-    Deliver { sheet: u64, tag: String, value: Value },
+    Deliver {
+        sheet: u64,
+        tag: String,
+        value: Value,
+    },
     /// Any other shell action (open a tab, continue a host-chooser purpose, ...).
     Run(ShellAction),
 }
@@ -237,7 +263,13 @@ impl SheetOps {
     }
 
     /// A core request whose response comes back to `Sheet::on_response` with `tag`.
-    pub fn request(&mut self, host_id: &str, message: Value, response_type: &str, tag: &str) -> RequestId {
+    pub fn request(
+        &mut self,
+        host_id: &str,
+        message: Value,
+        response_type: &str,
+        tag: &str,
+    ) -> RequestId {
         let id = self.core.request(host_id, message, response_type);
         self.requests.push((id.clone(), tag.to_string()));
         id
@@ -254,7 +286,10 @@ impl SheetOps {
     }
 
     pub fn toast(&mut self, message: impl Into<String>, error: bool) {
-        self.shell.push(ShellOp::Toast { message: message.into(), error });
+        self.shell.push(ShellOp::Toast {
+            message: message.into(),
+            error,
+        });
     }
 
     pub fn effect(&mut self, effect: UiEffect) {
@@ -290,7 +325,16 @@ pub trait Sheet {
         0.0
     }
 
-    fn draw_footer(&mut self, _cx: &mut Cx2d, _ui: &mut Ui, _x: f64, _y: f64, _w: f64, _interactive: bool) {}
+    fn draw_footer(
+        &mut self,
+        _cx: &mut Cx2d,
+        _ui: &mut Ui,
+        _x: f64,
+        _y: f64,
+        _w: f64,
+        _interactive: bool,
+    ) {
+    }
 
     /// Full-screen sheets: the body height below the header, set before each draw
     /// (`Expanded` children fill it).
@@ -299,7 +343,16 @@ pub trait Sheet {
     /// Draws the body at (`x`, `y`) within `w`; returns the body height. `interactive` is
     /// false while another overlay is above this one.
     #[allow(clippy::too_many_arguments)]
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64;
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64;
 
     /// A hit id recorded by `draw` was clicked.
     fn click(&mut self, cx: &mut Cx, id: &str, ops: &mut SheetOps) -> SheetFlow;
@@ -315,12 +368,24 @@ pub trait Sheet {
     }
 
     /// Responses to requests registered through `SheetOps::request`.
-    fn on_response(&mut self, _cx: &mut Cx, _tag: &str, _result: &Result<Value, CoreError>, _ops: &mut SheetOps) -> SheetFlow {
+    fn on_response(
+        &mut self,
+        _cx: &mut Cx,
+        _tag: &str,
+        _result: &Result<Value, CoreError>,
+        _ops: &mut SheetOps,
+    ) -> SheetFlow {
         SheetFlow::Stay
     }
 
     /// Answers from sheets this one opened (`ShellOp::Deliver`).
-    fn on_deliver(&mut self, _cx: &mut Cx, _tag: &str, _value: &Value, _ops: &mut SheetOps) -> SheetFlow {
+    fn on_deliver(
+        &mut self,
+        _cx: &mut Cx,
+        _tag: &str,
+        _value: &Value,
+        _ops: &mut SheetOps,
+    ) -> SheetFlow {
         SheetFlow::Stay
     }
 
@@ -329,11 +394,20 @@ pub trait Sheet {
 }
 
 /// Applies collected sheet operations; `sheet` is the issuing sheet (response routing).
-pub fn apply_ops(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, ops: SheetOps, sheet: Option<u64>) {
+pub fn apply_ops(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    ops: SheetOps,
+    sheet: Option<u64>,
+) {
     ui.effects.extend(ops.effects);
     if let Some(sheet) = sheet {
         for (request, tag) in ops.requests {
-            shell.data.pending.insert(request, Pending::Sheet { sheet, tag });
+            shell
+                .data
+                .pending
+                .insert(request, Pending::Sheet { sheet, tag });
         }
     }
     for op in ops.shell {
@@ -342,11 +416,26 @@ pub fn apply_ops(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, ops: S
                 shell.data.overlays.open_sheet(next);
             }
             ShellOp::ShowPage(page) => crate::shell::commands::show_page(shell, cx, page),
-            ShellOp::CloseWorkspaceTabs { host_id, workspace_ids } => {
-                crate::shell::commands::close_workspace_tabs(shell, cx, ui, &host_id, &workspace_ids);
+            ShellOp::CloseWorkspaceTabs {
+                host_id,
+                workspace_ids,
+            } => {
+                crate::shell::commands::close_workspace_tabs(
+                    shell,
+                    cx,
+                    ui,
+                    &host_id,
+                    &workspace_ids,
+                );
             }
-            ShellOp::Toast { message, error } => crate::shell::overlays::toast(&mut shell.data.overlays, cx, message, error),
-            ShellOp::Deliver { sheet: target, tag, value } => deliver(shell, cx, ui, target, &tag, &value),
+            ShellOp::Toast { message, error } => {
+                crate::shell::overlays::toast(&mut shell.data.overlays, cx, message, error)
+            }
+            ShellOp::Deliver {
+                sheet: target,
+                tag,
+                value,
+            } => deliver(shell, cx, ui, target, &tag, &value),
             ShellOp::Run(action) => action(shell, cx, ui),
         }
     }
@@ -354,7 +443,14 @@ pub fn apply_ops(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, ops: S
 }
 
 /// Routes a core response to the sheet that asked for it.
-pub fn route_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, sheet: u64, tag: &str, result: &Result<Value, CoreError>) {
+pub fn route_response(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    sheet: u64,
+    tag: &str,
+    result: &Result<Value, CoreError>,
+) {
     let mut ops = SheetOps::for_sheet(ui, sheet);
     let flow = match shell.data.overlays.sheet_mut(sheet) {
         Some(target) => target.on_response(cx, tag, result, &mut ops),
@@ -368,7 +464,14 @@ pub fn route_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, s
     apply_sheet_flow(shell, cx, sheet, flow);
 }
 
-fn deliver(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, sheet: u64, tag: &str, value: &Value) {
+fn deliver(
+    shell: &mut PaseoShell,
+    cx: &mut Cx,
+    ui: &mut UiContext,
+    sheet: u64,
+    tag: &str,
+    value: &Value,
+) {
     let mut ops = SheetOps::for_sheet(ui, sheet);
     let flow = match shell.data.overlays.sheet_mut(sheet) {
         Some(target) => target.on_deliver(cx, tag, value, &mut ops),
@@ -379,7 +482,10 @@ fn deliver(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, sheet: u64, 
 }
 
 fn apply_sheet_flow(shell: &mut PaseoShell, cx: &mut Cx, sheet: u64, flow: SheetFlow) {
-    let index = shell.data.overlays.stack.iter().position(|m| matches!(m, crate::shell::overlays::Modal::Sheet { id, .. } if *id == sheet));
+    let index =
+        shell.data.overlays.stack.iter().position(
+            |m| matches!(m, crate::shell::overlays::Modal::Sheet { id, .. } if *id == sheet),
+        );
     if let Some(index) = index {
         crate::shell::overlays::apply_flow(shell, cx, &mut Scope::empty(), index, flow);
     }
@@ -398,7 +504,14 @@ pub struct ConfirmSheet {
 }
 
 impl ConfirmSheet {
-    pub fn new(ops: &SheetOps, title: &str, message: &str, confirm_label: &str, destructive: bool, tag: &str) -> Self {
+    pub fn new(
+        ops: &SheetOps,
+        title: &str,
+        message: &str,
+        confirm_label: &str,
+        destructive: bool,
+        tag: &str,
+    ) -> Self {
         Self {
             title: title.to_string(),
             message: message.to_string(),
@@ -415,7 +528,11 @@ impl ConfirmSheet {
             return;
         }
         if let Some(sheet) = self.reply_to {
-            ops.shell.push(ShellOp::Deliver { sheet, tag: self.tag.clone(), value: Value::Bool(confirmed) });
+            ops.shell.push(ShellOp::Deliver {
+                sheet,
+                tag: self.tag.clone(),
+                value: Value::Bool(confirmed),
+            });
         }
     }
 }
@@ -429,19 +546,51 @@ impl Sheet for ConfirmSheet {
         420.0
     }
 
-    fn draw(&mut self, cx: &mut Cx2d, ui: &mut Ui, _scope: &mut Scope, x: f64, y: f64, w: f64, interactive: bool) -> f64 {
+    fn draw(
+        &mut self,
+        cx: &mut Cx2d,
+        ui: &mut Ui,
+        _scope: &mut Scope,
+        x: f64,
+        y: f64,
+        w: f64,
+        interactive: bool,
+    ) -> f64 {
         use crate::common::paint::{Font, rect};
         let spec = ui.spec(Font::Regular, 14.0, ui.p.muted);
         let h = ui.painter.paragraph_height(cx, w, spec, &self.message);
-        ui.painter.paragraph(cx, dvec2(x, y), w, spec, &self.message);
+        ui.painter
+            .paragraph(cx, dvec2(x, y), w, spec, &self.message);
         let by = y + h + 24.0;
         let cancel = crate::common::tr("common.actions.cancel");
         let cw = ui.button_width(cx, &cancel, None, crate::theme::ControlSize::Sm);
         let ow = ui.button_width(cx, &self.confirm_label, None, crate::theme::ControlSize::Sm);
-        let variant = if self.destructive { crate::shell::ui::Variant::Destructive } else { crate::shell::ui::Variant::Primary };
+        let variant = if self.destructive {
+            crate::shell::ui::Variant::Destructive
+        } else {
+            crate::shell::ui::Variant::Primary
+        };
         let right = x + w;
-        ui.button(cx, rect(right - ow, by, ow, 32.0), "confirm:ok", &self.confirm_label, None, variant, crate::theme::ControlSize::Sm, interactive);
-        ui.button(cx, rect(right - ow - 8.0 - cw, by, cw, 32.0), "confirm:cancel", &cancel, None, crate::shell::ui::Variant::Ghost, crate::theme::ControlSize::Sm, interactive);
+        ui.button(
+            cx,
+            rect(right - ow, by, ow, 32.0),
+            "confirm:ok",
+            &self.confirm_label,
+            None,
+            variant,
+            crate::theme::ControlSize::Sm,
+            interactive,
+        );
+        ui.button(
+            cx,
+            rect(right - ow - 8.0 - cw, by, cw, 32.0),
+            "confirm:cancel",
+            &cancel,
+            None,
+            crate::shell::ui::Variant::Ghost,
+            crate::theme::ControlSize::Sm,
+            interactive,
+        );
         h + 24.0 + 32.0
     }
 
@@ -497,7 +646,16 @@ pub fn take_spinning() -> bool {
 /// Original menu-style sheet row (`_item`): 16px leading slot, label, optional trailing glyph;
 /// 44 tall on compact layouts, else 32; surface2 while hovered; muted and inert without `id`.
 #[allow(clippy::too_many_arguments)]
-pub fn row(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, id: Option<&str>, label: &str, color: Option<Vec4>) -> (Rect, f64) {
+pub fn row(
+    ui: &mut Ui,
+    cx: &mut Cx2d,
+    x: f64,
+    y: f64,
+    w: f64,
+    id: Option<&str>,
+    label: &str,
+    color: Option<Vec4>,
+) -> (Rect, f64) {
     use crate::common::paint::{Font, rect};
     let h = if ui.compact { 44.0 } else { 32.0 };
     let r = rect(x, y, w, h);
@@ -508,20 +666,44 @@ pub fn row(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, id: Option<&str>,
         }
         ui.hit(r, id.to_string());
     }
-    let fg = if id.is_none() { ui.p.muted } else { color.unwrap_or(ui.p.foreground) };
+    let fg = if id.is_none() {
+        ui.p.muted
+    } else {
+        color.unwrap_or(ui.p.foreground)
+    };
     let spec = ui.spec(Font::Regular, 14.0, fg);
-    ui.text(cx, rect(x + 12.0 + 16.0 + 10.0, y, (w - 12.0 - 16.0 - 10.0 - 12.0 - 26.0).max(0.0), h), spec, label);
+    ui.text(
+        cx,
+        rect(
+            x + 12.0 + 16.0 + 10.0,
+            y,
+            (w - 12.0 - 16.0 - 10.0 - 12.0 - 26.0).max(0.0),
+            h,
+        ),
+        spec,
+        label,
+    );
     (r, h)
 }
 
 /// The 16px leading slot of [`row`].
 pub fn row_leading(r: Rect) -> Rect {
-    crate::common::paint::rect(r.pos.x + 12.0, r.pos.y + (r.size.y - 16.0) * 0.5, 16.0, 16.0)
+    crate::common::paint::rect(
+        r.pos.x + 12.0,
+        r.pos.y + (r.size.y - 16.0) * 0.5,
+        16.0,
+        16.0,
+    )
 }
 
 /// The trailing 16px slot of [`row`].
 pub fn row_trailing(r: Rect) -> Rect {
-    crate::common::paint::rect(r.pos.x + r.size.x - 12.0 - 16.0, r.pos.y + (r.size.y - 16.0) * 0.5, 16.0, 16.0)
+    crate::common::paint::rect(
+        r.pos.x + r.size.x - 12.0 - 16.0,
+        r.pos.y + (r.size.y - 16.0) * 0.5,
+        16.0,
+        16.0,
+    )
 }
 
 /// Small hint text (`_hint`): 12/6 padding, muted or destructive; returns its height.
@@ -530,7 +712,8 @@ pub fn hint(ui: &mut Ui, cx: &mut Cx2d, x: f64, y: f64, w: f64, text: &str, erro
     let color = if error { ui.p.danger } else { ui.p.muted };
     let spec = ui.spec(Font::Regular, 12.0, color);
     let h = ui.painter.paragraph_height(cx, w - 24.0, spec, text);
-    ui.painter.paragraph(cx, dvec2(x + 12.0, y + 6.0), w - 24.0, spec, text);
+    ui.painter
+        .paragraph(cx, dvec2(x + 12.0, y + 6.0), w - 24.0, spec, text);
     h + 12.0
 }
 

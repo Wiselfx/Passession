@@ -108,9 +108,10 @@ async fn read_keychain(rt: &UsageRuntime, service: &str, account: &str) -> Optio
             continue;
         }
         if let Ok(value) = serde_json::from_slice::<Value>(&output.stdout)
-            && let Some(record) = credentials(&value) {
-                return Some(record);
-            }
+            && let Some(record) = credentials(&value)
+        {
+            return Some(record);
+        }
     }
     None
 }
@@ -212,10 +213,10 @@ pub(super) async fn discover(rt: &UsageRuntime, scope: &UsageScope) -> Result<Ve
             .expires
             .is_some_and(|expires| expires <= now() as f64)
             && let Ok(Identity::Account { key, label }) = read_profile(rt, &credentials.token).await
-            {
-                account.key = key;
-                account.label = label;
-            }
+        {
+            account.key = key;
+            account.label = label;
+        }
         if rt.cancel.is_cancelled() {
             bail!("Usage discovery cancelled");
         }
@@ -499,15 +500,16 @@ fn parse_scoped(entry: &Value) -> Result<Option<ScopedLimit>> {
                     .filter(|s| !s.is_empty())
                     .or(id);
                 if chosen.is_none()
-                    && let Some(name) = name {
-                        chosen = Some(ScopedLimit {
-                            dimension,
-                            id: id.map(str::to_owned),
-                            name: name.into(),
-                            used,
-                            reset: reset.clone(),
-                        });
-                    }
+                    && let Some(name) = name
+                {
+                    chosen = Some(ScopedLimit {
+                        dimension,
+                        id: id.map(str::to_owned),
+                        name: name.into(),
+                        used,
+                        reset: reset.clone(),
+                    });
+                }
             }
         }
     }
@@ -610,12 +612,13 @@ fn project(value: &Value, subscription: Option<&str>, tier: Option<&str>) -> Res
     }
     let mut details = Vec::new();
     if let Some(extra) = stores::nullable_object(value, "extra_usage")?
-        && let Some(enabled) = extra.get("is_enabled") {
-            let enabled = enabled
-                .as_bool()
-                .ok_or_else(|| anyhow::anyhow!("Invalid Claude extra usage flag"))?;
-            details.push(json!({"id":"extra_usage", "label":"Extra usage", "value":if enabled {"Enabled"} else {"Disabled"}}));
-        }
+        && let Some(enabled) = extra.get("is_enabled")
+    {
+        let enabled = enabled
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Invalid Claude extra usage flag"))?;
+        details.push(json!({"id":"extra_usage", "label":"Extra usage", "value":if enabled {"Enabled"} else {"Disabled"}}));
+    }
     if windows.is_empty() {
         tracing::warn!("Claude usage response parsed but produced no windows");
     }

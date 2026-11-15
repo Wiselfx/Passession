@@ -4,7 +4,7 @@
 //! (`Bool(false)`). The output device is opened only while something plays.
 
 use super::DecodedAudio;
-use crate::action::{post_result, PlatformError, PlatformRequestId, PlatformValue};
+use crate::action::{PlatformError, PlatformRequestId, PlatformValue, post_result};
 use makepad_widgets::{AudioDeviceId, AudioDevicesEvent, Cx, CxMediaApi};
 use std::{
     collections::VecDeque,
@@ -51,7 +51,9 @@ pub(crate) struct AudioQueue {
 
 impl AudioEngine {
     pub fn queue(&self) -> AudioQueue {
-        AudioQueue { state: self.state.clone() }
+        AudioQueue {
+            state: self.state.clone(),
+        }
     }
 
     /// Routes playback to a native player instead of Makepad's output device.
@@ -112,7 +114,7 @@ impl AudioEngine {
     /// The OS took the audio session (focus loss / interruption): drop everything.
     #[cfg(any(target_os = "android", target_os = "ios"))]
     pub fn interrupted(&mut self, cx: &mut Cx) {
-        use crate::action::{post_event, PlatformEvent};
+        use crate::action::{PlatformEvent, post_event};
         self.cancel_with(Ok(PlatformValue::Bool(false)));
         post_event(PlatformEvent::AudioInterrupted);
         self.update(cx);
@@ -127,7 +129,11 @@ impl AudioEngine {
         let (playing, pending, sink) = {
             let mut state = self.state.lock().unwrap();
             state.generation = state.generation.wrapping_add(1);
-            (std::mem::take(&mut state.queue), std::mem::take(&mut state.pending), state.sink.clone())
+            (
+                std::mem::take(&mut state.queue),
+                std::mem::take(&mut state.pending),
+                state.sink.clone(),
+            )
         };
         if let Some(sink) = sink {
             // Completes what the native player holds with Bool(false).
@@ -152,7 +158,9 @@ impl AudioEngine {
                 let mut state = state.lock().unwrap();
                 let mut written = 0;
                 while written < frames {
-                    let Some(current) = state.queue.front_mut() else { break };
+                    let Some(current) = state.queue.front_mut() else {
+                        break;
+                    };
                     let source_channels = current.audio.channels.max(1);
                     let total = current.audio.samples.len() / source_channels;
                     let available = total.saturating_sub(current.frame);
@@ -161,15 +169,17 @@ impl AudioEngine {
                         let source_channel = c.min(source_channels - 1);
                         let out = buffer.channel_mut(c);
                         for i in 0..count {
-                            out[written + i] = current.audio.samples[(current.frame + i) * source_channels + source_channel];
+                            out[written + i] = current.audio.samples
+                                [(current.frame + i) * source_channels + source_channel];
                         }
                     }
                     current.frame += count;
                     written += count;
                     if current.frame >= total
-                        && let Some(done) = state.queue.pop_front() {
-                            finished.push(done.request);
-                        }
+                        && let Some(done) = state.queue.pop_front()
+                    {
+                        finished.push(done.request);
+                    }
                 }
             }
             for request in finished {
@@ -190,7 +200,12 @@ impl AudioQueue {
     }
 
     /// Decoding finished; sources move to the play queue in admission order.
-    pub fn decoded(&self, request: PlatformRequestId, generation: u64, result: anyhow::Result<DecodedAudio>) {
+    pub fn decoded(
+        &self,
+        request: PlatformRequestId,
+        generation: u64,
+        result: anyhow::Result<DecodedAudio>,
+    ) {
         let mut ready_failures = Vec::new();
         {
             let mut state = self.state.lock().unwrap();
@@ -209,11 +224,19 @@ impl AudioQueue {
                 }
             }
             let mut handed = Vec::new();
-            while state.pending.front().is_some_and(|(_, audio)| audio.is_some()) {
+            while state
+                .pending
+                .front()
+                .is_some_and(|(_, audio)| audio.is_some())
+            {
                 let (id, audio) = state.pending.pop_front().unwrap();
                 match &state.sink {
                     Some(sink) => handed.push((sink.clone(), id, audio.unwrap())),
-                    None => state.queue.push_back(Playing { request: id, audio: audio.unwrap(), frame: 0 }),
+                    None => state.queue.push_back(Playing {
+                        request: id,
+                        audio: audio.unwrap(),
+                        frame: 0,
+                    }),
                 }
             }
             // Still under the lock, so hand-off order equals admission order.

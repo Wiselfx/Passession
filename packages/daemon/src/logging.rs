@@ -107,7 +107,7 @@ where
             record["time"] = json!(chrono::Utc::now().timestamp_millis());
             record["pid"] = json!(std::process::id());
             record["hostname"] = json!(HOSTNAME.as_ref().expect("Logger hostname initialized"));
-            record["daemonVersion"] = json!(env!("CARGO_PKG_VERSION"));
+            record["daemonVersion"] = json!(crate::VERSION);
             record["name"] = json!(metadata.target());
             record["msg"] = message;
             writeln!(writer, "{record}")

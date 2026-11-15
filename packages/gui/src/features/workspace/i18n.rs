@@ -26,7 +26,10 @@ pub fn l(english: &'static str) -> &'static str {
     if !korean() {
         return english;
     }
-    KO.iter().find(|(en, _)| *en == english).map(|(_, ko)| *ko).unwrap_or(english)
+    KO.iter()
+        .find(|(en, _)| *en == english)
+        .map(|(_, ko)| *ko)
+        .unwrap_or(english)
 }
 
 /// Translates an English literal and fills `{name}` placeholders.
@@ -42,12 +45,27 @@ pub fn lf(english: &'static str, args: &[(&str, &str)]) -> String {
 static KO: &[(&str, &str)] = &[
     ("Directory source", "디렉터리 가져오기"),
     ("Directory options", "디렉터리 옵션"),
-    ("Worktree creation is no longer supported. Choose a local directory.", "워크트리 생성은 더 이상 지원하지 않습니다. 로컬 디렉터리를 선택하세요."),
-    ("Worktree schedules are no longer supported. Create a new schedule for a local directory.", "워크트리 일정은 더 이상 지원하지 않습니다. 로컬 디렉터리에서 실행할 새 일정을 만드세요."),
-    ("The host did not return a terminal.", "호스트가 터미널을 반환하지 않았습니다."),
+    (
+        "Worktree creation is no longer supported. Choose a local directory.",
+        "워크트리 생성은 더 이상 지원하지 않습니다. 로컬 디렉터리를 선택하세요.",
+    ),
+    (
+        "Worktree schedules are no longer supported. Create a new schedule for a local directory.",
+        "워크트리 일정은 더 이상 지원하지 않습니다. 로컬 디렉터리에서 실행할 새 일정을 만드세요.",
+    ),
+    (
+        "The host did not return a terminal.",
+        "호스트가 터미널을 반환하지 않았습니다.",
+    ),
     ("No scripts configured.", "설정된 스크립트가 없습니다."),
-    ("The host reported failure. Any partial session and directory remain intact; a new attempt uses a new identity.", "호스트가 실패를 보고했습니다. 일부 생성된 세션과 디렉터리는 보존되며 새 시도에는 새 식별자를 사용합니다."),
-    ("Creation failed. Inspect any created session or directory before starting again.", "생성에 실패했습니다. 다시 시작하기 전에 생성된 세션이나 디렉터리를 확인하세요."),
+    (
+        "The host reported failure. Any partial session and directory remain intact; a new attempt uses a new identity.",
+        "호스트가 실패를 보고했습니다. 일부 생성된 세션과 디렉터리는 보존되며 새 시도에는 새 식별자를 사용합니다.",
+    ),
+    (
+        "Creation failed. Inspect any created session or directory before starting again.",
+        "생성에 실패했습니다. 다시 시작하기 전에 생성된 세션이나 디렉터리를 확인하세요.",
+    ),
     // Schedules
     ("Schedules", "스케줄"),
     ("Unable to load schedules", "스케줄을 불러올 수 없습니다"),
@@ -58,9 +76,15 @@ static KO: &[(&str, &str)] = &[
     ("All hosts", "모든 호스트"),
     ("Filter by host", "호스트로 필터"),
     ("Filter: {label}", "필터: {label}"),
-    ("{host}: Could not load schedules", "{host}: 스케줄을 불러올 수 없습니다"),
+    (
+        "{host}: Could not load schedules",
+        "{host}: 스케줄을 불러올 수 없습니다",
+    ),
     ("No active schedules", "활성 스케줄이 없습니다"),
-    ("Schedules run agents on a cadence.", "스케줄은 정해진 주기로 에이전트를 실행합니다."),
+    (
+        "Schedules run agents on a cadence.",
+        "스케줄은 정해진 주기로 에이전트를 실행합니다.",
+    ),
     ("See docs", "문서 보기"),
     ("No ended schedules", "종료된 스케줄이 없습니다"),
     ("Paused", "일시 중지됨"),
@@ -82,7 +106,10 @@ static KO: &[(&str, &str)] = &[
     ("Run history", "실행 기록"),
     ("Delete {product}", "{product} 삭제"),
     ("Deleting...", "삭제 중..."),
-    ("Delete \"{title}\"? This cannot be undone.", "\"{title}\"을(를) 삭제할까요? 되돌릴 수 없습니다."),
+    (
+        "Delete \"{title}\"? This cannot be undone.",
+        "\"{title}\"을(를) 삭제할까요? 되돌릴 수 없습니다.",
+    ),
     ("Delete", "삭제"),
     ("No runs yet", "아직 실행 기록이 없습니다"),
     ("Succeeded", "성공"),
@@ -130,11 +157,17 @@ static KO: &[(&str, &str)] = &[
     ("Custom cron", "사용자 지정 cron"),
     ("Edit heartbeat", "하트비트 편집"),
     ("Edit schedule", "스케줄 편집"),
-    ("This connection does not have automation.manage permission.", "이 연결에는 automation.manage 권한이 없습니다."),
+    (
+        "This connection does not have automation.manage permission.",
+        "이 연결에는 automation.manage 권한이 없습니다.",
+    ),
     ("Name", "이름"),
     ("Optional", "선택 사항"),
     ("Prompt", "프롬프트"),
-    ("What should the agent do each run?", "매 실행마다 에이전트가 무엇을 해야 하나요?"),
+    (
+        "What should the agent do each run?",
+        "매 실행마다 에이전트가 무엇을 해야 하나요?",
+    ),
     ("Host", "호스트"),
     ("Select host", "호스트 선택"),
     ("No hosts found", "호스트가 없습니다"),
@@ -151,7 +184,10 @@ static KO: &[(&str, &str)] = &[
     ("Select mode", "모드 선택"),
     ("Default mode", "기본 모드"),
     ("No modes found", "모드가 없습니다"),
-    ("No modes are available for this model.", "이 모델에서 사용할 수 있는 모드가 없습니다."),
+    (
+        "No modes are available for this model.",
+        "이 모델에서 사용할 수 있는 모드가 없습니다.",
+    ),
     ("Archive on finish", "완료 시 보관"),
     ("Cadence", "주기"),
     ("Max runs", "최대 실행 횟수"),
@@ -161,7 +197,10 @@ static KO: &[(&str, &str)] = &[
     ("Create schedule", "스케줄 만들기"),
     ("Target", "대상"),
     ("Enter a cron expression", "cron 식을 입력하세요"),
-    ("Cron expressions must have 5 fields", "cron 식은 5개 필드여야 합니다"),
+    (
+        "Cron expressions must have 5 fields",
+        "cron 식은 5개 필드여야 합니다",
+    ),
     ("Invalid {name} field", "잘못된 {name} 필드"),
     ("Invalid {name} step", "잘못된 {name} 간격"),
     ("Invalid {name} range", "잘못된 {name} 범위"),
@@ -170,71 +209,170 @@ static KO: &[(&str, &str)] = &[
     ("Execution output", "실행 출력"),
     ("Execution finished", "실행 완료됨"),
     ("Live output · read-only", "실시간 출력 · 읽기 전용"),
-    ("Waiting for host · cached output", "호스트 대기 중 · 캐시된 출력"),
+    (
+        "Waiting for host · cached output",
+        "호스트 대기 중 · 캐시된 출력",
+    ),
     ("{n} lines", "{n}줄"),
     ("Pause following output", "출력 따라가기 일시 중지"),
     ("Follow output", "출력 따라가기"),
     ("Copy all output", "전체 출력 복사"),
-    ("Execution finished without output", "출력 없이 실행이 완료되었습니다"),
+    (
+        "Execution finished without output",
+        "출력 없이 실행이 완료되었습니다",
+    ),
     ("No output yet", "아직 출력이 없습니다"),
-    ("Output changed — search again", "출력이 변경되었습니다 — 다시 검색하세요"),
-    ("Execution output requires an existing process identifier", "실행 출력에는 기존 프로세스 식별자가 필요합니다"),
-    ("Execution observation could not be restored", "실행 관찰을 복원할 수 없습니다"),
-    ("Invalid execution subscription slot", "잘못된 실행 구독 슬롯"),
+    (
+        "Output changed — search again",
+        "출력이 변경되었습니다 — 다시 검색하세요",
+    ),
+    (
+        "Execution output requires an existing process identifier",
+        "실행 출력에는 기존 프로세스 식별자가 필요합니다",
+    ),
+    (
+        "Execution observation could not be restored",
+        "실행 관찰을 복원할 수 없습니다",
+    ),
+    (
+        "Invalid execution subscription slot",
+        "잘못된 실행 구독 슬롯",
+    ),
     ("Invalid execution snapshot", "잘못된 실행 스냅샷"),
-    ("Execution restore arrived without snapshot dimensions", "스냅샷 크기 없이 실행 복원이 도착했습니다"),
+    (
+        "Execution restore arrived without snapshot dimensions",
+        "스냅샷 크기 없이 실행 복원이 도착했습니다",
+    ),
     // Setup
-    ("Setup did not start. Refresh its status before retrying.", "설정이 시작되지 않았습니다. 다시 시도하기 전에 상태를 새로 고치세요."),
-    ("Earlier setup output was truncated by the host.", "이전 설정 출력은 호스트에서 잘렸습니다."),
-    ("Could not open service URL in the system browser.", "시스템 브라우저에서 서비스 URL을 열 수 없습니다."),
+    (
+        "Setup did not start. Refresh its status before retrying.",
+        "설정이 시작되지 않았습니다. 다시 시도하기 전에 상태를 새로 고치세요.",
+    ),
+    (
+        "Earlier setup output was truncated by the host.",
+        "이전 설정 출력은 호스트에서 잘렸습니다.",
+    ),
+    (
+        "Could not open service URL in the system browser.",
+        "시스템 브라우저에서 서비스 URL을 열 수 없습니다.",
+    ),
     ("Setup observation failed.", "설정 관찰에 실패했습니다."),
     // Project settings
-    ("Discard unsaved project settings?", "저장하지 않은 프로젝트 설정을 버릴까요?"),
-    ("Your edits have not been saved to the host.", "편집 내용이 호스트에 저장되지 않았습니다."),
+    (
+        "Discard unsaved project settings?",
+        "저장하지 않은 프로젝트 설정을 버릴까요?",
+    ),
+    (
+        "Your edits have not been saved to the host.",
+        "편집 내용이 호스트에 저장되지 않았습니다.",
+    ),
     ("Discard", "버리기"),
-    ("A script named \"{name}\" already exists", "\"{name}\" 스크립트가 이미 있습니다"),
+    (
+        "A script named \"{name}\" already exists",
+        "\"{name}\" 스크립트가 이미 있습니다",
+    ),
     ("Port", "포트"),
-    ("Service port range (for example 3000-3999)", "서비스 포트 범위 (예: 3000-3999)"),
-    ("Port allocation command (optional)", "포트 할당 명령 (선택 사항)"),
-    ("Enter an inclusive port range between 1 and 65535.", "1에서 65535 사이의 포함 범위를 입력하세요."),
+    (
+        "Service port range (for example 3000-3999)",
+        "서비스 포트 범위 (예: 3000-3999)",
+    ),
+    (
+        "Port allocation command (optional)",
+        "포트 할당 명령 (선택 사항)",
+    ),
+    (
+        "Enter an inclusive port range between 1 and 65535.",
+        "1에서 65535 사이의 포함 범위를 입력하세요.",
+    ),
     ("Service ports", "서비스 포트"),
     ("Service port allocation", "서비스 포트 할당"),
     ("Host default", "호스트 기본값"),
-    ("Icon must be 512 KB or smaller", "아이콘은 512KB 이하여야 합니다"),
+    (
+        "Icon must be 512 KB or smaller",
+        "아이콘은 512KB 이하여야 합니다",
+    ),
     ("Download failed ({status})", "다운로드 실패 ({status})"),
-    ("Enter a valid website or image URL", "올바른 웹사이트 또는 이미지 URL을 입력하세요"),
-    ("URL must use HTTP or HTTPS without credentials", "URL은 자격 증명 없이 HTTP 또는 HTTPS를 사용해야 합니다"),
-    ("Website does not expose a supported icon", "웹사이트에 지원되는 아이콘이 없습니다"),
+    (
+        "Enter a valid website or image URL",
+        "올바른 웹사이트 또는 이미지 URL을 입력하세요",
+    ),
+    (
+        "URL must use HTTP or HTTPS without credentials",
+        "URL은 자격 증명 없이 HTTP 또는 HTTPS를 사용해야 합니다",
+    ),
+    (
+        "Website does not expose a supported icon",
+        "웹사이트에 지원되는 아이콘이 없습니다",
+    ),
     ("OK", "확인"),
     // New tab
     ("Choose a remote directory", "원격 디렉터리 선택"),
     ("Choose a remote directory.", "원격 디렉터리를 선택하세요."),
-    ("Choose a remote parent directory.", "원격 상위 디렉터리를 선택하세요."),
+    (
+        "Choose a remote parent directory.",
+        "원격 상위 디렉터리를 선택하세요.",
+    ),
     ("Enter a directory name.", "디렉터리 이름을 입력하세요."),
-    ("Choose a repository or enter owner/repository.", "저장소를 선택하거나 owner/repository를 입력하세요."),
-    ("The host did not return a registered project.", "호스트가 등록된 프로젝트를 반환하지 않았습니다."),
-    ("The host did not return the prepared directory. Browse to inspect its state.", "호스트가 준비된 디렉터리를 반환하지 않았습니다. 찾아보기로 상태를 확인하세요."),
+    (
+        "Choose a repository or enter owner/repository.",
+        "저장소를 선택하거나 owner/repository를 입력하세요.",
+    ),
+    (
+        "The host did not return a registered project.",
+        "호스트가 등록된 프로젝트를 반환하지 않았습니다.",
+    ),
+    (
+        "The host did not return the prepared directory. Browse to inspect its state.",
+        "호스트가 준비된 디렉터리를 반환하지 않았습니다. 찾아보기로 상태를 확인하세요.",
+    ),
     ("No repositories found.", "저장소가 없습니다."),
     ("GitHub repositories", "GitHub 저장소"),
     ("Search projects", "프로젝트 검색"),
     ("No projects available.", "사용 가능한 프로젝트가 없습니다."),
     ("Add host", "호스트 추가"),
-    ("The directory changed. Review the refreshed directory-scoped provider configuration before creating.", "디렉터리가 변경되었습니다. 만들기 전에 새로 고친 디렉터리별 제공자 구성을 확인하세요."),
-    ("Prepare the directory before creating a session.", "세션을 만들기 전에 디렉터리를 준비하세요."),
-    ("Creation observation failed. Recover the receipt to continue.", "생성 관찰에 실패했습니다. 계속하려면 영수증을 복구하세요."),
-    ("Start a new creation attempt?", "새 생성 시도를 시작할까요?"),
+    (
+        "The directory changed. Review the refreshed directory-scoped provider configuration before creating.",
+        "디렉터리가 변경되었습니다. 만들기 전에 새로 고친 디렉터리별 제공자 구성을 확인하세요.",
+    ),
+    (
+        "Prepare the directory before creating a session.",
+        "세션을 만들기 전에 디렉터리를 준비하세요.",
+    ),
+    (
+        "Creation observation failed. Recover the receipt to continue.",
+        "생성 관찰에 실패했습니다. 계속하려면 영수증을 복구하세요.",
+    ),
+    (
+        "Start a new creation attempt?",
+        "새 생성 시도를 시작할까요?",
+    ),
     ("New attempt", "새 시도"),
-    ("Project added. It is available in the sidebar.", "프로젝트가 추가되었습니다. 사이드바에서 사용할 수 있습니다."),
-    ("Session created. It is open in the tab bar.", "세션이 생성되었습니다. 탭 바에 열려 있습니다."),
+    (
+        "Project added. It is available in the sidebar.",
+        "프로젝트가 추가되었습니다. 사이드바에서 사용할 수 있습니다.",
+    ),
+    (
+        "Session created. It is open in the tab bar.",
+        "세션이 생성되었습니다. 탭 바에 열려 있습니다.",
+    ),
     ("Creation: {phase}", "생성: {phase}"),
     ("awaiting confirmation", "확인 대기 중"),
     ("Receipt: {key}", "영수증: {key}"),
-    ("The original request is retained. Recover its receipt instead of creating a duplicate.", "원래 요청이 보존됩니다. 중복으로 만들지 말고 영수증을 복구하세요."),
-    ("The host reports an unknown outcome. Inspect the created resources before proceeding.", "호스트가 결과를 알 수 없다고 보고했습니다. 계속하기 전에 생성된 리소스를 확인하세요."),
+    (
+        "The original request is retained. Recover its receipt instead of creating a duplicate.",
+        "원래 요청이 보존됩니다. 중복으로 만들지 말고 영수증을 복구하세요.",
+    ),
+    (
+        "The host reports an unknown outcome. Inspect the created resources before proceeding.",
+        "호스트가 결과를 알 수 없다고 보고했습니다. 계속하기 전에 생성된 리소스를 확인하세요.",
+    ),
     ("Recover / refresh creation", "생성 복구 / 새로 고침"),
     ("Open created session", "생성된 세션 열기"),
     ("Start new attempt", "새 시도 시작"),
-    ("Existing checkout or directory", "기존 체크아웃 또는 디렉터리"),
+    (
+        "Existing checkout or directory",
+        "기존 체크아웃 또는 디렉터리",
+    ),
     ("Clone GitHub repository", "GitHub 저장소 복제"),
     ("Create remote directory", "원격 디렉터리 만들기"),
     ("Parent directory", "상위 디렉터리"),
@@ -246,19 +384,31 @@ static KO: &[(&str, &str)] = &[
     ("Automatic if empty", "비어 있으면 자동"),
     ("Pull / merge request number", "풀 / 머지 요청 번호"),
     ("Forge", "포지"),
-    ("Optional; the host detects the repository", "선택 사항이며 호스트가 저장소를 감지합니다"),
+    (
+        "Optional; the host detects the repository",
+        "선택 사항이며 호스트가 저장소를 감지합니다",
+    ),
     ("Forge project path", "포지 프로젝트 경로"),
     ("Repository or search query", "저장소 또는 검색어"),
     ("Search GitHub repositories", "GitHub 저장소 검색"),
     ("Clone protocol", "복제 프로토콜"),
     ("New directory name", "새 디렉터리 이름"),
-    ("The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.", "디렉터리 작업 결과를 알 수 없습니다. 대상을 찾아보고 완료되었다면 기존 디렉터리를 선택하세요. 작업을 무작정 반복하지 마세요."),
+    (
+        "The directory operation has an unknown outcome. Browse the target and select the existing directory if it completed; do not blindly repeat the operation.",
+        "디렉터리 작업 결과를 알 수 없습니다. 대상을 찾아보고 완료되었다면 기존 디렉터리를 선택하세요. 작업을 무작정 반복하지 마세요.",
+    ),
     ("Clone repository", "저장소 복제"),
     ("Create directory", "디렉터리 만들기"),
-    ("Inspect and select prepared directory", "준비된 디렉터리 확인 및 선택"),
+    (
+        "Inspect and select prepared directory",
+        "준비된 디렉터리 확인 및 선택",
+    ),
     ("Agent profile", "에이전트 프로필"),
     ("Custom configuration", "사용자 지정 구성"),
-    ("Add project without a workspace", "워크스페이스 없이 프로젝트 추가"),
+    (
+        "Add project without a workspace",
+        "워크스페이스 없이 프로젝트 추가",
+    ),
     ("Choose project", "프로젝트 선택"),
     ("Workspace project", "워크스페이스 프로젝트"),
     ("Session", "세션"),
