@@ -189,8 +189,9 @@ pub fn reply(pending: &PendingPermission, response: &Value) -> Result<Value> {
             if allow {
                 for q in &questions {
                     let header = q["header"].as_str().unwrap_or("");
-                    if let Some(answer) = response["updatedInput"]["answers"][header].as_str().map(str::trim).filter(|s|!s.is_empty()) {
-                        let values: Vec<&str> = if q["multiSelect"] == true { answer.split(',').map(str::trim).filter(|s|!s.is_empty()).collect() } else { vec![answer] };
+                    let labels: Vec<&str> = q["options"].as_array().into_iter().flatten().filter_map(|o| o["label"].as_str()).collect();
+                    if let Some(answer) = crate::providers::question_answers::read(response, header, &labels, q["multiSelect"] == true) {
+                        let values: Vec<String> = answer.options.into_iter().chain(answer.other).collect();
                         if !values.is_empty() { answers.insert(q["id"].as_str().unwrap_or("").into(),json!({"answers":values})); }
                     }
                 }

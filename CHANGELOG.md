@@ -24,6 +24,8 @@
 - Start embedded Tailscale inside Android's unprivileged app sandbox using OS interface snapshots and network-change callbacks, and keep backend initialization in the app's private state directory rather than requiring netlink access or a desktop home directory.
 - Recover cleanly from update planning failures and proven pre-handoff helper exits; retain recovery authority for ambiguous activation failures.
 - Keep read-only subscriptions and session discovery available while an update drains work, including requests authorized by alternative Hub permissions. Replacement clients can reconnect without admitting new mutations during the trial.
+- Show an OMP `ask` HTML form as one question card with its text, default selections and default text values. Paseo answers OMP's per-field RPC dialogs from the submitted card and checks each dialog against OMP's form rules; checkbox groups now keep every chosen option instead of only the last pick. A required-field re-prompt is shown, and an unexpected dialog stops the automatic answers and is asked step by step. OMP-withdrawn dialogs remove their card, and completed forms list every answer.
+- Keep multi-select answers whose labels or custom text contain ", " intact for OMP and Codex questions: clients now also send structured `updatedInput.selections`. Claude receives only its own `answers` strings.
 
 ## 0.13.26 - 2026-11-15
 

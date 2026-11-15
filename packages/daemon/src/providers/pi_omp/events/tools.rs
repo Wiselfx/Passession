@@ -211,7 +211,7 @@ fn detail(family: &str, name: &str, display_name: &str, args: &Value, result: &V
                     .as_array()
                     .map(Vec::as_slice)
                     .unwrap_or(std::slice::from_ref(details));
-                let lines: Vec<String> = answers
+                let mut lines: Vec<String> = answers
                     .iter()
                     .filter_map(|a| {
                         let q = first(&[&a["question"]])?;
@@ -233,6 +233,19 @@ fn detail(family: &str, name: &str, display_name: &str, args: &Value, result: &V
                         ))
                     })
                     .collect();
+                // An HTML form answers `{name, question, answer}` per field.
+                if lines.is_empty() {
+                    lines = array(&details["answers"])
+                        .iter()
+                        .filter_map(|a| {
+                            let q = first(&[&a["question"], &a["name"]])?;
+                            Some(format!(
+                                "{q}\n{}",
+                                first(&[&a["answer"]]).unwrap_or("No selection")
+                            ))
+                        })
+                        .collect();
+                }
                 let label = first(&[
                     &details["question"],
                     &args["questions"][0]["question"],

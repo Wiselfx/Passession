@@ -1801,6 +1801,8 @@ pub fn permission_response(request: &Value, response: &Value) -> Result<Value> {
                 if let Some(update) = response["updatedInput"].as_object() {
                     merged.extend(update.clone());
                 }
+                // Client-side structured answers; Claude reads only its own `answers` strings.
+                merged.remove("selections");
                 let mut answers = Map::new();
                 if let Some(questions) = merged.get_mut("questions").and_then(Value::as_array_mut) {
                     for question in questions {
@@ -3016,4 +3018,29 @@ fn decode_xml(text: &str) -> String {
     }
     output.push_str(rest);
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn question_answer_forwards_claude_strings_without_client_selections() {
+        let request = json!({"id":"q","kind":"question","input":{"questions":[
+            {"question":"Which stores?","header":"Stores","multiSelect":true,"allowOther":true,
+             "options":[{"label":"SQLite, local"},{"label":"Redis"}]}
+        ]}});
+        let response = json!({"behavior":"allow","updatedInput":{
+            "questions":request["input"]["questions"],
+            "answers":{"Stores":"SQLite, local, Redis"},
+            "selections":{"Stores":{"options":["SQLite, local","Redis"]}}
+        }});
+        let native = permission_response(&request, &response).unwrap();
+        assert_eq!(
+            native["updatedInput"]["answers"],
+            json!({"Which stores?":"SQLite, local, Redis"})
+        );
+        assert!(native["updatedInput"].get("selections").is_none());
+        assert!(native["updatedInput"]["questions"][0].get("allowOther").is_none());
+    }
 }

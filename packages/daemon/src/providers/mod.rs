@@ -12,4 +12,5 @@ pub mod opencode;
 pub mod options;
 pub mod pi_omp;
 pub mod prompt;
+pub mod question_answers;
 pub mod registry;

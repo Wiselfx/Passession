@@ -61,6 +61,28 @@ fn permission_denial_uses_each_native_response_shape() {
 }
 
 #[test]
+fn multi_select_answers_keep_labels_that_contain_commas() {
+    let params = json!({"threadId":"thread","turnId":"native-turn","itemId":"tool","questions":[
+        {"id":"q","header":"Pick","question":"Which?","multiSelect":true,"isOther":true,
+         "options":[{"label":"SQLite: one file, no service"},{"label":"Redis"}]}
+    ]});
+    let pending = permissions::request("codex", json!(8), "tool/requestUserInput", params).unwrap();
+    let legacy = json!({"behavior":"allow","updatedInput":{"answers":{"Pick":"SQLite: one file, no service, Redis, my, own"}}});
+    assert_eq!(
+        permissions::reply(&pending, &legacy).unwrap(),
+        json!({"answers":{"q":{"answers":["SQLite: one file, no service","Redis","my, own"]}}})
+    );
+    let structured = json!({"behavior":"allow","updatedInput":{
+        "answers":{"Pick":"ignored"},
+        "selections":{"Pick":{"options":["SQLite: one file, no service"],"other":""}}
+    }});
+    assert_eq!(
+        permissions::reply(&pending, &structured).unwrap(),
+        json!({"answers":{"q":{"answers":["SQLite: one file, no service"]}}})
+    );
+}
+
+#[test]
 fn asynchronous_question_is_not_committed_before_steer_acceptance() {
     let mut questions = permissions::AsyncQuestions::default();
     let request=questions.receive("codex",&json!({"type":"agentMessage","id":"question","delivery":"async","questions":[{"title":"Choose a branch","options":["main","release"]}]})).unwrap();

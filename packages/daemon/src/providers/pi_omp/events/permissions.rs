@@ -1,8 +1,12 @@
+use super::ask_form::{AskForm, Step, Submitted};
 use super::{array, first, put, string};
+use crate::providers::question_answers;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 const OTHER: &str = "Other (type your own)";
 const FREEFORM: &str = "✏️ Type custom response...";
+/// Shown on OMP form steps the replay could not predict.
+const STRAY_NOTE: &str = "Paseo could not match this OMP form step, so the remaining steps are asked one at a time. Picking a checkbox item toggles it; pick the option ending in “Done selecting” to finish.";
 #[derive(Default)]
 pub struct Permissions {
     requests: Vec<Value>,
@@ -12,6 +16,7 @@ pub struct Permissions {
     pi_ask: Value,
     pi_pending: Option<(String, Option<String>)>,
     rpiv: Option<Rpiv>,
+    form: Option<AskForm>,
 }
 struct Pending {
     title: String,
@@ -67,6 +72,11 @@ impl Permissions {
                 .cloned()
                 .collect();
             self.pending = None;
+            if let Some(html) = args["html"].as_str()
+                && self.form.as_ref().is_none_or(|form| form.tool != id)
+            {
+                self.form = AskForm::new(id, html);
+            }
         }
         if family != "omp" {
             self.pi_ask = if name == "ask_user" {
@@ -97,6 +107,9 @@ impl Permissions {
         if name == "ask" {
             self.ask.clear();
             self.pending = None;
+            if self.form.as_ref().is_some_and(|form| form.tool == id) {
+                self.form = None;
+            }
         }
         if name == "ask_user" {
             self.pi_ask = Value::Null;
@@ -109,6 +122,28 @@ impl Permissions {
     pub fn dialog(&mut self, family: &str, provider: &str, event: &Value) -> Option<Value> {
         let method = string(&event["method"]);
         let id = string(&event["id"]);
+        let mut stray = false;
+        if family == "omp"
+            && let Some(form) = self.form.as_mut()
+        {
+            match form.dialog(provider, event) {
+                Step::Show(request) => {
+                    self.requests.push(request.clone());
+                    return Some(request);
+                }
+                Step::Reply(body) => {
+                    self.responses.push(frame(id, body));
+                    return None;
+                }
+                Step::Ask => {}
+                Step::Finished => self.form = None,
+                Step::Abandon(reason) => {
+                    tracing::warn!(%reason, "OMP ask form replay stopped; showing its remaining steps one at a time");
+                    self.form = None;
+                    stray = true;
+                }
+            }
+        }
         if family != "omp" {
             if let Some(r) = self.rpiv.as_mut()
                 && matches!(method, "select" | "input")
@@ -204,6 +239,12 @@ impl Permissions {
                 req["metadata"]["freeformSentinel"] = json!(FREEFORM);
             }
         }
+        if stray && let Some(question) = req["input"]["questions"].get_mut(0) {
+            question["question"] = json!(format!(
+                "{STRAY_NOTE}\n\n{}",
+                string(&question["question"])
+            ));
+        }
         self.requests.push(req.clone());
         Some(req)
     }
@@ -248,6 +289,24 @@ impl Permissions {
             .position(|r| r["id"] == id)
             .ok_or_else(|| anyhow::anyhow!("No pending permission request with id '{id}'"))?;
         let req = self.requests.remove(pos);
+        if req["metadata"]["ompAskForm"] == true {
+            let submitted = match self.form.as_mut() {
+                Some(form) if form.shows(id) => form.submit(response),
+                _ => Ok(Submitted::Cancelled),
+            };
+            return match submitted {
+                Ok(Submitted::Reply(body)) => Ok(frame(id, body)),
+                Ok(Submitted::Cancelled) => {
+                    self.form = None;
+                    Ok(frame(id, json!({"cancelled":true})))
+                }
+                Err(message) => {
+                    // The form still waits for a valid answer.
+                    self.requests.insert(pos, req);
+                    Err(anyhow::anyhow!(message))
+                }
+            };
+        }
         let allow = response["behavior"] == "allow";
         let answers = &response["updatedInput"]["answers"];
         let answer = answers
@@ -289,22 +348,19 @@ impl Permissions {
             ));
         }
         if req["metadata"]["ompAsk"] == true {
-            let Some(answer) = answers["Response"].as_str().filter(|_| allow) else {
-                self.pending = None;
-                return Ok(frame(id, json!({"cancelled":true})));
-            };
             let labels: Vec<&str> = array(&req["metadata"]["optionLabels"])
                 .iter()
                 .filter_map(Value::as_str)
                 .collect();
             let multi = req["input"]["questions"][0]["multiSelect"] == true;
-            let (mut selected, custom) = if multi {
-                split(answer, &labels)
-            } else if labels.contains(&answer) {
-                (VecDeque::from([answer.into()]), None)
-            } else {
-                (VecDeque::new(), Some(answer.into()))
+            let Some(answer) =
+                question_answers::read(response, "Response", &labels, multi).filter(|_| allow)
+            else {
+                self.pending = None;
+                return Ok(frame(id, json!({"cancelled":true})));
             };
+            let mut selected: VecDeque<String> = answer.options.into();
+            let custom = answer.other;
             if selected.is_empty() && custom.is_none() {
                 return Ok(frame(id, json!({"cancelled":true})));
             }
@@ -332,33 +388,16 @@ impl Permissions {
             },
         ))
     }
-}
-fn split(answer: &str, labels: &[&str]) -> (VecDeque<String>, Option<String>) {
-    let mut remaining = answer;
-    let mut selected = VecDeque::new();
-    while !remaining.is_empty() {
-        let label = labels
-            .iter()
-            .copied()
-            .filter(|s| !selected.iter().any(|v| v == s))
-            .filter(|s| {
-                remaining == *s
-                    || remaining
-                        .strip_prefix(*s)
-                        .is_some_and(|r| r.starts_with(", "))
-            })
-            .max_by_key(|s| s.len());
-        let Some(label) = label else {
-            break;
-        };
-        selected.push_back(label.to_owned());
-        remaining = if remaining == label {
-            ""
-        } else {
-            &remaining[label.len() + 2..]
-        };
+    /// OMP withdrew a dialog (timeout or abort): drops the card shown for it.
+    pub fn cancel(&mut self, event: &Value) -> Option<String> {
+        let target = event["targetId"].as_str()?;
+        let index = self.requests.iter().position(|r| r["id"] == target)?;
+        self.requests.remove(index);
+        if self.form.as_ref().is_some_and(|form| form.shows(target)) {
+            self.form = None;
+        }
+        Some(target.to_owned())
     }
-    (selected, (!remaining.is_empty()).then(|| remaining.into()))
 }
 fn generic(event: &Value, provider: &str, label: &str) -> Option<Value> {
     let method = string(&event["method"]);

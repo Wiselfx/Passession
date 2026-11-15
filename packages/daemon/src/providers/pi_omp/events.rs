@@ -7,6 +7,7 @@ macro_rules! cached_regex {
         &*REGEX
     }};
 }
+mod ask_form;
 mod extensions;
 mod notices;
 mod permissions;
@@ -493,6 +494,14 @@ impl Mapper {
                         lines.push(instructions.into());
                     }
                     out.push(self.timeline(json!({"type":"assistant_message","text":lines.join("\n")})));
+                }
+                else if frame["method"] == "cancel" {
+                    if let Some(id) = self.permissions.cancel(frame) {
+                        let mut e = self.event("permission_resolved");
+                        e["requestId"] = json!(id);
+                        e["resolution"] = json!({"behavior":"deny","message":"Withdrawn by the agent"});
+                        out.push(e);
+                    }
                 }
                 else if let Some(request)=self.permissions.dialog(&self.family,&self.provider,frame){let mut e=self.event("permission_requested");e["request"]=request;out.push(e);}
             }

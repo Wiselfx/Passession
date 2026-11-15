@@ -28,6 +28,10 @@ pub struct Question {
     pub allow_empty: bool,
     pub placeholder: Option<String>,
     pub dismiss_label: Option<String>,
+    /// Options selected before the user answers (`options[].default`).
+    pub default_options: BTreeSet<usize>,
+    /// The text answer before the user edits it (`defaultText`).
+    pub default_text: Option<String>,
 }
 
 impl Question {
@@ -53,15 +57,27 @@ pub fn questions(request: &Value) -> Option<Vec<Question>> {
         {
             return None;
         }
+        let multi_select = is_true(get(q, "multiSelect"));
+        let mut default_options: BTreeSet<usize> = options
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| is_true(get(o, "default")))
+            .map(|(i, _)| i)
+            .collect();
+        if !multi_select && let Some(&first) = default_options.first() {
+            default_options = BTreeSet::from([first]);
+        }
         out.push(Question {
             question: question.to_owned(),
             header: header.to_owned(),
             options: options.clone(),
-            multi_select: is_true(get(q, "multiSelect")),
+            multi_select,
             allow_other: is_true(get(q, "allowOther")) || is_true(get(q, "isOther")),
             allow_empty: is_true(get(q, "allowEmpty")),
             placeholder: get(q, "placeholder").as_str().map(str::to_owned),
             dismiss_label: get(q, "dismissLabel").as_str().map(str::to_owned),
+            default_options,
+            default_text: get(q, "defaultText").as_str().map(str::to_owned),
         });
     }
     Some(out)
@@ -81,10 +97,19 @@ pub struct CardState {
 
 impl CardState {
     pub fn for_request(request: &Value) -> Self {
-        Self {
+        let mut state = Self {
             request_id: value_text(get(request, "id")),
             ..Default::default()
+        };
+        for (index, q) in questions(request).into_iter().flatten().enumerate() {
+            if !q.default_options.is_empty() {
+                state.selections.insert(index, q.default_options);
+            }
+            if let Some(text) = q.default_text {
+                state.other_texts.insert(index, text);
+            }
         }
+        state
     }
 
     pub fn is_answered(&self, q: &Question, index: usize) -> bool {
@@ -146,6 +171,29 @@ impl CardState {
             }
         }
         Value::Object(answers)
+    }
+
+    /// `{header: {"options": [label, ...], "other": text}}` for every question, beside the
+    /// joined `answers` strings older daemons read: a label containing ", " stays whole and
+    /// an emptied multi-select stays distinguishable from an unanswered one.
+    pub fn build_selections(&self, qs: &[Question]) -> Value {
+        let mut selections = serde_json::Map::new();
+        for (i, q) in qs.iter().enumerate() {
+            let options: Vec<&str> = self
+                .selections
+                .get(&i)
+                .into_iter()
+                .flatten()
+                .map(|&o| str_of(get(&q.options[o], "label")))
+                .collect();
+            let mut entry = json!({"options": options});
+            let text = self.other_texts.get(&i).map_or("", |t| t.trim());
+            if q.shows_text_input() && !text.is_empty() {
+                entry["other"] = json!(text);
+            }
+            selections.insert(q.header.clone(), entry);
+        }
+        Value::Object(selections)
     }
 
     /// Option toggle; single-select advances to the next question.
@@ -1074,5 +1122,33 @@ pub fn question_response(r: &Value, qs: &[Question], state: &CardState, dismiss:
         }
     }
     input.insert("answers".into(), state.build_answers(qs));
+    input.insert("selections".into(), state.build_selections(qs));
     json!({"behavior": "allow", "updatedInput": Value::Object(input)})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_defaults_prefill_the_card_and_answers_keep_comma_labels() {
+        let request = json!({"id":"q","kind":"question","input":{"questions":[
+            {"question":"Items?","header":"Items","multiSelect":true,"allowOther":true,
+             "options":[{"label":"A, B","default":true},{"label":"C","default":true},{"label":"D"}]},
+            {"question":"Days?","header":"Days","options":[],"defaultText":"30"}
+        ]}});
+        let qs = questions(&request).unwrap();
+        let mut state = CardState::for_request(&request);
+        assert_eq!(state.selections[&0], BTreeSet::from([0, 1]));
+        assert_eq!(state.other_texts[&1], "30");
+
+        state.toggle(&qs[0], 0, 1, qs.len());
+        state.set_other(&qs[0], 0, "x, y");
+        let response = question_response(&request, &qs, &state, false);
+        assert_eq!(response["updatedInput"]["answers"]["Items"], "A, B, x, y");
+        assert_eq!(
+            response["updatedInput"]["selections"],
+            json!({"Items":{"options":["A, B"],"other":"x, y"},"Days":{"options":[],"other":"30"}})
+        );
+    }
 }

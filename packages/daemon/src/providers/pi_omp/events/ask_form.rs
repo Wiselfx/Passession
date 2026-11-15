@@ -1,0 +1,604 @@
+//! OMP's `ask` tool takes one HTML form. OMP's RPC host has no form dialog, so OMP asks one
+//! dialog per field; a checkbox group becomes a `select` repeated once per toggled option,
+//! without its checked state. Paseo shows the whole form as one question card, then answers
+//! those dialogs itself, checking each one against the dialog OMP's own rules predict. A dialog
+//! that does not match stops the replay and is shown to the user, with every later one.
+
+mod parse;
+#[cfg(test)]
+mod tests;
+
+use crate::providers::question_answers;
+use parse::{Block, Kind};
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+
+/// OMP's automatic free-text option of a radio or checkbox group.
+const OTHER: &str = "Other (type your own)";
+/// OMP's multi-select finish option, after a theme-dependent symbol.
+const DONE: &str = " Done selecting";
+const HEADER_CHARS: usize = 24;
+
+pub(super) struct AskForm {
+    pub(super) tool: String,
+    plans: Vec<Plan>,
+    title: String,
+    trailing: Vec<String>,
+    stage: Stage,
+}
+
+enum Stage {
+    /// Waiting for OMP's first dialog.
+    Waiting,
+    /// The card is shown in place of this first dialog.
+    Shown {
+        request: String,
+        held: Value,
+    },
+    Replaying(Replay),
+}
+
+/// One named field, as OMP will ask it.
+struct Plan {
+    title: String,
+    header: String,
+    question: String,
+    kind: PlanKind,
+}
+
+enum PlanKind {
+    Choice {
+        multi: bool,
+        required: bool,
+        /// Dialog labels of the enabled options.
+        labels: Vec<String>,
+        defaults: BTreeSet<usize>,
+        /// Checked disabled options: OMP counts them but never offers them.
+        locked: usize,
+        other: Option<String>,
+    },
+    Text {
+        editor: bool,
+        value: String,
+        placeholder: String,
+        required: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum Target {
+    Single(Pick),
+    Multi {
+        picks: BTreeSet<usize>,
+        other: Option<String>,
+    },
+    Text(String),
+}
+
+#[derive(Clone, Debug)]
+enum Pick {
+    Option(usize),
+    Other(String),
+}
+
+pub(super) enum Step {
+    /// Show this card in place of the dialog.
+    Show(Value),
+    /// Answer the dialog with this body.
+    Reply(Value),
+    /// A validation re-prompt: show the dialog; the replay resumes after it.
+    Ask,
+    /// The form is complete; the dialog is not part of it.
+    Finished,
+    /// The dialog differs from the prediction.
+    Abandon(String),
+}
+
+pub(super) enum Submitted {
+    Reply(Value),
+    Cancelled,
+}
+
+impl AskForm {
+    /// `None` when the form has no named control: OMP then returns without a dialog.
+    pub(super) fn new(tool: &str, html: &str) -> Option<Self> {
+        let form = parse::parse(html);
+        let titles = form.titles();
+        let mut contexts: Vec<Vec<String>> = vec![Vec::new(); form.fields.len()];
+        let mut pending: Vec<String> = Vec::new();
+        for section in &form.sections {
+            if !section.title.is_empty() {
+                pending.push(section.title.clone());
+            }
+            for block in &section.blocks {
+                match block {
+                    Block::Text(text) | Block::Other(text) => {
+                        if !text.trim().is_empty() {
+                            pending.push(text.clone());
+                        }
+                    }
+                    Block::Field(index) if !form.fields[*index].name.is_empty() => {
+                        contexts[*index] = std::mem::take(&mut pending);
+                    }
+                    Block::Field(_) => {}
+                }
+            }
+        }
+        let mut headers: Vec<String> = Vec::new();
+        let mut plans = Vec::new();
+        for (index, field) in form.fields.iter().enumerate() {
+            if field.name.is_empty() {
+                continue;
+            }
+            let title = titles[index].clone();
+            let mut lines: Vec<&str> = contexts[index]
+                .iter()
+                .map(String::as_str)
+                .filter(|line| parse::collapse(line) != title)
+                .collect();
+            lines.push(&title);
+            let header = unique(
+                &short(if title.is_empty() {
+                    &field.name
+                } else {
+                    &title
+                }),
+                &headers,
+            );
+            headers.push(header.clone());
+            let kind = match &field.kind {
+                Kind::Choice {
+                    multi,
+                    other,
+                    options,
+                    ..
+                } => {
+                    let mut labels: Vec<String> = Vec::new();
+                    let mut defaults = BTreeSet::new();
+                    for option in options.iter().filter(|o| !o.disabled) {
+                        let label = parse::collapse(&option.label);
+                        let label = if label.is_empty() {
+                            option.value.clone()
+                        } else {
+                            label
+                        };
+                        if option.checked {
+                            defaults.insert(labels.len());
+                        }
+                        labels.push(unique(&label, &labels));
+                    }
+                    PlanKind::Choice {
+                        multi: *multi,
+                        required: field.required,
+                        locked: options.iter().filter(|o| o.disabled && o.checked).count(),
+                        other: other.then(|| unique(OTHER, &labels)),
+                        labels,
+                        defaults,
+                    }
+                }
+                Kind::Text {
+                    multiline,
+                    value,
+                    placeholder,
+                } => PlanKind::Text {
+                    editor: *multiline || !value.is_empty(),
+                    value: value.clone(),
+                    placeholder: placeholder.clone(),
+                    required: field.required,
+                },
+            };
+            plans.push(Plan {
+                question: lines.join("\n\n"),
+                title,
+                header,
+                kind,
+            });
+        }
+        let first = plans.first()?;
+        let title = form
+            .sections
+            .iter()
+            .map(|s| s.title.as_str())
+            .find(|t| !t.is_empty())
+            .unwrap_or(&first.title)
+            .to_owned();
+        Some(Self {
+            tool: tool.to_owned(),
+            plans,
+            title,
+            trailing: pending,
+            stage: Stage::Waiting,
+        })
+    }
+
+    pub(super) fn shows(&self, request: &str) -> bool {
+        matches!(&self.stage, Stage::Shown { request: id, .. } if id == request)
+    }
+
+    pub(super) fn dialog(&mut self, provider: &str, event: &Value) -> Step {
+        match &mut self.stage {
+            Stage::Waiting => {
+                let start = Replay::new(&self.plans, Vec::new());
+                if let Err(reason) = start.expected(&self.plans[0]).check(event) {
+                    return Step::Abandon(reason);
+                }
+                let id = event["id"].as_str().unwrap_or("").to_owned();
+                let request = self.request(provider, &id);
+                self.stage = Stage::Shown {
+                    request: id,
+                    held: event.clone(),
+                };
+                Step::Show(request)
+            }
+            Stage::Shown { .. } => {
+                Step::Abandon("OMP asked again before the form was answered".into())
+            }
+            Stage::Replaying(replay) => replay.next(&self.plans, event),
+        }
+    }
+
+    /// Answers the held first dialog from the card's response.
+    pub(super) fn submit(&mut self, response: &Value) -> Result<Submitted, String> {
+        let Stage::Shown { held, .. } = &self.stage else {
+            return Err("The form is not waiting for an answer".into());
+        };
+        if response["behavior"] != "allow" {
+            return Ok(Submitted::Cancelled);
+        }
+        let held = held.clone();
+        let mut replay = Replay::new(&self.plans, self.targets(response)?);
+        match replay.next(&self.plans, &held) {
+            Step::Reply(body) => {
+                self.stage = Stage::Replaying(replay);
+                Ok(Submitted::Reply(body))
+            }
+            Step::Abandon(reason) => Err(reason),
+            _ => Err("The form's first step could not be answered".into()),
+        }
+    }
+
+    fn request(&self, provider: &str, id: &str) -> Value {
+        let last = self.plans.len() - 1;
+        let questions: Vec<Value> = self
+            .plans
+            .iter()
+            .enumerate()
+            .map(|(index, plan)| {
+                let mut text = plan.question.clone();
+                if index == last && !self.trailing.is_empty() {
+                    text = format!("{text}\n\n{}", self.trailing.join("\n\n"));
+                }
+                match &plan.kind {
+                    PlanKind::Choice {
+                        multi,
+                        required,
+                        labels,
+                        defaults,
+                        other,
+                        ..
+                    } => {
+                        let options: Vec<Value> = labels
+                            .iter()
+                            .enumerate()
+                            .map(|(i, label)| {
+                                if defaults.contains(&i) {
+                                    json!({"label":label,"default":true})
+                                } else {
+                                    json!({"label":label})
+                                }
+                            })
+                            .collect();
+                        json!({"question":text,"header":plan.header,"options":options,"multiSelect":multi,"allowOther":other.is_some(),"allowEmpty":*multi && !required})
+                    }
+                    PlanKind::Text {
+                        value,
+                        placeholder,
+                        required,
+                        ..
+                    } => {
+                        let mut q = json!({"question":text,"header":plan.header,"options":[],"multiSelect":false,"allowEmpty":!required});
+                        if !placeholder.is_empty() {
+                            q["placeholder"] = json!(placeholder);
+                        }
+                        if !value.is_empty() {
+                            q["defaultText"] = json!(value);
+                        }
+                        q
+                    }
+                }
+            })
+            .collect();
+        json!({"id":id,"provider":provider,"name":"OMP ask","kind":"question","title":self.title,"input":{"questions":questions},"metadata":{"ompAskForm":true}})
+    }
+
+    fn targets(&self, response: &Value) -> Result<Vec<Target>, String> {
+        self.plans
+            .iter()
+            .map(|plan| match &plan.kind {
+                PlanKind::Choice {
+                    multi,
+                    labels,
+                    defaults,
+                    other,
+                    ..
+                } => {
+                    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let answer = question_answers::read(response, &plan.header, &refs, *multi);
+                    if let Some(text) = answer.as_ref().and_then(|a| a.other.as_ref())
+                        && other.is_none()
+                    {
+                        return Err(format!("“{}” has no option “{text}”", plan.title));
+                    }
+                    let picks = match &answer {
+                        Some(a) => a
+                            .options
+                            .iter()
+                            .map(|label| {
+                                refs.iter().position(|l| l == label).ok_or_else(|| {
+                                    format!("“{}” has no option “{label}”", plan.title)
+                                })
+                            })
+                            .collect::<Result<BTreeSet<usize>, String>>()?,
+                        None => defaults.clone(),
+                    };
+                    let custom = answer.and_then(|a| a.other);
+                    if *multi {
+                        return Ok(Target::Multi {
+                            picks,
+                            other: custom,
+                        });
+                    }
+                    let pick = match (picks.first(), custom) {
+                        (_, Some(text)) => Pick::Other(text),
+                        (Some(&index), None) => Pick::Option(index),
+                        (None, None) => defaults
+                            .first()
+                            .map(|&index| Pick::Option(index))
+                            .ok_or_else(|| format!("Answer “{}”", plan.title))?,
+                    };
+                    Ok(Target::Single(pick))
+                }
+                PlanKind::Text { value, .. } => Ok(Target::Text(
+                    question_answers::read(response, &plan.header, &[], false)
+                        .map_or_else(|| value.clone(), |a| a.other.unwrap_or_default()),
+                )),
+            })
+            .collect()
+    }
+}
+
+/// Replays the submitted form through OMP's per-field dialogs.
+struct Replay {
+    targets: Vec<Target>,
+    index: usize,
+    /// OMP is asking for the custom text after its Other option was picked.
+    other_input: bool,
+    checked: BTreeSet<usize>,
+    other_set: bool,
+    /// The text field answered last, which OMP may re-ask with a validation message.
+    last_text: Option<usize>,
+}
+
+/// The dialog OMP sends next.
+struct Expected<'a> {
+    method: &'static str,
+    title: String,
+    options: Option<Vec<&'a str>>,
+    done: bool,
+    prefill: Option<&'a str>,
+}
+
+impl Expected<'_> {
+    /// The finish option's label, when the dialog matches.
+    fn check(&self, event: &Value) -> Result<Option<String>, String> {
+        let method = event["method"].as_str().unwrap_or("");
+        let title = event["title"].as_str().unwrap_or("");
+        if method != self.method || title != self.title {
+            return Err(format!(
+                "expected {} “{}”, got {method} “{title}”",
+                self.method, self.title
+            ));
+        }
+        if let Some(prefill) = self.prefill
+            && event["prefill"].as_str().unwrap_or("") != prefill
+        {
+            return Err(format!("unexpected prefill for “{title}”"));
+        }
+        let Some(expected) = &self.options else {
+            return Ok(None);
+        };
+        let got: Vec<&str> = event["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let count = expected.len();
+        let done = self.done.then(|| got.get(count).copied()).flatten();
+        let fits = got.len() == count + usize::from(self.done)
+            && got[..count.min(got.len())] == expected[..]
+            && done.is_none_or(|label| label.ends_with(DONE));
+        if !fits {
+            return Err(format!("unexpected options for “{title}”: {got:?}"));
+        }
+        Ok(done.map(str::to_owned))
+    }
+}
+
+impl Replay {
+    fn new(plans: &[Plan], targets: Vec<Target>) -> Self {
+        let mut replay = Self {
+            targets,
+            index: 0,
+            other_input: false,
+            checked: BTreeSet::new(),
+            other_set: false,
+            last_text: None,
+        };
+        replay.reset(plans);
+        replay
+    }
+
+    fn reset(&mut self, plans: &[Plan]) {
+        self.other_input = false;
+        self.other_set = false;
+        self.checked = match plans.get(self.index).map(|p| &p.kind) {
+            Some(PlanKind::Choice {
+                multi: true,
+                defaults,
+                ..
+            }) => defaults.clone(),
+            _ => BTreeSet::new(),
+        };
+    }
+
+    fn advance(&mut self, plans: &[Plan]) {
+        self.index += 1;
+        self.reset(plans);
+    }
+
+    fn expected<'a>(&self, plan: &'a Plan) -> Expected<'a> {
+        let input = || Expected {
+            method: "input",
+            title: plan.title.clone(),
+            options: None,
+            done: false,
+            prefill: None,
+        };
+        match &plan.kind {
+            _ if self.other_input => input(),
+            PlanKind::Choice {
+                multi,
+                required,
+                labels,
+                locked,
+                other,
+                ..
+            } => {
+                let mut options: Vec<&str> = labels.iter().map(String::as_str).collect();
+                options.extend(other.as_deref());
+                let count = self.checked.len() + locked + usize::from(self.other_set);
+                let title = if *multi && count > 0 {
+                    format!("({count} selected) {}", plan.title)
+                } else {
+                    plan.title.clone()
+                };
+                Expected {
+                    method: "select",
+                    title,
+                    options: Some(options),
+                    done: *multi && (!required || count > 0),
+                    prefill: None,
+                }
+            }
+            PlanKind::Text { editor: false, .. } => input(),
+            PlanKind::Text { value, .. } => Expected {
+                method: "editor",
+                title: plan.title.clone(),
+                options: None,
+                done: false,
+                prefill: Some(value),
+            },
+        }
+    }
+
+    fn next(&mut self, plans: &[Plan], event: &Value) -> Step {
+        let checked = plans
+            .get(self.index)
+            .map(|plan| self.expected(plan).check(event));
+        let done = match checked {
+            Some(Ok(done)) => done,
+            mismatch => {
+                let title = event["title"].as_str().unwrap_or("");
+                if let Some(previous) = self.last_text
+                    && matches!(event["method"].as_str(), Some("input" | "editor"))
+                    && title
+                        .strip_prefix(plans[previous].title.as_str())
+                        .and_then(|rest| rest.strip_prefix(" ("))
+                        .is_some_and(|rest| rest.ends_with(')'))
+                {
+                    return Step::Ask;
+                }
+                return match mismatch {
+                    Some(Err(reason)) => Step::Abandon(reason),
+                    _ => Step::Finished,
+                };
+            }
+        };
+        self.last_text = None;
+        let plan = &plans[self.index];
+        let reply = |value: &str| Step::Reply(json!({"value":value}));
+        match (&plan.kind, self.targets[self.index].clone()) {
+            (PlanKind::Choice { labels, other, .. }, Target::Single(pick)) => match pick {
+                Pick::Other(text) if self.other_input => {
+                    self.advance(plans);
+                    reply(&text)
+                }
+                Pick::Other(_) => {
+                    self.other_input = true;
+                    reply(other.as_deref().unwrap_or(OTHER))
+                }
+                Pick::Option(index) => {
+                    let label = labels[index].clone();
+                    self.advance(plans);
+                    reply(&label)
+                }
+            },
+            (PlanKind::Choice { labels, other, .. }, Target::Multi { picks, other: text }) => {
+                if self.other_input {
+                    self.other_input = false;
+                    self.other_set = true;
+                    return reply(text.as_deref().unwrap_or(""));
+                }
+                if let Some(index) =
+                    (0..labels.len()).find(|i| self.checked.contains(i) != picks.contains(i))
+                {
+                    if !self.checked.remove(&index) {
+                        self.checked.insert(index);
+                    }
+                    return reply(&labels[index]);
+                }
+                if text.is_some() != self.other_set {
+                    if self.other_set {
+                        self.other_set = false;
+                    } else {
+                        self.other_input = true;
+                    }
+                    return reply(other.as_deref().unwrap_or(OTHER));
+                }
+                match done {
+                    Some(done) => {
+                        self.advance(plans);
+                        reply(&done)
+                    }
+                    None => Step::Abandon(format!("“{}” needs a selection", plan.title)),
+                }
+            }
+            (PlanKind::Text { .. }, Target::Text(text)) => {
+                self.last_text = Some(self.index);
+                self.advance(plans);
+                reply(&text)
+            }
+            _ => Step::Abandon(format!("no answer for “{}”", plan.title)),
+        }
+    }
+}
+
+fn unique(base: &str, taken: &[String]) -> String {
+    let mut candidate = base.to_owned();
+    let mut n = 2;
+    while taken.contains(&candidate) {
+        candidate = format!("{base} ({n})");
+        n += 1;
+    }
+    candidate
+}
+
+fn short(text: &str) -> String {
+    if text.chars().count() <= HEADER_CHARS {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(HEADER_CHARS - 1).collect();
+    out.push('…');
+    out
+}
