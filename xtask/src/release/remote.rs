@@ -151,10 +151,29 @@ fn verify_remote_artifact(
     release: &Value,
     reference: &paseo_protocol::components::ArtifactRef,
 ) -> Result<()> {
-    let remote = asset(release, integrity::artifact_name(reference)?)?;
+    let name = integrity::artifact_name(reference)?;
+    let remote = asset(release, name)?;
     trusted_publisher(remote, "uploader")?;
+    let download =
+        |tag: &str| format!("https://github.com/{REPOSITORY}/releases/download/{tag}/{name}");
+    // A draft serves its assets from an `untagged-…` path; publication moves
+    // them to the tag path that the reference already names.
+    let url_matches = if release["draft"] == true {
+        let remote_url = remote["browser_download_url"].as_str().unwrap_or_default();
+        release["tag_name"]
+            .as_str()
+            .is_some_and(|tag| reference.url == download(tag))
+            && remote_url
+                .strip_prefix(&format!(
+                    "https://github.com/{REPOSITORY}/releases/download/untagged-"
+                ))
+                .and_then(|rest| rest.split_once('/'))
+                .is_some_and(|(_, asset_name)| asset_name == name)
+    } else {
+        remote["browser_download_url"] == reference.url
+    };
     ensure!(
-        remote["size"] == reference.size && remote["browser_download_url"] == reference.url,
+        remote["size"] == reference.size && url_matches,
         "Origin artifact identity mismatch"
     );
     if let Some(digest) = remote["digest"].as_str() {
@@ -934,6 +953,19 @@ mod tests {
         };
         let release = json!({"assets":[{"name":"component.tar.gz","size":42,"browser_download_url":reference.url,"digest":format!("sha256:{}",reference.sha256),"uploader":{"login":"github-actions[bot]"}}]});
         verify_remote_artifact(&release, &reference).unwrap();
+        let mut draft = release.clone();
+        draft["draft"] = json!(true);
+        draft["tag_name"] = json!("v0.13.26");
+        draft["assets"][0]["browser_download_url"] = json!(
+            "https://github.com/emotionbug/Passession/releases/download/untagged-d84fe91d/component.tar.gz"
+        );
+        verify_remote_artifact(&draft, &reference).unwrap();
+        let mut other_tag = draft.clone();
+        other_tag["tag_name"] = json!("v0.13.27");
+        assert!(verify_remote_artifact(&other_tag, &reference).is_err());
+        let mut published_untagged = draft.clone();
+        published_untagged["draft"] = json!(false);
+        assert!(verify_remote_artifact(&published_untagged, &reference).is_err());
         for (key, value) in [
             ("size", json!(43)),
             ("digest", json!(format!("sha256:{}", "b".repeat(64)))),
