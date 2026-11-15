@@ -238,9 +238,15 @@ pub async fn run_args(mut args: Vec<String>) -> Result<i32> {
     ) {
         return crate::daemon_control::run_internal(&args[0], &args[1..]).await;
     }
+    if let Some(code) = crate::daemon_control::managed::forward_control_cli(&args)? {
+        return Ok(code);
+    }
     if args.first().is_some_and(|s| s == "component-identity") {
         ensure!(args.len() == 1, "component-identity accepts no arguments");
-        println!("{}", serde_json::json!({"schemaVersion":1,"id":"daemon","identity":crate::component_identity()}));
+        println!(
+            "{}",
+            serde_json::json!({"schemaVersion":1,"id":"daemon","identity":crate::component_identity()})
+        );
         return Ok(0);
     }
     if args.first().is_some_and(|s| s == "desktop-host") {

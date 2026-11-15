@@ -30,7 +30,8 @@ const POINTER: &str = "native-installation.json";
 /// Path the legacy (pre-managed) updater and supervisor own. New code never writes it.
 const LEGACY_UPDATE_RECORD: &str = "native-update.json";
 /// Increase only when the launcher contract changes; ordinary updates keep the entry.
-const CONTROL_PROTOCOL: u32 = 1;
+/// 2: the control entry also forwards user commands to the active runtime.
+const CONTROL_PROTOCOL: u32 = 2;
 const DROP_IN: &str = "zz-paseo-managed.conf";
 const DROP_IN_HEADER: &str = "# Managed by Paseo: fixed control entry.";
 #[cfg(target_os = "linux")]
@@ -2581,6 +2582,59 @@ fn launch_order(selection: &Selection, executor_alive: bool) -> Vec<&RuntimeIden
     order
 }
 
+/// The fixed control entry is also the stable user command: when `exe` is an
+/// installation's control entry, every non-internal command runs the active
+/// runtime's CLI, so a PATH entry for `<installation>/bin/paseo` follows updates
+/// while links to one runtime break once cleanup removes it.
+fn control_cli_target(exe: &Path) -> Result<Option<PathBuf>> {
+    let (Some(bin), Some(name)) = (exe.parent(), exe.file_name()) else {
+        return Ok(None);
+    };
+    let Some(root) = bin.parent() else {
+        return Ok(None);
+    };
+    if name != EXECUTABLE || bin.file_name().is_none_or(|bin| bin != "bin") {
+        return Ok(None);
+    }
+    let path = root.join(SELECTION);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let home = serde_json::from_slice::<Selection>(&fs::read(&path)?)
+        .context("Corrupt managed installation selection")?
+        .home;
+    let Some(selection) = Installation::at(root.to_owned(), home)?.load()? else {
+        return Ok(None);
+    };
+    Ok((selection.control.path == exe).then(|| selection.active.root.join(EXECUTABLE)))
+}
+
+/// Runs `args` with the active runtime's CLI when this process is a control
+/// entry; `None` means this executable is not one and handles them itself.
+pub(crate) fn forward_control_cli(args: &[String]) -> Result<Option<i32>> {
+    let Ok(exe) = std::env::current_exe().and_then(|exe| exe.canonicalize()) else {
+        return Ok(None);
+    };
+    let Some(target) = control_cli_target(&exe)? else {
+        return Ok(None);
+    };
+    let mut command = std::process::Command::new(&target);
+    command.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let failure = command.exec();
+        Err(failure).with_context(|| format!("Cannot run active runtime {}", target.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let status = command
+            .status()
+            .with_context(|| format!("Cannot run active runtime {}", target.display()))?;
+        Ok(Some(status.code().unwrap_or(1)))
+    }
+}
+
 /// Internal `__launcher`: the fixed service entry. Bootstrap recovery runs
 /// first; the launcher itself never mutates the selection.
 pub(crate) async fn run_launcher(home: &Path, standalone: bool) -> Result<i32> {
@@ -2699,6 +2753,40 @@ mod tests {
         assert!(installation.try_lease().unwrap().is_none());
         drop(lease);
         assert!(installation.try_lease().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn control_entry_runs_the_active_runtime_across_commits() {
+        let (_base, installation, lease, selection) = fixture();
+        let control = selection.control.path.clone();
+        assert_eq!(
+            control_cli_target(&control).unwrap(),
+            Some(selection.active.root.join(EXECUTABLE))
+        );
+        let candidate = runtime(&installation.runtimes().join("new"), "1.1.0");
+        installation
+            .select_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
+        // A trial under verification is not the user's command yet.
+        assert_eq!(
+            control_cli_target(&control).unwrap(),
+            Some(selection.active.root.join(EXECUTABLE))
+        );
+        installation
+            .commit_trial(&lease, "op-1", &candidate)
+            .await
+            .unwrap();
+        assert_eq!(
+            control_cli_target(&control).unwrap(),
+            Some(candidate.root.join(EXECUTABLE))
+        );
+        // Runtime images and unrelated `bin/paseo` files run themselves.
+        let runtime_exe = candidate.root.join(EXECUTABLE);
+        assert_eq!(control_cli_target(&runtime_exe).unwrap(), None);
+        let elsewhere = tempfile::tempdir().unwrap();
+        let other = elsewhere.path().join("bin").join(EXECUTABLE);
+        assert_eq!(control_cli_target(&other).unwrap(), None);
     }
 
     #[tokio::test]

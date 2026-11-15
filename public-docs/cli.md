@@ -384,6 +384,11 @@ original service configuration and installs an ExecStart-only drop-in pointing a
 launcher. Later updates select immutable runtimes without rewriting the service path.
 Migrating a daemon without drain support requires explicit `--force-running`.
 
+The fixed launcher, `bin/paseo` in the installation store, is also the stable `paseo`
+command: every user command it receives runs the active runtime's CLI, so put it (or a
+symlink to it) on `PATH` and the command follows updates. A link to one runtime directory
+breaks once a later update removes that runtime.
+
 The installation store lives outside `PASEO_HOME`, located by `native-installation.json`.
 Active/trial runtime selection is separate from the operation journal. If a trial cannot
 become ready, the launch owner restores the known-good runtime; a later launcher invocation

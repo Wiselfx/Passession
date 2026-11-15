@@ -5,6 +5,7 @@
 ### Changed
 
 - Stop keeping the previous app, daemon and component versions after an update succeeds. The old copy now lives only until the new version passes its health check, so failed or interrupted updates still roll back; existing leftover copies are removed by the next cleanup.
+- The managed daemon's fixed launcher (`bin/paseo` in its installation store) now runs the active runtime's CLI for every user command, so a `paseo` command linked to it keeps following updates instead of breaking when the replaced runtime is removed.
 
 ## 0.13.27 - 2026-11-16
 
