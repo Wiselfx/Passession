@@ -889,7 +889,7 @@ pub(super) async fn process_identity(pid: u32) -> Result<Value, PlatformError> {
     };
     #[cfg(windows)]
     let birth = unsafe {
-        use windows::Win32::{
+        use ::windows::Win32::{
             Foundation::{CloseHandle, FILETIME},
             System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
         };

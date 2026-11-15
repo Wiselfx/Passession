@@ -394,13 +394,16 @@ fn component_inputs(
                 .and_then(|features| features.get(package_id))
                 .unwrap_or(&node["features"]);
             if package["source"].is_null() {
+                // Windows canonical paths carry a verbatim prefix that Cargo
+                // metadata omits; compare both in canonical form.
                 let directory = Path::new(
                     package["manifest_path"]
                         .as_str()
                         .context("Missing manifest path")?,
                 )
                 .parent()
-                .context("Missing crate directory")?;
+                .context("Missing crate directory")?
+                .canonicalize()?;
                 let relative = directory
                     .strip_prefix(root)
                     .context("Path dependency outside repository")?
@@ -874,7 +877,9 @@ fn ci_decisions_for_inputs(
                 }
                 Path::new(p["manifest_path"].as_str().unwrap_or_default())
                     .parent()
-                    .and_then(|dir| dir.strip_prefix(root).ok())
+                    .and_then(|dir| dir.canonicalize().ok())
+                    .and_then(|dir| dir.strip_prefix(root).ok().map(Path::to_path_buf))
+                    .as_deref()
                     .and_then(Path::to_str)
                     .is_some_and(|dir| {
                         effective.iter().any(|path| {
