@@ -16,9 +16,9 @@ nav: 相关项目
 
 | 项目                                                                                         | 作用                                                                                                |
 | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| [Paseo for VS Code](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) | 在 VS Code 中打开对应的 Paseo 项目或 worktree，并添加 Agent 聊天、文件提及和编辑器链接。            |
+| [Paseo for VS Code](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) | 在 VS Code 中打开对应的项目或 worktree，并添加 Agent 聊天、文件提及和编辑器链接。现有外部 worktree 在 Paseo 中作为本地目录使用；请向扩展维护者确认兼容性。 |
 | [VS Code Web plugin](https://github.com/itsjustanks/paseo-plugin-vscode-web)                 | 第三方 VS Code 隧道集成。其旧 Paseo UI 入口不是受支持的客户端插件，请使用外部浏览器/工具工作流。 |
-| [Paseo Icon](https://github.com/gpambrozio/paseo-menubar)                                    | 在 macOS 菜单栏中显示各个 Paseo 主机上的工作区状态，一键打开工作区。                                |
+| [Paseo Icon](https://github.com/gpambrozio/paseo-menubar)                                    | 围绕旧工作区 UI 构建的 macOS 菜单栏集成。用于当前 Paseo 前，请向维护者确认会话/目录兼容性。 |
 | [Paseo Cross-Daemon Comms](https://github.com/xpufx/paseo-cross-daemon-comms)                | 让 Agent 通过 MCP 服务器与另一个 Paseo daemon 上的 Agent 通信。                                     |
 | [Paseo Antigravity ACP](https://github.com/tiezbro/paseo-agy-acp)                            | 通过 ACP 把 Google Antigravity CLI 接入 Paseo，并处理 Paseo 特有的上下文、权限和并发。              |
 | [Desvio](https://github.com/cleiter/desvio)                                                  | 基于一组分支重建个人 fork，用 Agent 解决新冲突，用 Git rerere 重放已知的解决方案。                  |

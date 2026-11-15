@@ -47,6 +47,30 @@ Remote model tools gate this capability once; they do not fall back to a
 provider-starting read. Existing UI/SDK requests omit the flag and retain their
 history preparation behavior. Older clients still parse the unchanged response.
 
+### Selected-file commits
+
+Gate `checkout.commit_selected.request` once on `server_info.features.gitSelectedCommit`.
+Do not emulate it with staging calls or the legacy `checkout_commit_request`: that can
+commit unrelated staged work. The legacy RPC and its message-generation behavior stay unchanged.
+
+Selection means full current working-tree contents, not staged hunks. Send exact changed
+file paths relative to the checkout root; directories and pathspec patterns are not selections.
+Selecting either side of a detected rename includes both names. An unstaged move that Git
+reports as a deletion and an untracked file requires both selections. Unselected index
+entries and working files remain untouched by the daemon's selection logic, including when
+HEAD is unborn. Normal Git hooks and signing still run; repository-defined hook effects
+and concurrent external edits are not rolled back. Conflicts and in-progress merge,
+cherry-pick or rebase operations must be resolved outside this action.
+
+The daemon builds a private index from HEAD and settles only selected entries back into
+the original index under Git's index lock. Failed preparation or commit hooks do not stage
+files in the user's index. Once the commit starts, cancellation/disconnection does not undo
+it; the owned operation finishes index settlement. A timeout or lost response is an unknown
+outcome: refresh Git state before another explicit submission, never retry automatically.
+Success returns `payload.commitSha` with the usual `cwd`, `requestId`, `success` and `error`
+fields. Failure returns `success: false` and an error object, without `commitSha`; an error
+after HEAD advances names the commit and asks the user to inspect Git.
+
 ## Client capability ownership
 
 Each client boundary advertises only behavior it implements. The GUI core's connection pump uses

@@ -6,7 +6,7 @@ Paseo's native SDK drives a daemon from your Rust application. It preserves the 
 
 | Crate | Purpose |
 | --- | --- |
-| `paseo-client` | Tokio client, local/remote/relay/SSH transports, agent/workspace RPCs, subscriptions, pagination and binary files/terminals. |
+| `paseo-client` | Tokio client, local/remote/relay/SSH transports, agent RPCs, internal ownership records, subscriptions, pagination and binary files/terminals. |
 | `paseo-protocol` | Lossless wire messages, native validation, provider catalogs, routing, timeline helpers and encrypted transport codecs. |
 | `paseo-highlight` | Native syntax parsing, borrowed tokens, themes and incremental delivery of completed-document results. |
 
@@ -23,7 +23,7 @@ Follow the [complete executable example](quickstart.md#create-an-agent). The pub
 ## Guides
 
 - [Agents](agents.md)
-- [Workspaces](workspaces.md)
+- [Sessions and directories](workspaces.md)
 - [Providers](providers.md) and [provider options](provider-options.md)
 - [Events and history](events.md)
 - [Recipes](recipes.md)

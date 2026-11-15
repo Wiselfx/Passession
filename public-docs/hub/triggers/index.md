@@ -58,7 +58,7 @@ The same checks run wherever a trigger is authored: the dashboard form, its YAML
 
 Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
 
-If the agent is busy, the new prompt steers its current work. Each arrival keeps its own output limits and completion status. If a reusable workspace is archived, Hub asks Paseo to restore it before sending the prompt.
+If the agent is busy, the new prompt steers its current work. Each arrival keeps its own output limits and completion status. If the reusable session's internal ownership record is archived, Hub asks Paseo to restore that record before sending the prompt. Its local directory must still exist; restoration does not recreate a worktree.
 
 Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
 

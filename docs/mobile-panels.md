@@ -4,9 +4,11 @@ The Rust shell owns compact presentation in `packages/gui/src/shell/{layout,chro
 
 The compact flow is sidebar → session → supporting file view. Back returns from the file explorer to the session, then to the sidebar. A detail tab (file, diff, subagent, log) replaces the header's sidebar button with a visible Back control that returns to the tab that opened it. Leaving the app does not stop remote sessions. Settings and focused modal workflows retain their own navigation behavior.
 
-The header `⋯` leads with the selected session's actions (rename, fork, restart agent, archive, delete) before the workspace actions, so a phone reaches them without the tab switcher.
+The header `⋯` exposes the selected session's actions (rename, fork, restart agent, archive, delete). There is no workspace action group or nested session tab switcher. The rightmost header button exposes Files, Git Log and Commit.
 
 The Git Log is two screens on a phone. The log screen lists commits as two-line rows (lane graph, subject with its first ref pill, then author · age · short hash), with a Branch chip that opens a sheet of HEAD, local, remote and tag refs, a search toggle and refresh; the whole row is its tap target and a long press opens copy and diff actions. Tapping a commit opens the commit screen: message, author and date, copyable hash, parents and the changed files, each of which opens the commit diff as a detail tab. Back, Escape or the screen's arrow returns to the log with its scroll position and selection; the header's Back leaves the Git Log for the tab that opened it.
+
+Commit keeps a scrollable uncommitted-file list above the multiline message and Commit button. File exclusions survive refresh; new files are not silently selected. The message editor and action remain reachable above the keyboard, and Enter inserts a newline without dismissing it. Failed commits retain the message and selection; refresh never submits another commit automatically. A successful commit clears the submitted message and refreshes the list.
 
 Keep navigation intent separate from transient geometry. Resizing or rotating must not change host identity, create duplicate sessions, lose drafts or mutate persisted collapse state. Compact sidebar navigation changes only `compact_destination`; the wide sidebar's saved visibility changes only from the wide layout. Repeated open/close actions and a cancelled gesture must settle to one coherent destination rather than leaving invisible hit regions.
 

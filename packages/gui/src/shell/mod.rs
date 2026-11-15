@@ -194,8 +194,6 @@ pub enum Pending {
     OpenAgent { host_id: String, error: Option<String>, placement: crate::common::TabPlacement },
     /// `navigationRequest` whose success refreshes the host; failures toast.
     Refresh { host_id: String },
-    /// `archive_workspace_request`: close that workspace's tabs, refresh.
-    ArchiveWorkspace { host_id: String, workspace_id: String },
     /// `archive_agent_request`: mark History archived only after the daemon confirms.
     ArchiveSession { host_id: String, agent_id: String },
     /// `project.remove.request`: close tabs of the removed workspaces.
@@ -206,8 +204,6 @@ pub enum Pending {
     Plain,
     /// A sheet's (or the sessions page's) request; routed by tag.
     Sheet { sheet: u64, tag: String },
-    /// `workspace.recovery.inspect.request` before the restore confirmation.
-    RecoverInspect { host_id: String, workspace_id: String },
     /// `workspace.label.list.request` for the sidebar display menu catalog.
     LabelCatalog,
     /// Silent (child tab labels).

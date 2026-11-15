@@ -16,7 +16,7 @@ Use sentence case and concrete action names. A destructive consequence needs an 
 
 ## Navigation and identity
 
-The sidebar is **host → directory → session**. Keep a visible expandable host row even for one host, preserve empty directories, and scope equal paths to their host. Search reveals matching ancestors temporarily. Do not reintroduce workspace grouping controls; workspaces remain available for orchestration and Command Center.
+The sidebar is **host → directory → session**. Keep a visible expandable host row even for one host, preserve empty directories, and scope equal paths to their host. Search reveals matching ancestors temporarily. Sessions are direct Command Center targets; do not reintroduce workspace screens, grouping controls or nested session tabs. Existing internal owner IDs remain a persistence detail.
 
 Host, directory and session rows have distinct actions. A directory's create action must use that exact host/path. Closing a session tab does not archive it. Add Project uses a remote folder picker, not a local OS path dialog for remote data.
 
@@ -32,7 +32,7 @@ Hit maps resolve the last registered target first. A row or card registers its o
 
 ## Content surfaces
 
-Markdown and source editing are native. Diffs are summary-first and load bodies lazily; do not block opening the entire Changes view on every patch. Preserve drafts and selection through transient errors. Interactive terminals are native terminal tabs; display script/setup output as read-only logs, with real lifecycle state and exit errors. The app does not contain a browser.
+Markdown and source editing are native. Historical commit diffs are summary-first and load patch bodies lazily. Supporting tabs are Files, Git Log and Commit; there is no working-tree Changes view or session line-count badge. Commit provides file selection, a multiline message and explicit submission while preserving unrelated staging. Preserve drafts and selection through transient errors. Interactive terminals are native terminal tabs; display script output as read-only logs, with real lifecycle state and exit errors. The app does not contain a browser.
 
 The Git Log tab (`git_log`, IntelliJ's Git Log) follows the same tiers. From 900px a pane shows the ref tree (HEAD, local branches with ahead/behind, remotes grouped by remote, tags), the commit table (lane graph, ref pills, author, date, hash) and the selected commit's changed files above its message, author, hash and parents; the details move under the table below 1100px. Between 600px and 900px the ref tree folds into the Branch filter and the author column drops. Phones get the stacked flow in [compact panels](mobile-panels.md). The graph is laid out client-side from `parents` in `--date-order`, so appending a page never changes earlier rows; with text or author filters only commit dots are drawn, because a filtered list has gaps in its parent chains. A changed file opens the existing commit diff tab. History comes from the daemon's `checkout.log`, `checkout.refs` and `checkout.commit.get` requests behind the `gitLog` feature; an older daemon shows an update notice instead of an empty log.
 

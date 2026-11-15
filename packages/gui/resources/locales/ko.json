@@ -98,6 +98,7 @@
   },
   "shell": {
     "menu": {
+      "sessionActions": "세션 작업",
       "toggleSidebar": "사이드바 토글",
       "open": "메뉴 열기",
       "close": "메뉴 닫기",
@@ -1072,6 +1073,19 @@
     },
     "tree": { "showFolderTree": "폴더 트리 표시", "hideFolderTree": "폴더 트리 숨기기" },
     "git": {
+      "commit": {
+        "title": "커밋",
+        "files": "{{total}}개 파일 중 {{selected}}개 선택",
+        "message": "커밋 메시지",
+        "messagePlaceholder": "변경 내용을 설명하세요",
+        "submit": "커밋",
+        "committing": "커밋 중…",
+        "success": "커밋 완료",
+        "loading": "미커밋 파일 불러오는 중…",
+        "empty": "커밋하지 않은 파일이 없습니다",
+        "disconnected": "파일을 확인하고 커밋하려면 호스트에 연결하세요.",
+        "unsupported": "선택한 파일을 커밋하려면 호스트를 업데이트하세요."
+      },
       "toasts": { "notAccepted": "호스트가 이 작업을 받아들이지 않았습니다." },
       "review": {
         "keepEditing": "계속 작성",
@@ -2454,7 +2468,7 @@
     "loading": "설정 불러오는 중...",
     "groups": { "app": "앱", "host": "호스트" },
     "hostPicker": { "switchHost": "호스트 전환", "local": "로컬" },
-    "backToWorkspace": "뒤로",
+    "backToWorkspace": "세션으로 돌아가기",
     "addHost": "호스트 추가",
     "enableBuiltInDaemon": "내장 데몬 활성화",
     "projects": "프로젝트",
@@ -2812,7 +2826,7 @@
       },
       "sections": {
         "general": "일반",
-        "workspaces": "프로젝트 및 워크스페이스",
+        "sessions": "세션",
         "tabsPanes": "탭 및 창",
         "layout": "레이아웃",
         "agentInput": "에이전트 입력"
@@ -2830,10 +2844,10 @@
         "archiveWorkspace": "워크스페이스 보관",
         "newTab": "새 탭",
         "closeCurrentTab": "현재 탭 닫기",
-        "jumpToWorkspace": "세션으로 이동",
+        "jumpToSession": "세션으로 이동",
         "jumpToTab": "탭으로 이동",
-        "previousWorkspace": "이전 세션",
-        "nextWorkspace": "다음 세션",
+        "previousSession": "이전 세션",
+        "nextSession": "다음 세션",
         "previousTab": "이전 탭",
         "nextTab": "다음 탭",
         "splitPaneRight": "창을 오른쪽으로 분할",

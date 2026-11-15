@@ -124,7 +124,7 @@ pub enum ActionKind {
     Delete,
     Detach,
     Cancel,
-    Fork { target: ForkTarget },
+    Fork,
     Rewind { mode: String, text: String },
     ListPrompts { request: u64 },
     OutlineMenu,
@@ -140,11 +140,6 @@ pub enum ActionKind {
     ProbeFolder { generation: u64, target: Value },
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ForkTarget {
-    Tab,
-    Workspace,
-}
 
 #[derive(Clone, Debug)]
 pub struct Completion {

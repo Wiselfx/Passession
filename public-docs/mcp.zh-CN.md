@@ -1,6 +1,6 @@
 ---
 title: MCP 参考
-description: Agent 用来管理 Agent、工作区、脚本、终端和定时任务的 Paseo 工具参考。
+description: Agent 用来管理会话、脚本、终端和定时任务的 Paseo 工具参考。
 nav: MCP 参考
 ---
 
@@ -66,12 +66,12 @@ nav: MCP 参考
 
 ## 心智模型 {#mental-model}
 
-工作区决定工作在哪里进行；Agent 的父子关系决定工作归谁所有。
+会话运行在现有目录中；Agent 的父子关系与目录选择相互独立。
 
-- 不带 `workspaceId` 调用 `create_agent` 的 Agent，会在它自己的工作区中得到一个子 Agent。
-- 传入 `workspaceId` 会把子 Agent 放到另一个工作区，但不会让它脱离父 Agent。
-- 没有工作区的顶层 MCP 调用方会得到一个新的本地工作区。
-- 需要 worktree 隔离、特定分支或 Pull Request 检出时，请先创建工作区。
+- Agent 调用 `create_agent` 时可以省略 `cwd`，使用自己的目录。
+- 传入 `cwd` 可选择目标主机上的另一个现有目录，不会让子 Agent 脱离父 Agent。
+- 顶层 MCP 调用方必须提供 `cwd`。
+- Paseo 不会为会话创建 Git worktree 或准备分支。
 
 MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用或 CLI 中手动执行的操作。
 
@@ -81,7 +81,7 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 
 | 工具                 | 功能                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `create_agent`       | 创建 Agent，可用 `workspaceId` 把它放到已有的工作区。用 `initialPrompt` 开始工作；不等待完成就返回。 |
+| `create_agent`       | 在 `cwd` 中创建会话；顶层调用方必须提供目录，Agent 调用默认使用自身目录。用 `initialPrompt` 开始工作，不等待完成即返回。 |
 | `send_agent_prompt`  | 用 `agentId` 和 `prompt` 发送提示词；不等待完成就返回。                                              |
 | `get_agent_status`   | 返回 Agent 的最新快照。                                                                              |
 | `list_agents`        | 以精简元数据列出最近的 Agent；`includeBackground: true` 会包含后台工作。                             |
@@ -94,32 +94,21 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 
 Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFinish: false` 可以关闭它们。外部 MCP 客户端使用 `get_agent_status` 和 `get_agent_activity` 查看结果。
 
-### 工作区 {#workspaces}
+### 脚本 {#scripts}
 
-| 工具                | 功能                                                                                                                                                                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create_workspace`  | 创建本地工作区或使用 worktree 隔离的工作区。worktree 可以从某个分支分出、检出一个分支或一个 PR。`background: true` 会把它从默认列表和侧边栏中隐藏，同时保留历史记录和按 ID 访问。省略时继承调用方 Agent 工作区的设置；没有调用方时默认为 false。 |
-| `list_workspaces`   | 列出活动的工作区及其目录和隔离方式。使用 `includeBackground: true` 可以包含后台工作区。                                                                                                                                                          |
-| `rename_workspace`  | 修改当前或指定工作区在界面上显示的名称。                                                                                                                                                                                                         |
-| `archive_workspace` | 归档工作区及其拥有的会话。                                                                                                                                                                                                                       |
-
-对于 worktree 隔离，`create_workspace` 接受与应用中相同的常用选择：从某个基础分支分出、检出一个已有分支，或检出一个 Pull Request。worktree 仍然是工作区生命周期的实现细节。
-
-### 工作区脚本 {#workspace-scripts}
-
-这些工具管理在工作区的 `paseo.json` 中配置的脚本。每个工具都需要显式的 `workspaceId`；启动和停止还需要已配置的 `scriptName`。
+这些工具管理 `paseo.json` 中的脚本。`agentId` 选择会话的目录归属，默认使用调用方 Agent；顶层调用方必须提供它。启动和停止还需要 `scriptName`。
 
 | 工具                     | 功能                                                                  |
 | ------------------------ | --------------------------------------------------------------------- |
-| `list_workspace_scripts` | 列出已配置的脚本及其生命周期、终端、端口、代理 URL 和健康状态元数据。 |
-| `start_workspace_script` | 通过 Paseo 的托管启动器启动已配置的脚本。                             |
-| `stop_workspace_script`  | 通过受监管的终端停止正在运行的脚本。                                  |
+| `list_scripts` | 列出已配置脚本及其生命周期、终端、端口、代理 URL 和健康状态元数据。 |
+| `start_script` | 通过 Paseo 托管启动器启动已配置脚本。 |
+| `stop_script` | 通过受监管的终端停止运行中的脚本。 |
 
-`paseo.json` 的配置见 [Git worktree](/docs/worktrees#scripts-and-services)。
+配置见[项目脚本与服务](/docs/worktrees#scripts-and-services)。
 
 ### 终端 {#terminals}
 
-这些是 daemon 端 PTY API。原生客户端以 **Terminal** 标签页打开交互式 shell，并以只读日志显示脚本/设置任务的输出。
+这些是 daemon 端 PTY API。原生客户端以 **Terminal** 标签页打开交互式 shell，以只读日志显示脚本输出。`cwd` 默认为调用方 Agent 的目录；顶层调用默认为进程目录。
 
 | 工具                 | 功能                                       |
 | -------------------- | ------------------------------------------ |
@@ -149,7 +138,7 @@ Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFini
 
 MCP heartbeat 是临时的：只能创建或删除。要修改一个 heartbeat，请删除它并创建一个替代的。暂停、恢复、更新、查看、日志和单次运行只适用于新建 Agent 的定时任务。
 
-默认情况下，新建 Agent 的定时任务每次运行结束时都会归档其工作区。`create_schedule` 和 `update_schedule` 不提供 **Archive on finish**（`archiveOnFinish`）；要让之后的运行工作区保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-workspaces)。
+默认情况下，新 Agent 定时运行结束后会归档其会话并停止所属终端，但不会删除文件或 Git worktree。`create_schedule` 和 `update_schedule` 不提供 **Archive on finish**（`archiveOnFinish`）；要保留之后的运行会话，请[在应用中修改该选项](/docs/schedules#keep-run-sessions)。
 
 ### Agent 配置 {#agent-profiles}
 

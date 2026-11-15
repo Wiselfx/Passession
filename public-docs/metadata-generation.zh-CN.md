@@ -1,6 +1,6 @@
 ---
 title: 元数据生成
-description: Paseo 如何使用 Provider 生成分支名、提交信息和 PR 文本，以及如何配置。
+description: Paseo 如何使用 Provider 生成提交信息和 PR 文本，以及如何配置。
 nav: 元数据生成
 ---
 
@@ -8,14 +8,10 @@ nav: 元数据生成
 
 Paseo 会请语言模型替你编写一些简短的文本，省去你自己动手。这与你正在对话的 Agent 无关：它是一次在后台进行的小型单次调用。
 
-Paseo 会生成以下几类元数据：
+Paseo 可以为现有检出起草 Git 元数据：
 
-- **工作区标题**：工作区的简短任务式标签，显示在侧边栏中。
-- **worktree 分支名**：新建的 worktree 隔离工作区所用分支的 slug。
 - **提交信息**：为你要提交的改动生成简洁的提交信息。
 - **PR 标题和正文**：创建 PR 时根据 diff 起草。
-
-工作区标题和它的分支名由同一个提示词一起生成，但它们的措辞可以分别配置（见下文）。
 
 ## 如何选择模型 {#how-a-model-is-chosen}
 
@@ -32,9 +28,9 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 每个默认值按模型 id 或名称匹配，因此第一个提供匹配模型的已启用 Provider 胜出。没有匹配的默认值会被跳过。去除重复项后，生成过程从上到下依次尝试。默认顺序的意图是：对于这些简短任务，优先使用小、快、便宜的模型，最后才退回到你选中的模型。
 
-在手动模式下，Paseo 只按你的顺序尝试你配置的模型。它不会加入内置默认值或当前选中的模型，因此你的提示词和 diff 只会发送给你选择的 Provider。如果所有配置的模型都失败，生成就会失败：不会生成工作区标题和分支名，提交和拉取请求会使用占位文本。请选择适合这些任务的模型。
+在手动模式下，Paseo 只按你的顺序尝试你配置的模型。它不会加入内置默认值或当前选中的模型，因此你的提示词和 diff 只会发送给你选择的 Provider。如果所有配置的模型都失败，提交和拉取请求会使用占位文本。请选择适合这些任务的模型，并在提交前审阅生成的文本。
 
-每次失败都会写入 `$PASEO_HOME/daemon.log`（默认是 `~/.paseo/daemon.log`），包含 Provider、模型和错误。如果手动模型没有生成标题、分支名、提交信息或拉取请求文本，请查看这里。
+每次失败都会写入 `$PASEO_HOME/daemon.log`（默认是 `~/.paseo/daemon.log`），包含 Provider、模型和错误。如果手动模型没有生成提交信息或拉取请求文本，请查看这里。
 
 ## 选择模型 {#choose-a-model}
 
@@ -67,13 +63,11 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 ## 按项目设置指令 {#per-project-instructions}
 
-你可以在仓库根目录的 `paseo.json` 文件中，按仓库调整每类元数据的措辞。Paseo 从基础分支已提交的版本中读取它，方式与读取 worktree 配置相同。
+你可以通过 `git rev-parse --show-toplevel` 返回的检出根目录中磁盘上的 `paseo.json`，按仓库调整 Git 元数据的措辞。Paseo 不会从基础分支已提交的版本中读取该配置。外部创建的关联 Git worktree 使用其自身检出中的文件。
 
 ```json
 {
   "metadataGeneration": {
-    "title": { "instructions": "Keep titles to a few words, no leading verb." },
-    "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
     "pullRequest": { "instructions": "Include a Testing section in the body." }
   }

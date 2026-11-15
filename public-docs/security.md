@@ -123,7 +123,7 @@ See [Docker](/docs/docker) for Compose and reverse proxy examples.
 
 ## Native desktop trust boundary
 
-The native desktop client does not bundle Electron or Chromium. Chromium sandbox switches and helper-installation instructions do not apply. This does not sandbox agents: providers, script/setup PTYs and **Terminal** shells run with the daemon user's filesystem and credential access. Script/setup tasks show read-only logs; what you type in a **Terminal** tab goes to that shell on the daemon host.
+The native desktop client does not bundle Electron or Chromium. Chromium sandbox switches and helper-installation instructions do not apply. This does not sandbox agents: providers, script PTYs and **Terminal** shells run with the daemon user's filesystem and credential access. Script tasks show read-only logs; what you type in a **Terminal** tab goes to that shell on the daemon host.
 
 Built-in integrations run in Rust. Native backend plugins execute trusted code in separate processes with the daemon user's privileges. Process isolation is not a security sandbox; install only plugins you trust. Executable React UI plugins and embedded browser automation are not part of the native product.
 
@@ -153,6 +153,6 @@ Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; clear
 - **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon unless you also set a password
 - **Set a password** if you bind to a network address, it prevents unauthorized clients from controlling your agents
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
-- **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
+- **Scope Docker mounts tightly**, agents can access mounted directories and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
 - **Protect the Hub configuration branch**, push access to the `.paseo` bundle controls what that project can reach, see [How Hub works](/docs/hub/concepts)

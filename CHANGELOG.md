@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.13.26 - 2026-11-15
+
+### Changed
+
+- Replace the working-tree Changes view and session line-count badge with Files, Git Log and Commit supporting tabs. Historical commit details and lazy diffs remain available.
+- Add selected-file commits with a multiline message, preserving unrelated staging and working files. Normal hooks and signing remain active; failures preserve the draft and selection, and ambiguous outcomes are never automatically retried.
+- Navigate directly by host → directory → session, preserving existing records and history without workspace screens or nested workspace session tabs. New Chat creates a session even with an empty prompt.
+- Remove managed worktree creation, recovery, cleanup and isolation controls. Existing local and user-managed worktree directories remain usable and are not deleted.
+- Make agent creation directory-based in MCP and CLI; remove workspace lifecycle tools and commands. Session script tools are `list_scripts`, `start_script` and `stop_script`, with CLI terminal/script selection through `--agent` or `--cwd`.
 
 ### Fixed
 

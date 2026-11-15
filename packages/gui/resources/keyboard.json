@@ -4,7 +4,7 @@
     "action": "agent.new",
     "combo": "Cmd+O",
     "when": { "mac": true },
-    "help": { "id": "new-agent", "section": "workspaces", "label": "New session" },
+    "help": { "id": "new-agent", "section": "sessions", "label": "New session" },
     "parsedChord": [{ "code": "KeyO", "meta": true, "key": "o" }]
   },
   {
@@ -12,23 +12,23 @@
     "action": "agent.new",
     "combo": "Ctrl+O",
     "when": { "mac": false, "terminal": false },
-    "help": { "id": "new-agent", "section": "workspaces", "label": "New session" },
+    "help": { "id": "new-agent", "section": "sessions", "label": "New session" },
     "parsedChord": [{ "code": "KeyO", "ctrl": true, "key": "o" }]
   },
   {
-    "id": "workspace-new-cmd-n-mac",
-    "action": "workspace.new",
+    "id": "session-new-cmd-n-mac",
+    "action": "agent.new",
     "combo": "Cmd+N",
     "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "new-workspace", "section": "workspaces", "label": "New workspace" },
+    "help": { "id": "new-agent", "section": "sessions", "label": "New session" },
     "parsedChord": [{ "code": "KeyN", "meta": true, "key": "n" }]
   },
   {
-    "id": "workspace-new-ctrl-n-non-mac",
-    "action": "workspace.new",
+    "id": "session-new-ctrl-n-non-mac",
+    "action": "agent.new",
     "combo": "Ctrl+N",
     "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "new-workspace", "section": "workspaces", "label": "New workspace" },
+    "help": { "id": "new-agent", "section": "sessions", "label": "New session" },
     "parsedChord": [{ "code": "KeyN", "ctrl": true, "key": "n" }]
   },
   {
@@ -46,38 +46,6 @@
     "when": { "mac": false, "commandCenter": false, "terminal": false },
     "help": { "id": "search-files", "section": "general", "label": "Search files" },
     "parsedChord": [{ "code": "KeyP", "ctrl": true, "key": "p" }]
-  },
-  {
-    "id": "worktree-archive-cmd-shift-backspace-mac",
-    "action": "workspace.archive",
-    "combo": "Cmd+Shift+Backspace",
-    "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "archive-workspace", "section": "workspaces", "label": "Archive workspace" },
-    "parsedChord": [{ "code": "Backspace", "meta": true, "shift": true }]
-  },
-  {
-    "id": "worktree-archive-ctrl-shift-backspace-non-mac",
-    "action": "workspace.archive",
-    "combo": "Ctrl+Shift+Backspace",
-    "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "archive-workspace", "section": "workspaces", "label": "Archive workspace" },
-    "parsedChord": [{ "code": "Backspace", "ctrl": true, "shift": true }]
-  },
-  {
-    "id": "workspace-pin-cmd-shift-p-mac",
-    "action": "workspace.pin",
-    "combo": "Cmd+Shift+P",
-    "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "pin-workspace", "section": "workspaces", "label": "Pin chat" },
-    "parsedChord": [{ "code": "KeyP", "meta": true, "shift": true, "key": "p" }]
-  },
-  {
-    "id": "workspace-pin-ctrl-shift-p-non-mac",
-    "action": "workspace.pin",
-    "combo": "Ctrl+Shift+P",
-    "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "pin-workspace", "section": "workspaces", "label": "Pin chat" },
-    "parsedChord": [{ "code": "KeyP", "ctrl": true, "shift": true, "key": "p" }]
   },
   {
     "id": "workspace-tab-new-cmd-t-mac",
@@ -110,22 +78,6 @@
     "when": { "mac": false, "commandCenter": false, "terminal": false },
     "help": { "id": "workspace-tab-target-agent", "section": "tabs-panes", "label": "New agent" },
     "parsedChord": [{ "code": "KeyA", "ctrl": true, "shift": true, "key": "a" }]
-  },
-  {
-    "id": "workspace-tab-target-changes-cmd-shift-c-mac",
-    "action": "workspace.tab.target.changes",
-    "combo": "Cmd+Shift+G",
-    "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "workspace-tab-target-changes", "section": "tabs-panes", "label": "Changes" },
-    "parsedChord": [{ "code": "KeyG", "meta": true, "shift": true, "key": "g" }]
-  },
-  {
-    "id": "workspace-tab-target-changes-ctrl-shift-c-non-mac",
-    "action": "workspace.tab.target.changes",
-    "combo": "Ctrl+Shift+G",
-    "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "workspace-tab-target-changes", "section": "tabs-panes", "label": "Changes" },
-    "parsedChord": [{ "code": "KeyG", "ctrl": true, "shift": true, "key": "g" }]
   },
   {
     "id": "workspace-tab-target-files-cmd-shift-e-mac",
@@ -180,43 +132,43 @@
     "parsedChord": [{ "code": "KeyW", "alt": true, "shift": true, "key": "w" }]
   },
   {
-    "id": "workspace-navigate-index-cmd-digit-mac",
-    "action": "workspace.navigate.index",
+    "id": "session-navigate-index-cmd-digit-mac",
+    "action": "session.navigate.index",
     "combo": "Cmd+Digit",
     "when": { "mac": true, "desktop": true, "commandCenter": false },
     "payload": { "type": "index" },
     "help": {
-      "id": "workspace-jump-index",
-      "section": "workspaces",
-      "label": "Jump to workspace",
+      "id": "session-jump-index",
+      "section": "sessions",
+      "label": "Jump to session",
       "defaultDisplayKeys": ["mod", "1-9"]
     },
     "parsedChord": [{ "code": "Digit", "meta": true }]
   },
   {
-    "id": "workspace-navigate-index-ctrl-digit-non-mac",
-    "action": "workspace.navigate.index",
+    "id": "session-navigate-index-ctrl-digit-non-mac",
+    "action": "session.navigate.index",
     "combo": "Ctrl+Digit",
     "when": { "mac": false, "desktop": true, "commandCenter": false, "terminal": false },
     "payload": { "type": "index" },
     "help": {
-      "id": "workspace-jump-index",
-      "section": "workspaces",
-      "label": "Jump to workspace",
+      "id": "session-jump-index",
+      "section": "sessions",
+      "label": "Jump to session",
       "defaultDisplayKeys": ["mod", "1-9"]
     },
     "parsedChord": [{ "code": "Digit", "ctrl": true }]
   },
   {
-    "id": "workspace-navigate-index-alt-digit-web",
-    "action": "workspace.navigate.index",
+    "id": "session-navigate-index-alt-digit-web",
+    "action": "session.navigate.index",
     "combo": "Alt+Digit",
     "when": { "desktop": false, "commandCenter": false },
     "payload": { "type": "index" },
     "help": {
-      "id": "workspace-jump-index",
-      "section": "workspaces",
-      "label": "Jump to workspace",
+      "id": "session-jump-index",
+      "section": "sessions",
+      "label": "Jump to session",
       "defaultDisplayKeys": ["alt", "1-9"]
     },
     "parsedChord": [{ "code": "Digit", "alt": true }]
@@ -264,57 +216,57 @@
     "parsedChord": [{ "code": "Digit", "alt": true, "shift": true }]
   },
   {
-    "id": "workspace-navigate-relative-cmd-left-mac",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-cmd-left-mac",
+    "action": "session.navigate.relative",
     "combo": "Cmd+[",
     "when": { "mac": true, "desktop": true, "commandCenter": false },
     "payload": { "type": "delta", "delta": -1 },
-    "help": { "id": "workspace-prev", "section": "workspaces", "label": "Previous workspace" },
+    "help": { "id": "session-prev", "section": "sessions", "label": "Previous session" },
     "parsedChord": [{ "code": "BracketLeft", "meta": true, "key": "[", "shiftedKey": "{" }]
   },
   {
-    "id": "workspace-navigate-relative-ctrl-left-non-mac",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-ctrl-left-non-mac",
+    "action": "session.navigate.relative",
     "combo": "Ctrl+[",
     "when": { "mac": false, "desktop": true, "commandCenter": false, "terminal": false },
     "payload": { "type": "delta", "delta": -1 },
-    "help": { "id": "workspace-prev", "section": "workspaces", "label": "Previous workspace" },
+    "help": { "id": "session-prev", "section": "sessions", "label": "Previous session" },
     "parsedChord": [{ "code": "BracketLeft", "ctrl": true, "key": "[", "shiftedKey": "{" }]
   },
   {
-    "id": "workspace-navigate-relative-cmd-right-mac",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-cmd-right-mac",
+    "action": "session.navigate.relative",
     "combo": "Cmd+]",
     "when": { "mac": true, "desktop": true, "commandCenter": false },
     "payload": { "type": "delta", "delta": 1 },
-    "help": { "id": "workspace-next", "section": "workspaces", "label": "Next workspace" },
+    "help": { "id": "session-next", "section": "sessions", "label": "Next session" },
     "parsedChord": [{ "code": "BracketRight", "meta": true, "key": "]", "shiftedKey": "}" }]
   },
   {
-    "id": "workspace-navigate-relative-ctrl-right-non-mac",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-ctrl-right-non-mac",
+    "action": "session.navigate.relative",
     "combo": "Ctrl+]",
     "when": { "mac": false, "desktop": true, "commandCenter": false, "terminal": false },
     "payload": { "type": "delta", "delta": 1 },
-    "help": { "id": "workspace-next", "section": "workspaces", "label": "Next workspace" },
+    "help": { "id": "session-next", "section": "sessions", "label": "Next session" },
     "parsedChord": [{ "code": "BracketRight", "ctrl": true, "key": "]", "shiftedKey": "}" }]
   },
   {
-    "id": "workspace-navigate-relative-alt-left-web",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-alt-left-web",
+    "action": "session.navigate.relative",
     "combo": "Alt+[",
     "when": { "desktop": false, "commandCenter": false },
     "payload": { "type": "delta", "delta": -1 },
-    "help": { "id": "workspace-prev", "section": "workspaces", "label": "Previous workspace" },
+    "help": { "id": "session-prev", "section": "sessions", "label": "Previous session" },
     "parsedChord": [{ "code": "BracketLeft", "alt": true, "key": "[", "shiftedKey": "{" }]
   },
   {
-    "id": "workspace-navigate-relative-alt-right-web",
-    "action": "workspace.navigate.relative",
+    "id": "session-navigate-relative-alt-right-web",
+    "action": "session.navigate.relative",
     "combo": "Alt+]",
     "when": { "desktop": false, "commandCenter": false },
     "payload": { "type": "delta", "delta": 1 },
-    "help": { "id": "workspace-next", "section": "workspaces", "label": "Next workspace" },
+    "help": { "id": "session-next", "section": "sessions", "label": "Next session" },
     "parsedChord": [{ "code": "BracketRight", "alt": true, "key": "]", "shiftedKey": "}" }]
   },
   {
@@ -550,27 +502,11 @@
     "parsedChord": [{ "code": "KeyW", "ctrl": true, "shift": true, "key": "w" }]
   },
   {
-    "id": "worktree-new-cmd-alt-n-mac",
-    "action": "worktree.new",
-    "combo": "Cmd+Alt+N",
-    "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "new-worktree", "section": "workspaces", "label": "New worktree session" },
-    "parsedChord": [{ "code": "KeyN", "meta": true, "alt": true, "key": "n" }]
-  },
-  {
-    "id": "worktree-new-ctrl-alt-n-non-mac",
-    "action": "worktree.new",
-    "combo": "Ctrl+Alt+N",
-    "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "new-worktree", "section": "workspaces", "label": "New worktree session" },
-    "parsedChord": [{ "code": "KeyN", "ctrl": true, "alt": true, "key": "n" }]
-  },
-  {
     "id": "session-next-attention-cmd-shift-j-mac",
     "action": "session.next-attention",
     "combo": "Cmd+Shift+J",
     "when": { "mac": true, "commandCenter": false },
-    "help": { "id": "next-attention", "section": "workspaces", "label": "Next session needing input" },
+    "help": { "id": "next-attention", "section": "sessions", "label": "Next session needing input" },
     "parsedChord": [{ "code": "KeyJ", "meta": true, "shift": true, "key": "j" }]
   },
   {
@@ -578,7 +514,7 @@
     "action": "session.next-attention",
     "combo": "Ctrl+Shift+J",
     "when": { "mac": false, "commandCenter": false, "terminal": false },
-    "help": { "id": "next-attention", "section": "workspaces", "label": "Next session needing input" },
+    "help": { "id": "next-attention", "section": "sessions", "label": "Next session needing input" },
     "parsedChord": [{ "code": "KeyJ", "ctrl": true, "shift": true, "key": "j" }]
   },
   {

@@ -17,4 +17,4 @@ Keep these distinctions clear:
 - A remote service URL must be reachable from the machine running the browser. `localhost` on your phone is not the daemon host.
 - Browser tests of your project are not tests of the native client. The unused documentation website is removed; these guides remain repository Markdown.
 
-See [external browser workflow](browser.md), [workspace scripts](worktrees.md#scripts-and-services), and [connectivity](connectivity.md).
+See [external browser workflow](browser.md), [project scripts](worktrees.md#scripts-and-services), and [connectivity](connectivity.md).

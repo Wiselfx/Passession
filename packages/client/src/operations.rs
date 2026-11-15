@@ -66,6 +66,7 @@ operations! {
     search_agent_timeline => ("agent.timeline.search.request", "agent.timeline.search.response"),
     get_checkout_diff => ("checkout.diff.get.request", "checkout.diff.get.response"),
     checkout_commit => ("checkout_commit_request", "checkout_commit_response"),
+    checkout_commit_selected => ("checkout.commit_selected.request", "checkout.commit_selected.response"),
     checkout_merge => ("checkout_merge_request", "checkout_merge_response"),
     checkout_merge_from_base => ("checkout_merge_from_base_request", "checkout_merge_from_base_response"),
     checkout_pull => ("checkout_pull_request", "checkout_pull_response"),

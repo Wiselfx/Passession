@@ -6,7 +6,7 @@
 
 ## 运行初始提示词
 
-调用 `create_agent(fields, RequestOptions)`，传入 `config: {provider, model, cwd}` 和 `initialPrompt`。省略提示词会创建空闲会话。响应 payload 包含 `agent`；保存其 `id` 和 `workspaceId`。协议支持 `config.title` 及顶层 `labels`、`env`、`attachments`、`images`、`outputSchema`。
+调用 `create_agent(fields, RequestOptions)`，传入 `config: {provider, model, cwd}` 和 `initialPrompt`，使用 daemon 主机上已有的目录。省略提示词会创建空闲会话。响应 payload 包含 `agent`；保存其 `id` 和内部归属 `workspaceId`。协议支持 `config.title` 及顶层 `labels`、`env`、`attachments`、`images`、`outputSchema`。
 
 ## 为后续提示词保持会话
 
@@ -63,11 +63,9 @@ async fn inspect(client: &DaemonClient, id: &str) -> Result<()> {
 
 ## 创建子 Agent
 
-向 `create_agent` 传入 `callerAgentId`、`workspaceId`，且 `config.cwd` 必须匹配工作区实际目录。读取父 Agent 最新快照，不要猜测位置。归档父 Agent 会级联归档子 Agent；若子 Agent 需要独立保留，请先调用 `detach_agent(json!({"agentId": child_id}))`。
+向 `create_agent` 传入 `callerAgentId`，并用 `config.cwd` 指定已有目录。若复用父 Agent 的内部归属记录，读取其最新快照，传入 `workspaceId` 及匹配的 `config.cwd`。目录位置不改变父子关系。归档父 Agent 会级联归档子 Agent；若子 Agent 需要独立保留，请先调用 `detach_agent(json!({"agentId": child_id}))`。
 
-## 在后台工作区中运行工作
-
-调用 `create_workspace`，在顶层设置 `background: true`、`source` 及可选的 `agent: {config, initialPrompt}`，参见[工作区创建](workspaces.zh-CN.md)。不要把后台可见性放进嵌套 Agent。Agent 保留普通生命周期和历史。默认列表隐藏后台工作区，需显式包含；已知 Agent ID 仍可正常使用。
+内部归属兼容性和终端位置见[会话与目录](workspaces.zh-CN.md)。会话完成不会创建、删除或迁移目录或 Git worktree。
 
 ## 请求结构化输出
 

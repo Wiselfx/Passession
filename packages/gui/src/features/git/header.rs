@@ -1,10 +1,9 @@
-//! Workspace header widgets: the git actions split button (original
-//! `WorkspaceGitActionsButton`) and the Open-in split button (original
-//! `WorkspaceOpenInButton`). The shell lays them out right-aligned in the wide
-//! header and calls `set_workspace` every frame; rebinding happens only when
+//! Repository header widgets: the git actions split button and the Open-in
+//! split button. The shell lays them out right-aligned in the wide header
+//! and calls `set_workspace` every frame; rebinding happens only when
 //! the checkout identity changes.
 
-use super::actions::{ArchiveConfirm, Checkout, menu_entries};
+use super::actions::{Checkout, menu_entries};
 use super::chrome::{palette, ui as ui_px};
 use super::forge_url::{forge_from_remote_url, forge_web_url};
 use super::host;
@@ -34,7 +33,6 @@ const GIT_LOG_ITEM: &str = "git-log";
 #[derive(Debug)]
 enum ActionsPurpose {
     Menu,
-    Archive(String),
 }
 
 /// Original `WorkspaceGitActionsButton`.
@@ -95,18 +93,6 @@ impl GitActionsButton {
         self.redraw(cx);
     }
 
-    fn open_confirm(&mut self, ui: &mut UiContext, confirm: ArchiveConfirm) {
-        self.overlay.open(Overlay {
-            purpose: ActionsPurpose::Archive(confirm.workspace_id),
-            kind: OverlayKind::Confirm {
-                title: confirm.title,
-                message: confirm.message,
-                confirm: confirm.confirm,
-                destructive: true,
-            },
-        });
-        self.overlay.flush(ui);
-    }
 }
 
 impl Widget for GitActionsButton {
@@ -132,16 +118,10 @@ impl Widget for GitActionsButton {
                     ui.push(UiEffect::OpenTab { target, placement: TabPlacement::Main });
                 }
                 OverlayResult::Chose(ActionsPurpose::Menu, id) => {
-                    let confirm = with_store(|store| {
+                    with_store(|store| {
                         let actions = checkout.build(ui, store);
                         checkout.run_menu(cx, ui, store, &actions, &id)
                     });
-                    if let Some(confirm) = confirm {
-                        self.open_confirm(ui, confirm);
-                    }
-                }
-                OverlayResult::Confirmed(ActionsPurpose::Archive(workspace_id)) => {
-                    with_store(|store| checkout.archive_confirmed(cx, ui, store, &workspace_id));
                 }
                 _ => {}
             }
@@ -184,13 +164,11 @@ impl Widget for GitActionsButton {
                 let checkout = self.checkout.clone();
                 match pressed {
                     Some(Part::Primary) => {
-                        let confirm = with_store(|store| {
-                            let primary = checkout.build(ui, store).primary?;
-                            checkout.run(cx, ui, store, &primary)
+                        with_store(|store| {
+                            if let Some(primary) = checkout.build(ui, store).primary {
+                                checkout.run(cx, ui, store, &primary);
+                            }
                         });
-                        if let Some(confirm) = confirm {
-                            self.open_confirm(ui, confirm);
-                        }
                     }
                     Some(Part::Caret) => {
                         let log = host::supports(ui, &checkout.host, super::log::FEATURE);

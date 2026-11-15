@@ -34,10 +34,10 @@ cron 是标准的节奏表示。CLI 接受 `5m` 或 `1h` 这样的简单预设�
 - **[通过 CLI](/docs/schedules-cli)**：`paseo schedule create`，适用于无界面的机器和脚本。
 - **[通过 MCP](/docs/mcp)**：Agent 以编程方式创建和管理定时任务。
 
-## 保留运行工作区 {#keep-run-workspaces}
+## 保留运行会话 {#keep-run-sessions}
 
-新建 Agent 的定时任务每次运行都会创建一个工作区。**Archive on finish** 默认开启：运行结束时，Paseo 会归档该工作区及其 Agent。使用 worktree 隔离时，最后一个使用该 worktree 的活跃工作区被归档后，归档还会删除这个 worktree。
+新建 Agent 的定时任务每次运行都会在配置的现有目录中启动会话。运行共享该目录的文件，因此请协调重叠的编辑，或为独立任务选择不同的目录。
 
-要保留运行结果，在应用的定时任务视图中打开该定时任务，关闭 **Archive on finish** 并保存。Paseo 会让每次运行的工作区和 Agent 保持活跃，直到你手动归档；在创建 Agent 之前就失败的运行仍会被清理。该选项同样适用于本地隔离；归档本地工作区不会删除项目目录。
+**Archive on finish** 默认开启：运行结束时，Paseo 会归档会话并停止其终端。要让之后的运行会话保持活跃，在应用的定时任务视图中打开该定时任务，关闭 **Archive on finish** 并保存。归档不会删除目录或其中的文件。
 
 存储的选项是 `target.config.archiveOnFinish`，一个布尔值，省略时默认为 `true`。CLI 和 MCP 的定时任务工具不提供这个选项；请在应用中修改。heartbeat 使用已有的 Agent，没有这个选项。

@@ -1,7 +1,5 @@
-//! Git review (Flutter `features/git/`): the `GitPanel` root of the Changes
-//! (`changes_tree`), working diff (`working_diff`), commit (`commit_diff`),
-//! pull request (`pull_request`) and Git Log (`git_log`) tabs, plus the
-//! workspace header's `GitActionsButton` and `OpenInButton`.
+//! Session-directory Git Log, Commit, historical diffs and pull requests.
+//! File selection and commit messages belong to their retained tab.
 //!
 //! Every git widget of a window shares one store (`store.rs`): per-checkout
 //! status and PR status, the action runner, invalidations, comparisons and
@@ -12,6 +10,7 @@ pub mod actions;
 pub mod changes;
 pub mod chrome;
 pub mod controller;
+pub mod commit_view;
 pub mod diff_doc;
 pub mod forge_url;
 pub mod graph;
@@ -80,6 +79,7 @@ live_design! {
         // The Git Log's search and branch filter fields.
         search_input: <GitTextInput> {}
         branch_input: <GitTextInput> {}
+        commit_input: <GitTextInput> { is_multiline: true }
         chat_kit: <ChatKit> {}
     }
 

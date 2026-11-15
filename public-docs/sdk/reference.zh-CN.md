@@ -54,9 +54,9 @@ SSH 使用本机 `ssh` 可执行文件、非交互批量认证及指向远端回
 
 `RequestOptions { timeout, cancel }` 默认 30 秒与新取消 token。请求超时为零表示无期限。`request_cancellable` 直接接受 token。已提交的修改可能在超时、取消、断线后完成；丢弃 future 不代表回滚。
 
-## Agent 与工作区
+## Agent 与内部归属
 
-`create_agent(fields, options)` / `create_workspace(fields, options)` 要求带 key 的创建生命周期能力，并保留/生成 `idempotencyKey`。返回包含资源的 payload，而非句柄。需要恢复时保留显式 key。普通命名方法接受单个 JSON `fields` 参数，使用默认请求选项；`update_agent(agent_id, patch)` 例外，单独接受 ID。
+`create_agent(fields, options)` 要求带 key 的创建生命周期能力，并保留/生成 `idempotencyKey`。返回包含 Agent 的 payload，而非句柄。用 `config.cwd` 指定 daemon 主机上已有的目录。需要恢复时保留显式 key。保留的 SDK 方法 `create_workspace(fields, options)` 为内部目录归属记录使用同一创建生命周期，不支持 worktree 来源。普通命名方法接受单个 JSON `fields` 参数，使用默认请求选项；`update_agent(agent_id, patch)` 例外，单独接受 ID。
 
 | 领域 | 方法 |
 | --- | --- |
@@ -66,11 +66,13 @@ SSH 使用本机 `ssh` 可执行文件、非交互批量认证及指向远端回
 | 生命周期 | `resume_agent`、`import_agent`、`refresh_agent`、`archive_agent`、`detach_agent`、`delete_agent` |
 | 子 Agent | `list_provider_subagents`、`fetch_provider_subagent_timeline`、`delete_provider_subagents`、`build_agent_fork_context` |
 | 项目 | `open_project`、`add_project`、`list_projects`、`rename_project`、`set_project_icon`、`remove_project` |
-| 工作区 | `fetch_workspaces`、`archive_workspace`、`set_workspace_title`、`set_workspace_pinned`、`inspect_workspace_recovery`、`restore_workspace` |
-| 初始化/脚本 | `fetch_workspace_setup_status`、`run_workspace_setup`、`list_workspace_scripts`、`start_workspace_script_with_status`、`stop_workspace_script` |
-| 标签 | `list_workspace_labels`、`set_workspace_label`、`update_workspace_label`、`delete_workspace_label` |
+| 内部归属注册表 | `fetch_workspaces`、`archive_workspace`、`set_workspace_title`、`set_workspace_pinned`、`inspect_workspace_recovery`、`restore_workspace` |
+| 显式脚本 | `list_workspace_scripts`、`start_workspace_script_with_status`、`stop_workspace_script` |
+| 内部标签 | `list_workspace_labels`、`set_workspace_label`、`update_workspace_label`、`delete_workspace_label` |
 
-参数见 [Agent](agents.zh-CN.md)、[工作区](workspaces.zh-CN.md)及[完整请求 schema](../../packages/protocol/schema/session-inbound.json)。`CursorPages::{agents,workspaces,history}` 和可失败的 `CursorPages::timeline` 提供 `next(&client, options).await -> Result<Option<Value>>`；重复游标是错误。除非调用者收集，否则不会累计所有页面。
+工作区命名的 SDK 操作和协议类型为兼容性保留，不是公开 MCP 工作区工具或产品导航。脚本方法使用会话保留的 `workspaceId`。`fetch_workspace_setup_status` 和 `run_workspace_setup` 仍是 SDK 映射，不表示自动初始化生命周期。Paseo 不创建/删除 Git worktree，也不在最后一个会话完成时自动归档归属记录。
+
+参数见 [Agent](agents.zh-CN.md)、[会话与目录](workspaces.zh-CN.md)及[完整请求 schema](../../packages/protocol/schema/session-inbound.json)。`CursorPages::{agents,workspaces,history}` 和可失败的 `CursorPages::timeline` 提供 `next(&client, options).await -> Result<Option<Value>>`；重复游标是错误。除非调用者收集，否则不会累计所有页面。
 
 ## 事件与恢复
 
@@ -81,7 +83,7 @@ SSH 使用本机 `ssh` 可执行文件、非交互批量认证及指向远端回
 <a id="terminals-and-files"></a>
 ## 终端与文件
 
-`create_terminal`、`list_terminals`、`rename_terminal`、`capture_terminal`、`kill_terminal` 管理 daemon PTY。包括工作区身份和实际目录。`observe_terminal(id, restore, options)` 返回 `TerminalStream`；`recv` 产生 `TerminalEvent::{Frame,Exit}`，`input` 发送字节，`resize` 接受 `paseo_protocol::binary_frames::TerminalResize`。显式释放 `stream.subscription`。原生客户端的 **Terminal** 标签页使用的也是这些 daemon 终端。
+`create_terminal`、`list_terminals`、`rename_terminal`、`capture_terminal`、`kill_terminal` 管理 daemon PTY。传入会话的内部 `workspaceId` 和实际 `cwd`，明确归属。`observe_terminal(id, restore, options)` 返回 `TerminalStream`；`recv` 产生 `TerminalEvent::{Frame,Exit}`，`input` 发送字节，`resize` 接受 `paseo_protocol::binary_frames::TerminalResize`。显式释放 `stream.subscription`。原生客户端的 **Terminal** 标签页使用的也是这些 daemon 终端。
 
 `read_file(cwd, path, max_bytes, options)` 返回有字节上限的 `DownloadedFile { metadata, bytes }`。`upload_file(file_name, mime, modified_at, bytes, options)` 使用有限大小二进制帧。`list_directory`、`write_file`、`create_file_entry`、`rename_file_entry`、`duplicate_file_entry`、`delete_file_entry` 提供文件操作；破坏性调用前确认准确 schema。上传取消不保证回滚或自动重试。
 

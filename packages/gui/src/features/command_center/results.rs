@@ -1,7 +1,5 @@
-//! Command Center results (`command-center/results.ts`, `workspace-search.ts`,
-//! `contributions.ts`, `list-metrics.ts` as ported in Flutter `ui/command_center.dart`):
-//! contribution sections that reorder by match quality, pinned file/workspace/agent
-//! sections, PR/MR number ranking and recency tie-breaks.
+//! Command Center results: contribution sections ordered by match quality,
+//! with pinned file/session sections and recency tie-breaks.
 
 use std::cmp::Ordering;
 
@@ -12,7 +10,6 @@ use crate::common::UiEffect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Workspace,
     Agent,
     File,
     Action,
@@ -24,9 +21,7 @@ pub enum Run {
     /// A shell command (`onCommand: _execute`).
     Command(String, Value),
     Effect(UiEffect),
-    /// `navigateToWorkspace` for (host, workspace).
-    OpenWorkspace { host_id: String, workspace: Value },
-    /// Toast an error instead of acting (e.g. no workspace path).
+    /// Toast an error instead of acting.
     Error(String),
 }
 
@@ -34,8 +29,6 @@ pub enum Run {
 pub enum Icon {
     None,
     Glyph(&'static str),
-    /// Project square with the workspace status bucket mark.
-    Project { name: String, view_key: String, bucket: Option<crate::common::widgets::StatusBucket> },
     Provider { provider: String, bucket: Option<crate::common::widgets::StatusBucket> },
     File(String),
 }
@@ -60,7 +53,6 @@ pub struct ResultRow {
     pub shortcut: String,
     pub icon: Icon,
     pub score: Option<Score>,
-    pub change_request_number: Option<i64>,
     pub run: Run,
 }
 
@@ -76,13 +68,12 @@ impl ResultRow {
             shortcut: String::new(),
             icon: Icon::None,
             score: None,
-            change_request_number: None,
             run,
         }
     }
 
     pub fn two_line(&self) -> bool {
-        matches!(self.kind, Kind::Workspace | Kind::Agent) || (self.kind == Kind::Action && !self.subtitle.is_empty())
+        self.kind == Kind::Agent || (self.kind == Kind::Action && !self.subtitle.is_empty())
     }
 }
 
@@ -128,40 +119,6 @@ pub fn rank_built_in(rows: Vec<ResultRow>, query: &str) -> Vec<ResultRow> {
     scored.into_iter().map(|(_, r, _)| r).collect()
 }
 
-/// An optional `pr`/`mr` word, optional `#`/`!`, then a number.
-pub fn change_request_query(query: &str) -> Option<i64> {
-    let lower = query.trim().to_lowercase();
-    let rest = lower.strip_prefix("pr").or_else(|| lower.strip_prefix("mr")).map(str::trim_start).unwrap_or(&lower);
-    let rest = rest.strip_prefix('#').or_else(|| rest.strip_prefix('!')).unwrap_or(rest);
-    (!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())).then(|| rest.parse().ok()).flatten()
-}
-
-/// `filterAndRankWorkspaces`: a PR/MR number hit outranks any text match.
-pub fn rank_workspaces(rows: Vec<ResultRow>, query: &str) -> Vec<ResultRow> {
-    if query.trim().is_empty() {
-        return rank_built_in(rows, query);
-    }
-    let number = change_request_query(query);
-    let mut matches: Vec<(usize, ResultRow, Option<Score>, bool)> = rows
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, row)| {
-            let score = score_fields(query, &[&row.title, &row.subtitle], &[]);
-            let hit = number.is_some() && row.change_request_number == number;
-            (score.is_some() || hit).then_some((i, row, score, hit))
-        })
-        .collect();
-    matches.sort_by(|a, b| {
-        b.3.cmp(&a.3)
-            .then_with(|| match (&a.2, &b.2) {
-                (Some(x), Some(y)) => compare_built_in(x, y),
-                _ => Ordering::Equal,
-            })
-            .then_with(|| by_recency(&a.1, &b.1))
-            .then(a.0.cmp(&b.0))
-    });
-    matches.into_iter().map(|(_, r, _, _)| r).collect()
-}
 
 /// A registered action (presentation kind "action").
 #[derive(Clone, Debug)]
@@ -346,7 +303,7 @@ mod tests {
     use super::*;
 
     fn row(id: &str, title: &str, at: i64) -> ResultRow {
-        let mut row = ResultRow::new(id, Kind::Workspace, title, Run::Error(String::new()));
+        let mut row = ResultRow::new(id, Kind::Agent, title, Run::Error(String::new()));
         row.activity_at = Some(at);
         row
     }
@@ -358,17 +315,6 @@ mod tests {
         assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["6", "5", "4", "3", "2"]);
     }
 
-    #[test]
-    fn change_request_numbers_outrank_text() {
-        assert_eq!(change_request_query("PR #12"), Some(12));
-        assert_eq!(change_request_query("!7"), Some(7));
-        assert_eq!(change_request_query("fix 12"), None);
-        let mut hit = row("a", "other", 0);
-        hit.change_request_number = Some(12);
-        let text = row("b", "12 things", 10);
-        let ranked = rank_workspaces(vec![text, hit], "12");
-        assert_eq!(ranked[0].id, "a");
-    }
 
     #[test]
     fn attention_priority_and_age() {

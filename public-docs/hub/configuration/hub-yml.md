@@ -60,9 +60,8 @@ The only top-level keys are `environments` and `agents`. A `triggers` key is rej
 | `daemon`   | daemon only | Registered daemon slug, resolved when the revision activates.                  |
 | `cwd`      | daemon only | Absolute working directory on the daemon.                                      |
 | `image`    | fly/docker  | Image name.                                                                    |
-| `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                      |
 
-For `worktree`, use `newBranch` and optional `base` with `branch-off`, `branch` with `checkout-branch`, or positive `prNumber` with `checkout-pr`.
+Set `cwd` to an existing local directory on the daemon. Worktree provisioning is unsupported; do not configure a `worktree` target.
 
 ```yaml
 environments:
@@ -70,19 +69,9 @@ environments:
     kind: daemon
     daemon: build-server
     cwd: /workspace/project
-    worktree:
-      mode: branch-off
-      newBranch: trigger-${{ paseo.execution.id }}
-      base: origin/main
 ```
 
-`newBranch` is a branch-name string. Embed `${{ paseo.execution.id }}`, which renders the execution's UUID, so every execution branches off `base` on its own branch and keeps it when Hub retries or recovers that execution.
-
-One execution is one step run, so two steps selecting the same environment get separate branches.
-
-`${{ paseo.execution.id }}` is the only expression `newBranch` accepts. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here, and each one fails bundle activation at the authored field, such as `.paseo/hub.yml.environments.review.worktree.newBranch`.
-
-`${{ paseo.execution.id }}` fails activation the same way anywhere else in a bundle. `branch` and `prNumber` take literal values.
+Prepare separate directories outside Paseo when executions must not share files. An existing externally managed Git worktree can be selected by its path. Paseo does not create per-execution branches or delete/migrate existing directories.
 
 An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
 
@@ -269,7 +258,7 @@ Self-contained dashboard trigger documents accept `run.continuation`:
 
 Keys use the existing expression syntax and must resolve to a non-empty string of at most 512 characters. Custom keys and provider conversation identities occupy separate namespaces. The same key in different projects does not share an agent.
 
-An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
+An existing session keeps its daemon, agent configuration, target directory, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change.
 
 A follow-up steers the active agent without extending its runtime deadline or credential expiry. With a `run.github` grant or connection token in `run.env`, follow-ups share the active agent’s credentials. Once all requests finish, Hub revokes leased tokens; the next arrival starts a new agent with fresh credentials. Agents without temporary credentials can be reused after completion.
 

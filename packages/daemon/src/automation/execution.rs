@@ -130,6 +130,9 @@ impl AutomationService {
                 })
             }
             Target::NewAgent { config } => {
+                if config["isolation"] == "worktree" {
+                    return Err(crate::projects::unsupported_worktrees());
+                }
                 let cwd = string(config, "cwd")?;
                 match tokio::fs::metadata(cwd).await {
                     Ok(meta) if !meta.is_dir() => {
@@ -146,11 +149,7 @@ impl AutomationService {
                     }
                     Err(e) => return Err(e.into()),
                 }
-                let source = if config["isolation"] == "worktree" {
-                    json!({"kind":"worktree","cwd":cwd})
-                } else {
-                    json!({"kind":"directory","path":cwd})
-                };
+                let source = json!({"kind":"directory","path":cwd});
                 let workspace = app
                     .projects
                     .create_workspace(

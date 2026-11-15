@@ -1,5 +1,5 @@
 //! Adaptive sheets (Flutter `showAdaptiveSheet` content): host connection flow, host
-//! connections/picker/chooser, workspace labels, shortcut help, compact workspace tabs, import
+//! connections/picker/chooser, labels, shortcut help, import
 //! sessions; plus the welcome screen and the sessions page drawn in the content area.
 
 pub mod history;
@@ -9,7 +9,6 @@ pub mod labels;
 pub mod qr_code;
 pub mod shortcut_help;
 pub mod welcome;
-pub mod workspace_tabs;
 
 use std::cell::Cell;
 use std::sync::Arc;

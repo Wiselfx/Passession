@@ -55,9 +55,9 @@ async fn history(client: &DaemonClient, agent_id: &str) -> Result<()> {
 
 `CursorPages::timeline` supports `before` and `after`; page order and opaque start/end cursors are authoritative. For a single page call `fetch_agent_timeline` with `agentId`, `direction`, `limit` and optional `cursor`/`projection`. `fetch_agent_history` and `CursorPages::history(fields)` address the separate history endpoint; they are not interchangeable with timeline pages. History is explicit, not automatically replayed by subscriptions.
 
-## Follow workspace updates
+## Follow internal ownership updates
 
-Use `observe_workspaces(json!({"filter": {"includeBackground": true}}), options)` with an `Arc<DaemonClient>`. Release the returned observation when your view closes. Ordinary `fetch_workspaces` calls do not create observations unless you explicitly request one.
+Integrations maintaining the retained directory-owner registry can use `observe_workspaces(json!({"filter": {"includeBackground": true}}), options)` with an `Arc<DaemonClient>`. This observes internal records, not product workspaces. Release the returned observation when its consumer closes. Ordinary `fetch_workspaces` calls do not create observations unless you explicitly request one. For session lists, use `observe_agents`.
 
 ## Follow provider catalog changes
 

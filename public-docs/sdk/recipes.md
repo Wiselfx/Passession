@@ -12,23 +12,18 @@ use paseo_client::{DaemonClient, RequestOptions};
 use serde_json::json;
 
 async fn start_issue(client: &DaemonClient, cwd: &str, model: &str,
-                     issue_id: &str, title: &str, description: &str) -> Result<(String, String)> {
-    let opened = client.open_project(json!({"cwd": cwd})).await?;
-    let workspace = &opened["workspace"];
-    let workspace_id = workspace["id"].as_str().context("missing workspace ID")?;
-    let directory = workspace["workspaceDirectory"].as_str().context("missing directory")?;
+                     issue_id: &str, title: &str, description: &str) -> Result<String> {
     let created = client.create_agent(json!({
-        "workspaceId": workspace_id,
-        "config": {"provider": "codex", "model": model, "cwd": directory, "title": title},
+        "config": {"provider": "codex", "model": model, "cwd": cwd, "title": title},
         "labels": {"my-tracker/issue-id": issue_id},
         "initialPrompt": format!("Implement issue {issue_id}: {title}\n\n{description}")
     }), RequestOptions::default()).await?;
     let agent_id = created["agent"]["id"].as_str().context("missing agent ID")?;
-    Ok((workspace_id.to_owned(), agent_id.to_owned()))
+    Ok(agent_id.to_owned())
 }
 ```
 
-Persist both IDs in your integration. On later webhooks, fetch and reuse the existing resources instead of blindly calling creation again. Issue text is untrusted task content, not authorization for unrelated host operations. The opened workspace may predate your integration; do not archive it merely because this function used it.
+Persist the agent ID in your integration. On later webhooks, fetch and reuse that session instead of blindly creating another. Issue text is untrusted task content, not authorization for unrelated host operations. Use an existing directory on the daemon host; preserve its contents and any other sessions using it.
 
 ## Run parallel reviewers
 
@@ -104,6 +99,6 @@ Use the returned ID with `send_agent_message` and `wait_for_finish`. Namespace l
 
 ## Clean up temporary agents
 
-The reviewers example attempts every archive even after work or another cleanup fails. Closing the connection is separate from resource cleanup. Keep IDs durably when cleanup must survive process failure. Archive only your own temporary agents; resident roles and preexisting workspaces should remain intact.
+The reviewers example attempts every archive even after work or another cleanup fails. Closing the connection is separate from resource cleanup. Keep IDs durably when cleanup must survive process failure. Archive only your own temporary agents; resident roles remain intact. Agent archival does not delete directories or Git worktrees.
 
 For uncertain creation, `ReconnectingClient::recover_creation(kind, key, original_fields, options)` inspects the keyed lifecycle and only resubmits when its snapshot is missing. Keep the original fields and key. Recovery can return either a creation lifecycle snapshot or the creation RPC payload; inspect the shape rather than assuming both have identical paths. Other mutations are not automatically retried; inspect current state before any deliberate retry.

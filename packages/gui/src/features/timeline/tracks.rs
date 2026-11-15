@@ -1,8 +1,7 @@
 //! Port of `chrome/composer_tracks.dart` + `stream_chrome.dart` subagent rows:
-//! the floating track bar over the stream bottom (task progress, subagents,
-//! workspace diff stat) and its panels (popover above the pill on wide
-//! layouts, bottom sheet on compact), with subagent open / archive / detach /
-//! delete-finished actions.
+//! the floating track bar over the stream bottom (task progress and subagents)
+//! and its panels (popover above the pill on wide layouts, bottom sheet on
+//! compact), with subagent open / archive / detach / delete-finished actions.
 
 use super::canvas::*;
 use super::i18n::{t, ta};
@@ -181,8 +180,6 @@ pub struct TrackModel<'a> {
     pub tasks: &'a [Value],
     pub rows: &'a [SubagentRow],
     pub delete: DeleteFinished,
-    pub additions: i64,
-    pub deletions: i64,
     pub can_delete_finished: bool,
     pub can_detach: bool,
     pub host_id: &'a str,
@@ -191,7 +188,7 @@ pub struct TrackModel<'a> {
 }
 
 pub fn visible(model: &TrackModel) -> bool {
-    model.additions > 0 || model.deletions > 0 || !model.rows.is_empty() || !model.tasks.is_empty() || model.delete != DeleteFinished::Idle
+    !model.rows.is_empty() || !model.tasks.is_empty() || model.delete != DeleteFinished::Idle
 }
 
 /// track-presentation.ts buildSubagentPillPresentation.
@@ -264,23 +261,13 @@ fn pill(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, x: f64, y: f64, heig
 /// The track bar resting `pill_clearance` above `bottom`; returns pill rects.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_bar(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, model: &TrackModel, open: Option<TrackPanel>, x: f64, bottom: f64, w: f64, height: f64) -> Vec<(TrackPanel, Rect)> {
-    let p = d.look.palette;
     let outer = (w - 32.0).min(d.look.typo.content_max_width);
     let bx = x + (w - outer) * 0.5;
     let y = bottom - pill_clearance(d.look.compact) - height;
     let mut cursor = bx;
     let mut out = Vec::new();
-    let diff = model.additions > 0 || model.deletions > 0;
-    let diff_w = if diff {
-        let a = format!("+{}", model.additions);
-        let r = format!("-{}", model.deletions);
-        let size = d.look.ui(12.0);
-        d.kit.measure(cx, Font::Mono, size, 1.3, &a, None).x + d.kit.measure(cx, Font::Mono, size, 1.3, &r, None).x + 6.0 + 24.0
-    } else {
-        0.0
-    };
     let pills = (!model.tasks.is_empty()) as usize + (!model.rows.is_empty() || model.delete != DeleteFinished::Idle) as usize;
-    let avail = (outer - diff_w - 4.0 * pills as f64).max(80.0);
+    let avail = (outer - 4.0 * pills.saturating_sub(1) as f64).max(80.0);
     let each = if pills > 0 { avail / pills as f64 } else { avail };
     if !model.tasks.is_empty() {
         let completed = model.tasks.iter().filter(|task| is_true(get(task, "completed")) || get(task, "status") == "completed").count();
@@ -293,19 +280,6 @@ pub fn draw_bar(cx: &mut Cx2d, d: &mut Draw, painter: &mut Painter, model: &Trac
         let segments = subagent_segments(model.rows);
         let pw = pill(cx, d, painter, cursor, y, height, each, &segments, open == Some(TrackPanel::Subagents), "track:subagents");
         out.push((TrackPanel::Subagents, rect_xywh(cursor, y, pw, height)));
-        cursor += pw + 4.0;
-    }
-    if diff {
-        let r = rect_xywh(cursor, y, diff_w, height);
-        let hovered = d.state.hover_hit.as_deref() == Some("track:diff");
-        d.kit.bordered(cx, r, if hovered { p.surface2 } else { p.surface1 }, height * 0.5, p.border_accent, 1.0);
-        let size = d.look.ui(12.0);
-        let a = format!("+{}", model.additions);
-        let label_height = d.kit.measure(cx, Font::Mono, size, 1.3, &a, None).y;
-        let text_y = y + (height - label_height) * 0.5;
-        let s = d.kit.label(cx, Font::Mono, size, 1.3, p.added, dvec2(cursor + 12.0, text_y), &a, None);
-        d.kit.label(cx, Font::Mono, size, 1.3, p.removed, dvec2(cursor + 18.0 + s.x, text_y), &format!("-{}", model.deletions), None);
-        d.canvas.add_hit(r, HitTarget::Chrome("track:diff".into()));
     }
     out
 }

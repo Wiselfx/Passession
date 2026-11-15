@@ -65,7 +65,7 @@ For alternative endpoints, multiple profiles, custom binaries, and ACP agents, s
 
 ## Why Paseo's environment can differ from your terminal
 
-An OS launcher, service manager, container, or remote host can supply a different environment from your terminal. This affects agent providers and script/setup PTYs as well as other host tools.
+An OS launcher, service manager, container, or remote host can supply a different environment from your terminal. This affects agent providers and script PTYs as well as other host tools.
 
 Use the affected daemon's provider diagnostic rather than assuming the desktop app imports your interactive shell configuration. Start a foreground instance with `paseo daemon run` to use your terminal's launch environment. Managed `paseo daemon start` intentionally removes daemon-setting overrides; save those settings in `config.json`.
 
@@ -75,7 +75,7 @@ Ensure provider binaries are on the daemon's launch `PATH`, or configure an abso
 
 - **Daemon** — `~/.paseo/daemon.log` (`$PASEO_HOME/daemon.log` for a custom home).
 - **Desktop client** — use the native settings diagnostics' **Application logs** and **Daemon logs** actions. The Rust desktop process shares `desktop-main.log` in the app support directory across its windows; use the returned `logPath` rather than an assumed per-window or old Electron log location.
-- **Script/setup tasks** — inspect their read-only logs. For an interactive shell, open a **Terminal** session instead.
+- **Script tasks** — inspect their read-only logs. For an interactive shell, open a **Terminal** session instead.
 
 ## I changed config.json but nothing happened
 

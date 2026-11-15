@@ -1,9 +1,6 @@
 //! Project settings (Flutter `project_settings_panel.dart`, original
-//! `project-settings-screen.tsx`): `paseo.json` worktree lifecycle hooks, service port
-//! allocation, scripts, metadata generation instructions, revision-checked saves, the
-//! project name/icon editor and workspace recovery.
-
-use std::collections::HashMap;
+//! `project-settings-screen.tsx`): `paseo.json` scripts, metadata generation
+//! instructions, revision-checked saves, and the project name/icon editor.
 
 use makepad_widgets::*;
 use super::kit::{WaModalWidgetExt, WaModalWidgetRefExt};
@@ -45,13 +42,6 @@ live_design! {
         <View> { width: Fill, height: 1. }
     }
     WaInfo = <View> { width: Fill, height: Fit, visible: false, padding: { bottom: 12. }, text = <WaSmall> {} }
-    WaSectionHeader = <View> {
-        width: Fill, height: Fit, flow: Right, spacing: 8.
-        padding: { bottom: 8. }
-        title = <WaMuted> { width: Fit, margin: { top: 2. } }
-        <View> { width: Fill, height: 1. }
-        docs = <WaLinkButton> { trailing: "arrow-up-right" }
-    }
 
     WaProjectScriptRow = <View> {
         width: Fill, height: Fit, flow: Down
@@ -68,9 +58,6 @@ live_design! {
         }
     }
 
-    WaActionRow = <WaRow> {
-        controls = { action = <WaButtonOutlineSmall> {} }
-    }
 
     pub WaProjectSettingsView = {{WaProjectSettingsView}} {
         width: Fill, height: Fill, flow: Overlay
@@ -100,27 +87,6 @@ live_design! {
                     }
                     body = <View> {
                         width: Fill, height: Fit, flow: Down, visible: false
-                        worktree_group = <View> {
-                            width: Fill, height: Fit, flow: Down, padding: { bottom: 32. }
-                            header = <WaGroupHeader> {}
-                            info = <WaInfo> {}
-                            setup_section = <View> {
-                                width: Fill, height: Fit, flow: Down, spacing: 8., padding: { bottom: 24. }
-                                header = <WaSectionHeader> {}
-                                uncommitted = <WaWarningAlert> { visible: false }
-                                setup_input = <WaTextArea> { input = { empty_text: "npm install" } }
-                            }
-                            teardown_section = <View> {
-                                width: Fill, height: Fit, flow: Down, spacing: 8., padding: { bottom: 24. }
-                                header = <WaSectionHeader> {}
-                                teardown_input = <WaTextArea> { input = { empty_text: "docker compose down" } }
-                            }
-                            ports_section = <View> {
-                                width: Fill, height: Fit, flow: Down, spacing: 8.
-                                title = <WaMutedLine> {}
-                                card = <WaCard> { ports_row = <WaActionRow> {} }
-                            }
-                        }
                         scripts_group = <View> {
                             width: Fill, height: Fit, flow: Down, padding: { bottom: 32. }
                             header = <WaGroupHeader> { add_script = <WaGlyphButton> { icon: "plus" } }
@@ -160,19 +126,6 @@ live_design! {
                             width: Fill, height: Fit, align: { x: 1.0 }, padding: { top: 16. }
                             save = <WaButtonPrimary> { size: Md }
                         }
-                    }
-                    recovery = <View> {
-                        width: Fill, height: Fit, flow: Down, spacing: 8., padding: { top: 32. }, visible: false
-                        title = <WaSectionTitle> {}
-                        card = <WaCard> {
-                            inspect_row = <WaActionRow> {}
-                            restore_row = <View> {
-                                width: Fill, height: Fit, flow: Down, visible: false
-                                <WaRule> {}
-                                row = <WaActionRow> {}
-                            }
-                        }
-                        recovery_error = <View> { width: Fill, height: Fit, visible: false, text = <WaError> {} }
                     }
                 }
             }
@@ -255,8 +208,6 @@ live_design! {
 enum Req {
     Read,
     Write,
-    Inspect,
-    Restore,
     EditProject,
 }
 
@@ -301,16 +252,11 @@ pub struct WaProjectSettingsView {
     #[rust]
     root: String,
     #[rust]
-    workspace_id: String,
-    #[rust]
     tab_key: String,
     #[rust]
     started: bool,
     #[rust]
     config: Option<Value>,
-    /// The config as last read or saved (lifecycle hook shapes).
-    #[rust]
-    loaded: Value,
     #[rust]
     revision: Value,
     #[rust]
@@ -322,37 +268,25 @@ pub struct WaProjectSettingsView {
     #[rust]
     error: Option<String>,
     #[rust]
-    recovery: Option<Value>,
-    #[rust]
-    recovery_error: Option<String>,
-    #[rust]
     loading: bool,
     #[rust]
     saving: bool,
-    #[rust]
-    busy: bool,
     #[rust]
     dirty: bool,
     #[rust]
     guard_dirty: Option<bool>,
     #[rust]
-    uncommitted: bool,
-    #[rust]
-    kinds: HashMap<String, &'static str>,
-    #[rust]
     form_epoch: u64,
     #[rust]
     applied_epoch: u64,
     #[rust]
-    info_open: [bool; 3],
+    info_open: [bool; 2],
     #[rust]
     pending: Pending<Req>,
     #[rust]
     script_sheet: ScriptSheet,
     #[rust]
     project_sheet: ProjectSheet,
-    #[rust]
-    port_range_draft: String,
     #[rust]
     last_status: Option<Connection>,
     #[rust]
@@ -365,14 +299,13 @@ impl WaProjectSettingsView {
         self.view.widget(id!(wa_root))
     }
 
-    pub fn set_project(&mut self, cx: &mut Cx, host_id: &str, root: &str, workspace_id: &str, tab_key: &str) {
-        if self.host_id == host_id && self.root == root && self.workspace_id == workspace_id {
+    pub fn set_project(&mut self, cx: &mut Cx, host_id: &str, root: &str, tab_key: &str) {
+        if self.host_id == host_id && self.root == root {
             self.tab_key = tab_key.to_owned();
             return;
         }
         self.host_id = host_id.to_owned();
         self.root = root.to_owned();
-        self.workspace_id = workspace_id.to_owned();
         self.tab_key = tab_key.to_owned();
         self.started = false;
         self.config = None;
@@ -405,9 +338,9 @@ impl WaProjectSettingsView {
         );
     }
 
-    fn change(&mut self, change: impl FnOnce(&mut Value, &Value, &mut HashMap<String, &'static str>)) {
+    fn change(&mut self, change: impl FnOnce(&mut Value)) {
         let Some(config) = self.config.as_mut() else { return };
-        change(config, &self.loaded, &mut self.kinds);
+        change(config);
         self.dirty = true;
     }
 
@@ -458,12 +391,9 @@ impl WaProjectSettingsView {
                                 self.read_error_code = Some(if code.is_empty() { "read_failed".into() } else { code });
                             } else {
                                 let config = object_of(&body, "config").clone();
-                                self.loaded = config.clone();
                                 self.config = Some(config);
                                 self.revision = body.get("revision").cloned().unwrap_or(Value::Null);
                                 self.dirty = false;
-                                self.kinds.clear();
-                                self.uncommitted = super::rpc::flag(&body, "hasUncommittedWorktreeSetupChanges");
                                 self.form_epoch += 1;
                             }
                         }
@@ -485,41 +415,15 @@ impl WaProjectSettingsView {
                             } else {
                                 self.write_error_code = None;
                                 let config = object_of(&body, "config").clone();
-                                self.loaded = config.clone();
                                 self.config = Some(config);
                                 self.revision = body.get("revision").cloned().unwrap_or(Value::Null);
                                 self.dirty = false;
-                                self.kinds.clear();
-                                if body.get("hasUncommittedWorktreeSetupChanges").is_some() {
-                                    self.uncommitted = super::rpc::flag(&body, "hasUncommittedWorktreeSetupChanges");
-                                }
                                 self.form_epoch += 1;
                                 ctx.effects.push(UiEffect::Toast { message: t("settings.project.actions.saved"), is_error: false });
                                 ctx.core.refresh_host(&self.host_id);
                             }
                         }
                         Err(error) => self.error = Some(error.to_string()),
-                    }
-                }
-                Req::Inspect => {
-                    self.busy = false;
-                    match result.and_then(|body| require_success(&body).map(|_| body)) {
-                        Ok(body) => {
-                            self.recovery = Some(object_of(&body, "state").clone());
-                            self.recovery_error = None;
-                        }
-                        Err(error) => self.recovery_error = Some(error.to_string()),
-                    }
-                }
-                Req::Restore => {
-                    self.busy = false;
-                    match result.and_then(|body| require_success(&body)) {
-                        Ok(()) => {
-                            ctx.core.refresh_host(&self.host_id);
-                            self.recovery = None;
-                            self.recovery_error = None;
-                        }
-                        Err(error) => self.recovery_error = Some(error.to_string()),
                     }
                 }
                 Req::EditProject => {
@@ -610,7 +514,7 @@ impl WaProjectSettingsView {
         let existing = old_name.as_ref().map(|n| object_of(object_of(&config, "scripts"), n).clone()).unwrap_or(Value::Null);
         let entry = model::script_entry(&existing, &command, &port, self.script_sheet.service);
         let key = name.trim().to_owned();
-        self.change(|config, _, _| model::replace_script(config, old_name.as_deref(), &key, entry));
+        self.change(|config| model::replace_script(config, old_name.as_deref(), &key, entry));
         self.script_sheet.open = false;
         view.wa_modal(id!(script_sheet)).close(cx);
         self.view.redraw(cx);
@@ -746,25 +650,7 @@ impl WaProjectSettingsView {
                 self.read(ctx);
             } else if let Some(name) = token.strip_prefix("remove:") {
                 let name = name.to_owned();
-                self.change(|config, _, _| model::remove_script(config, &name));
-            } else if token == "restore" {
-                self.busy = true;
-                self.pending.send(&ctx.core, &self.host_id, "workspace.recovery.restore.request", json!({ "workspaceId": self.workspace_id }), Req::Restore);
-            }
-            self.view.redraw(cx);
-        }
-        if let Some((token, value)) = dialog.submitted(actions) {
-            if token == "port-range" {
-                self.port_range_draft = value;
-                let script = self.config.as_ref().map(|c| str_of(object_of(object_of(c, "worktree"), "servicePorts"), "portScript").to_owned()).unwrap_or_default();
-                dialog.prompt(cx, "port-script", l("Port allocation command (optional)"), &script, true);
-            } else if token == "port-script" {
-                let range = std::mem::take(&mut self.port_range_draft);
-                if !model::valid_port_range(&range) {
-                    ctx.effects.push(UiEffect::Toast { message: l("Enter an inclusive port range between 1 and 65535.").to_owned(), is_error: true });
-                } else {
-                    self.change(|config, _, _| model::set_service_ports(config, &range, &value));
-                }
+                self.change(|config| model::remove_script(config, &name));
             }
             self.view.redraw(cx);
         }
@@ -795,36 +681,23 @@ impl WaProjectSettingsView {
             self.save(ctx);
             self.view.redraw(cx);
         }
-        for (index, button) in [id!(worktree_group.header.info), id!(scripts_group.header.info), id!(metadata_group.header.info)].iter().enumerate() {
+        for (index, button) in [id!(scripts_group.header.info), id!(metadata_group.header.info)].iter().enumerate() {
             if view.wa_button(*button).clicked(actions) {
                 self.info_open[index] = !self.info_open[index];
                 self.view.redraw(cx);
             }
         }
-        if view.wa_button(id!(setup_section.header.docs)).clicked(actions) || view.wa_button(id!(teardown_section.header.docs)).clicked(actions) {
-            ctx.effects.push(UiEffect::OpenExternal { url: model::WORKTREE_DOCS_URL.to_owned() });
-        }
         // Text areas: Enter inserts a newline (multi-line inputs), every change marks dirty.
-        let areas: [(&[LiveId], &str); 5] = [
-            (id!(setup_input), "setup"),
-            (id!(teardown_input), "teardown"),
-            (id!(meta_branch), "meta:branchName"),
-            (id!(meta_commit), "meta:commitMessage"),
-            (id!(meta_pr), "meta:pullRequest"),
+        let areas: [(&[LiveId], &str); 3] = [
+            (id!(meta_branch), "branchName"),
+            (id!(meta_commit), "commitMessage"),
+            (id!(meta_pr), "pullRequest"),
         ];
         for (path, field) in areas {
             let input = view.wa_input(path);
             let Some(text) = input.changed(actions) else { continue };
-            if let Some(key) = field.strip_prefix("meta:") {
-                self.change(|config, _, _| model::set_metadata_text(config, key, &text));
-            } else {
-                self.change(|config, loaded, kinds| model::set_lifecycle_text(config, loaded, kinds, field, &text));
-            }
+            self.change(|config| model::set_metadata_text(config, field, &text));
             self.view.redraw(cx);
-        }
-        if view.wa_button(id!(ports_row.controls.action)).clicked(actions) && !self.saving {
-            let range = self.config.as_ref().map(|c| str_of(object_of(object_of(c, "worktree"), "servicePorts"), "range").to_owned()).unwrap_or_default();
-            dialog.prompt(cx, "port-range", l("Service port range (for example 3000-3999)"), &range, false);
         }
         if view.wa_button(id!(add_script)).clicked(actions) && !self.saving {
             self.open_script_sheet(cx, None);
@@ -940,17 +813,6 @@ impl WaProjectSettingsView {
                 self.view.redraw(cx);
             }
         }
-        // Recovery.
-        if view.wa_button(id!(inspect_row.controls.action)).clicked(actions) && !self.busy {
-            self.busy = true;
-            self.recovery_error = None;
-            self.pending.send(&ctx.core, &self.host_id, "workspace.recovery.inspect.request", json!({ "workspaceId": self.workspace_id }), Req::Inspect);
-            self.view.redraw(cx);
-        }
-        if view.wa_button(id!(restore_row.row.controls.action)).clicked(actions) && !self.busy && let Some(recovery) = &self.recovery {
-            let message = format!("{}\n{}", str_of(recovery, "action"), str_of(recovery, "branch"));
-            dialog.confirm(cx, "restore", l("Restore workspace?"), &message, l("Restore"), false);
-        }
     }
 
     fn present(&mut self, cx: &mut Cx2d, ctx: &UiContext, width: f64) {
@@ -998,29 +860,6 @@ impl WaProjectSettingsView {
         if show_form {
             self.present_form(cx);
         }
-        let recovery = view.widget(id!(recovery));
-        recovery.set_visible(cx, !self.workspace_id.is_empty());
-        if !self.workspace_id.is_empty() {
-            recovery.widget(id!(title)).set_text(cx, l("Workspace recovery"));
-            let inspect = view.widget(id!(inspect_row));
-            inspect.widget(id!(body.label)).set_text(cx, l("Inspect missing workspace recovery"));
-            let hint = self.recovery.as_ref().map(|r| super::rpc::str_or(r, "message", str_of(r, "action")).to_owned()).unwrap_or_default();
-            set_optional(cx, &inspect.widget(id!(body.hint)), &hint);
-            let run = view.wa_button(id!(inspect_row.controls.action));
-            run.set_text(cx, &t("settings.diagnostics.app.run"));
-            run.set_enabled(cx, !self.busy);
-            let recoverable = self.recovery.as_ref().is_some_and(|r| str_of(r, "kind") == "recoverable");
-            view.widget(id!(restore_row)).set_visible(cx, recoverable);
-            if let (true, Some(r)) = (recoverable, &self.recovery) {
-                let row = view.widget(id!(restore_row.row));
-                row.widget(id!(body.label)).set_text(cx, l("Restore workspace"));
-                set_optional(cx, &row.widget(id!(body.hint)), &format!("{}\n{}", str_of(r, "action"), str_of(r, "branch")));
-                let restore = view.wa_button(id!(restore_row.row.controls.action));
-                restore.set_text(cx, l("Restore"));
-                restore.set_enabled(cx, !self.busy);
-            }
-            set_optional(cx, &view.widget(id!(recovery_error)), self.recovery_error.as_deref().unwrap_or(""));
-        }
         if self.script_sheet.open {
             self.present_script_sheet(cx);
         }
@@ -1033,7 +872,6 @@ impl WaProjectSettingsView {
         let view = self.root();
         let config = self.config.clone().unwrap_or(Value::Null);
         let groups = [
-            (id!(worktree_group), "settings.project.worktree.title", "settings.project.worktree.info"),
             (id!(scripts_group), "settings.project.scripts.title", "settings.project.scripts.info"),
             (id!(metadata_group), "settings.project.metadata.title", "settings.project.metadata.info"),
         ];
@@ -1044,36 +882,15 @@ impl WaProjectSettingsView {
             group.wa_button(id!(header.info)).set_tooltip(cx, &t(info));
             set_optional(cx, &group.widget(id!(info)), if self.info_open[index] { t(info) } else { String::new() }.as_str());
         }
-        for (path, title) in [(id!(setup_section), "settings.project.worktree.setup"), (id!(teardown_section), "settings.project.worktree.teardown")] {
-            let section = view.widget(path);
-            section.widget(id!(header.title)).set_text(cx, &t(title));
-            section.wa_button(id!(header.docs)).set_text(cx, &t("settings.project.worktree.docs"));
-        }
-        let uncommitted = view.widget(id!(uncommitted));
-        uncommitted.set_visible(cx, self.uncommitted);
-        if self.uncommitted {
-            set_alert(cx, &uncommitted, &t("settings.project.worktree.uncommittedTitle"), &t("settings.project.worktree.uncommittedDescription"));
-        }
         if self.applied_epoch != self.form_epoch {
             self.applied_epoch = self.form_epoch;
-            sync_input(cx, &view.wa_input(id!(setup_input)), &model::lifecycle_text(&config, "setup"));
-            sync_input(cx, &view.wa_input(id!(teardown_input)), &model::lifecycle_text(&config, "teardown"));
             sync_input(cx, &view.wa_input(id!(meta_branch)), &model::metadata_text(&config, "branchName"));
             sync_input(cx, &view.wa_input(id!(meta_commit)), &model::metadata_text(&config, "commitMessage"));
             sync_input(cx, &view.wa_input(id!(meta_pr)), &model::metadata_text(&config, "pullRequest"));
         }
-        for path in [id!(setup_input), id!(teardown_input), id!(meta_branch), id!(meta_commit), id!(meta_pr)] {
+        for path in [id!(meta_branch), id!(meta_commit), id!(meta_pr)] {
             view.wa_input(path).set_is_read_only(cx, self.saving);
         }
-        let ports = view.widget(id!(ports_section));
-        ports.widget(id!(title)).set_text(cx, l("Service ports"));
-        let row = view.widget(id!(ports_row));
-        row.widget(id!(body.label)).set_text(cx, l("Service port allocation"));
-        let range = super::rpc::str_or(object_of(object_of(&config, "worktree"), "servicePorts"), "range", l("Host default")).to_owned();
-        set_optional(cx, &row.widget(id!(body.hint)), &range);
-        let edit = view.wa_button(id!(ports_row.controls.action));
-        edit.set_text(cx, &t("settings.project.scripts.actions.edit"));
-        edit.set_enabled(cx, !self.saving);
 
         let scripts = model::scripts(&config);
         set_optional(cx, &view.widget(id!(scripts_empty)), if scripts.is_empty() { t("settings.project.scripts.empty") } else { String::new() }.as_str());

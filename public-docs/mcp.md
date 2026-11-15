@@ -1,6 +1,6 @@
 ---
 title: MCP reference
-description: Reference for the Paseo tools agents use to manage agents, workspaces, scripts, terminals, and schedules.
+description: Reference for the Paseo tools agents use to manage sessions, scripts, terminals, and schedules.
 nav: MCP reference
 order: 34
 category: Orchestration
@@ -73,12 +73,12 @@ that can access the host through a shell.
 
 ## Mental model
 
-Workspaces decide where work happens; agent parentage decides who owns the work.
+Sessions run in existing directories; agent parentage is independent of directory selection.
 
-- An agent that calls `create_agent` without a `workspaceId` gets a subagent in its own workspace.
-- Passing a `workspaceId` places that subagent in another workspace without detaching it from its parent.
-- A top-level MCP caller without a workspace gets a new local workspace.
-- Create a workspace first when you need worktree isolation, a specific branch, or a pull request checkout.
+- An agent calling `create_agent` can omit `cwd` to use its own directory.
+- Passing `cwd` selects another existing directory on the target host without detaching the child from its parent.
+- A top-level MCP caller must provide `cwd`.
+- Paseo does not create Git worktrees or prepare branches for sessions.
 
 MCP does not expose an agent-detach tool. Detaching is a manual user action in the app or CLI.
 
@@ -88,7 +88,7 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 | Tool                 | Function                                                                                                                                                       |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. Use `initialPrompt` to start work; returns without waiting for completion. |
+| `create_agent`       | Create a session in `cwd` (required for top-level callers; defaults to the calling agent's directory). Use `initialPrompt` to start work; returns without waiting for completion. |
 | `send_agent_prompt`  | Send a prompt using `agentId` and `prompt`; returns without waiting for completion.                                                                            |
 | `get_agent_status`   | Return compact lifecycle, error and permission status; use `detail` to recover full snapshot fields.                                                           |
 | `list_agents`        | List recent agents as compact metadata; `includeBackground: true` includes background work.                                                                    |
@@ -183,32 +183,21 @@ output and errors. Running calls already expose their request. A missing or blan
 title leaves the row labelled **Eval**, without using code or output as its title.
 
 
-### Workspaces
+### Scripts
 
-| Tool                | Function                                                                                                                                                                                                                                                                                                        |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create_workspace`  | Create a local or worktree-isolated workspace. Worktrees can branch off, check out a branch, or a PR. `background: true` hides it from default lists and the sidebar while preserving history and access by ID. Omission inherits the calling agent’s workspace setting, or defaults to false without a caller. |
-| `list_workspaces`   | List active workspaces and their directories and isolation. Use `includeBackground: true` to include background workspaces.                                                                                                                                                                                     |
-| `rename_workspace`  | Change the user-visible name of the current or specified workspace.                                                                                                                                                                                                                                             |
-| `archive_workspace` | Archive a workspace and the sessions it owns.                                                                                                                                                                                                                                                                   |
-
-For worktree isolation, `create_workspace` accepts the same useful choices as the app: branch off from a base, check out an existing branch, or check out a pull request. The worktree remains an implementation detail of the workspace lifecycle.
-
-### Workspace scripts
-
-These tools manage scripts configured in a workspace's `paseo.json`. Each requires an explicit `workspaceId`; start and stop also require the configured `scriptName`.
+These tools manage scripts configured in `paseo.json`. `agentId` selects the session's directory owner and defaults to the calling agent; a top-level caller must provide it. Start and stop also require `scriptName`.
 
 | Tool                     | Function                                                                                |
 | ------------------------ | --------------------------------------------------------------------------------------- |
-| `list_workspace_scripts` | List configured scripts with lifecycle, terminal, port, proxy URL, and health metadata. |
-| `start_workspace_script` | Start a configured script through Paseo's managed launcher.                             |
-| `stop_workspace_script`  | Stop a running script through its supervised terminal.                                  |
+| `list_scripts` | List configured scripts with lifecycle, terminal, port, proxy URL, and health metadata. |
+| `start_script` | Start a configured script through Paseo's managed launcher.                             |
+| `stop_script`  | Stop a running script through its supervised terminal.                                  |
 
-See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
+See [Project scripts and services](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
 
 ### Terminals
 
-These are daemon-side PTY APIs. The native client opens interactive shells as **Terminal** tabs and shows script/setup output as read-only logs.
+These are daemon-side PTY APIs. The native client opens interactive shells as **Terminal** tabs and shows script output as read-only logs. `cwd` defaults to the calling agent's directory, or the process directory for a top-level caller.
 
 | Tool                 | Function                                                                     |
 | -------------------- | ---------------------------------------------------------------------------- |
@@ -272,7 +261,7 @@ Use it for the complete schedule, including prompt, full target configuration an
 run history. `inspect_schedule` is unchanged; compact listing does not discard
 stored schedule data.
 
-New-agent run workspaces are archived when each run ends by default. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
+New-agent runs archive their sessions and stop owned terminals when they end by default; files and Git worktrees remain untouched. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-sessions) to keep subsequent run sessions active.
 
 ### Agent profiles
 

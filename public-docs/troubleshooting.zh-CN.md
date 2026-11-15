@@ -63,7 +63,7 @@ paseo --host <host:port> provider diagnostic <provider> --json
 
 ## Paseo 的环境为何可能与终端不同 {#why-paseos-environment-can-differ-from-your-terminal}
 
-操作系统启动器、服务管理器、容器或远程主机可能提供不同于终端的环境。这会影响 Agent Provider、脚本/设置任务 PTY 和其他主机工具。
+操作系统启动器、服务管理器、容器或远程主机可能提供不同于终端的环境。这会影响 Agent Provider、脚本 PTY 和其他主机工具。
 
 请查看受影响 daemon 的 Provider 诊断，不要假定桌面应用会导入交互式 shell 配置。`paseo daemon run` 使用终端启动环境；托管的 `paseo daemon start` 会有意移除 daemon 设置覆盖项，应将这些设置写入 `config.json`。
 
@@ -73,7 +73,7 @@ paseo --host <host:port> provider diagnostic <provider> --json
 
 - **daemon**：`~/.paseo/daemon.log`，自定义主目录则为 `$PASEO_HOME/daemon.log`。
 - **桌面客户端**：使用原生设置诊断中的 **Application logs** 和 **Daemon logs**。Rust 桌面进程的所有窗口共享支持目录中的 `desktop-main.log`；以返回的 `logPath` 为准，不要假定使用每窗口日志或旧 Electron 日志路径。
-- **脚本/设置任务**：查看只读日志。如需交互式 shell，请改为打开 **Terminal** 会话。
+- **脚本任务**：查看只读日志。如需交互式 shell，请改为打开 **Terminal** 会话。
 
 ## 我修改了 config.json，但什么都没发生 {#i-changed-configjson-but-nothing-happened}
 

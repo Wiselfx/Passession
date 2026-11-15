@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: "Paseo CLI reference: manage projects, workspaces, agents, plugins, scripts, schedules, daemons, and permissions from your terminal."
+description: "Paseo CLI reference: manage projects, sessions, plugins, scripts, schedules, daemons, and permissions from your terminal."
 nav: CLI reference
 order: 35
 category: Orchestration
@@ -12,7 +12,7 @@ The Rust Paseo CLI manages agents and daemon operations from your terminal. Thes
 
 Bare `paseo` opens CLI chat. Use `paseo onboard` for explicit setup, then `paseo daemon start` and `paseo daemon status` for managed operation. The default home remains `~/.paseo`.
 
-> **Agent orchestration:** You can tell coding agents to use the Paseo CLI to spawn and manage other agents. Paseo recognizes the calling agent, so CLI-created workers get the same workspace and parent defaults as MCP-created workers.
+> **Agent orchestration:** You can tell coding agents to use the Paseo CLI to spawn and manage other agents. Paseo recognizes the calling agent, so CLI-created workers get the same directory and parent defaults as MCP-created workers.
 
 ## Quick reference
 
@@ -89,7 +89,7 @@ JSON output never includes connection credentials.
 
 `update --meta` replaces supplied keys; `--remove-meta` removes keys. Replacing a connection retains
 the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
-destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
+destination. `rm` removes the saved connection; sessions on that host keep running.
 
 ## Provider diagnostics
 
@@ -112,26 +112,21 @@ paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --no-wait "run the focused test suite"
 paseo run --output-schema schema.json "name this branch"
-paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
-paseo run --workspace <workspace-id> "review the current diff"
+paseo run --cwd ~/dev/my-app "implement feature X"
+paseo run --cwd ~/dev/my-app "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
 paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}' "summarize release notes"
 ```
 
-From a human shell, a bare `paseo run` creates a new local workspace for the current directory. Use `--workspace <id>` to add the agent to an existing workspace, or `--new-workspace local|worktree` to explicitly create a separate workspace for the run.
+From a human shell, `paseo run` starts a session in the current directory. Use `--cwd <path>` to select another existing directory on the target host. Paseo does not create Git worktrees or check out branches for a run.
 
-Worktree creation accepts `--worktree-mode branch-off|checkout-branch|checkout-pr` plus the matching `--new-branch`/`--base`, `--branch`, or `--pr-number`/`--forge` options. Use `--worktree-slug` to choose the managed directory slug.
-
-When an existing Paseo agent runs the same command, Paseo recognizes it through `PASEO_AGENT_ID`. Without explicit placement, the new agent becomes its subagent in the same workspace. `--workspace` can place that subagent elsewhere without changing its parent.
+When an existing Paseo agent runs the command, Paseo recognizes it through `PASEO_AGENT_ID`. Without an explicit directory, the new agent becomes its subagent in the caller's directory. An explicit `--cwd` changes the working directory without changing parentage.
 
 Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--no-wait`.
 
 By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
 
-The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden
-from help, and print a warning to stderr. Use `--no-wait` in scripts. Workspace visibility is
-selected separately with `workspace create --background`; this release does not repurpose
-`run --background`.
+The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden from help, and print a warning to stderr. Use `--no-wait` in scripts.
 
 ## Projects
 
@@ -151,7 +146,7 @@ paseo project rename <project-id> --reset
 paseo project delete <project-id>
 ```
 
-`--reset` restores the name derived from the project directory. Deleting a project archives its active workspaces and removes the project from Paseo. It does not delete the project directory.
+`--reset` restores the name derived from the project directory. Deleting a project removes its registration and archives its active directory-owner records. It does not delete the project directory or Git worktrees.
 
 For a local daemon, `paseo project create [path]` defaults to the current directory and resolves relative paths on the CLI machine. When you use the global `--host` option or `PASEO_HOST`, provide a path that the target daemon can access:
 
@@ -159,86 +154,30 @@ For a local daemon, `paseo project create [path]` defaults to the current direct
 paseo --host devbox:6767 project create /srv/repos/api
 ```
 
-The remote daemon interprets that path on its own machine. See [Workspaces](/docs/workspaces) for how projects group working directories and sessions.
-
-## Workspaces
-
-Create a workspace independently when you want to prepare its files before starting an agent:
-
-```bash
-paseo workspace create --isolation local --path ~/dev/my-app --title main
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode branch-off \
-  --new-branch feature/auth \
-  --worktree-slug feature-auth \
-  --base origin/main
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode checkout-branch \
-  --branch feature/existing \
-  --worktree-slug existing-copy
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode checkout-pr \
-  --pr-number 2186
-```
-
-Add `--background` to hide a workspace from default discovery. Its agents and terminals keep
-ordinary history, persistence, hooks, and restart recovery. `--no-background` explicitly overrides
-caller-workspace inheritance; omission inherits when run by a Paseo agent and defaults to false
-from a human shell. Visibility is creation-only.
-
-```bash
-paseo workspace create --isolation local --background --path /path/to/repo
-paseo run --workspace <workspace-id> --no-wait "review the checkout flow"
-```
-
-Exact workspace and agent IDs remain accessible regardless of listing visibility.
-
-Then list, use, rename, or archive it:
-
-```bash
-paseo workspace ls
-paseo workspace ls --background               # Also include background workspaces
-paseo run --workspace <workspace-id> "implement authentication"
-paseo workspace rename <workspace-id> "Auth rework"
-paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
-paseo workspace archive <workspace-id>
-```
-
-Add `--forge <name>` to PR checkout when Paseo cannot infer the forge from the source checkout. See [Git worktrees](/docs/worktrees) for setup hooks and services.
+The remote daemon interprets that path on its own machine. See [Sessions and directories](/docs/workspaces) for the host → directory → session navigation model.
 
 ## Terminals
 
-These commands control daemon-side PTYs on the host. The app opens interactive shells as **Terminal** tabs and shows script/setup output as read-only logs.
+These commands control daemon-side PTYs on the host. The app opens interactive shells as **Terminal** tabs and shows script output as read-only logs.
 
-Use the workspace ID when multiple workspaces share a directory:
+Select a session with `--agent`, or a directory with `--cwd`:
 
 ```bash
-paseo terminal create --workspace <workspace-id> --name Development
-paseo terminal ls --workspace <workspace-id> --json
+paseo terminal create --agent <agent-id> --name Development
+paseo terminal ls --cwd ~/dev/my-app --json
 paseo terminal send-keys <terminal-id> -l "echo ready"
 paseo terminal send-keys <terminal-id> Enter
 paseo terminal capture <terminal-id>
 paseo terminal kill <terminal-id>
 ```
 
-Creation defaults to the workspace directory. Add `--cwd <absolute-path>` to change the process directory while keeping that workspace as the owner. Unknown and archived workspace IDs fail.
+`--agent <id>` selects the session's directory owner. Without it, creation uses `--cwd` or the current directory. `ls --all` lists every terminal on the host and cannot be combined with agent or directory filters.
 
-Without `--workspace`, creation opens the project at `--cwd` or the current directory and reuses its oldest active workspace. Listing without `--workspace` filters by `--cwd` or the current directory and can include multiple workspaces. `ls --all` lists every terminal on the host and cannot be combined with directory or workspace filters.
+Use `--json` for structured output and the global `--host` option to target another daemon. Results retain internal `workspaceId` ownership fields for protocol compatibility; select sessions and directories rather than managing those IDs.
 
-Create and list results include `id`, `name`, `cwd`, and `workspaceId`. Use `--json` for structured output and the global `--host` option to target another daemon. These commands require a host that supports the [workspace terminal API](/docs/sdk/reference#clientterminals); older hosts return an update message.
+## Scripts
 
-## Workspace scripts
-
-List, start, and stop the scripts configured in a workspace's `paseo.json`:
+List, start, and stop scripts configured in the selected directory's `paseo.json`:
 
 ```bash
 paseo script ls
@@ -246,9 +185,9 @@ paseo script start web
 paseo script stop web
 ```
 
-By default, Paseo selects the workspace whose directory is the current directory. Pass `--cwd <path>` to select a different directory, or `--workspace <workspace-id>` when a directory has multiple workspaces. Use the global `--host` option to target another daemon. These commands also accept standard output options such as `--json`.
+Pass `--agent <agent-id>` to select a session's directory owner, or `--cwd <path>` to select another directory. Without either, commands use the current directory. Use the global `--host` option to target another daemon. Standard output options such as `--json` are supported.
 
-The output includes each script's lifecycle and supervised terminal ID. Services also include their assigned port, proxy URL, and health. See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
+The output includes each script's lifecycle and supervised terminal ID. Services also include their assigned port, proxy URL, and health. See [Project scripts and services](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
 
 ## Plugins
 
@@ -299,11 +238,11 @@ Removal deletes the installation's settings; do not use remove/reinstall as a da
 ## Listing agents
 
 ```bash
-paseo ls                    # Non-archived agents in active workspaces
-paseo ls -a                 # Also include archived agents
-paseo ls -g                 # Non-archived agents across all workspaces
-paseo ls -a -g --json       # All agents, including archived, as JSON
-paseo ls --background       # Also include agents in background workspaces
+paseo ls                    # Non-archived sessions with active directory ownership
+paseo ls -a                 # Also include archived sessions
+paseo ls -g                 # Non-archived sessions, including inactive directory ownership
+paseo ls -a -g --json       # All sessions, including archived, as JSON
+paseo ls --background       # Also include retained background sessions
 ```
 
 ## Streaming output
@@ -550,7 +489,7 @@ paseo wait "$agent_id"
 paseo logs "$agent_id" --tail 5
 ```
 
-Because Agent A's ID is present in the environment, Agent B is created as its subagent in the same workspace unless `--workspace` is specified.
+Because Agent A's ID is present in the environment, Agent B is created as its subagent. It inherits the caller's directory unless `--cwd` is specified.
 
 Simple implement + verify loop:
 

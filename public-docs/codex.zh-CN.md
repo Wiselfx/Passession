@@ -73,7 +73,7 @@ where.exe codex
 
 ## 在外部终端中使用 Codex {#use-codex-in-an-external-terminal}
 
-如需标准 Codex CLI 体验，在 daemon 主机上打开终端，进入检出目录并运行 `codex`。可以使用自己的终端，也可以使用 Paseo 的 **Terminal** 会话（**New session → Launch → Terminal**）；工作区脚本/设置 PTY 仍受支持，并以只读日志呈现。
+如需标准 Codex CLI 体验，在 daemon 主机上打开终端，进入检出目录并运行 `codex`。可以使用自己的终端，也可以使用 Paseo 的 **Terminal** 会话（**New session → Launch → Terminal**）；项目脚本 PTY 仍受支持，并以只读日志呈现。
 
 ## 另请参阅 {#see-also}
 

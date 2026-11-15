@@ -98,6 +98,7 @@
   },
   "shell": {
     "menu": {
+      "sessionActions": "Session actions",
       "toggleSidebar": "Toggle sidebar",
       "open": "Open menu",
       "close": "Close menu",
@@ -1070,6 +1071,19 @@
     },
     "tree": { "showFolderTree": "Show folder tree", "hideFolderTree": "Hide folder tree" },
     "git": {
+      "commit": {
+        "title": "Commit",
+        "files": "{{selected}} of {{total}} files selected",
+        "message": "Commit message",
+        "messagePlaceholder": "Describe these changes",
+        "submit": "Commit",
+        "committing": "Committing…",
+        "success": "Committed",
+        "loading": "Loading uncommitted files…",
+        "empty": "No uncommitted files",
+        "disconnected": "Connect to the host to inspect and commit files.",
+        "unsupported": "Update the host to use selected-file commits."
+      },
       "toasts": { "notAccepted": "The host did not accept this operation." },
       "review": {
         "keepEditing": "Keep editing",
@@ -2439,7 +2453,7 @@
     "loading": "Loading settings...",
     "groups": { "app": "App", "host": "Host" },
     "hostPicker": { "switchHost": "Switch host", "local": "Local" },
-    "backToWorkspace": "Back",
+    "backToWorkspace": "Back to sessions",
     "addHost": "Add host",
     "enableBuiltInDaemon": "Enable built-in daemon",
     "projects": "Projects",
@@ -2797,7 +2811,7 @@
       },
       "sections": {
         "general": "General",
-        "workspaces": "Projects & Workspaces",
+        "sessions": "Sessions",
         "tabsPanes": "Tabs & Panes",
         "layout": "Layout",
         "agentInput": "Agent Input"
@@ -2815,10 +2829,10 @@
         "archiveWorkspace": "Archive workspace",
         "newTab": "New tab",
         "closeCurrentTab": "Close current tab",
-        "jumpToWorkspace": "Jump to session",
+        "jumpToSession": "Jump to session",
         "jumpToTab": "Jump to tab",
-        "previousWorkspace": "Previous session",
-        "nextWorkspace": "Next session",
+        "previousSession": "Previous session",
+        "nextSession": "Next session",
         "previousTab": "Previous tab",
         "nextTab": "Next tab",
         "splitPaneRight": "Split pane right",

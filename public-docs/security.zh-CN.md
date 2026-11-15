@@ -120,7 +120,7 @@ Compose 和反向代理的示例见 [Docker](/docs/docker)。
 
 ## 原生桌面信任边界 {#native-desktop-trust-boundary}
 
-原生桌面客户端不包含 Electron 或 Chromium，Chromium 沙盒参数及辅助程序安装说明不适用。这并不隔离 Agent：Provider、脚本/设置任务 PTY 和 **Terminal** shell 拥有 daemon 用户的文件系统与凭据访问权限。脚本/设置任务显示只读日志；你在 **Terminal** 标签页中输入的内容会发送到 daemon 主机上的该 shell。
+原生桌面客户端不包含 Electron 或 Chromium，Chromium 沙盒参数及辅助程序安装说明不适用。这并不隔离 Agent：Provider、脚本 PTY 和 **Terminal** shell 拥有 daemon 用户的文件系统与凭据访问权限。脚本显示只读日志；你在 **Terminal** 标签页中输入的内容会发送到 daemon 主机上的该 shell。
 
 内置集成在 Rust 中运行。原生后端插件以 daemon 用户权限在独立进程中执行受信任代码。进程隔离不是安全沙盒，只安装可信插件。原生产品不包含可执行 React UI 插件或内嵌浏览器自动化。
 
@@ -150,6 +150,6 @@ Hub CLI 凭据是 bearer 密钥。远程 Hub 地址必须使用 HTTPS；只有�
 - **像对待密码一样对待二维码**，除非你同时设置了密码，否则任何拿到配对信息的人都可以连接你的 daemon
 - **设置密码**，如果你绑定到网络地址，它可以阻止未经授权的客户端控制你的 Agent
 - **不要在没有密码的情况下绑定到 0.0.0.0**，否则你网络中的任何设备都可以连接
-- **严格限定 Docker 挂载范围**，Agent 可以访问挂载的工作区和 Provider 凭据
+- **严格限定 Docker 挂载范围**，Agent 可以访问挂载的目录和 Provider 凭据
 - **保持 daemon 为最新版本**，安全改进会定期发布
 - **保护 Hub 配置分支**，对 `.paseo` 文件包的推送权限决定了该项目能访问什么，见 [Hub 的工作原理](/docs/hub/concepts)

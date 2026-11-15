@@ -91,18 +91,9 @@ environments:
 
 `cwd` is a path on that machine. Hub does not clone anything for you; the directory must already exist.
 
-To keep executions off your working tree, add a worktree:
+To separate automation from another session's files, prepare a separate directory outside Paseo and set `cwd` to that directory. Existing externally managed Git worktrees are usable this way. Paseo does not create worktrees, run automatic setup/teardown hooks, or delete directories when executions finish.
 
-```yaml
-worktree:
-  mode: branch-off
-  newBranch: trigger-${{ paseo.execution.id }}
-  base: origin/main
-```
-
-`${{ paseo.execution.id }}` renders the execution's UUID, so every execution gets its own branch off `origin/main`.
-
-[Environment fields](/docs/hub/configuration/hub-yml#environments) lists what `newBranch` accepts. See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
+See [environment fields](/docs/hub/configuration/hub-yml#environments) and [project scripts](/docs/worktrees#scripts-and-services).
 
 ## What Hub owns
 

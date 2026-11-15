@@ -16,7 +16,7 @@ external event → Hub → daemon → provider process → cwd, filesystem, netw
 
 ## 选择 daemon 权限 {#choose-daemon-authority}
 
-连接 daemon 并不会授予 Hub 运行 Agent 的权限。当你希望 Hub 自动化使用它时，请授予 `hub.execute`。该权限允许 Hub 在该 daemon 上创建和延续 Agent，查看它们的状态和时间线，配置它们的模型、思考级别和 Provider 权限模式，以及归档或恢复工作区。Provider 模式可能包括跳过审批提示。它同样适用于已有的 Agent 和工作区；它不是围绕 Hub 所创建工作的隔离边界。
+连接 daemon 并不会授予 Hub 运行 Agent 的权限。当你希望 Hub 自动化使用它时，请授予 `hub.execute`。该权限允许 Hub 在该 daemon 上创建和延续 Agent，查看它们的状态和时间线，配置它们的模型、思考级别和 Provider 权限模式，以及归档或恢复内部会话归属记录。Provider 模式可能包括跳过审批提示。它同样适用于已有的 Agent 和归属记录；它不是围绕 Hub 所创建工作的隔离边界。这些保留权限不会创建或删除 Git worktree。
 
 daemon 管理、终端控制以及 daemon 凭据的权限管理需要单独的权限。你可以撤销 `hub.execute`，而无需授予 Hub 修改自身权限的能力。
 

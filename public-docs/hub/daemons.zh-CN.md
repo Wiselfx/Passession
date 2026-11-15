@@ -89,18 +89,9 @@ environments:
 
 `cwd` 是那台机器上的路径。Hub 不会替你克隆任何东西；该目录必须已经存在。
 
-要让执行不影响你的 worktree，请添加一个 worktree：
+若要让自动化与其他会话的文件分开，请在 Paseo 之外准备独立目录，并将 `cwd` 指向它。已有的外部管理 Git worktree 也可这样使用。Paseo 不创建 worktree，不自动运行初始化/清理钩子，也不在执行结束后删除目录。
 
-```yaml
-worktree:
-  mode: branch-off
-  newBranch: trigger-${{ paseo.execution.id }}
-  base: origin/main
-```
-
-`${{ paseo.execution.id }}` 会渲染为本次执行的 UUID，因此每次执行都会从 `origin/main` 创建自己的分支。
-
-[环境字段](/docs/hub/configuration/hub-yml#environments)列出了 `newBranch` 接受的值。setup 钩子和脚本见 [Git worktree](/docs/worktrees)。
+参见[环境字段](/docs/hub/configuration/hub-yml#environments)和[项目脚本](/docs/worktrees#scripts-and-services)。
 
 ## Hub 负责什么 {#what-hub-owns}
 

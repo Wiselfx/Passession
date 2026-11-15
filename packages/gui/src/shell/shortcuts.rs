@@ -466,21 +466,16 @@ pub fn current_label_for_help_id(help_id: &str) -> Option<String> {
 pub fn help_locale_key(help_id: &str) -> Option<&'static str> {
     Some(match help_id {
         "new-agent" => "newSession",
-        "new-workspace" => "newWorkspace",
-        "new-worktree" => "newWorktree",
         "next-attention" => "nextAttention",
         "search-files" => "searchFiles",
-        "archive-workspace" => "archiveWorkspace",
-        "pin-workspace" => "pinWorkspace",
         "workspace-tab-new" => "newTab",
         "workspace-tab-target-agent" => "newAgentTab",
-        "workspace-tab-target-changes" => "openChanges",
         "workspace-tab-target-files" => "openFiles",
         "workspace-tab-close-current" => "closeCurrentTab",
-        "workspace-jump-index" => "jumpToWorkspace",
+        "session-jump-index" => "jumpToSession",
         "workspace-tab-jump-index" => "jumpToTab",
-        "workspace-prev" => "previousWorkspace",
-        "workspace-next" => "nextWorkspace",
+        "session-prev" => "previousSession",
+        "session-next" => "nextSession",
         "workspace-tab-prev" => "previousTab",
         "workspace-tab-next" => "nextTab",
         "workspace-pane-split-right" => "splitPaneRight",
@@ -522,7 +517,7 @@ pub fn help_label(help_id: &str, fallback: &str) -> String {
 /// Shortcut help sections (`_shortcutSections`): (catalog section, locale key).
 pub const SECTIONS: [(&str, &str); 5] = [
     ("general", "general"),
-    ("workspaces", "workspaces"),
+    ("sessions", "sessions"),
     ("tabs-panes", "tabsPanes"),
     ("layout", "layout"),
     ("agent-input", "agentInput"),
@@ -632,6 +627,28 @@ mod tests {
         assert!(format_step("Backspace").ends_with('⌫'));
     }
 
+    #[test]
+    fn session_shortcuts_create_and_navigate_sessions_without_workspace_mutations() {
+        let raw: Value = serde_json::from_str(CATALOG).unwrap();
+        let bindings = raw.as_array().unwrap();
+        for combo in ["Cmd+N", "Ctrl+N"] {
+            let binding = bindings.iter().find(|b| j::text(b, "combo") == combo).unwrap();
+            assert_eq!(j::text(binding, "action"), "agent.new");
+        }
+        for help in ["session-jump-index", "session-prev", "session-next"] {
+            let matching: Vec<_> = bindings.iter().filter(|b| j::text(j::object(b, "help"), "id") == help).collect();
+            assert!(!matching.is_empty());
+            for binding in matching {
+                assert!(matches!(j::text(binding, "action"), "session.navigate.index" | "session.navigate.relative"));
+                assert_eq!(j::text(j::object(binding, "help"), "section"), "sessions");
+            }
+        }
+        assert!(!bindings.iter().any(|b| matches!(
+            j::text(b, "action"),
+            "workspace.new" | "worktree.new" | "workspace.archive" | "workspace.pin" | "workspace.tab.target.changes"
+        )));
+    }
+
     /// Every shortcut the help dialog lists has a translated name in both catalogs.
     #[test]
     fn every_help_id_has_a_localized_label() {
@@ -652,12 +669,12 @@ mod tests {
         }
     }
 
-    /// Linux/Windows have pane, worktree and next-attention shortcuts, with distinct chords.
+    /// Linux/Windows have pane and next-attention shortcuts, with distinct chords.
     #[test]
     fn non_mac_bindings_cover_panes_and_do_not_collide() {
         let raw: Value = serde_json::from_str(CATALOG).unwrap();
         let non_mac: Vec<&Value> = raw.as_array().unwrap().iter().filter(|b| j::object(b, "when").get("mac") == Some(&Value::Bool(false))).collect();
-        for action in ["workspace.pane.split.right", "workspace.pane.split.down", "workspace.pane.focus.left", "workspace.pane.move-tab.down", "workspace.pane.close", "worktree.new", "session.next-attention"] {
+        for action in ["workspace.pane.split.right", "workspace.pane.split.down", "workspace.pane.focus.left", "workspace.pane.move-tab.down", "workspace.pane.close", "session.next-attention"] {
             assert!(non_mac.iter().any(|b| j::text(b, "action") == action), "no non-mac binding for {action}");
         }
         let mut seen = std::collections::HashMap::new();

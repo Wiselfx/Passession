@@ -70,11 +70,11 @@ The daemon validates the complete file before applying anything. It applies runt
 paseo daemon restart
 ```
 
-Runtime-safe settings include relay enablement, MCP settings, hostnames, CORS origins, trusted proxies, Git process limits, agent and script/setup terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
+Runtime-safe settings include relay enablement, MCP settings, hostnames, CORS origins, trusted proxies, Git process limits, agent and script terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
 
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
-Listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, and logging require a restart. Reload applies other valid edits in the same file before reporting those paths.
+Listen addresses, authentication, relay endpoints and TLS, service-proxy addresses, and logging require a restart. Reload applies other valid edits in the same file before reporting those paths.
 
 Deployment environment variables remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. List settings such as hostnames and CORS origins still append across sources. Stop and relaunch the deployment without the override to make the file value authoritative.
 
@@ -84,20 +84,6 @@ Agent providers, both the first-class ones Paseo ships with and custom entries y
 
 See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 
-## Worktrees
-
-New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new worktrees somewhere else, set `worktrees.root`:
-
-```json
-{
-  "worktrees": {
-    "root": "/mnt/fast/paseo-worktrees"
-  }
-}
-```
-
-Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
-
 ## Removed speech settings
 
 Speech recognition, voice conversations and TTS are no longer supported. Legacy top-level `providers`, `features.dictation` and `features.voiceMode` settings are discarded during configuration normalization. This does not remove agent configuration under `agents.providers`.
@@ -106,7 +92,7 @@ Speech recognition, voice conversations and TTS are no longer supported. Legacy 
 
 The Rust daemon serves APIs, not a bundled web product client. Connect with the native desktop/mobile app or the Rust CLI. Mobile clients connect to a remote desktop/server daemon; they do not run one locally.
 
-Retired `features.webUi` and `daemon.browserTools` settings are discarded during normalization. There is no web UI or embedded browser automation to enable. Interactive **Terminal** sessions and script/setup PTYs run on the daemon; script/setup output appears in the client as read-only logs.
+Retired `features.webUi` and `daemon.browserTools` settings are discarded during normalization. There is no web UI or embedded browser automation to enable. Interactive **Terminal** sessions and script PTYs run on the daemon; script output appears in the client as read-only logs.
 
 ## Logging
 

@@ -12,23 +12,18 @@ use paseo_client::{DaemonClient, RequestOptions};
 use serde_json::json;
 
 async fn start_issue(client: &DaemonClient, cwd: &str, model: &str,
-                     issue_id: &str, title: &str, description: &str) -> Result<(String, String)> {
-    let opened = client.open_project(json!({"cwd": cwd})).await?;
-    let workspace = &opened["workspace"];
-    let workspace_id = workspace["id"].as_str().context("missing workspace ID")?;
-    let directory = workspace["workspaceDirectory"].as_str().context("missing directory")?;
+                     issue_id: &str, title: &str, description: &str) -> Result<String> {
     let created = client.create_agent(json!({
-        "workspaceId": workspace_id,
-        "config": {"provider": "codex", "model": model, "cwd": directory, "title": title},
+        "config": {"provider": "codex", "model": model, "cwd": cwd, "title": title},
         "labels": {"my-tracker/issue-id": issue_id},
         "initialPrompt": format!("Implement issue {issue_id}: {title}\n\n{description}")
     }), RequestOptions::default()).await?;
     let agent_id = created["agent"]["id"].as_str().context("missing agent ID")?;
-    Ok((workspace_id.to_owned(), agent_id.to_owned()))
+    Ok(agent_id.to_owned())
 }
 ```
 
-在集成中保存两个 ID。后续 webhook 应读取并复用已有资源，不要盲目再次创建。Issue 文本是不可信任务内容，不授权无关主机操作。打开的工作区可能早已存在，不能因为本函数使用过它就归档。
+在集成中保存 Agent ID。后续 webhook 应读取并复用该会话，不要盲目再次创建。Issue 文本是不可信任务内容，不授权无关主机操作。使用 daemon 主机上已有的目录，保留其内容以及使用它的其他会话。
 
 ## 运行并行审查者
 
@@ -104,6 +99,6 @@ async fn planner(client: &DaemonClient, cwd: &str, model: &str) -> Result<String
 
 ## 清理临时 Agent
 
-审查示例即使工作或其他清理失败，也尝试所有归档。关闭连接与清理资源是两回事。若清理需跨进程崩溃保留，应持久化 ID。只归档自己拥有的临时 Agent；常驻角色和原有工作区应保留。
+审查示例即使工作或其他清理失败，也尝试所有归档。关闭连接与清理资源是两回事。若清理需跨进程崩溃保留，应持久化 ID。只归档自己拥有的临时 Agent，保留常驻角色。归档 Agent 不会删除目录或 Git worktree。
 
 对于结果不确定的创建，`ReconnectingClient::recover_creation(kind, key, original_fields, options)` 检查带 key 的生命周期，仅在快照缺失时重新提交。保留原始字段和 key。恢复可能返回创建生命周期快照或创建 RPC payload，两者路径不一定相同，需检查形状。其他修改不会自动重试；主动重试前先检查当前状态。

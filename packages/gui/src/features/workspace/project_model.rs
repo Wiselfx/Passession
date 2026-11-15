@@ -1,49 +1,14 @@
 //! Pure parts of the project settings form (`project_settings_panel.dart`,
-//! original `project-config-form.ts`): lifecycle hook text, scripts editing with position
-//! preserved, metadata instructions, service port allocation and icon URL import.
+//! original `project-config-form.ts`): scripts editing with position preserved,
+//! metadata instructions and icon URL import.
 
-use std::collections::HashMap;
-
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use super::rpc::{object_of, str_of};
 
 pub const METADATA_KEYS: [&str; 3] = ["branchName", "commitMessage", "pullRequest"];
-pub const WORKTREE_DOCS_URL: &str = "https://paseo.sh/docs/worktrees";
 pub const MAX_ICON_BYTES: usize = 512 * 1024;
 
-/// A lifecycle hook (`setup`/`teardown`) as one text area: a string stays a string, an
-/// array joins by lines.
-pub fn lifecycle_text(config: &Value, field: &str) -> String {
-    match object_of(config, "worktree").get(field) {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"),
-        _ => String::new(),
-    }
-}
-
-/// Writes a lifecycle hook back in the shape it was loaded with (`string`, `array` or
-/// `missing`, remembered per field in `kinds` until the next load).
-pub fn set_lifecycle_text(config: &mut Value, loaded: &Value, kinds: &mut HashMap<String, &'static str>, field: &str, text: &str) {
-    let lines: Vec<&str> = text.split('\n').filter(|line| !line.trim().is_empty()).collect();
-    let kind = *kinds.entry(field.to_owned()).or_insert_with(|| match object_of(loaded, "worktree").get(field) {
-        Some(Value::String(_)) => "string",
-        Some(Value::Array(_)) => "array",
-        _ => "missing",
-    });
-    let worktree = ensure_object(config, "worktree");
-    if lines.is_empty() {
-        worktree.remove(field);
-    } else {
-        let value = match kind {
-            "string" => Value::String(lines.join("\n")),
-            "array" => json!(lines),
-            _ if lines.len() == 1 => Value::String(lines[0].to_owned()),
-            _ => json!(lines),
-        };
-        worktree.insert(field.to_owned(), value);
-    }
-}
 
 /// The object at `key` of `config`, created when missing or not an object.
 pub fn ensure_object<'a>(config: &'a mut Value, key: &str) -> &'a mut Map<String, Value> {
@@ -174,37 +139,7 @@ pub fn set_metadata_text(config: &mut Value, key: &str, text: &str) {
     }
 }
 
-/// An inclusive port range `start-end` within 1..=65535.
-pub fn valid_port_range(range: &str) -> bool {
-    let range = range.trim();
-    if range.is_empty() {
-        return true;
-    }
-    let Some((start, end)) = range.split_once('-') else { return false };
-    if end.contains('-') {
-        return false;
-    }
-    match (start.parse::<u32>(), end.parse::<u32>()) {
-        (Ok(start), Ok(end)) => start >= 1 && end <= 65535 && start <= end,
-        _ => false,
-    }
-}
 
-pub fn set_service_ports(config: &mut Value, range: &str, script: &str) {
-    let worktree = ensure_object(config, "worktree");
-    if range.trim().is_empty() && script.trim().is_empty() {
-        worktree.remove("servicePorts");
-        return;
-    }
-    let mut ports = Map::new();
-    if !range.trim().is_empty() {
-        ports.insert("range".into(), Value::String(range.trim().to_owned()));
-    }
-    if !script.trim().is_empty() {
-        ports.insert("portScript".into(), Value::String(script.to_owned()));
-    }
-    worktree.insert("servicePorts".into(), Value::Object(ports));
-}
 
 /// `importProjectIconFromUrl` URL rule: http(s) with a host and no credentials.
 pub fn icon_url_error(value: &str) -> Option<&'static str> {
@@ -291,21 +226,8 @@ pub fn resolve_url(base: &str, href: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    #[test]
-    fn lifecycle_keeps_loaded_shape() {
-        let loaded = json!({"worktree": {"setup": ["a"], "teardown": "x"}});
-        let mut config = loaded.clone();
-        let mut kinds = HashMap::new();
-        set_lifecycle_text(&mut config, &loaded, &mut kinds, "setup", "a\n\nb");
-        assert_eq!(config["worktree"]["setup"], json!(["a", "b"]));
-        set_lifecycle_text(&mut config, &loaded, &mut kinds, "teardown", "y\nz");
-        assert_eq!(config["worktree"]["teardown"], json!("y\nz"));
-        set_lifecycle_text(&mut config, &loaded, &mut kinds, "other", "one");
-        assert_eq!(config["worktree"]["other"], json!("one"));
-        set_lifecycle_text(&mut config, &loaded, &mut kinds, "setup", "  ");
-        assert!(config["worktree"].get("setup").is_none());
-    }
 
     #[test]
     fn scripts_replace_in_place_and_validate() {
@@ -321,11 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn port_ranges_and_metadata() {
-        assert!(valid_port_range("3000-3999"));
-        assert!(!valid_port_range("0-10"));
-        assert!(!valid_port_range("10-5"));
-        assert!(valid_port_range(""));
+    fn metadata_instructions_round_trip() {
         let mut config = json!({});
         set_metadata_text(&mut config, "branchName", "short");
         assert_eq!(metadata_text(&config, "branchName"), "short");

@@ -8,7 +8,7 @@ nav: CLI
 
 `paseo schedule` 在终端中创建和管理新建 Agent 的[定时任务](/docs/schedules)，适用于无界面的机器和脚本。每次运行都会启动一个新的 Agent。
 
-默认情况下，每次运行结束时都会归档其工作区。CLI 没有 **Archive on finish** 参数；要让之后的运行工作区保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-workspaces)。
+每次运行都会在配置的现有目录中启动会话，默认在运行结束时归档，但不会删除文件。CLI 没有 **Archive on finish** 参数；要让之后的运行会话保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-sessions)。
 
 ## 创建 {#create}
 

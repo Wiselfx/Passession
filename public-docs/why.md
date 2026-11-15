@@ -10,17 +10,17 @@ category: Getting started
 
 Paseo is a native environment for agent-driven development: run coding agents, edit source, read Markdown, review diffs and pull requests, and inspect script output. Native Rust clients connect to a Rust daemon that owns the work and preserves it across devices.
 
-## Develop in one workspace
+## Develop in a session
 
-Open the native desktop client, choose a host and directory, and start a session. Keep the conversation, editor, summary-first diff and read-only script logs together. The sidebar is host → directory → session; workspaces still organize worktrees and orchestration.
+Open the native desktop client, choose a host and existing directory, and start a session. Keep the conversation, editor, summary-first diff and read-only script logs together. The sidebar is host → directory → session.
 
 The client targets Linux, macOS, Windows, Android and iOS. Desktop can manage a local Rust daemon; mobile connects remotely. This native cutover is not yet published; use the [source-build setup](/docs) rather than assuming existing upstream downloads contain it.
 
 ## Run tasks in parallel
 
-Give independent tasks their own worktrees and branches. Run several agents at once, inspect each diff, test each implementation, and choose what to merge. Use the same provider for every task or choose a different provider and model for each.
+Run several agents at once in existing directories, inspect each diff, test each implementation, and choose what to merge. Prepare separate checkouts yourself when tasks need independent files or branches. Use the same provider for every task or choose a different provider and model for each.
 
-Configure [workspace scripts](/docs/worktrees#scripts-and-services) to start development servers with separate ports for each worktree. [Try the parallel development workflow](/docs/parallel-development).
+Configure [project scripts](/docs/worktrees#scripts-and-services) to start development servers with separate ports for each running copy. [Try the parallel development workflow](/docs/parallel-development).
 
 ## Use your agents and tools
 
@@ -28,13 +28,13 @@ Paseo runs the coding agents you already use, with your subscriptions, credentia
 
 ## Continue from another device
 
-The daemon owns running agents and workspaces. Native desktop/mobile clients and the Rust CLI connect to the same environment. Existing IDs, history, configuration and host-side files are preserved.
+The daemon owns running sessions. Native desktop/mobile clients and the Rust CLI connect to the same environment. Existing IDs, history, configuration and host-side files are preserved.
 
 Use Paseo on your laptop or connect to another machine. Android and iOS provide remote chat, files, diffs, terminals and read-only script logs, without running a daemon; a mobile **Terminal** tab drives the host's shell, not a local one. [Connect your devices](/docs/connectivity) directly or through the optional end-to-end encrypted relay. There is no product web client or embedded browser/automation; use your own external browser when needed.
 
 ## Automate and extend your workflow
 
-Give agents [Paseo tools](orchestration.md) to create worktrees, launch other agents, send prompts, and collect results. Use the [CLI](cli.md) or [Rust SDK](sdk/index.md) to automate agent and workspace operations.
+Give agents [Paseo tools](orchestration.md) to launch other sessions in existing directories, send prompts, and collect results. Use the [CLI](cli.md) or [Rust SDK](sdk/index.md) to automate session and script operations.
 
 [Backend plugins](plugins/index.md) add providers, RPCs, lifecycle behavior and usage integrations through native executables and the Rust SDK. Built-ins run in Rust; executable React UI plugins are not supported. Paseo runtime/build tools require no Node, Electron or Chromium. [Hub](hub/index.md) connects external events to agents running on your machines.
 

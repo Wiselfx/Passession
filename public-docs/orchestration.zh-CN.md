@@ -8,7 +8,7 @@ nav: 概览
 
 Paseo 让你的编程 Agent 协调其他 Agent，把工作分配到不同的 Provider 和机器上，并自动推进任务。
 
-也可在原生应用亲自监督任务：[在不同 worktree 中运行并行任务](/docs/parallel-development)，检查 diff 和只读脚本日志，再使用项目工具或外部浏览器/终端测试，决定合并内容。
+也可在原生应用亲自监督任务：[在现有目录中运行并行任务](/docs/parallel-development)，检查 diff 和只读脚本日志，再使用项目工具或外部浏览器/终端测试，决定合并内容。
 
 ## 你的 Agent 能做什么 {#what-your-agents-can-do}
 
@@ -16,7 +16,7 @@ Paseo 让你的编程 Agent 协调其他 Agent，把工作分配到不同的 Pro
 - **委派与并行**：把调研、实现和审查分给不同的 Agent，包括来自不同 Provider 的 Agent。
 - **相互通信**：Agent 可以[通过 ID 向其他 Agent 发送提示词](/docs/orchestration-workflows#send-a-prompt-to-another-agent)，用来提问、分享发现或请求协助。
 - **协调进行中的工作**：查看进度、停止任务并收集结果。
-- **创建工作区和 worktree**：为相互独立的改动提供各自的[工作目录](/docs/worktrees)。
+- **选择工作目录**：为相互独立的改动在[现有目录中启动会话](/docs/workspaces)。
 - **跨机器工作**：使用 [CLI](/docs/cli#connecting-to-a-remote-daemon) 在另一台可访问的 Paseo 主机上启动和管理 Agent。
 - **按专长选择**：使用 [Agent 配置](/docs/agent-profiles)及其说明，为 UI 工作、规划或审查选择设置。
 - **创建定时任务**：在[指定时间](/docs/schedules)用新的 Agent 运行一段提示词。
@@ -28,7 +28,7 @@ Paseo 让你的编程 Agent 协调其他 Agent，把工作分配到不同的 Pro
 
 ### 内置 Paseo 工具（MCP） {#built-in-paseo-tools-mcp}
 
-启用 Paseo 工具后，在 Paseo 中运行的 Agent 可以直接管理其主机上的 Agent 和工作区。
+启用 Paseo 工具后，在 Paseo 中运行的 Agent 可以直接管理其主机上的会话和脚本。
 
 1. 打开 **设置 → 你的主机 → Agents**。
 2. 打开 **启用 Paseo tools**。工具注入默认关闭。
@@ -51,9 +51,9 @@ paseo run --provider codex --no-wait \
 paseo ls -a
 ```
 
-第一条命令启动一个执行者并立即返回；第二条命令还会列出已归档和后台的 Agent。当 Paseo Agent 运行这条命令时，执行者会成为它在同一工作区中的子 Agent。从你自己的终端运行时，它会在一个新的本地工作区中启动。
+第一条命令在 shell 的当前目录中启动执行者并立即返回；第二条命令还会列出已归档和后台的 Agent。当 Paseo Agent 运行这条命令时，执行者会成为它的子 Agent。从你自己的终端运行时，它会启动顶层会话，不会创建目录或分支。
 
-后续提示词、输出、worktree 和远程主机的用法见 [CLI 参考](/docs/cli)。
+后续提示词、输出、目录选择和远程主机的用法见 [CLI 参考](/docs/cli)。
 
 ## 用配置一次选好设置 {#pick-settings-once-with-profiles}
 
@@ -64,7 +64,7 @@ paseo ls -a
 ## 更进一步 {#go-further}
 
 - [委派实现并获取独立审查](/docs/orchestration-workflows#implement-then-review)。
-- [在不同的 worktree 中运行并行改动](/docs/orchestration-workflows#parallelize-edits-without-collisions)。
+- [在不同的目录中运行并行改动](/docs/orchestration-workflows#parallelize-edits-without-collisions)。
 - [协调另一台机器上的工作](/docs/orchestration-workflows#work-on-another-machine)。
 - [创建周期性任务](/docs/schedules)，或[用 heartbeat 继续任务](/docs/orchestration-workflows#keep-an-agent-working-with-a-heartbeat)。
 - [安装可复用的编排技能](/docs/skills)。

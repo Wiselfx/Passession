@@ -16,19 +16,9 @@ names, and workspace foreign keys. Attached workspaces are independently refresh
 from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
 are observed too.
 
-The workspace registry model defines placement once: initial directory/worktree construction,
-mutable reconciliation fields, and the persisted-to-wire checkout projection. Its update policy
-preserves `displayName` and `baseBranch`. `WorkspaceProvisioningService` owns the corresponding
-registry writes, so directory opens, agent imports, and worktree creation all enter through that
-service instead of constructing records independently. The workspace record is then the durable
-placement authority: `cwd` is the exact execution directory, while `worktreeRoot` is the backing
-checkout root. They intentionally differ for an exact subproject inside a worktree. Archive,
-restore, branch auto-name, and descriptor flows consume those persisted facts rather than
-rediscovering ownership from a directory that may already be gone. Reconciliation may refresh
-mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
-Workspace archive runs lifecycle teardown from the exact `cwd` but removes only the backing
-`worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
-checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
+The internal workspace registry preserves durable directory ownership for sessions, terminals and scripts. `WorkspaceProvisioningService` owns its registry writes for existing-directory opens and agent imports. `cwd` is the exact execution directory; `worktreeRoot` is a recorded checkout root and can differ for a subproject inside an external Git worktree.
+
+The session-only product retains these records and foreign keys without presenting Workspace as a creation or navigation concept. Reconciliation can refresh Git facts but must not change `projectId`, `cwd`, `displayName` or `baseBranch`. Historical ownership flags never authorize deleting, recreating or moving a checkout. Archive and restore only update retained record state; missing directories require the user's own filesystem/Git workflow.
 
 Paseo uses **file-based JSON persistence**. The Rust daemon owns validation and mutation in `packages/daemon/src/config`, `agent`, `projects`, and `automation`. Existing persisted records, IDs, provider handles and configuration shapes remain compatible; the TypeScript-style shapes below describe data, not a Node runtime. Store implementations own atomic writes and compatibility normalization. Do not reset a home or rekey existing records as part of the native client cutover.
 
@@ -57,7 +47,7 @@ $PASEO_HOME/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
 │   ├── projects.json                    # Project registry
-│   ├── workspaces.json                  # Workspace registry
+│   ├── workspaces.json                  # Internal durable directory-owner registry
 │   ├── workspace-labels.json            # Shared host-local label catalog
 │   ├── workspace-labels.transaction.json # Recoverable catalog/assignment compound commit
 │   └── icons/                           # Host-local custom project icon images
@@ -85,7 +75,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `id`                 | `string`                                 | UUID, primary key                                                                                                                                                                                                                                                                                                                                                                   |
 | `provider`           | `string`                                 | Agent provider (`"claude"`, `"codex"`, `"opencode"`, etc.)                                                                                                                                                                                                                                                                                                                          |
 | `cwd`                | `string`                                 | Working directory the agent operates in                                                                                                                                                                                                                                                                                                                                             |
-| `workspaceId`        | `string?`                                | Owning workspace id — the single source of ownership. Every agent is stamped with one at create time. Runtime code never infers ownership or status from cwd: status is computed per `workspaceId`, and same-cwd siblings are independent.                                                                                                                                         |
+| `workspaceId`        | `string?` | Internal durable directory-owner ID, retained for protocol/history compatibility. Each created agent is stamped with one. Runtime ownership and aggregate status use this ID, not pathname equality; it is not a user-facing workspace selector. |
 | `createdAt`          | `string` (ISO 8601)                      | Creation timestamp                                                                                                                                                                                                                                                                                                                                                                  |
 | `updatedAt`          | `string` (ISO 8601)                      | Last update timestamp                                                                                                                                                                                                                                                                                                                                                               |
 | `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                                                                                                                                                                                                                                                                                                                             |
@@ -214,10 +204,10 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     baseUrl: string
   },
   worktrees?: {
-    root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
-    servicePorts?: {         // optional dynamic service port allocation policy
+    root?: string            // historical managed-checkout identification only; never a creation destination
+    servicePorts?: {         // retained dynamic service port allocation policy
       range?: string         // inclusive range, e.g. "3000-4000"
-      portScript?: string    // executable that receives service/workspace context and prints one TCP port
+      portScript?: string    // executable receiving script/internal-owner context and printing one TCP port
     }
   },
   agents: {
@@ -353,7 +343,7 @@ Legacy top-level `providers` speech settings and `features.dictation`/`features.
 One file per schedule. ID is 8 hex characters.
 
 Manual runs belong to the daemon once admitted, not to the requesting socket. A disconnected
-caller must not strand a durable `running` claim or skip its workspace cleanup. Cancellation is
+caller must not strand a durable `running` claim or skip agent/terminal cleanup. Cancellation is
 a failed run for both existing-agent and new-agent targets; an earlier assistant reply is not a
 successful result for the canceled work.
 
@@ -434,32 +424,32 @@ workspace together with its owning project.
 
 ---
 
-## 5. Workspace Registry
+## 5. Internal Directory-Owner Registry
 
 **Path:** `$PASEO_HOME/projects/workspaces.json`
 
-Array of workspace records. A workspace is a specific working directory within a project.
+Array of retained workspace wire records representing directory ownership within a project. New sessions use existing directories. The filename, IDs and field shapes stay compatible; they do not expose a separate Workspace product lifecycle.
 
 | Field                          | Type                                                         | Description                                                                                                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId`                  | `string`                                                     | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access.         |
 | `projectId`                    | `string`                                                     | FK to Project.projectId; the workspace's stable project membership                                                                                                                            |
-| `cwd`                          | `string`                                                     | Exact execution directory selected for agents, files, scripts, and setup                                                                                                                      |
+| `cwd`                          | `string` | Exact execution directory selected for sessions, files and scripts. |
 | `kind`                         | `"local_checkout" \| "worktree" \| "directory"`              | Mutable checkout classification                                                                                                                                                               |
 | `displayName`                  | `string`                                                     | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                        |
 | `title`                        | `string \| null`                                             | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
 | `branch`                       | `string \| null`                                             | The current Git branch for git-backed workspaces. Separate from `displayName`/`title`; a background branch refresh never rewrites the name.                                                   |
-| `worktreeRoot`                 | `string \| null`                                             | Backing checkout/worktree root. May differ from `cwd` for exact subprojects and remains persisted after the worktree is deleted so restore can reproduce the placement.                       |
-| `baseBranch`                   | `string \| null`                                             | Comparison base retained across archive and restore. Branch-off creation stores the resolved ref; legacy and PR-checkout records hold a bare name. Null means no recorded base.               |
-| `isPaseoOwnedWorktree`         | `boolean`                                                    | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
+| `worktreeRoot`                 | `string \| null` | Recorded checkout root; may differ from `cwd` for subprojects. Retained even when absent, without permission to recreate it. |
+| `baseBranch`                   | `string \| null` | Historical comparison base. Retained across registry archive/restore; null means none recorded. |
+| `isPaseoOwnedWorktree`          | `boolean` | Historical provenance only. Does not authorize removal or recreation of the checkout. |
 | `mainRepoRoot`                 | `string \| null`                                             | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
 | `createdAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
 | `updatedAt`                    | `string` (ISO 8601)                                          |                                                                                                                                                                                               |
 | `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
-| `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
-| `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
-| `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
-| `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
+| `autoArchivedChangeRequestUrl` | `string \| null` | Historical merged-change-request archive marker; automatic merge archive is retired. |
+| `labels`                       | `string[]?` | Retained normalized label assignments from the host-local catalog. Missing means unlabelled. |
+| `pinnedAt`                     | `string \| null` (ISO 8601) | Historical pin timestamp retained for stored-record compatibility. |
+| `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Historical cross-repository checkout provenance. Worktree setup execution is retired. |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. The daemon never materializes registries or workspace ownership from agent records at startup.
 

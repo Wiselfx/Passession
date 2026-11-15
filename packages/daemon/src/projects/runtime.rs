@@ -828,83 +828,6 @@ pub async fn read_worktree_metadata(root: &Path) -> Result<Option<Value>> {
     }
 }
 
-async fn write_metadata_file(root: &Path, metadata: &Value) -> Result<()> {
-    let path = metadata_path(root).await?;
-    let parent = path.parent().context("Missing metadata directory")?;
-    tokio::fs::create_dir_all(parent).await?;
-    let mut bytes = serde_json::to_vec_pretty(metadata)?;
-    bytes.push(b'\n');
-    let temp = path.with_file_name(format!(
-        "worktree.json.{}.{}.tmp",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    tokio::fs::write(&temp, bytes).await?;
-    if let Err(error) = tokio::fs::rename(&temp, &path).await {
-        let _ = tokio::fs::remove_file(&temp).await;
-        return Err(error.into());
-    }
-    Ok(())
-}
-
-pub fn is_qualified_ref(reference: &str) -> bool {
-    reference.trim_matches(js_whitespace).starts_with("refs/")
-}
-
-pub fn branch_name_from_ref(reference: &str) -> &str {
-    let reference = reference.trim_matches(js_whitespace);
-    if let Some(branch) = reference.strip_prefix("refs/heads/") {
-        return branch;
-    }
-    if let Some(branch) = reference.strip_prefix("refs/remotes/") {
-        return branch.split_once('/').map_or(branch, |(_, branch)| branch);
-    }
-    reference.strip_prefix("origin/").unwrap_or(reference)
-}
-
-pub fn normalize_base_ref_name(input: &str) -> Result<&str> {
-    if input.trim_matches(js_whitespace).is_empty() {
-        bail!("Base branch is required");
-    }
-    Ok(branch_name_from_ref(input))
-}
-
-fn assert_valid_base_ref(value: &str) -> Result<()> {
-    if value == "HEAD" {
-        bail!("Base branch cannot be HEAD");
-    }
-    if value.contains("..") || value.contains("@{") {
-        bail!("Invalid base branch: {value}");
-    }
-    Ok(())
-}
-
-pub async fn write_worktree_metadata(root: &Path, options: &Value) -> Result<()> {
-    let base = normalize_base_ref_name(
-        options
-            .get("baseRefName")
-            .and_then(Value::as_str)
-            .context("Base branch is required")?,
-    )?;
-    assert_valid_base_ref(base)?;
-    let mut metadata = json!({"version": 1, "baseRefName": base});
-    if let Some(exact) = options
-        .get("baseRef")
-        .and_then(Value::as_str)
-        .map(|s| s.trim_matches(js_whitespace))
-        .filter(|s| !s.is_empty())
-    {
-        assert_valid_base_ref(exact)?;
-        metadata["baseRef"] = Value::String(exact.to_owned());
-    }
-    if let Some(hint) = options
-        .get("changeRequestLookupTarget")
-        .filter(|v| !v.is_null() && **v != Value::Bool(false))
-    {
-        metadata["changeRequestLookupTarget"] = hint.clone();
-    }
-    write_metadata_file(root, &metadata).await
-}
 
 pub async fn read_worktree_runtime_port(root: &Path) -> Result<Option<f64>> {
     Ok(read_worktree_metadata(root).await?.and_then(|m| {
@@ -914,85 +837,6 @@ pub async fn read_worktree_runtime_port(root: &Path) -> Result<Option<f64>> {
     }))
 }
 
-// net.Server.listen(port) without a host first tries the unspecified IPv6
-// address, then IPv4. This is deliberately not the service allocator's
-// loopback-only probe: setup scripts may bind the persisted port publicly.
-async fn bind_worktree_port(port: u16) -> std::io::Result<TcpListener> {
-    match TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, port)).await {
-        Ok(listener) => Ok(listener),
-        Err(_) => TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await,
-    }
-}
-
-pub async fn ensure_worktree_runtime_port(root: &Path) -> Result<f64> {
-    if let Some(port) = read_worktree_runtime_port(root).await? {
-        if !(0.0..65536.0).contains(&port) || port.fract() != 0.0 {
-            bail!("options.port should be >= 0 and < 65536. Received type number ({port}).");
-        }
-        match bind_worktree_port(port as u16).await {
-            Ok(listener) => drop(listener),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
-                bail!("Persisted worktree port {port} is already in use");
-            }
-            Err(error) => return Err(error.into()),
-        }
-        return Ok(port);
-    }
-    let listener = bind_worktree_port(0).await?;
-    let port = f64::from(listener.local_addr()?.port());
-    drop(listener);
-    if read_worktree_metadata(root).await?.is_some() {
-        write_worktree_runtime_metadata(root, port).await?;
-    }
-    Ok(port)
-}
-
-pub async fn write_worktree_runtime_metadata(root: &Path, worktree_port: f64) -> Result<()> {
-    if !worktree_port.is_finite() || worktree_port <= 0.0 || worktree_port.fract() != 0.0 {
-        bail!("Invalid worktree runtime port: {worktree_port}");
-    }
-    let mut current = read_worktree_metadata(root)
-        .await?
-        .context("Cannot persist worktree runtime metadata: missing base metadata")?;
-    current["version"] = json!(2);
-    current["runtime"] = json!({"worktreePort": worktree_port});
-    write_metadata_file(root, &current).await
-}
-
-pub async fn write_worktree_first_agent_branch_auto_name_metadata(
-    root: &Path,
-    placeholder_branch_name: &str,
-) -> Result<()> {
-    let name = placeholder_branch_name.trim_matches(js_whitespace);
-    if name.is_empty() {
-        bail!("Placeholder branch name is required");
-    }
-    let mut current = read_worktree_metadata(root)
-        .await?
-        .context("Cannot persist first-agent branch auto-name metadata: missing base metadata")?;
-    current["version"] = json!(2);
-    current["firstAgentBranchAutoName"] = json!({"status":"pending", "placeholderBranchName":name});
-    write_metadata_file(root, &current).await
-}
-
-pub async fn mark_worktree_first_agent_branch_auto_name_attempted(
-    root: &Path,
-    attempted_at: Option<&str>,
-) -> Result<Option<Value>> {
-    let Some(mut current) = read_worktree_metadata(root).await? else {
-        return Ok(None);
-    };
-    if current["version"] == 2 && current["firstAgentBranchAutoName"]["status"] == "pending" {
-        let name = current["firstAgentBranchAutoName"]["placeholderBranchName"].clone();
-        let timestamp = attempted_at.map(str::to_owned).unwrap_or_else(|| {
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        });
-        current["firstAgentBranchAutoName"] =
-            json!({"status":"attempted", "placeholderBranchName":name, "attemptedAt":timestamp});
-        write_metadata_file(root, &current).await?;
-    }
-    Ok(Some(current))
-}
 
 pub fn worktree_change_request_hint_for_branch<'a>(
     metadata: Option<&'a Value>,
@@ -1022,30 +866,6 @@ pub fn worktree_change_request_hint_for_branch<'a>(
     }
 }
 
-pub async fn rebind_worktree_change_request_hint(
-    root: &Path,
-    previous_branch: &str,
-    current_branch: &str,
-) -> Result<bool> {
-    let Some(mut metadata) = read_worktree_metadata(root).await? else {
-        return Ok(false);
-    };
-    let Some(hint) = worktree_change_request_hint_for_branch(Some(&metadata), previous_branch)
-    else {
-        return Ok(false);
-    };
-    let mut hint = hint.clone();
-    if hint["headRef"] == previous_branch
-        && hint.get("headRepositoryOwner").is_none()
-        && hint.get("changeRequestNumber").is_none()
-    {
-        hint["headRef"] = json!(current_branch);
-    }
-    hint["localBranchName"] = json!(current_branch);
-    metadata["changeRequestLookupTarget"] = hint;
-    write_metadata_file(root, &metadata).await?;
-    Ok(true)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1085,7 +905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metadata_uses_linked_gitdir_and_preserves_schema_transitions() -> Result<()> {
+    async fn metadata_reads_external_linked_gitdir_without_mutation() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let root = temp.path().join("repo");
         let linked = temp.path().join("linked");
@@ -1116,17 +936,15 @@ mod tests {
                 .await?
                 .starts_with(root.join(".git/worktrees"))
         );
-        write_worktree_metadata(&linked, &json!({
-            "baseRefName":" refs/remotes/upstream/main ", "baseRef":" refs/remotes/upstream/main ",
-            "changeRequestLookupTarget":{"headRef":"feature","unknown":"stripped on read"}
-        })).await?;
+        let path = metadata_path(&linked).await?;
+        tokio::fs::create_dir_all(path.parent().unwrap()).await?;
+        let fixture = br#"{"version":2,"baseRefName":"main","baseRef":"refs/remotes/upstream/main","changeRequestLookupTarget":{"headRef":"feature","unknown":"stripped on read"},"runtime":{"worktreePort":70000}}"#;
+        tokio::fs::write(&path, fixture).await?;
         assert_eq!(
             read_worktree_metadata(&linked).await?.unwrap()["baseRefName"],
             "main"
         );
         assert_eq!(read_worktree_metadata(&root).await?, None);
-        write_worktree_runtime_metadata(&linked, 70000.0).await?;
-        write_worktree_first_agent_branch_auto_name_metadata(&linked, " placeholder ").await?;
         let metadata = read_worktree_metadata(&linked).await?.unwrap();
         assert_eq!(metadata["version"], 2);
         assert_eq!(metadata["baseRef"], "refs/remotes/upstream/main");
@@ -1136,20 +954,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(read_worktree_runtime_port(&linked).await?, Some(70000.0));
-        assert!(rebind_worktree_change_request_hint(&linked, "feature", "renamed").await?);
-        let attempted = mark_worktree_first_agent_branch_auto_name_attempted(
-            &linked,
-            Some("2026-10-29T00:00:00.000Z"),
-        )
-        .await?
-        .unwrap();
-        assert_eq!(attempted["firstAgentBranchAutoName"]["status"], "attempted");
-        assert_eq!(attempted["changeRequestLookupTarget"]["headRef"], "renamed");
-        assert_eq!(
-            mark_worktree_first_agent_branch_auto_name_attempted(&linked, Some("later")).await?,
-            Some(attempted)
-        );
-        let path = metadata_path(&linked).await?;
+        assert_eq!(tokio::fs::read(&path).await?, fixture);
         tokio::fs::write(
             &path,
             br#"{"version":2,"baseRefName":"main","runtime":null}"#,
@@ -1183,10 +988,6 @@ mod tests {
             json!({"changeRequestLookupTarget":{"headRef":"feature","localBranchName":"local"}});
         assert!(worktree_change_request_hint_for_branch(Some(&pinned), "feature").is_none());
         assert!(worktree_change_request_hint_for_branch(Some(&pinned), "local").is_some());
-        assert_eq!(
-            branch_name_from_ref("refs/remotes/team/upstream/main"),
-            "upstream/main"
-        );
         Ok(())
     }
 
@@ -1613,60 +1414,4 @@ printf ' 43210\n'"#).await?;
         Ok(())
     }
 
-    #[tokio::test]
-    async fn setup_port_persists_only_with_metadata_and_never_replaces_busy_port() -> Result<()> {
-        let temp = tempfile::tempdir()?;
-        git(temp.path(), &["init", "-b", "main"]).await?;
-        let unpersisted = ensure_worktree_runtime_port(temp.path()).await?;
-        assert!((1.0..=65535.0).contains(&unpersisted));
-        assert_eq!(read_worktree_metadata(temp.path()).await?, None);
-        write_worktree_metadata(temp.path(), &json!({"baseRefName":"main"})).await?;
-        let port = ensure_worktree_runtime_port(temp.path()).await?;
-        assert_eq!(read_worktree_runtime_port(temp.path()).await?, Some(port));
-        // Keep the busy-port fixture outside the ephemeral pool used by
-        // concurrent network tests; allocation probes do not reserve sockets.
-        let mut listener = None;
-        for port in 16384..20000 {
-            match bind_worktree_port(port).await {
-                Ok(bound) => {
-                    listener = Some(bound);
-                    break;
-                }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
-                    ) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let listener = listener.context("No free test worktree port outside the ephemeral pool")?;
-        let port = f64::from(listener.local_addr()?.port());
-        write_worktree_runtime_metadata(temp.path(), port).await?;
-        assert_eq!(
-            ensure_worktree_runtime_port(temp.path())
-                .await
-                .unwrap_err()
-                .to_string(),
-            format!("Persisted worktree port {port} is already in use"),
-        );
-        assert_eq!(read_worktree_runtime_port(temp.path()).await?, Some(port));
-        drop(listener);
-        assert_eq!(ensure_worktree_runtime_port(temp.path()).await?, port);
-        // Storage accepts any positive JS integer, but binding must not truncate
-        // a persisted value into a different TCP port.
-        write_worktree_runtime_metadata(temp.path(), 70000.0).await?;
-        assert!(
-            ensure_worktree_runtime_port(temp.path())
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("Received type number (70000)")
-        );
-        assert_eq!(
-            read_worktree_runtime_port(temp.path()).await?,
-            Some(70000.0)
-        );
-        Ok(())
-    }
 }

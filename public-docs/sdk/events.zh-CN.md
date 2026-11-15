@@ -55,9 +55,9 @@ async fn history(client: &DaemonClient, agent_id: &str) -> Result<()> {
 
 `CursorPages::timeline` 支持 `before` 和 `after`；以页面顺序和不透明的起止游标为准。单页调用使用 `fetch_agent_timeline`，传入 `agentId`、`direction`、`limit` 及可选 `cursor`/`projection`。`fetch_agent_history` 与 `CursorPages::history(fields)` 使用独立历史端点，不能与时间线分页互换。历史读取是显式操作，订阅不会自动重放。
 
-## 跟踪工作区更新
+## 跟踪内部归属更新
 
-在 `Arc<DaemonClient>` 上调用 `observe_workspaces(json!({"filter": {"includeBackground": true}}), options)`。视图关闭时释放返回的观察。普通 `fetch_workspaces` 读取不会创建观察，除非显式要求订阅。
+维护保留的目录归属注册表的集成可在 `Arc<DaemonClient>` 上调用 `observe_workspaces(json!({"filter": {"includeBackground": true}}), options)`。它观察内部记录，而非产品工作区。使用者关闭时释放观察。普通 `fetch_workspaces` 读取不会创建观察，除非显式要求订阅。会话列表使用 `observe_agents`。
 
 ## 跟踪 Provider 目录变化
 

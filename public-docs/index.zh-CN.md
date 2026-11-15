@@ -72,7 +72,7 @@ docker run -d --name paseo-native \
 
 ## 运行范围 {#runtime-scope}
 
-原生产品没有网页客户端、Electron/Chromium、内嵌浏览器或浏览器自动化，也不执行 React UI 插件。**Terminal** 会话在所选主机上 daemon 管理的 PTY 中打开交互式 shell；工作区和服务脚本同样在 daemon 管理的 PTY 中运行，客户端显示只读日志。原生后端插件与外部 Rust SDK 仍受支持。
+原生产品没有网页客户端、Electron/Chromium、内嵌浏览器或浏览器自动化，也不执行 React UI 插件。**Terminal** 会话在所选主机上 daemon 管理的 PTY 中打开交互式 shell；项目脚本和服务同样在 daemon 管理的 PTY 中运行，客户端显示只读日志。原生后端插件与外部 Rust SDK 仍受支持。
 
 已记录的 Linux 执行证据和未验证的平台边界见仓库 `docs/testing.md`。CI 矩阵定义不等于设备测试通过。原生包不提供语音识别、语音对话或 TTS，保留一般音效播放。
 

@@ -68,6 +68,9 @@ impl AgentManager {
         mut receipt: Option<&mut CreationGuard>,
         cancel: Option<&CancellationToken>,
     ) -> Result<Value> {
+        if wants_worktree(&input["worktree"]) {
+            return Err(crate::projects::unsupported_worktrees());
+        }
         let _update_admission = self.update_admission.enter()?;
         let app = self.app()?;
         let is_mcp = input["kind"] == "mcp";
@@ -170,32 +173,15 @@ impl AgentManager {
             labels.insert("paseo.parent-agent-id".into(), json!(id));
         }
         let caller_workspace = parent.as_ref().and_then(|p| text(p, "workspaceId"));
-        let mut created_worktree = None;
         let mut created_agent = None;
         let operation = async {
             require_active(cancel)?;
             let mut name_created_directory = false;
-            let workspace_id = if (is_mcp || public) && wants_worktree(&input["worktree"]) {
-                let worktree = &input["worktree"];
-                if public {
-                    require_directory(&cwd).await?;
-                }
-                if text(worktree,"worktreeName").is_some() && !["baseBranch","refName","action","githubPrNumber","mode"].iter().any(|key| worktree.get(*key).is_some()) {
-                    bail!("baseBranch is required when creating a worktree");
-                }
-                let mut request = json!({"source":worktree_source(worktree,&cwd),"firstAgentContext":first_context});
-                if let Some(id) = caller_id { request["callerAgentId"] = json!(id); }
-                copy_as(&input,"background",&mut request,"background");
-                let workspace = app.projects.create_workspace(&request).await?;
-                cwd = PathBuf::from(required(&workspace,"cwd")?);
-                let id = required(&workspace,"workspaceId")?.to_owned();
-                created_worktree = Some(workspace.get("createdWorktree").cloned().context("Worktree creation did not return its owned resource metadata")?);
-                id
-            } else if let Some(id) = text(&input,"workspaceId") {
+            let workspace_id = if let Some(id) = text(&input,"workspaceId") {
                 let workspace = app.projects.workspace(id).await?.filter(|w| w.get("archivedAt").is_none_or(Value::is_null)).with_context(|| format!("Workspace {id} not found"))?;
                 if !is_mcp || (requested.is_none() && parent.is_none()) { cwd = PathBuf::from(required(&workspace,"cwd")?); }
                 id.to_owned()
-            } else if let Some(parent) = parent.as_ref() {
+            } else if let Some(parent) = parent.as_ref().filter(|_| requested.is_none()) {
                 let id = text(parent,"workspaceId").with_context(|| format!("Caller agent {} has no workspace",caller_id.unwrap_or_default()))?;
                 cwd = PathBuf::from(required(parent,"cwd")?);
                 id.to_owned()
@@ -271,7 +257,7 @@ impl AgentManager {
             }
             if let Some(notification) = notification { notification.accept().await?; }
             if let Some(events) = archive_events {
-                self.archive_after_creation_turn(id.clone(),created_worktree.clone(),events)?;
+                self.archive_after_creation_turn(id.clone(),events)?;
             }
             require_active(cancel)?;
             // Directory workspaces minted for this agent are named from the first prompt even
@@ -279,22 +265,13 @@ impl AgentManager {
             if name_created_directory && !initial_prompt.is_empty() {
                 app.projects.schedule_directory_auto_name(&workspace_id,&first_context).await?;
             }
-            let mut result = json!({"snapshot":snapshot,"liveSnapshot":live_snapshot,"initialPromptStarted":started,"initialPromptError":prompt_error});
-            if let Some(worktree) = created_worktree.as_ref() { result["createdWorktree"] = worktree.clone(); }
+            let result = json!({"snapshot":snapshot,"liveSnapshot":live_snapshot,"initialPromptStarted":started,"initialPromptError":prompt_error});
             Ok::<_,anyhow::Error>(result)
         }.await;
-        if operation.is_err() && created_agent.is_none() && cancel.is_none()
-            && let Some(worktree) = created_worktree
-                .as_ref()
-                .filter(|worktree| worktree["created"] == true)
-                && let Some(id) = text(&worktree["workspace"], "workspaceId")
-                    && let Err(error) = app.projects.archive_workspace(actor, id).await {
-                        tracing::warn!(?error, "Failed to clean up newly created worktree");
-                    }
         // Hub failures, unlike ordinary first-turn failures, revoke only resources
         // created by this invocation. Replayed executions never enter this branch.
         if operation.is_err() && cancel.is_some() {
-            self.cleanup_creation(actor, created_agent.as_deref(), created_worktree.as_ref())
+            self.cleanup_creation(actor, created_agent.as_deref())
                 .await?;
         }
         operation
@@ -502,9 +479,7 @@ impl AgentManager {
         let result = self
             .create_command(owner, command, None, Some(&cancel))
             .await?;
-        let mut owned = json!({"executionId":execution_id,"agent":snapshot_payload(&result["liveSnapshot"]),"created":true});
-        copy_as(&result, "createdWorktree", &mut owned, "createdWorktree");
-        Ok(owned)
+        Ok(json!({"executionId":execution_id,"agent":snapshot_payload(&result["liveSnapshot"]),"created":true}))
     }
 
     pub async fn hub_cleanup_created(&self, created: &Value, owner: &Value) -> Result<()> {
@@ -525,14 +500,13 @@ impl AgentManager {
             && agent["owner"] != *owner {
                 bail!("Hub execution owner does not match created agent");
             }
-        self.cleanup_creation(owner, Some(id), created.get("createdWorktree"))
+        self.cleanup_creation(owner, Some(id))
             .await
     }
 
     fn archive_after_creation_turn(
         &self,
         id: String,
-        worktree: Option<Value>,
         mut events: broadcast::Receiver<Value>,
     ) -> Result<()> {
         let app = self.app()?;
@@ -561,15 +535,7 @@ impl AgentManager {
                     break;
                 };
                 let actor = json!({"kind":"system"});
-                let result = if let Some(workspace) = worktree
-                    .as_ref()
-                    .filter(|w| w["created"] == true)
-                    .and_then(|w| text(&w["workspace"], "workspaceId"))
-                {
-                    app.projects.archive_workspace(&actor, workspace).await
-                } else {
-                    app.agents.control(&actor, &id, "archive", json!({})).await
-                };
+                let result = app.agents.control(&actor, &id, "archive", json!({})).await;
                 if let Err(error) = result {
                     tracing::warn!(agent_id = %id,?error,"Failed to auto-archive agent");
                 }
@@ -583,7 +549,6 @@ impl AgentManager {
         &self,
         actor: &Value,
         agent_id: Option<&str>,
-        worktree: Option<&Value>,
     ) -> Result<()> {
         let mut failure = None;
         if let Some(id) = agent_id {
@@ -595,12 +560,6 @@ impl AgentManager {
                     failure = Some(error);
                 }
         }
-        if let Some(worktree) = worktree.filter(|worktree| worktree["created"] == true)
-            && let Some(id) = text(&worktree["workspace"], "workspaceId")
-                && let Err(error) = self.app()?.projects.archive_workspace(actor, id).await
-                    && failure.is_none() {
-                        failure = Some(error);
-                    }
         if let Some(error) = failure {
             Err(error)
         } else {
@@ -838,12 +797,14 @@ fn merge_value(target: &mut Value, source: &Value) {
 fn issue(field: &str, message: String) -> Value {
     json!({"path":[field],"message":message})
 }
-/// Public `create_agent_request` placement rules. A worktree target is first-class
-/// placement; only the removed git/worktreeName fields are rejected.
+/// Validate retained public placement fields without reinterpreting retired isolation.
 fn validate_public_intent(input: &Value) -> Result<()> {
+    if wants_worktree(&input["worktree"]) {
+        return Err(crate::projects::unsupported_worktrees());
+    }
     if input.get("git").is_some() || input.get("worktreeName").is_some() {
         bail!(
-            "Legacy git/worktreeName agent placement was removed. Use createWorkspace({{ source, agent, idempotencyKey }}) to create a workspace with an agent, or create the workspace first and pass workspaceId."
+            "Managed worktrees are no longer supported. Select an existing local directory with config.cwd."
         );
     }
     if input["internal"] == true || input["config"]["internal"] == true {
@@ -956,48 +917,7 @@ pub(super) fn title(explicit: Option<&str>, prompt: &str) -> Option<String> {
     Some(normalized)
 }
 fn wants_worktree(value: &Value) -> bool {
-    [
-        "worktreeName",
-        "refName",
-        "action",
-        "githubPrNumber",
-        "mode",
-    ]
-    .iter()
-    .any(|key| value.get(*key).is_some_and(|v| !v.is_null() && v != ""))
-}
-fn worktree_source(worktree: &Value, cwd: &Path) -> Value {
-    let mut source = json!({"kind":"worktree","cwd":cwd});
-    match text(worktree, "mode") {
-        Some("branch-off") => {
-            source["action"] = json!("branch-off");
-            copy_as(worktree, "base", &mut source, "refName");
-            copy_as(worktree, "newBranch", &mut source, "worktreeSlug");
-            copy_as(worktree, "newBranch", &mut source, "branchName");
-        }
-        Some("checkout-branch") => {
-            source["action"] = json!("checkout");
-            copy_as(worktree, "branch", &mut source, "refName");
-        }
-        Some("checkout-pr") => {
-            source["action"] = json!("checkout");
-            copy_as(worktree, "prNumber", &mut source, "githubPrNumber");
-        }
-        _ => {
-            for key in [
-                "action",
-                "refName",
-                "baseBranch",
-                "branchName",
-                "githubPrNumber",
-                "checkoutSource",
-            ] {
-                copy_as(worktree, key, &mut source, key);
-            }
-            copy_as(worktree, "worktreeName", &mut source, "worktreeSlug");
-        }
-    }
-    source
+    !value.is_null() && value.as_object().is_none_or(|object| !object.is_empty())
 }
 
 #[cfg(test)]
@@ -1017,20 +937,11 @@ mod tests {
     }
 
     #[test]
-    fn worktree_targets_keep_branch_and_checkout_intent_distinct() {
-        let base = Path::new("/repository");
-        assert_eq!(
-            worktree_source(
-                &json!({"mode":"branch-off","base":"origin/main","newBranch":"feature"}),
-                base
-            ),
-            json!({"kind":"worktree","cwd":base,"action":"branch-off","refName":"origin/main","worktreeSlug":"feature","branchName":"feature"})
-        );
-        assert_eq!(
-            worktree_source(&json!({"mode":"checkout-branch","branch":"existing"}), base),
-            json!({"kind":"worktree","cwd":base,"action":"checkout","refName":"existing"})
-        );
-        assert!(!wants_worktree(&json!({"branchName":"unused"})));
+    fn worktree_intent_is_never_silently_ignored() {
+        assert!(!wants_worktree(&Value::Null));
+        assert!(!wants_worktree(&json!({})));
+        assert!(wants_worktree(&json!({"branchName":"feature"})));
+        assert!(wants_worktree(&json!({"mode":"branch-off"})));
     }
 
     #[test]
@@ -1045,23 +956,12 @@ mod tests {
     }
 
     #[test]
-    fn public_create_accepts_worktree_targets_and_scopes_background() {
-        let worktree = json!({"mode":"branch-off","newBranch":"feature","base":"main"});
-        assert!(validate_public_intent(&json!({"worktree":worktree})).is_ok());
-        assert!(wants_worktree(&worktree));
-        assert!(
-            validate_public_intent(
-                &json!({"worktree":worktree,"callerAgentId":"parent","background":true})
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_public_intent(&json!({"callerAgentId":"parent","background":true})).is_err()
-        );
-        assert!(
-            validate_public_intent(&json!({"workspaceId":"w","worktree":worktree,"background":true}))
-                .is_err()
-        );
+    fn public_create_rejects_worktrees_and_preserves_local_directory_intent() {
+        assert!(validate_public_intent(&json!({"config":{"cwd":"/repo"}})).is_ok());
+        for worktree in [json!({"mode":"branch-off"}), json!({"worktreeName":"feature"}), json!({"branchName":"feature"})] {
+            let error = validate_public_intent(&json!({"worktree":worktree})).unwrap_err();
+            assert_eq!(error.downcast_ref::<crate::projects::RequestError>().unwrap().code, "unsupported");
+        }
         assert!(validate_public_intent(&json!({"worktreeName":"legacy"})).is_err());
         assert!(validate_public_intent(&json!({"git":{}})).is_err());
     }

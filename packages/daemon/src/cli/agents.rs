@@ -428,7 +428,7 @@ async fn execute_connected(
             if flag(m, "all") || flag(m, "background") {
                 client.require_feature(
                     "backgroundWorkspaces",
-                    "Update the host to use background workspaces.",
+                    "Update the host to include background sessions.",
                 )?;
                 request["filter"]["includeBackground"] = json!(true);
             }

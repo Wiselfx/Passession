@@ -54,9 +54,9 @@ SSH uses the local `ssh` executable, noninteractive batch authentication and `-W
 
 `RequestOptions { timeout, cancel }` defaults to 30 seconds and a fresh cancellation token. A zero request timeout disables its deadline. `request_cancellable` accepts a token directly. A submitted mutation may still complete after timeout, cancellation or disconnect. Never assume dropping a future rolls it back.
 
-## Agents and workspaces
+## Agents and internal ownership
 
-`create_agent(fields, options)` / `create_workspace(fields, options)` require keyed creation lifecycle support and preserve/allocate `idempotencyKey`. They return payloads containing resources rather than handles. Keep explicit keys for recoverable workflows. Ordinary named operation methods take one JSON `fields` argument and use default request options. `update_agent(agent_id, patch)` is an exception with a separate ID argument.
+`create_agent(fields, options)` requires keyed creation lifecycle support and preserves/allocates `idempotencyKey`. It returns a payload containing the agent rather than a handle. Use `config.cwd` for an existing directory on the daemon host. Keep explicit keys for recoverable workflows. The retained `create_workspace(fields, options)` SDK method uses the same creation lifecycle for internal directory-owner records; worktree sources are unsupported. Ordinary named operation methods take one JSON `fields` argument and use default request options. `update_agent(agent_id, patch)` is an exception with a separate ID argument.
 
 | Area | Methods |
 | --- | --- |
@@ -66,11 +66,13 @@ SSH uses the local `ssh` executable, noninteractive batch authentication and `-W
 | Lifecycle | `resume_agent`, `import_agent`, `refresh_agent`, `archive_agent`, `detach_agent`, `delete_agent` |
 | Subagents | `list_provider_subagents`, `fetch_provider_subagent_timeline`, `delete_provider_subagents`, `build_agent_fork_context` |
 | Projects | `open_project`, `add_project`, `list_projects`, `rename_project`, `set_project_icon`, `remove_project` |
-| Workspaces | `fetch_workspaces`, `archive_workspace`, `set_workspace_title`, `set_workspace_pinned`, `inspect_workspace_recovery`, `restore_workspace` |
-| Setup/scripts | `fetch_workspace_setup_status`, `run_workspace_setup`, `list_workspace_scripts`, `start_workspace_script_with_status`, `stop_workspace_script` |
-| Labels | `list_workspace_labels`, `set_workspace_label`, `update_workspace_label`, `delete_workspace_label` |
+| Internal ownership registry | `fetch_workspaces`, `archive_workspace`, `set_workspace_title`, `set_workspace_pinned`, `inspect_workspace_recovery`, `restore_workspace` |
+| Explicit scripts | `list_workspace_scripts`, `start_workspace_script_with_status`, `stop_workspace_script` |
+| Internal labels | `list_workspace_labels`, `set_workspace_label`, `update_workspace_label`, `delete_workspace_label` |
 
-Use [Agents](agents.md), [Workspaces](workspaces.md), and the [complete request schema](../../packages/protocol/schema/session-inbound.json) for argument shapes. `CursorPages::{agents,workspaces,history}` and fallible `CursorPages::timeline` provide `next(&client, options).await -> Result<Option<Value>>`; repeated cursors are errors. They do not collect all pages unless you do so.
+Workspace-named SDK operations and wire types remain for compatibility; they are not public MCP workspace tools or product navigation. Script methods use the session's retained `workspaceId`. `fetch_workspace_setup_status` and `run_workspace_setup` remain SDK mappings, not an automatic setup lifecycle. Paseo does not create/delete Git worktrees or automatically archive an owner when its last session finishes.
+
+Use [Agents](agents.md), [Sessions and directories](workspaces.md), and the [complete request schema](../../packages/protocol/schema/session-inbound.json) for argument shapes. `CursorPages::{agents,workspaces,history}` and fallible `CursorPages::timeline` provide `next(&client, options).await -> Result<Option<Value>>`; repeated cursors are errors. They do not collect all pages unless you do so.
 
 ## Events and recovery
 
@@ -80,7 +82,7 @@ Owned observations require `Arc<DaemonClient>`: `observe_agents`, `observe_works
 
 ## Terminals and files
 
-`create_terminal`, `list_terminals`, `rename_terminal`, `capture_terminal`, `kill_terminal` manage daemon PTYs. Include workspace identity and actual directory. `observe_terminal(id, restore, options)` returns `TerminalStream`; `recv` yields `TerminalEvent::{Frame,Exit}`, `input` sends bytes, and `resize` takes `paseo_protocol::binary_frames::TerminalResize`. Release `stream.subscription` explicitly. The native client's **Terminal** tabs use these same daemon terminals.
+`create_terminal`, `list_terminals`, `rename_terminal`, `capture_terminal`, `kill_terminal` manage daemon PTYs. Include the session's internal `workspaceId` and actual `cwd` for unambiguous ownership. `observe_terminal(id, restore, options)` returns `TerminalStream`; `recv` yields `TerminalEvent::{Frame,Exit}`, `input` sends bytes, and `resize` takes `paseo_protocol::binary_frames::TerminalResize`. Release `stream.subscription` explicitly. The native client's **Terminal** tabs use these same daemon terminals.
 
 `read_file(cwd, path, max_bytes, options)` returns `DownloadedFile { metadata, bytes }` with a byte ceiling. `upload_file(file_name, mime, modified_at, bytes, options)` uses bounded binary frames. `list_directory`, `write_file`, `create_file_entry`, `rename_file_entry`, `duplicate_file_entry`, `delete_file_entry` expose file operations; check their exact schema before destructive calls. Upload cancellation does not promise rollback or automatic retry.
 

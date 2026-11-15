@@ -1,8 +1,7 @@
-//! Diff document model shared by the Changes and commit views (original
-//! diff_view.dart / changes_panel.dart helpers and git/*.ts presentation).
+//! Historical diff document model and shared Git presentation helpers.
 
 use super::json::{array, flag, int, text};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::cmp::Ordering;
 
 /// One numbered diff row. `hunk` is the index of the hunk header row the line
@@ -118,22 +117,6 @@ pub fn utf16_cmp(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
 }
 
-/// Original `normalizeCheckoutDiffCompare`: the uncommitted comparison never
-/// carries a base ref; other comparisons carry the trimmed one when present.
-pub fn normalize_compare(mode: &str, base_ref: &str, ignore_whitespace: bool, detail: Option<&str>) -> Value {
-    let mut normalized = json!({ "mode": mode, "ignoreWhitespace": ignore_whitespace });
-    if let Some(detail) = detail {
-        normalized["detail"] = json!(detail);
-    }
-    if mode == "uncommitted" {
-        return normalized;
-    }
-    let trimmed = base_ref.trim();
-    if !trimmed.is_empty() {
-        normalized["baseRef"] = json!(trimmed);
-    }
-    normalized
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChangeKind {
@@ -346,24 +329,6 @@ pub fn changed_tree_rows(files: &[Value], collapsed: &std::collections::HashSet<
     rows
 }
 
-/// Original `handleCollapseFolder`: the folder and every folder under it.
-pub fn collapse_folder_recursive(
-    files: &[Value],
-    path: &str,
-    collapsed: &mut std::collections::HashSet<String>,
-) {
-    collapsed.insert(path.to_owned());
-    let prefix = format!("{path}/");
-    for file in files {
-        let segments: Vec<&str> = text(file, "path").split('/').collect();
-        for i in 1..segments.len() {
-            let folder = segments[..i].join("/");
-            if folder.starts_with(&prefix) {
-                collapsed.insert(folder);
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Time formatting.
@@ -472,6 +437,7 @@ pub fn parse_iso8601_ms(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::collections::HashSet;
 
     #[test]
@@ -498,21 +464,6 @@ mod tests {
         assert_eq!(paths, ["a/b/c.txt", "a/z.txt", "A.txt", "b.txt"]);
     }
 
-    #[test]
-    fn uncommitted_comparison_never_sends_a_base_ref() {
-        assert_eq!(
-            normalize_compare("uncommitted", "main", false, None),
-            json!({"mode":"uncommitted","ignoreWhitespace":false})
-        );
-        assert_eq!(
-            normalize_compare("base", " origin/main ", true, Some("summary")),
-            json!({"mode":"base","ignoreWhitespace":true,"detail":"summary","baseRef":"origin/main"})
-        );
-        assert_eq!(
-            normalize_compare("all", "  ", false, None),
-            json!({"mode":"all","ignoreWhitespace":false})
-        );
-    }
 
     #[test]
     fn diff_counts_use_compact_notation() {

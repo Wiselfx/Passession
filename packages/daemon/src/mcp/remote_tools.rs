@@ -217,28 +217,6 @@ fn entries(mut payload: Value) -> Result<Vec<Value>> {
     }
 }
 
-fn workspace_summary(workspace: &Value) -> Value {
-    let kind = workspace.get("workspaceKind").and_then(Value::as_str);
-    let mut summary = json!({
-        "isolation": if kind == Some("worktree") { "worktree" } else { "local" },
-    });
-    copy_fields(
-        &mut summary,
-        workspace,
-        &[
-            ("id", "workspaceId"),
-            ("projectId", "projectId"),
-            ("workspaceDirectory", "cwd"),
-            ("workspaceKind", "kind"),
-            ("title", "title"),
-            ("background", "background"),
-        ],
-    );
-    if kind == Some("checkout") {
-        summary["kind"] = json!("local_checkout");
-    }
-    summary
-}
 
 async fn execute_remote(
     app: &Arc<AppState>,
@@ -251,26 +229,6 @@ async fn execute_remote(
 ) -> Result<Value> {
     match name {
         "create_agent" => create_agent(client, caller, origin, input).await,
-        "create_workspace" => create_workspace(client, input).await,
-        "list_workspaces" => {
-            let background = input.get("includeBackground") == Some(&Value::Bool(true));
-            if background {
-                require_feature(
-                    client,
-                    "backgroundWorkspaces",
-                    "Update the host to use background workspaces.",
-                )?;
-            }
-            let workspaces = entries(
-                request(
-                    client,
-                    json!({"type":"fetch_workspaces_request", "includeBackground":background}),
-                    "fetch_workspaces_response",
-                )
-                .await?,
-            )?;
-            Ok(json!({"workspaces":workspaces.iter().map(workspace_summary).collect::<Vec<_>>()}))
-        }
         "send_agent_prompt" => {
             let agent_id = required(input, "agentId")?;
             if caller.is_none()
@@ -420,7 +378,7 @@ async fn create_agent(
         "provider",
         "title",
         "initialPrompt",
-        "workspaceId",
+        "cwd",
         "labels",
         "notifyOnFinish",
         "idempotencyKey",
@@ -448,20 +406,8 @@ async fn create_agent(
         .ok_or_else(|| {
             super::input_error("provider must be provider/model, for example codex/gpt-5.4")
         })?;
-    let workspace_id = required(input, "workspaceId")?;
+    let cwd = required(input, "cwd")?;
     let prompt = required(input, "initialPrompt")?;
-    let workspaces = entries(
-        request(
-            client,
-            json!({"type":"fetch_workspaces_request"}),
-            "fetch_workspaces_response",
-        )
-        .await?,
-    )?;
-    let workspace = workspaces
-        .iter()
-        .find(|workspace| workspace.get("id").and_then(Value::as_str) == Some(workspace_id))
-        .ok_or_else(|| anyhow!("Workspace {workspace_id} not found"))?;
     let mut labels = match input.get("labels") {
         Some(Value::Object(labels)) => Value::Object(labels.clone()),
         None => Value::Object(Map::new()),
@@ -477,7 +423,7 @@ async fn create_agent(
         labels["paseo.parent-agent-id"] = json!(caller);
         labels["paseo.parent-server-id"] = json!(origin);
     }
-    let mut config = json!({"provider":provider,"model":model,"cwd":required(workspace,"workspaceDirectory")?,"title":title});
+    let mut config = json!({"provider":provider,"model":model,"cwd":cwd,"title":title});
     if let Some(settings) = input.get("settings") {
         copy_fields(
             &mut config,
@@ -492,7 +438,7 @@ async fn create_agent(
     let modern = client.features().get("creationLifecycle") == Some(&Value::Bool(true));
     let mut message = json!({
         "type":if modern {"agent.create.request"} else {"create_agent_request"},
-        "config":config,"workspaceId":workspace_id,"labels":labels,"initialPrompt":prompt,
+        "config":config,"labels":labels,"initialPrompt":prompt,
     });
     if modern {
         message["idempotencyKey"] = input
@@ -527,7 +473,6 @@ async fn create_agent(
             ("provider", "type"),
             ("status", "status"),
             ("cwd", "cwd"),
-            ("workspaceId", "workspaceId"),
             ("currentModeId", "currentModeId"),
             ("availableModes", "availableModes"),
         ],
@@ -536,56 +481,3 @@ async fn create_agent(
     Ok(summary)
 }
 
-async fn create_workspace(client: &HostClient, input: &Value) -> Result<Value> {
-    let isolation = required(input, "isolation")?;
-    let path = required(input, "path")?;
-    let mut source = match isolation {
-        "local" => json!({"kind":"directory", "path":path}),
-        "worktree" => {
-            let mut source = json!({
-                "kind":"worktree","cwd":path,
-                "action":if matches!(input.get("mode").and_then(Value::as_str), Some("checkout-branch" | "checkout-pr")) {"checkout"} else {"branch-off"},
-            });
-            copy_fields(
-                &mut source,
-                input,
-                &[
-                    ("baseBranch", "baseBranch"),
-                    ("branchName", "branchName"),
-                    ("branch", "refName"),
-                    ("prNumber", "githubPrNumber"),
-                    ("worktreeSlug", "worktreeSlug"),
-                ],
-            );
-            source
-        }
-        _ => return Err(super::input_error("isolation must be local or worktree")),
-    };
-    copy_fields(&mut source, input, &[("projectId", "projectId")]);
-    if input.get("background").is_some() {
-        require_feature(
-            client,
-            "backgroundWorkspaces",
-            "Update the host to use background workspaces.",
-        )?;
-    }
-    let mut message = json!({"type":"workspace.create.request","source":source});
-    copy_fields(
-        &mut message,
-        input,
-        &[("title", "title"), ("background", "background")],
-    );
-    if client.features().get("creationLifecycle") == Some(&Value::Bool(true))
-        || client.features().get("workspaceRequestReceipts") == Some(&Value::Bool(true))
-    {
-        message["idempotencyKey"] = json!(uuid::Uuid::new_v4().to_string());
-    }
-    let mut response = request(client, message, "workspace.create.response").await?;
-    payload_error(&response)?;
-    let workspace = response
-        .as_object_mut()
-        .and_then(|response| response.remove("workspace"))
-        .filter(Value::is_object)
-        .ok_or_else(|| anyhow!("Workspace creation failed"))?;
-    Ok(workspace_summary(&workspace))
-}

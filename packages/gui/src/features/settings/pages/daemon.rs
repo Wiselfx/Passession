@@ -323,20 +323,6 @@ pub fn draw_agents(ui: &mut Ui, s: &Settings, v: &super::View, host: &HostView) 
     }
 }
 
-/// The archive-merged option at the end of the Projects page.
-pub fn draw_workspace_options(ui: &mut Ui, s: &Settings, host: &HostView) {
-    // Secondary to the project list: it shows once the config is loaded; a
-    // disconnected host or failed load is already explained above it.
-    let ready = data(s, &host.server_id).is_some_and(|d| !d.loading && d.error.is_none());
-    if !host.connected() || !ready {
-        return;
-    }
-    ui.section_title(&t("settings.hostSections.workspaces"), None, None);
-    ui.card_begin();
-    toggle(ui, s, host, ConfigSwitch { group: None, key: "autoArchiveAfterMerge", fallback: false, confirm: None }, t("settingsNative.archiveMerged"), Some(t("settingsNative.archiveMergedHint")));
-    ui.card_end();
-    ui.gap(24.0);
-}
 
 // ------------------------------------------------------------ host configuration
 

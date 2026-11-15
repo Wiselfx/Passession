@@ -12,7 +12,7 @@ Skills give your agents reusable instructions for delegation, handoffs, and revi
 
 | Skill              | Use it to                                                            |
 | ------------------ | -------------------------------------------------------------------- |
-| `/paseo`           | Look up how to manage agents, workspaces, schedules, and heartbeats. |
+| `/paseo`           | Look up how to manage sessions, scripts, schedules, and heartbeats. |
 | `/paseo-handoff`   | Transfer a task and its context to another agent.                    |
 | `/paseo-committee` | Get two independent analyses of a difficult problem.                 |
 | `/paseo-advisor`   | Get a second opinion on your current work.                           |
@@ -28,15 +28,15 @@ Use the same settings card to update or uninstall skills. The host also refreshe
 
 The foundational reference used by the other skills. It teaches agents to check your [agent profiles and their notes](/docs/agent-profiles#guide-delegation-with-notes) before delegating, then apply the selected launch settings. If no profile fits, it directs them to discover available providers and models and tell you about the fallback.
 
-> /paseo show me how to create an agent in a workspace with worktree isolation
+> /paseo show me how to create an agent session in an existing directory
 
 ## `/paseo-handoff`, Task Handoff
 
 Transfer the current task with a briefing: relevant files, progress, decisions, constraints, and acceptance criteria. The skill checks profiles before choosing the receiving agent; you can name the profile you want.
 
-> /paseo-handoff hand off the auth fix to an implementation agent in its own worktree
+> /paseo-handoff hand off the auth fix to an implementation agent in the existing directory /projects/auth-fix
 
-The receiving agent gets the context it needs to continue. Ask for a separate worktree when it should edit independently.
+The receiving agent gets the context it needs to continue. Supply a separate, already prepared checkout directory when it should edit independently.
 
 ## `/paseo-committee`, Committee Planning
 

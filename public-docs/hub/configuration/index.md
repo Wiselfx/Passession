@@ -66,7 +66,7 @@ Setup asks before replacing the selected trigger file. It preserves other trigge
 
 ## Startup timeout
 
-Hub waits up to **two minutes** for agent startup, including worktree creation, provider startup, and initial prompt acceptance. For a slower machine, set `run.startup_timeout` in the trigger YAML:
+Hub waits up to **two minutes** for agent startup, including provider startup and initial prompt acceptance in the configured directory. For a slower machine, set `run.startup_timeout` in the trigger YAML:
 
 ```yaml
 name: inspect

@@ -37,6 +37,7 @@ impl GitService {
             "checkout.rename_branch.request" => "checkout.rename_branch.response",
             "checkout.discard_changes.request" => "checkout.discard_changes.response",
             "checkout_commit_request" => "checkout_commit_response",
+            "checkout.commit_selected.request" => "checkout.commit_selected.response",
             "checkout_merge_request" => "checkout_merge_response",
             "checkout_merge_from_base_request" => "checkout_merge_from_base_response",
             "checkout_pull_request" => "checkout_pull_response",
@@ -288,6 +289,39 @@ impl GitService {
             }
             Err(error) => return Err(error),
         };
+        if kind == "checkout.commit_selected.request" {
+            let paths = message["paths"]
+                .as_array()
+                .ok_or_else(|| anyhow!("paths required"))?
+                .iter()
+                .map(|path| {
+                    path.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow!("Invalid path"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let text = string(message, "message")?.to_owned();
+            let cwd = cwd.to_owned();
+            let app = self.app.clone();
+            // A socket closing aborts its request tasks. Keep the index transaction
+            // and checkout mutex alive through commit settlement, not just submission.
+            return tokio::spawn(async move {
+                let _mutation = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => bail!("Git mutation cancelled before admission"),
+                    guard = entry.mutation.lock() => guard,
+                };
+                let result =
+                    mutations::commit_selected(&cwd, &paths, &text, &env, cancel).await;
+                if let Some(app) = app.upgrade()
+                    && let Err(error) = app.git.notify_mutation(&cwd).await
+                {
+                    tracing::warn!(%error, "Selected commit settled; refresh failed");
+                }
+                result.map(|sha| json!({"success":true,"error":null,"commitSha":sha}))
+            })
+            .await?;
+        }
         let _mutation = tokio::select! {_=cancel.cancelled()=>bail!("Git mutation cancelled before admission"),guard=entry.mutation.lock()=>guard};
         let mut result = json!({"success":true,"error":null});
         match kind {
@@ -302,12 +336,6 @@ impl GitService {
                 let value =
                     mutations::rename(cwd, string(message, "branch")?, &env, cancel.clone())
                         .await?;
-                crate::projects::runtime::rebind_worktree_change_request_hint(
-                    cwd,
-                    string(&value, "previousBranch")?,
-                    string(&value, "currentBranch")?,
-                )
-                .await?;
                 result["currentBranch"] = value["currentBranch"].clone();
             }
             "checkout.discard_changes.request" => {

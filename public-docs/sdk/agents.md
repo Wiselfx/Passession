@@ -6,7 +6,7 @@ Examples are async functions to call with a connected `DaemonClient` using the q
 
 ## Run an initial prompt
 
-Call `create_agent(fields, RequestOptions)` with `config: {provider, model, cwd}` and `initialPrompt`. Omit the prompt to create an idle session. The response payload contains `agent`; persist its `id` and `workspaceId`. `config.title`, top-level `labels`, `env`, `attachments`, `images`, and `outputSchema` are supported wire fields.
+Call `create_agent(fields, RequestOptions)` with `config: {provider, model, cwd}` and `initialPrompt`, using an existing directory on the daemon host. Omit the prompt to create an idle session. The response payload contains `agent`; persist its `id` and internal ownership `workspaceId`. `config.title`, top-level `labels`, `env`, `attachments`, `images`, and `outputSchema` are supported wire fields.
 
 ## Keep a session alive for follow-ups
 
@@ -63,11 +63,9 @@ Call `fetch_agent` before sending to an old ID if you need fresh existence/state
 
 ## Create a subagent
 
-Pass `callerAgentId` and `workspaceId` to `create_agent`; `config.cwd` must match that workspace's actual directory. Read the parent's current snapshot rather than guessing placement. Archiving a parent cascade-archives its children. Use `detach_agent(json!({"agentId": child_id}))` before archiving the parent if the child must remain independent.
+Pass `callerAgentId` to `create_agent` and set `config.cwd` to the intended existing directory. To reuse the parent's internal owner, read its current snapshot and pass its `workspaceId` with matching `config.cwd`. Placement does not change parentage. Archiving a parent cascade-archives its children. Use `detach_agent(json!({"agentId": child_id}))` before archiving the parent if the child must remain independent.
 
-## Run work in a background workspace
-
-Use `create_workspace` with top-level `background: true`, `source`, and optional `agent: {config, initialPrompt}`; see [workspace creation](workspaces.md#create-a-fresh-workspace). Do not put background visibility inside the nested agent. Agents retain normal lifecycle and history. Default lists hide background workspaces; include them explicitly. An exact agent ID remains usable.
+See [sessions and directories](workspaces.md) for internal ownership compatibility and terminal placement. Session completion does not provision, delete, or migrate directories or Git worktrees.
 
 ## Request structured output
 

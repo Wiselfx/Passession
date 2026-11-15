@@ -10,7 +10,7 @@ category: Schedules
 
 `paseo schedule` creates and manages new-agent [schedules](/docs/schedules) from your terminal, useful for headless boxes and scripts. Every run starts a fresh agent.
 
-Run workspaces are archived when each run ends by default. The CLI has no **Archive on finish** flag; [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
+Each run starts a session in the configured existing directory. Run sessions are archived when each run ends by default, without deleting files. The CLI has no **Archive on finish** flag; [change the option in the app](/docs/schedules#keep-run-sessions) to keep subsequent run sessions active.
 
 ## Create
 

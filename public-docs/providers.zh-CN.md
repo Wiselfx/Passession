@@ -6,9 +6,9 @@ nav: Provider
 
 # Provider {#providers}
 
-Paseo 运行**你已安装并认证的编程 Agent**，提供原生聊天、源码/Markdown 编辑、摘要优先的 diff 和只读脚本/设置日志。你可以并行运行多个 Agent，为每个任务选择 Provider，并在同一个客户端审查工作。订阅、配置、技能和 MCP 服务器保持不变。内置适配器使用 Rust；外部 Provider 程序保留其自身运行时要求。
+Paseo 运行**你已安装并认证的编程 Agent**，提供原生聊天、源码/Markdown 编辑、摘要优先的 diff 和只读脚本日志。你可以并行运行多个 Agent，为每个任务选择 Provider，并在同一个客户端审查工作。订阅、配置、技能和 MCP 服务器保持不变。内置适配器使用 Rust；外部 Provider 程序保留其自身运行时要求。
 
-想体验这套工作流，可以[在不同的 worktree 中运行并行任务](/docs/parallel-development)。
+想体验这套工作流，可以[在现有目录中运行并行会话](/docs/parallel-development)。
 
 ## 心智模型 {#mental-model}
 

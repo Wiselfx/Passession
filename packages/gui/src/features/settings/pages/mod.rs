@@ -52,7 +52,6 @@ pub fn draw_section(ui: &mut Ui, s: &Settings, v: &View, section: &str) {
             "host" => host::draw_overview_page(ui, s, v, host),
             "projects" => {
                 host::draw_projects(ui, s, host);
-                daemon::draw_workspace_options(ui, s, host);
             }
             "connections" => host::draw_connections_page(ui, s, v, host),
             "agents" => daemon::draw_agents(ui, s, v, host),

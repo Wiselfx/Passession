@@ -10,7 +10,7 @@ category: Getting started
 
 The Rust daemon does **not** bundle or serve a product web client. The native clients are Rust (Makepad) applications for Linux, macOS, Windows, Android and iOS. The documentation website is separate from the application.
 
-Do not enable `features.webUi`, set `PASEO_WEB_UI_ENABLED`, or look for an app at `http://localhost:6767/` as an installation step. These former instructions do not create a native client. The HTTP/WebSocket API, MCP and workspace service proxy remain daemon functions; their existence does not imply a browser UI.
+Do not enable `features.webUi`, set `PASEO_WEB_UI_ENABLED`, or look for an app at `http://localhost:6767/` as an installation step. These former instructions do not create a native client. The HTTP/WebSocket API, MCP and project service proxy remain daemon functions; their existence does not imply a browser UI.
 
 ## Self-host the daemon
 
@@ -34,4 +34,4 @@ See [connectivity](/docs/connectivity), [configuration](/docs/configuration), [s
 
 ## Review and test work
 
-Native clients provide chat, Markdown, source editing, remote folders, summary-first diffs, schedules and read-only script/setup logs. Workspace services can still serve your project's own web application; open those URLs in an external browser. That is distinct from a Paseo product web client or embedded automation.
+Native clients provide chat, Markdown, source editing, remote folders, summary-first diffs, schedules and read-only script logs. Project services can still serve your project's own web application; open those URLs in an external browser. That is distinct from a Paseo product web client or embedded automation.

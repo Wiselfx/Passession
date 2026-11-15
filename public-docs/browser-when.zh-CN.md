@@ -15,4 +15,4 @@ nav: 外部测试工具
 - 远程服务 URL 必须能从运行浏览器的机器访问。手机上的 localhost 不是 daemon 主机。
 - 项目或文档网站的浏览器测试不是原生客户端测试。
 
-参见[外部浏览器工作流](/docs/browser)、[工作区脚本](/docs/worktrees#scripts-and-services)和[连接](/docs/connectivity)。
+参见[外部浏览器工作流](/docs/browser)、[项目脚本](/docs/worktrees#scripts-and-services)和[连接](/docs/connectivity)。

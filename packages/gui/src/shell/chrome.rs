@@ -81,15 +81,15 @@ pub fn title(state: &Value, target: &PanelTarget) -> String {
         "new_tab" if target.data.get("addProject") == Some(&Value::Bool(true)) => tr("sidebar.actions.addProject"),
         "draft" | "new_tab" => tr("sessionNavigation.newSession"),
         "files" => tr("workspace.tabs.actions.files"),
-        "changes_tree" => tr("workspace.tabs.actions.changes"),
         "file" => {
             let fallback = tr("shell.tabs.file");
             let path = j::text_or(&target.data, "path", target.id.as_deref().unwrap_or(&fallback));
             path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
         }
-        "working_diff" | "commit_diff" => tr("panels.diff.diffLabel"),
+        "commit_diff" => tr("panels.diff.diffLabel"),
         "pull_request" => tr("panels.pullRequest.label"),
         "git_log" => tr("workspace.git.log.title"),
+        "git_commit" => tr("workspace.git.commit.title"),
         "execution_log" => tr("shell.tabs.executionLog"),
         "terminal" => tr("workspace.tabs.fallback.terminal"),
         "setup" => tr("workspace.tabs.fallback.workspaceSetup"),
@@ -120,10 +120,10 @@ pub fn kind_label(target: &PanelTarget) -> String {
             let path = j::text_or(&target.data, "path", target.id.as_deref().unwrap_or(""));
             path.split('/').rfind(|p| !p.is_empty()).unwrap_or(path).to_string()
         }
-        "working_diff" | "changes_tree" => tr("panels.diff.changesLabel"),
         "files" => tr("panels.files.label"),
         "pull_request" => tr("panels.pullRequest.label"),
         "git_log" => tr("workspace.git.log.title"),
+        "git_commit" => tr("workspace.git.commit.title"),
         "commit_diff" => target.id.as_deref().map(|id| id.chars().take(7).collect()).unwrap_or_default(),
         _ => tr("workspace.tabs.fallback.agent"),
     }
@@ -133,20 +133,18 @@ pub fn kind_label(target: &PanelTarget) -> String {
 // Visibility
 
 fn in_workspace(tab: Option<&PanelTarget>, workspace: &PanelTarget) -> bool {
-    tab.is_some_and(|t| t.server_id == workspace.server_id && t.workspace_id == workspace.workspace_id)
+    tab.is_some_and(|t| t.server_id == workspace.server_id && t.workspace_id == workspace.workspace_id && t.cwd == workspace.cwd)
 }
 
-/// The explorer tab keys shown (compact: only the workspace on screen).
+/// Supporting views belong to the selected session's host and directory at every width.
 pub fn explorer_keys(shell: &PaseoShell) -> (Vec<String>, Option<String>) {
     let layout = &shell.data.layout;
     let mut keys = layout.explorer_tabs.clone();
     let mut selected = layout.selected_explorer.clone();
-    if shell.data.compact
-        && let Some(workspace) = layout.selected()
-    {
+    if let Some(workspace) = layout.selected() {
         keys.retain(|key| in_workspace(layout.target(key), workspace));
         if !selected.as_ref().is_some_and(|s| keys.contains(s)) {
-            selected = keys.first().cloned();
+            selected = layout.explorer_focus_for(workspace).filter(|key| keys.contains(key)).or_else(|| keys.first().cloned());
         }
     }
     (keys, selected)
@@ -183,9 +181,9 @@ pub fn visible_tabs(shell: &PaseoShell) -> HashSet<String> {
             }
         }
         if layout.explorer_visible
-            && let Some(key) = &layout.selected_explorer
+            && let (_, Some(key)) = explorer_keys(shell)
         {
-            out.insert(key.clone());
+            out.insert(key);
         }
     }
     out
@@ -334,8 +332,7 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
     let target = shell.data.layout.selected().cloned();
     let host = target.as_ref().and_then(|t| hosts::host(state, &t.server_id));
     let workspace = target.as_ref().and_then(|t| host.and_then(|h| h.workspace(&t.workspace_id))).cloned();
-    let tabs_count = target.as_ref().map(|t| commands::workspace_tabs(shell, state, t).len()).unwrap_or(0);
-    let new_workspace = target.as_ref().is_some_and(|t| t.kind == "new_tab" && t.workspace_id.is_empty());
+    let new_session = target.as_ref().is_some_and(|t| t.kind == "new_tab");
     let row = rect(r.pos.x + 12.0, r.pos.y + if compact { 8.0 } else { 0.0 }, r.size.x - 24.0, r.size.y - if compact { 8.0 } else { 0.0 });
     let mid = row.pos.y + row.size.y * 0.5;
     let has_scripts = workspace.as_ref().is_some_and(|w| !j::array(w, "scripts").is_empty());
@@ -379,7 +376,7 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
         }
         let mut x = toggle.pos.x + extent + 8.0;
         let mut right = row.pos.x + row.size.x;
-        if new_workspace {
+        if new_session {
             if compact {
                 let label = tr("importSession.title");
                 let w = ui.button_width(cx, &label, Some("import"), ControlSize::Sm);
@@ -387,7 +384,7 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
                 ui.button(cx, rect(right - w, mid - h * 0.5, w, h), "hdr:import", &label, Some("import"), Variant::Ghost, ControlSize::Sm, true);
             }
         } else {
-            // Right island: explorer toggle, git widgets (wide), scripts (wide), menu, tabs (compact).
+            // Right island: explorer toggle, git widgets (wide), scripts (wide), menu.
             let explorer_tip = crate::common::tooltip_with_shortcut(&tr("workspace.tabs.explorerSidebar.toggle"), "toggle-right-sidebar");
             let explorer = island(&mut ui, cx, dvec2(right - extent * 0.5, mid), "hdr:explorer", &explorer_tip, compact);
             ui.icon(cx, explorer, "panel-right", 16.0, p.muted);
@@ -408,20 +405,9 @@ fn draw_header(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, state: 
                 ui.icon(cx, scripts, "play", 16.0, p.muted);
                 right = scripts.pos.x;
             }
-            let menu = island(&mut ui, cx, dvec2(right - extent * 0.5, mid), "hdr:menu", &tr("workspace.header.actions.workspaceActions"), compact);
+            let menu = island(&mut ui, cx, dvec2(right - extent * 0.5, mid), "hdr:menu", &tr("shell.menu.sessionActions"), compact);
             ui.icon(cx, menu, "ellipsis", 16.0, p.muted);
             right = menu.pos.x;
-            if compact && target.is_some() {
-                let count = tabs_count.to_string();
-                let tabs = island(&mut ui, cx, dvec2(right - extent * 0.5, mid), "hdr:tabs", &tr_args("workspace.tabs.switcher.trigger", &[("count", &count)]), true);
-                let spec = ui.spec(Font::Medium, 10.0, p.muted);
-                let w = ui.measure(cx, spec, &count).max(12.0) + 4.0;
-                let badge_h = text_line_height(16.0, 10.0);
-                let badge = rect(tabs.pos.x + (extent - w) * 0.5, mid - badge_h * 0.5, w, badge_h);
-                ui.painter.outline(cx, badge, Vec4::default(), p.muted, 1.0, 2.0);
-                ui.text_centered(cx, badge, spec, &count);
-                right = tabs.pos.x;
-            }
             // Title group.
             right -= 8.0;
             let title_text = target.as_ref().map(|t| header_title(state, t)).unwrap_or_else(|| "Passession".to_string());

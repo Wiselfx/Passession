@@ -1,10 +1,10 @@
 # Explorer and supporting panes
 
-The Rust shell presents file browsing, source/Markdown views and Changes alongside session work. `packages/gui/src/shell/{layout,panels,commands}.rs` owns placement and retained roots; `src/features/files` owns remote file sessions and `src/features/git` owns Git views.
+The Rust shell presents Files, Git Log and Commit alongside sessions. `packages/gui/src/shell/{layout,panels,commands}.rs` owns placement and retained roots; `src/features/files` owns remote file sessions and `src/features/git` owns Git views.
 
 ## Identity and retention
 
-Every target carries its host identity. File and Git facts are directory-backed: equal cwd strings on different hosts remain distinct. Workspace-owned drafts/layout retain workspace identity rather than deriving it from a path. A view must not change the daemon's project membership merely because it is moved or closed.
+Every target carries its host identity. File and Git facts are directory-backed: equal cwd strings on different hosts remain distinct. Existing internal directory-owner IDs still retain drafts and layout; they are not a user-facing workspace or nested session group. A view must not change project membership merely because it is moved or closed.
 
 Preserve unsaved editor text when changing width, theme, tabs or supporting-view presentation. The file store binds an editing session to its owner/tab; shell close guards ask that owner before closing or retargeting. Closing a chat tab is not archive; closing a script log view is not stopping a script.
 
@@ -12,9 +12,11 @@ Serialize writes for an editor. A save acknowledgement belongs to the submitted 
 
 ## Explorer sidebar
 
-The main navigation tree is host → directory → session. The file Explorer is a supporting surface, not a replacement workspace grouping tree. Add Project uses `features/files/picker.rs` (`RemoteFolderPicker`) to list/select a directory on the chosen host; an OS picker on the client cannot select a remote checkout.
+The main navigation tree remains host → directory → session, including existing sessions, empty directories, status, search and collapse state. The file Explorer is a supporting surface, not another session grouping layer. Add Project uses `features/files/picker.rs` (`RemoteFolderPicker`) to list/select a directory on the chosen host; an OS picker on the client cannot select a remote checkout.
 
-Files are read/written through the daemon. Markdown and source editing share the same remote identity and revision. The Changes view loads summary/file-tree information first and patch bodies on demand, so a large repository does not require every diff body before navigation is usable. Its tree pane and compact jump-to-file sheet share one row renderer and measured extent; follow the [shared row contract](design.md#reuse-and-hierarchy) without changing indentation, file statistics or selection identity.
+Files are read/written through the daemon. Markdown and source editing share the same remote identity and revision. Git Log opens historical commit details and lazy patch bodies. The working-tree Changes view and session added/deleted-line badge are removed.
+
+Commit lists uncommitted files with checkboxes and a multiline message editor. A checked file commits its complete current working-tree contents, not only its staged hunks. The daemon uses a temporary index and preserves unrelated staging and working files; normal Git hooks and signing still apply. Refresh preserves exclusions and does not automatically select newly appearing files. Failure retains the message and selection; an explicit refresh is required before retrying, and an unknown outcome is never automatically replayed. Older hosts without `gitSelectedCommit` expose an unavailable state rather than falling back to committing every file.
 
 Git action retry resumes the unfinished steps only. Refresh repository state after failure; when the daemon reports an unknown mutation outcome, require inspection of that state rather than automatically resubmitting an operation that may already have succeeded.
 

@@ -1,6 +1,6 @@
 ---
 name: paseo
-description: Paseo reference for managing hosts, projects, workspaces, workspace scripts, agents, schedules, and heartbeats.
+description: Paseo reference for managing hosts, projects, local directories, scripts, agents, schedules, and heartbeats.
 ---
 
 Paseo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
@@ -9,7 +9,7 @@ Paseo is a remote daemon that manages coding agents, terminals. Control it throu
 
 Call `list_hosts` to discover the calling daemon (`self`) and its registered destinations (`hosts`). Use a destination's `serverId` for tool calls; labels are display names.
 
-`create_workspace`, `list_workspaces`, `create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
+`create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
 
 Keep an agent's `{ serverId, agentId }` together. For example, call `send_agent_prompt` with:
 
@@ -17,7 +17,7 @@ Keep an agent's `{ serverId, agentId }` together. For example, call `send_agent_
 { "serverId": "srv_build", "agentId": "agent_123", "prompt": "Continue", "notifyOnFinish": true }
 ```
 
-Remote paths and workspace IDs belong to the destination. Remote `list_agents` has no caller-directory default; pass `cwd` to filter it.
+Remote paths and agent IDs belong to the destination. Remote `list_agents` has no caller-directory default; pass `cwd` to filter it.
 
 Manage registrations through the CLI; use the returned `registrationId` for updates and removal:
 
@@ -38,49 +38,39 @@ paseo project rename <project-id> --reset
 paseo project delete <project-id>
 ```
 
-For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its active workspaces and removes the project from Paseo without deleting the project directory.
+For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its associated records and removes it from Paseo without deleting directories or Git worktrees.
 
-## Workspaces
+## Local directories
 
-**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge` for a change request. Use `path` for a local directory or source checkout and `projectId` for the owning project; when no path is supplied, a worktree may resolve its source from `projectId`. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
+Start sessions in an existing directory on the selected daemon. Paseo does not create or manage Git worktrees, run automatic setup/teardown hooks, or migrate existing directories. An externally managed Git worktree is usable by passing its directory as `cwd`.
 
-`background: true` hides a workspace from default lists and the sidebar while its contents remain durable and accessible; omit `background` to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks.
-
-Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Paseo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
-
-**`list_workspaces`** — list active workspaces, excluding background workspaces unless `includeBackground: true`.
-
-**`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
-
-**`rename_workspace`** — `{ workspaceId, name }`. Rename workspace.
-
-## Workspace scripts
+## Scripts
 
 Configured `paseo.json` scripts use the same supervised lifecycle from tools and the CLI.
 
-**`list_workspace_scripts`** — `{ workspaceId }`. Lists configured scripts with lifecycle, service port, proxy URLs, health, exit code, and terminal ID.
+**`list_scripts`** — `{ agentId? }`. Lists configured scripts with lifecycle, service port, proxy URLs, health, exit code, and terminal ID.
 
-**`start_workspace_script`** — `{ workspaceId, scriptName }`. Starts one configured script through Paseo's managed workspace-script launcher and returns its status metadata.
+**`start_script`** — `{ agentId?, scriptName }`. Starts one configured script and returns its status metadata.
 
-**`stop_workspace_script`** — `{ workspaceId, scriptName }`. Stops a running script through its supervised terminal and returns the stopped status metadata.
+**`stop_script`** — `{ agentId?, scriptName }`. Stops a running script through its supervised terminal and returns the stopped status metadata.
 
-The matching CLI surface accepts either an explicit workspace ID or resolves the current directory:
+`agentId` defaults to the calling agent. Top-level callers must provide it. The CLI accepts a session ID or local directory:
 
 ```bash
-paseo script ls [--cwd <path> | --workspace <workspace-id>]
-paseo script start <name> [--cwd <path> | --workspace <workspace-id>]
-paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
+paseo script ls [--cwd <path> | --agent <agent-id>]
+paseo script start <name> [--cwd <path> | --agent <agent-id>]
+paseo script stop <name> [--cwd <path> | --agent <agent-id>]
 ```
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Optional: `workspaceId`, `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
+**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`, and `cwd` for top-level callers. Agent-scoped callers may omit `cwd` to inherit the caller's directory. Optional: `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`; `workspaceId` is internal durable ownership metadata, not a product placement selector.
 
 Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. Agent profiles are the preferred source for these values. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
-Agent-scoped creation always creates your subagent. On your own host, omit `workspaceId` to use your current workspace. On another host, first list or create a workspace with that `serverId`, then pass its `workspaceId` and the same `serverId` to `create_agent`. Placement never changes parentage.
+Agent-scoped creation always creates your subagent. On another host, pass a `cwd` that exists on that host and its `serverId`. Placement never changes parentage.
 
-Detach is an explicit user action in the subagents track, not an agent tool. A cross-workspace child remains your subagent even though it also appears as a normal tab in its workspace.
+Detach is an explicit user action in the subagents track, not an agent tool. A child in another directory remains your subagent.
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` when you want explicit reporting or no completion callback.
 
@@ -88,7 +78,7 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
-**`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; set `includeBackground: true` to include agents in background workspaces.
+**`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; `includeBackground: true` also includes agents whose retained internal ownership records are marked background.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 
@@ -136,11 +126,7 @@ If you want an explicit reply with `send_agent_prompt`, have the sender check `l
 The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
-paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base origin/main
-paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
-paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
-paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
-paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
+paseo run --cwd /absolute/path/to/repository --provider codex/gpt-5.4 --mode full-access "<prompt>"
 paseo send <agent-id> "<follow-up>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"

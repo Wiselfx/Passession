@@ -11,7 +11,6 @@ const TERMINALS: &[(&str, &str)] = &[
     ("ID", "id"),
     ("NAME", "name"),
     ("CWD", "cwd"),
-    ("WORKSPACE", "workspaceId"),
 ];
 const SCRIPTS: &[(&str, &str)] = &[
     ("NAME", "scriptName"),
@@ -24,16 +23,16 @@ const SCRIPTS: &[(&str, &str)] = &[
 ];
 pub fn commands() -> Vec<Command> {
     let terminal = Command::new("terminal")
-        .about("Manage workspace terminals")
+        .about("Manage terminals")
         .subcommand(
             Command::new("ls")
-                .arg(switch("all", "all").conflicts_with_all(["cwd", "workspace"]))
-                .arg(option("workspace", "workspace"))
+                .arg(switch("all", "all").conflicts_with_all(["cwd", "agent"]))
+                .arg(option("agent", "agent").conflicts_with("cwd"))
                 .arg(option("cwd", "cwd")),
         )
         .subcommand(
             Command::new("create")
-                .arg(option("workspace", "workspace"))
+                .arg(option("agent", "agent").conflicts_with("cwd"))
                 .arg(option("cwd", "cwd"))
                 .arg(option("name", "name")),
         )
@@ -56,11 +55,11 @@ pub fn commands() -> Vec<Command> {
                 )
                 .arg(switch("literal", "literal").short('l')),
         );
-    let mut script = Command::new("script").about("Manage configured workspace scripts");
+    let mut script = Command::new("script").about("Manage configured directory scripts");
     for action in ["ls", "start", "stop"] {
         let mut child = Command::new(action)
             .arg(option("cwd", "cwd"))
-            .arg(option("workspace", "workspace"));
+            .arg(option("agent", "agent").conflicts_with("cwd"));
         if action != "ls" {
             child = child.arg(positional("name", true));
         }
@@ -92,11 +91,11 @@ async fn request(
         .await
 }
 fn project_terminal(value: &Value) -> Result<Value> {
-    for key in ["id", "workspaceId", "cwd", "name"] {
+    for key in ["id", "cwd", "name"] {
         ensure!(value[key].is_string(), "Invalid terminal metadata: {key}");
     }
     Ok(
-        json!({"id":value["id"],"workspaceId":value["workspaceId"],"cwd":value["cwd"],"name":value["name"]}),
+        json!({"id":value["id"],"cwd":value["cwd"],"name":value["name"]}),
     )
 }
 async fn terminal(
@@ -107,12 +106,13 @@ async fn terminal(
 ) -> Result<Output> {
     client.require_feature(
         "workspaceTerminals",
-        "Update the host to use workspace terminals through the SDK.",
+        "Update the host to use terminals through the SDK.",
     )?;
     if action == "ls" {
         let mut message = json!({"type":"list_terminals_request"});
-        if let Some(id) = string(m, "workspace") {
-            message["workspaceId"] = id.into();
+        if let Some(id) = string(m, "agent") {
+            let agent = session(client, context, id).await?;
+            message["workspaceId"] = agent["workspaceId"].clone();
         } else if !flag(m, "all") {
             message["cwd"] = string(m, "cwd")
                 .map(str::to_owned)
@@ -129,41 +129,7 @@ async fn terminal(
         return Ok(terminal_output(json!(rows)));
     }
     if action == "create" {
-        let cwd = match string(m, "cwd") {
-            Some(cwd) => Some(cwd.to_owned()),
-            None if string(m, "workspace").is_none() => {
-                Some(std::env::current_dir()?.to_string_lossy().into_owned())
-            }
-            None => None,
-        };
-        let (workspace, directory) = if let Some(workspace) = string(m, "workspace") {
-            let directory = if let Some(cwd) = cwd.clone() {
-                cwd
-            } else {
-                let rows = super::projects::list_workspaces(client, false).await?;
-                rows.iter()
-                    .find(|row| row["id"] == workspace)
-                    .and_then(|row| row["workspaceDirectory"].as_str())
-                    .ok_or_else(|| anyhow!("Workspace not found: {workspace}"))?
-                    .into()
-            };
-            (workspace.to_owned(), directory)
-        } else {
-            let cwd = cwd
-                .as_deref()
-                .ok_or_else(|| anyhow!("Working directory unavailable"))?;
-            let opened = request(
-                client,
-                json!({"type":"open_project_request","cwd":cwd}),
-                "open_project_response",
-                context,
-            )
-            .await?;
-            let workspace = opened["workspace"]["id"]
-                .as_str()
-                .ok_or_else(|| anyhow!("The daemon did not open a workspace for {cwd}"))?;
-            (workspace.into(), cwd.into())
-        };
+        let (workspace, directory) = directory_owner(m, client, context).await?;
         let mut message =
             json!({"type":"create_terminal_request","workspaceId":workspace,"cwd":directory});
         if let Some(name) = string(m, "name") {
@@ -322,25 +288,9 @@ async fn script(
 ) -> Result<Output> {
     client.require_feature(
         "workspaceScriptManagement",
-        "Update the host to use workspace script management.",
+        "Update the host to use script management.",
     )?;
-    let workspace = if let Some(workspace) = string(m, "workspace") {
-        workspace.to_owned()
-    } else {
-        let cwd = super::projects::absolute(string(m, "cwd").unwrap_or("."))?;
-        let rows = super::projects::list_workspaces(client, false).await?;
-        let matches = rows
-            .iter()
-            .filter(|row| {
-                row["workspaceDirectory"]
-                    .as_str()
-                    .and_then(|p| super::projects::absolute(p).ok())
-                    .as_deref()
-                    == Some(&cwd)
-            })
-            .collect::<Vec<_>>();
-        match matches.as_slice(){[row]=>row["id"].as_str().ok_or_else(||anyhow!("Invalid workspace ID"))?.into(),[]=>return Err(ClientError::new("WORKSPACE_NOT_FOUND",format!("No Paseo workspace found for {cwd}. Open the directory in Paseo first, or pass --workspace <workspace-id>.")).into()),_=>return Err(ClientError::new("WORKSPACE_AMBIGUOUS",format!("Multiple workspaces use {cwd}. Pass --workspace <workspace-id> to select one.")).into())}
-    };
+    let (workspace, _) = directory_owner(m, client, context).await?;
     let (kind, response) = match action {
         "ls" => (
             "workspace.script.list.request",
@@ -389,7 +339,7 @@ fn terminal_output(data: Value) -> Output {
     Output::new(data)
         .table_data(table)
         .columns(TERMINALS)
-        .widths(&[8, 24, 48, 24])
+        .widths(&[8, 24, 48])
 }
 fn script_output(data: Value) -> Output {
     let mut table = data.clone();
@@ -412,6 +362,25 @@ fn script_output(data: Value) -> Output {
         .id("scriptName")
         .columns(SCRIPTS)
         .widths(&[20, 9, 10, 10, 7, 42, 12])
+}
+
+async fn session(client: &DaemonClient, context: &Context, id: &str) -> Result<Value> {
+    let response = request(client, json!({"type":"fetch_agent_request","agentId":id}), "fetch_agent_response", context).await?;
+    let agent = &response["agent"];
+    ensure!(agent["cwd"].is_string() && agent["workspaceId"].is_string(), "Agent not found: {id}");
+    Ok(agent.clone())
+}
+
+async fn directory_owner(m: &ArgMatches, client: &DaemonClient, context: &Context) -> Result<(String, String)> {
+    let ambient = std::env::var("PASEO_AGENT_ID").ok();
+    if let Some(id) = string(m, "agent").or_else(|| string(m, "cwd").is_none().then_some(ambient.as_deref()).flatten()) {
+        let agent = session(client, context, id).await?;
+        return Ok((agent["workspaceId"].as_str().unwrap().to_owned(), agent["cwd"].as_str().unwrap().to_owned()));
+    }
+    let cwd = string(m, "cwd").map(str::to_owned).unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned());
+    let opened = request(client, json!({"type":"open_project_request","cwd":cwd}), "open_project_response", context).await?;
+    let owner = opened["workspace"]["id"].as_str().ok_or_else(|| anyhow!("Unable to open directory {cwd}"))?;
+    Ok((owner.to_owned(), cwd))
 }
 #[cfg(test)]
 mod tests {

@@ -26,7 +26,7 @@ GitHub / Slack / Discord / manual request
 - **连接**让 Hub 接收来自 GitHub、Slack 或 Discord 的事件。
 - **daemon** 是一台运行 Paseo daemon 的已注册机器。
 - **项目**把一份配置与它使用的连接和 daemon 组织在一起。
-- **环境**指定 workflow step 在哪里运行：一个 daemon、它的工作目录，以及可选的 worktree。
+- **环境**指定 workflow step 在哪里运行：一个 daemon 及其已有的本地工作目录。
 - **触发器**说明哪个 Provider 事件可以启动 workflow，以及允许哪些事件通过。
 - **workflow** 是触发器匹配后运行的一组有序 step。
 - **step** 启动一次 Agent 执行，有自己的提示词、Agent 选择、凭据、回复能力和限制。

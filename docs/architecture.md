@@ -9,7 +9,7 @@ Rust mobile client ── WebSocket / encrypted relay ── Rust daemon
 Rust CLI / external Rust SDK ─────────────────────┤
                                                   ├─ provider processes
                                                   ├─ persistent state / files / Git
-                                                  ├─ script and setup PTYs
+                                                  ├─ terminal and script PTYs
                                                   ├─ MCP / schedules / connected hosts
                                                   └─ optional native plugin executables
 ```
@@ -24,9 +24,9 @@ Paseo's runtime, SDKs and build tools require neither Node, Electron, nor Chromi
 | Transport                   | `packages/daemon/src/transport/`, `packages/client/src`, `packages/protocol/src/crypto` | HTTP/WebSocket, authentication, relay encryption, local/remote SDK and CLI connections |
 | State and configuration     | `state.rs`, `config.rs`, `config/`                                                     | Config resolution, durable state, mutation transactions                                   |
 | Agents                      | `agent.rs`, `agent/`, `providers/`                                                     | Provider processes, permissions, lifecycle, snapshots, timeline persistence and streaming |
-| Projects and workspaces     | `projects.rs`, `projects/`, `directory_sync/`                                          | Checkout/worktree identity, acquisition, registries, directory reconciliation             |
+| Projects and directory ownership | `projects.rs`, `projects/`, `directory_sync/` | Existing-directory identity, retained ownership registries and reconciliation |
 | Files and Git               | `files/`, `git/`                                                                       | Remote picker, reads/writes, observation, Git facts and lazy diff bodies                  |
-| Terminals and scripts       | `terminals.rs`, `terminals/`                                                           | PTY lifecycle, interactive shells, setup, service scripts, screen state, replayable output |
+| Terminals and scripts       | `terminals.rs`, `terminals/` | PTY lifecycle, interactive shells, service scripts, screen state and replayable output |
 | Automation and integrations | `automation/`, `mcp/`, `mcp_client/`, `hosts/`, `hub/`                                 | Schedules, MCP client/server, connected-host and Hub behavior                             |
 | Desktop lifecycle           | `desktop_host.rs`, `desktop_host/`, `daemon_control/`                                  | Structured IPC, process identity, ownership, supervisor and worker lifecycle              |
 | Client runtime              | `packages/gui-core/src`                                                                | Host connections, directory synchronization, persisted client state, request/event boundary |
@@ -49,9 +49,9 @@ A client disconnect does not end a provider turn or archive a session. Daemon-ow
 
 `packages/gui-core` owns client protocol behavior and shared application state behind `GuiCore`/`CoreHandle`; network and disk IO never run on the GUI thread. `packages/gui/src/shell` composes the native shell and routes; feature widgets under `packages/gui/src/features` own their paged data.
 
-The primary navigation tree is **host → directory → session**, not workspace grouping. Keys include host identity: equal paths on two machines must not merge. Empty directories remain visible. Search temporarily reveals ancestors without overwriting saved collapse state. Workspaces remain daemon entities and are available through Command Center and workspace operations.
+The primary navigation tree is **host → directory → session**. Keys include host identity: equal paths on two machines must not merge. Empty directories remain visible. Search temporarily reveals ancestors without overwriting saved collapse state. Sessions open directly as tabs without an intermediate workspace or nested session tab bar. Internal `workspaceId` records remain durable directory owners for protocol, history and runtime state; they are not exposed as a product creation or selection concept.
 
-File operations use the selected host. Add Project browses host-side folders through the daemon rather than choosing a path on the client device. Markdown and source editing are native views. Diffs request a summary/file tree before loading individual patch bodies; opening a large diff must not eagerly fetch/render every patch.
+File operations use the selected host. New Session and Add Project browse host-side directories through the daemon, never client-device paths. New work reuses an existing directory, including a user-managed Git worktree; Paseo does not create, restore or remove worktrees. Markdown and source editing are native views. Git Log reads commit history, while Commit reviews and submits selected changes; patch bodies load on demand.
 
 ## Desktop ownership
 
@@ -63,7 +63,7 @@ Platform tray/menu/window behavior is native integration, not an Electron render
 
 ## Terminals and excluded surfaces
 
-Daemon PTYs back interactive terminals and script/setup runs. The client opens interactive shells as Terminal tabs on every platform and presents script/setup output as read-only logs; see [terminal activity](terminal-activity.md). Native CLI chat remains available outside the application.
+Daemon PTYs back interactive terminals and project scripts. The client opens interactive shells as Terminal tabs on every platform and presents script output as read-only logs; see [terminal activity](terminal-activity.md). Native CLI chat remains available outside the application.
 
 The client has no embedded browser, browser automation, web target, Chromium capture surface, or executable React UI-plugin host. Links open externally. Backend plugin RPCs/providers/lifecycle/usage contributions remain an optional extension boundary, described in [plugins](plugins.md); a server extension does not imply support for its former React client entry.
 

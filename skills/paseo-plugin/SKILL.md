@@ -1,6 +1,6 @@
 ---
 name: paseo-plugin
-description: Build and manage trusted Paseo backend plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, update, publish, or troubleshoot a Paseo plugin; add plugin RPCs; add lifecycle hooks or before hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a coding-agent provider or ACP adapter; add a usage source; persist plugin settings; append plugin rows to an agent timeline; or asks for a plugin screen, panel, sidebar item, composer pill, slash command, timeline renderer, or theme (the native client does not run those).
+description: Build and manage trusted Paseo backend plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, update, publish, or troubleshoot a Paseo plugin; add plugin RPCs; add lifecycle hooks or before hooks; transform agent configuration, environment, or MCP servers; automate permissions or turn follow-ups; add a coding-agent provider or ACP adapter; add a usage source; persist plugin settings; append plugin rows to an agent timeline; or asks for a plugin screen, panel, sidebar item, composer pill, slash command, timeline renderer, or theme (the native client does not run those).
 ---
 
 # Paseo plugins
@@ -47,18 +47,18 @@ instead of doing the work.
 | Contribution     | Registration                                           | Use it when                                                                                                     |
 | ---------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Plugin RPC       | `defineRpc` + `server.handle`                          | Daemon-side work that is not a normal Paseo operation: vendor APIs, credentials, local files                    |
-| Lifecycle events | `server.on`                                            | Observe agents and workspaces, inspect ended turns, answer permission requests, send follow-ups                 |
-| Before hooks     | `server.before`                                        | Change agent configuration, provider options, MCP servers, launch environment, or workspace creation beforehand |
+| Lifecycle events | `server.on`                                            | Observe agents and internal ownership records, inspect ended turns, answer permission requests, send follow-ups |
+| Before hooks     | `server.before`                                        | Change agent configuration, provider options, MCP servers, or launch environment beforehand |
 | Settings         | `defineSettings` + `server.registerSettings`           | Versioned, host-scoped values the plugin reads and watches                                                      |
 | Timeline row     | `paseo.agents.ref(id).timeline.append(...)`            | Push a plugin-owned row into an agent timeline and update it later                                              |
 | Provider         | `server.registerProvider` (direct or `runAcpProvider`) | Add a coding agent to Paseo                                                                                     |
 | Usage source     | `server.registerUsageSource`                           | Report plan and quota usage for a provider account                                                              |
-| Paseo SDK        | `{ paseo }` in handlers and hooks                      | Normal Paseo operations: workspaces, agents, providers, config                                                  |
+| Paseo SDK        | `{ paseo }` in handlers and hooks                      | Normal Paseo operations: agents, local directories, providers, config |
 
 | Task                                                                | Example                                                                                                            |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Log every lifecycle event and before hook                           | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)                   |
-| Follow-ups, permissions, environment, provider switching, worktrees | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)                 |
+| Follow-ups, permissions, environment, provider switching | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions) |
 | Inject MCP servers and change Codex sandbox/approval options        | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration)             |
 | Direct provider                                                     | [provider-direct](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct) (server entry only) |
 | ACP provider with a vendor transformer                              | [provider-acp-transformer](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer)   |
@@ -277,7 +277,7 @@ Both return a function that removes the registration.
 
 Events: `agent.created`, `agent.closed`, `agent.turn_started`, `agent.turn_ended`,
 `agent.permission_requested`, `agent.permission_resolved`, `agent.archived`, `workspace.created`,
-and `workspace.archived`.
+and `workspace.archived`. Workspace events describe retained internal ownership records, not product workspaces or Git worktree lifecycle.
 
 - `agent.turn_ended` carries `agent`, `turnId`, and `outcome` (`{ kind: "completed" }`,
   `{ kind: "failed", error }`, or `{ kind: "canceled", reason }`). Its `timeline` field is
@@ -288,7 +288,7 @@ and `workspace.archived`.
   `{ behavior: "deny", message }`. Send a follow-up with `paseo.agents.ref(id).send(text)`.
 - An event callback that throws is logged to the plugin log and does not affect the operation.
 - Hooks run while the plugin is enabled, including when no app is connected. Archive notification
-  does not mean runtime or worktree cleanup has finished.
+  does not mean runtime cleanup has finished. It never authorizes deleting directories or worktrees.
 
 Before hooks:
 
@@ -296,7 +296,7 @@ Before hooks:
 | -------------------- | ---------------------------------------------------------------------- |
 | `agent.create`       | `config` (agent configuration except `cwd`) and launch-override `env`  |
 | `agent.session_open` | Only `env`; `reason` and `purpose` tell you why the session is opening |
-| `workspace.create`   | The workspace creation request                                         |
+| `workspace.create`   | Retained internal directory-owner creation request; worktree sources are unsupported |
 
 - Each callback receives a copy of the request after earlier callbacks changed it. Return the whole
   request with your change, or `undefined` to keep it.
@@ -426,29 +426,11 @@ add a custom panel.
 
 ## Use the Paseo SDK from backend code
 
-RPC handlers receive `{ paseo }`; lifecycle callbacks receive `{ paseo, signal }`. This is the
-`@getpaseo/client` API on the plugin's own daemon session: `paseo.workspaces`, `paseo.agents`,
-`paseo.projects`, `paseo.providers`, `paseo.config`, `paseo.terminals`, and `paseo.hosts`. Use it
-for normal agent, workspace, provider, and configuration work instead of defining duplicate RPCs.
-Release subscriptions you open in cleanup.
+Use `context.daemon.client().await?` in native plugin code to obtain the Rust `DaemonClient` on the plugin's daemon connection. Create an agent with `create_agent` and `config: {provider, model, cwd}` using an existing local directory. Keep the returned agent ID for follow-ups and its `workspaceId` only when an SDK operation needs the internal ownership identity.
 
-```ts
-const workspace = await paseo.workspaces.create({
-  title: "Review PR 42",
-  source: {
-    kind: "worktree",
-    cwd: "/absolute/path/to/repository",
-    action: "checkout",
-    checkoutSource: { kind: "change_request", forge: "github", number: 42 },
-  },
-});
-await workspace.agents.create({
-  config: { provider: "codex/gpt-5.5" },
-  prompt: "Review PR #42.",
-});
-```
+Do not create a product workspace or request a worktree source. Existing externally managed Git worktrees are ordinary local directories. Paseo does not delete or migrate them when a session finishes.
 
-See the [SDK reference](https://paseo.sh/docs/sdk/reference.md) for method details.
+See the [SDK directory guide](https://paseo.sh/docs/sdk/workspaces.md) and [SDK reference](https://paseo.sh/docs/sdk/reference.md) for exact Rust method signatures. Release subscriptions you open.
 
 ## Debug backend output
 
@@ -602,8 +584,8 @@ After a change:
 3. Run `paseo plugin ls <id>` and require `running` with no error. `running` only proves the
    backend loaded.
 4. Exercise each changed contribution on the intended daemon:
-   - Hooks: create an agent or workspace, or complete a turn, then read `paseo plugin logs <id>`.
-   - Before hooks: confirm the created agent, workspace, or session has the change.
+   - Hooks: create an agent or complete a turn, then read `paseo plugin logs <id>`.
+   - Before hooks: confirm the created agent or session has the change.
    - RPCs: call the method through `plugin.rpc.invoke.request`, including an input the schema
      rejects and a handler error.
    - Timeline rows: open the agent in the native client and find the JSON row.
@@ -624,7 +606,7 @@ Common failures:
 - Worker or Node unavailable: install Node.js 20+ on the daemon host or set `PASEO_PLUGIN_NODE`.
 - RPC rejection: input or output failed its Zod schema, the method name is wrong, or the handler
   threw. Check `paseo plugin logs <id>`.
-- Agent or workspace creation fails with `Plugin <id> before <name> failed`: a before hook threw or
+- Agent creation fails with `Plugin <id> before <name> failed`: a before hook threw or
   returned an invalid request.
 - Append rejected: `data` exceeds 64 KiB, or the call did not come from plugin code.
 - Changes not active: the source was edited without `paseo plugin reload <id>`.

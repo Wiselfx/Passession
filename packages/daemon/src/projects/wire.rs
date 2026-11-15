@@ -148,7 +148,7 @@ impl ProjectService {
                 let mut removed = Vec::new();
                 let result = async {
                     for wid in &active {
-                        self.archive_locked(ctx.principal(), wid, false, None)
+                        self.archive_locked(ctx.principal(), wid, None)
                             .await?;
                         removed.push(wid.clone());
                     }
@@ -213,33 +213,10 @@ impl ProjectService {
                     json!({"workspaceId":m["workspaceId"],"archivedAt":result["archivedAt"],"error":null}),
                 )
             }
-            "paseo_worktree_list_request" => {
-                let cwd = m["repoRoot"]
-                    .as_str()
-                    .or_else(|| m["cwd"].as_str())
-                    .context("cwd or repoRoot is required")?;
-                let list = worktrees::list(
-                    &app.home,
-                    &app.config.snapshot(),
-                    Path::new(cwd),
-                    ctx.cancellation(),
-                )
-                .await?;
-                let rows:Vec<_>=list.into_iter().map(|w|json!({"worktreePath":w["path"],"branchName":w["branchName"],"createdAt":w["createdAt"],"head":w["head"]})).collect();
-                Ok(json!({"worktrees":rows,"error":null}))
-            }
-            "paseo_worktree_archive_request" => self.archive_worktree_wire(ctx, m).await,
-            "create_paseo_worktree_request" => {
-                let mut source = m.clone();
-                source["kind"] = json!("worktree");
-                let context=m.get("firstAgentContext").cloned().unwrap_or_else(||json!({"prompt":m["nameContext"],"attachments":m.get("attachments").cloned().unwrap_or_else(||json!([]))}));
-                let record = self
-                    .create_workspace(&json!({"source":source,"firstAgentContext":context}))
-                    .await?;
-                Ok(
-                    json!({"workspace":self.descriptor(text(&record,"workspaceId")?).await?,"error":null,"setupTerminalId":null}),
-                )
-            }
+            // COMPAT(managedWorktrees): retained wire requests are rejected, not reinterpreted.
+            "paseo_worktree_list_request"
+            | "paseo_worktree_archive_request"
+            | "create_paseo_worktree_request" => Err(unsupported_worktrees()),
             "workspace.recovery.inspect.request" => {
                 let id = text(m, "workspaceId")?;
                 let workspace = self.workspace(id).await?;
@@ -258,18 +235,7 @@ impl ProjectService {
                     .workspace(id)
                     .await?
                     .ok_or_else(|| anyhow!("Workspace not found: {id}"))?;
-                let p = self
-                    .project(text(&w, "projectId")?)
-                    .await?
-                    .ok_or_else(|| anyhow!("Project not found"))?;
-                worktrees::restore(
-                    &app.home,
-                    &app.config.snapshot(),
-                    &w,
-                    &p,
-                    ctx.cancellation(),
-                )
-                .await?;
+                require_directory(Path::new(text(&w, "cwd")?)).await?;
                 self.unarchive(w).await?;
                 Ok(json!({"workspaceId":id,"accepted":true,"error":null}))
             }
@@ -696,172 +662,6 @@ impl ProjectService {
             .await?;
         Ok(json!({"workspaceId":id,"markedAgentId":aid,"success":true,"error":null}))
     }
-    async fn archive_worktree_wire(&self, ctx: &RequestContext, m: &Value) -> Result<Value> {
-        let app = self.app()?;
-        let records = self.list_workspaces().await?;
-        let path = if let Some(path) = m["worktreePath"].as_str() {
-            PathBuf::from(path)
-        } else if let Some(id) = m["workspaceId"].as_str() {
-            let w = self
-                .workspace(id)
-                .await?
-                .ok_or_else(|| anyhow!("Workspace not found: {id}"))?;
-            PathBuf::from(w["worktreeRoot"].as_str().unwrap_or(text(&w, "cwd")?))
-        } else {
-            let repo = Path::new(text(m, "repoRoot")?);
-            let branch = text(m, "branchName")?;
-            let list = worktrees::list(&app.home, &app.config.snapshot(), repo, ctx.cancellation())
-                .await?;
-            PathBuf::from(text(
-                list.iter()
-                    .find(|w| w["branchName"] == branch)
-                    .ok_or_else(|| anyhow!("Paseo worktree not found for branch {branch}"))?,
-                "path",
-            )?)
-        };
-        let all = m["scope"] == "worktree";
-        if all {
-            let owned =
-                worktrees::ownership(&app.home, &app.config.snapshot(), &path, ctx.cancellation())
-                    .await?;
-            if owned["allowed"] != true {
-                return Ok(
-                    json!({"success":false,"removedAgents":[],"error":{"code":"NOT_ALLOWED","message":"Worktree is not a Paseo-owned worktree"}}),
-                );
-            }
-        }
-        let mut targets = Vec::new();
-        if !all
-            && let Some(id) = m["workspaceId"].as_str() {
-                targets.push(id.to_owned());
-            }
-        if targets.is_empty() {
-            let mut matched = Vec::new();
-            for w in records {
-                let root = if all {
-                    w["worktreeRoot"].as_str().unwrap_or(text(&w, "cwd")?)
-                } else {
-                    text(&w, "cwd")?
-                };
-                if w["archivedAt"].is_null() && same_path(Path::new(root), &path).await {
-                    matched.push(w);
-                }
-            }
-            matched.sort_by_key(|w| w["kind"] != "worktree");
-            for w in matched {
-                targets.push(text(&w, "workspaceId")?.into());
-                if !all {
-                    break;
-                }
-            }
-        }
-        let mut removed = Vec::new();
-        if all {
-            let _guard = self.lifecycle.lock().await;
-            let mut selected = Vec::new();
-            for id in &targets {
-                if let Some(workspace) = self.workspace(id).await? {
-                    selected.push(workspace);
-                }
-            }
-            for id in &targets {
-                let result = self
-                    .archive_locked(ctx.principal(), id, false, None)
-                    .await?;
-                if let Some(ids) = result["archivedAgentIds"].as_array() {
-                    removed.extend(ids.iter().cloned());
-                }
-            }
-            let owned =
-                worktrees::ownership(&app.home, &app.config.snapshot(), &path, ctx.cancellation())
-                    .await?;
-            let repo = selected
-                .iter()
-                .find_map(|w| w["mainRepoRoot"].as_str())
-                .or_else(|| owned["repoRoot"].as_str())
-                .or_else(|| m["repoRoot"].as_str())
-                .map(PathBuf::from);
-            let mut completed_cwds = Vec::<PathBuf>::new();
-            let mut teardown_ok = true;
-            for workspace in &selected {
-                let cwd = Path::new(text(workspace, "cwd")?);
-                let mut blocked = false;
-                for other in &selected {
-                    if other.get("untrustedSource").is_some()
-                        && same_path(Path::new(text(other, "cwd")?), cwd).await
-                    {
-                        blocked = true;
-                        break;
-                    }
-                }
-                for completed in &completed_cwds {
-                    if same_path(completed, cwd).await {
-                        blocked = true;
-                        break;
-                    }
-                }
-                if blocked {
-                    continue;
-                }
-                completed_cwds.push(cwd.to_path_buf());
-                if let Err(error) = app
-                    .terminals
-                    .teardown(text(workspace, "workspaceId")?)
-                    .await
-                {
-                    tracing::warn!(%error,"Archived worktree teardown failed; retaining directory");
-                    teardown_ok = false;
-                    break;
-                }
-            }
-            if selected.is_empty()
-                && let Err(error) = app.terminals.teardown_path(&path, repo.as_deref()).await {
-                    tracing::warn!(%error,"Orphan worktree teardown failed; retaining directory");
-                    teardown_ok = false;
-                }
-            let mut referenced = false;
-            for workspace in self.list_workspaces().await? {
-                if workspace["archivedAt"].is_null()
-                    && same_path(
-                        Path::new(
-                            workspace["worktreeRoot"]
-                                .as_str()
-                                .unwrap_or(text(&workspace, "cwd")?),
-                        ),
-                        &path,
-                    )
-                    .await
-                {
-                    referenced = true;
-                    break;
-                }
-            }
-            if teardown_ok && !referenced
-                && let Some(repo) = repo {
-                    if let Err(error) = worktrees::remove(
-                        &app.home,
-                        &app.config.snapshot(),
-                        &repo,
-                        &path,
-                        ctx.cancellation(),
-                    )
-                    .await
-                    {
-                        tracing::warn!(%error,"Archived worktree removal failed; retaining directory");
-                    } else {
-                        app.git.invalidate(&repo).await?;
-                    }
-                }
-        } else {
-            for id in targets {
-                let result = self.archive_workspace(ctx.principal(), &id).await?;
-                if let Some(ids) = result["archivedAgentIds"].as_array() {
-                    removed.extend(ids.iter().cloned());
-                }
-            }
-        }
-        Ok(json!({"success":true,"removedAgents":removed,"error":null}))
-    }
 }
 fn failure(kind: &str, m: &Value, error: &anyhow::Error) -> Value {
     let code = error
@@ -869,16 +669,11 @@ fn failure(kind: &str, m: &Value, error: &anyhow::Error) -> Value {
         .map(|e| e.code)
         .or_else(|| error.downcast_ref::<store::StoreError>().map(|e| e.code))
         .unwrap_or("unknown");
-    let worktree_error = worktrees::wire_error(error);
     let mut p = json!({"error":error.to_string()});
     match kind {
         "open_project_request" | "workspace.create.request" | "create_paseo_worktree_request" => {
             p["workspace"] = Value::Null;
-            p["errorCode"] = if code == "unknown" {
-                worktree_error["code"].clone()
-            } else {
-                json!(code)
-            };
+            p["errorCode"] = json!(code);
             if kind != "open_project_request" {
                 p["setupTerminalId"] = Value::Null;
             }

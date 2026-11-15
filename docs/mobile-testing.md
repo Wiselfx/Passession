@@ -16,14 +16,14 @@ Exercise compact and wide layouts, keyboard visible/hidden, rotation/resize, for
 - Back from file explorer to session, session to sidebar, and leaving the app without stopping remote work.
 - Add Project through the selected daemon's remote folder browser.
 - Chat streaming, draft retention, Korean IME composition during streaming, permissions, session rename/import/history and closing a tab without archiving. Exercise composing-syllable replacement, backspace, selection, focus transfer and keyboard dismissal, not only pasted Korean text.
-- Markdown selection/copy/links, file search/read-only source on mobile, and large summary-first diff navigation. Source editing/save-failure coverage belongs to desktop; Android and iOS intentionally disable source editing.
+- Markdown selection/copy/links, file search/read-only source on mobile, Git Log and lazy historical patch navigation. Source editing/save-failure coverage belongs to desktop; Android and iOS intentionally disable source editing.
 - Setup/service scripts and read-only log output. Check natural process exit, retained output after exit, initial tail positioning, touch-scroll pause and explicit Follow without new output.
 - Interactive terminals on the remote host: create one from New session → Terminal, type through the soft keyboard and Korean IME, paste, run a full-screen program, rotate, background/resume and reconnect, then close the tab and confirm the daemon terminal is gone.
 - Schedules, profiles, connected hosts, and server errors.
 - Drag across actionable rows/buttons/links, return to the touch origin, and cancel a gesture. Scrolling must not open a session, follow a link, dismiss a permission, remove an attachment or run a script.
 - Open nested pickers over forms; one Back/Escape must close only the top layer. Close a focused search, then open and activate a context menu. Closed or never-drawn inputs must not retain keyboard ownership.
 - Type while a composer is covered by a sheet, then return to it: its draft must be unchanged. Keep a synthetic stream running behind another panel and verify its completion when returning.
-- Refresh Git after changing file content without changing the added/deleted line counts; the patch must not remain stale.
+- Commit selected files through the real daemon, verify unrelated staging and working files remain unchanged, and exercise failure → explicit refresh → retry with a retained multiline message. Verify the new commit in Git Log and its historical patch.
 - Effect-sound playback, audio interruptions and recovery, notification permissions/taps, and QR pairing on the actual mobile platform.
 
 Use current native semantic controls and fresh screenshots/observations. Former React test IDs, Maestro flows, Agent Device scripts, Flutter integration tests and native-module patches from retired clients are not executable acceptance instructions. A source-only change cannot demonstrate an OS permission sheet, app lifecycle callback or device audio path.
@@ -249,3 +249,34 @@ This pass did not exercise physical-device handles, API 24–27 fallback, deskto
 touchscreens, log-view gestures or the standalone Markdown preview.
 
 Capture screenshots/logs without unrelated personal data or credentials. Preserve failing output, use bounded waits for observable conditions, and clean up only test-owned app instances, homes and processes. Installation or device changes require the appropriate authorization.
+
+### Session-only navigation and selected-file commits (2026-11-15)
+
+The v0.13.26 debug x86_64 APK ran on an isolated Android 15/API 35 emulator at
+720×1568 and 320 dpi, connected to a password-protected disposable native daemon.
+Only the development mock provider was enabled. Evidence is retained at
+`/tmp/passession-session-git-qk3fp78_/`:
+
+- `04-directory-sessions.png` shows two existing sessions under one host/directory,
+  without a workspace grouping layer. `05-session.png` has no nested tab counter.
+- `07-supporting-panel.png` shows Files / Git Log / Commit and the real repository's
+  uncommitted files. `09-multiline-commit-message.png` shows multiline Enter retaining
+  the keyboard, with the editor and Commit button above it.
+- A real rejecting Git hook left HEAD, unrelated staging, selection and the two-line
+  message intact (`11-rejection-retains-draft.png`). Refresh did not resubmit.
+  Explicit retry committed only `selected.txt`; unrelated staged content, different
+  unstaged content and the untracked file remained exact (`commit-proof.json`).
+- `15-commit-success.png` shows the cleared message and refreshed remaining files.
+  Git Log displays the new commit (`16-git-log.png`); its historical patch displays
+  the expected old/new content (`20-historical-patch-loaded.png`).
+- The directory's plus action opens a local-only form without Isolation/Worktree
+  controls (`23-local-session-form.png`). Submitting empty Chat creates an idle
+  session directly, retaining both existing sessions (`empty-session-proof.json`).
+- The live protocol rejects legacy managed-worktree creation as unsupported
+  (`session-api-proof.json`). No existing worktree folder was deleted.
+
+`runtime-proof.json` records the APK SHA-256 and bounded 200-line process-log check;
+no fatal exception, fatal signal or Rust panic appeared in that capture. The test
+daemon/emulator were stopped and their private credentials, repository and daemon
+home removed. Production processes and physical Android devices were untouched.
+This run does not establish physical-device, iOS or Windows GUI execution.

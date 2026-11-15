@@ -14,16 +14,6 @@ pub(super) fn run_command() -> Command {
         "model",
         "thinking",
         "mode",
-        "new-workspace",
-        "worktree",
-        "worktree-mode",
-        "worktree-slug",
-        "new-branch",
-        "base",
-        "branch",
-        "pr-number",
-        "forge",
-        "workspace",
         "cwd",
         "wait-timeout",
         "output-schema",
@@ -138,113 +128,6 @@ async fn launch_config(m: &ArgMatches, context: &Context, client: &DaemonClient)
     }
     Ok(launch)
 }
-fn absent(m: &ArgMatches, names: &[&str], message: &str) -> Result<()> {
-    if names.iter().any(|name| opt(m, name).is_some()) {
-        return Err(error("INVALID_OPTIONS", message));
-    }
-    Ok(())
-}
-fn workspace_source(m: &ArgMatches, cwd: &str) -> Result<Value> {
-    let kind = opt(m, "new-workspace")
-        .or_else(|| opt(m, "worktree").map(|_| "worktree"))
-        .unwrap_or("local");
-    if opt(m, "new-workspace").is_some() && opt(m, "worktree").is_some() {
-        return Err(error(
-            "INVALID_OPTIONS",
-            "--new-workspace and --worktree cannot be combined",
-        ));
-    }
-    if (opt(m, "new-workspace").is_some() || opt(m, "worktree").is_some())
-        && opt(m, "workspace").is_some()
-    {
-        return Err(error(
-            "INVALID_OPTIONS",
-            "A new workspace and --workspace cannot be combined",
-        ));
-    }
-    if kind == "local" {
-        absent(
-            m,
-            &[
-                "worktree-mode",
-                "worktree-slug",
-                "new-branch",
-                "base",
-                "branch",
-                "pr-number",
-                "forge",
-            ],
-            "Worktree options require --new-workspace worktree",
-        )?;
-        return Ok(json!({"kind":"directory","path":cwd}));
-    }
-    if kind != "worktree" {
-        return Err(error(
-            "INVALID_OPTIONS",
-            format!("Unsupported new workspace kind: {kind}"),
-        ));
-    }
-    let mut source = json!({"kind":"worktree","cwd":cwd});
-    if let Some(slug) = opt(m, "worktree-slug").or_else(|| opt(m, "worktree")) {
-        source["worktreeSlug"] = json!(slug);
-    }
-    match opt(m, "worktree-mode").unwrap_or("branch-off") {
-        "branch-off" => {
-            absent(
-                m,
-                &["branch", "pr-number", "forge"],
-                "--branch, --pr-number, and --forge require a checkout mode",
-            )?;
-            source["action"] = json!("branch-off");
-            if let Some(branch) = opt(m, "new-branch") {
-                source["branchName"] = json!(branch);
-            }
-            if let Some(base) = opt(m, "base") {
-                source["baseBranch"] = json!(base);
-            }
-        }
-        "checkout-branch" => {
-            absent(
-                m,
-                &["new-branch", "base", "pr-number", "forge"],
-                "--new-branch, --base, --pr-number, and --forge are not valid for checkout-branch",
-            )?;
-            let branch = opt(m, "branch").filter(|v| !v.is_empty()).ok_or_else(|| {
-                error(
-                    "INVALID_OPTIONS",
-                    "--branch is required for checkout-branch",
-                )
-            })?;
-            source["action"] = json!("checkout");
-            source["refName"] = json!(branch);
-        }
-        "checkout-pr" => {
-            absent(
-                m,
-                &["new-branch", "base", "branch"],
-                "--new-branch, --base, and --branch are not valid for checkout-pr",
-            )?;
-            let number = opt(m, "pr-number")
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .ok_or_else(|| {
-                    error("INVALID_OPTIONS", "--pr-number must be a positive integer")
-                })?;
-            source["action"] = json!("checkout");
-            source["checkoutSource"] = json!({"kind":"change_request","number":number});
-            if let Some(forge) = opt(m, "forge") {
-                source["checkoutSource"]["forge"] = json!(forge);
-            }
-        }
-        mode => {
-            return Err(error(
-                "INVALID_OPTIONS",
-                format!("Unsupported worktree mode: {mode}"),
-            ));
-        }
-    }
-    Ok(source)
-}
 async fn caller(client: &DaemonClient, context: &Context) -> Result<Option<String>> {
     let Some(id) = std::env::var("PASEO_AGENT_ID")
         .ok()
@@ -270,85 +153,20 @@ async fn caller(client: &DaemonClient, context: &Context) -> Result<Option<Strin
         }
     }
 }
-async fn workspace(
+async fn placement(
     m: &ArgMatches,
     context: &Context,
     client: &DaemonClient,
     caller: Option<&str>,
 ) -> Result<(String, Option<String>)> {
-    let cwd = opt(m, "cwd")
-        .map(str::to_owned)
-        .unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned());
-    let source = workspace_source(m, &cwd)?;
-    let new = opt(m, "new-workspace").is_some() || opt(m, "worktree").is_some();
-    let ambient = std::env::var("PASEO_WORKSPACE_ID").ok();
-    let existing = if new {
-        None
-    } else {
-        opt(m, "workspace")
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| {
-                if caller.is_some() {
-                    None
-                } else {
-                    ambient.as_deref().filter(|s| !s.trim().is_empty())
-                }
-            })
-    };
-    if let Some(id) = existing {
-        let result = rpc(
-            client,
-            context,
-            json!({"type":"fetch_workspaces_request","filter":{"query":id},"page":{"limit":200}}),
-            "fetch_workspaces_response",
-        )
-        .await?;
-        let row = array(&result["entries"])
-            .iter()
-            .find(|w| w["id"] == id)
-            .ok_or_else(|| error("WORKSPACE_NOT_FOUND", format!("Workspace not found: {id}")))?;
-        eprintln!("Using workspace {id}");
-        return Ok((text(row, "workspaceDirectory").into(), Some(id.into())));
+    if let Some(cwd) = opt(m, "cwd") {
+        return Ok((cwd.to_owned(), None));
     }
-    if !new && caller.is_some() {
-        return Ok((cwd, None));
-    }
-    let mut request = json!({"type":"workspace.create.request","source":source,"idempotencyKey":uuid::Uuid::new_v4().to_string()});
     if let Some(caller) = caller {
-        request["callerAgentId"] = json!(caller);
+        let agent = fetch(client, context, caller).await?;
+        return Ok((text(&agent, "cwd").into(), agent["workspaceId"].as_str().map(str::to_owned)));
     }
-    let result = client
-        .request_cancellable(
-            request,
-            "workspace.create.response",
-            Duration::ZERO,
-            context.cancel.clone(),
-        )
-        .await?;
-    let row = &result["workspace"];
-    if !row.is_object() {
-        return Err(error(
-            "WORKSPACE_CREATE_FAILED",
-            result["error"]
-                .as_str()
-                .unwrap_or("Failed to create workspace for this run"),
-        ));
-    }
-    eprintln!(
-        "Created workspace {} - {}",
-        text(row, "id"),
-        text(row, "name")
-    );
-    if let Some(reason) = result["setupSkippedReason"].as_str() {
-        eprintln!("{reason}");
-    }
-    eprintln!(
-        "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace."
-    );
-    Ok((
-        row["workspaceDirectory"].as_str().unwrap_or(&cwd).into(),
-        Some(text(row, "id").into()),
-    ))
+    Ok((std::env::current_dir()?.to_string_lossy().into_owned(), None))
 }
 pub(super) async fn images(paths: Vec<String>, strict: bool) -> Result<Vec<Value>> {
     let mut images = Vec::with_capacity(paths.len());
@@ -484,7 +302,7 @@ pub(super) async fn run(
     let env =
         key_values(strings(m, "env"), false).map_err(|e| error("INVALID_ENV", e.to_string()))?;
     let caller = caller(client, context).await?;
-    let (cwd, workspace) = workspace(m, context, client, caller.as_deref()).await?;
+    let (cwd, workspace) = placement(m, context, client, caller.as_deref()).await?;
     config["cwd"] = json!(cwd);
     if let Some(title) = string(m, "title").or_else(|| string(m, "name")) {
         config["title"] = json!(title);
@@ -726,7 +544,7 @@ pub(super) async fn chat(
             continue;
         }
         if agent.is_none() {
-            let (cwd, workspace) = workspace(m, context, client, None).await?;
+            let (cwd, workspace) = placement(m, context, client, None).await?;
             let mut config = launch
                 .clone()
                 .ok_or_else(|| anyhow!("Missing chat launch settings"))?;
@@ -777,21 +595,9 @@ mod tests {
         );
     }
     #[test]
-    fn workspace_checkout_rejects_branch_off_options() {
-        let m = run_command()
-            .try_get_matches_from([
-                "run",
-                "hello",
-                "--new-workspace",
-                "worktree",
-                "--worktree-mode",
-                "checkout-branch",
-                "--branch",
-                "main",
-                "--base",
-                "other",
-            ])
-            .unwrap();
-        assert!(workspace_source(&m, "/repo").is_err());
+    fn managed_worktree_options_are_rejected() {
+        for option in ["--worktree", "--worktree-mode", "--worktree-slug", "--new-branch", "--workspace", "--new-workspace"] {
+            assert!(run_command().try_get_matches_from(["run", "hello", option, "value"]).is_err());
+        }
     }
 }

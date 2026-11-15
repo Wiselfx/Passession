@@ -17,7 +17,7 @@ use crate::common::overlay::{
 use crate::common::{MAIN_WINDOW_ID, PanelTarget, Route, TabPlacement, UiContext, UiEffect, json as j, tr, tr_args};
 use crate::shell::hosts::{self, parent_agent_id};
 use crate::shell::layout::{Axis, CompactDestination, Direction};
-use crate::shell::sheets::{self, history, host_connections, host_dialog, labels, shortcut_help, workspace_tabs};
+use crate::shell::sheets::{self, history, host_connections, host_dialog, labels, shortcut_help};
 use crate::shell::ui::Press;
 use crate::shell::{Page, PaseoShell, Pending, WindowRequest, WindowState, chrome, overlays, panels, platform, response_message, sidebar};
 
@@ -35,8 +35,6 @@ pub enum AfterClose {
     Quit(u64),
     /// Saved host removal (`removeHost`) once its tabs closed.
     RemoveHost(String),
-    /// `workspace.archive` shortcut once every guard passed (`canCloseWindow`).
-    Archive { host_id: String, workspaces: Vec<Value> },
 }
 
 /// An in-progress close (Flutter `_closeWorkspaceTabs` / `canCloseWindow`).
@@ -51,7 +49,7 @@ pub struct Closing {
 /// Why a host is being chosen (`_chooseHost` / `showHostChooser` callers).
 #[derive(Clone, Debug)]
 pub enum HostPurpose {
-    NewSession { new_workspace: bool, worktree: bool },
+    NewSession,
     AddProject,
     Usage,
     ManageLabels,
@@ -64,7 +62,6 @@ pub enum HostPurpose {
 pub enum ShellOverlay {
     TabMenu { target: PanelTarget, pane_id: String, explorer: bool },
     TabOverflow { pane_id: String },
-    WorkspaceTabMenu { tab: PanelTarget, workspace: PanelTarget },
     HostMenu { host_id: String, order: Vec<String> },
     ProjectMenu { host_id: String, project: Value, order: Vec<String> },
     SessionMenu { host_id: String, agent: Value },
@@ -81,8 +78,6 @@ pub enum ShellOverlay {
     RemoveHost { host_id: String },
     RemoveProject { host_id: String, project: Value },
     ArchiveSession { host_id: String, agent_id: String },
-    ArchiveRisk { host_id: String, current: Value, remaining: Vec<Value>, confirmed: Vec<Value> },
-    RestoreWorkspace { host_id: String, workspace_id: String },
     RenameTab { target: PanelTarget },
     RenameSession { host_id: String, agent_id: String },
     RenameProject { host_id: String, project_id: String },
@@ -193,7 +188,7 @@ pub(crate) fn selected(shell: &PaseoShell) -> Option<PanelTarget> {
 }
 
 fn in_workspace(tab: Option<&PanelTarget>, workspace: &PanelTarget) -> bool {
-    tab.is_some_and(|t| t.server_id == workspace.server_id && t.workspace_id == workspace.workspace_id)
+    tab.is_some_and(|t| t.server_id == workspace.server_id && t.workspace_id == workspace.workspace_id && t.cwd == workspace.cwd)
 }
 
 fn copy(shell: &mut PaseoShell, cx: &mut Cx, text: &str, label_key: &str) {
@@ -342,7 +337,7 @@ fn choose_any_host(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purp
     candidates.sort_by_key(|id| !hosts::host(&ui.state, id).is_some_and(|h| h.connected()));
     match candidates.len() {
         0 => {
-            if matches!(purpose, HostPurpose::NewSession { .. } | HostPurpose::AddProject) {
+            if matches!(purpose, HostPurpose::NewSession | HostPurpose::AddProject) {
                 host_dialog::open_flow(shell, cx, None, None, None);
             }
         }
@@ -360,18 +355,15 @@ fn choose_any_host(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purp
 
 pub fn host_chosen(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, purpose: HostPurpose, host_id: String) {
     match purpose {
-        HostPurpose::NewSession { new_workspace, worktree } => {
-            let current = selected(shell);
-            let mut target = PanelTarget::new(
+        HostPurpose::NewSession => {
+            let current = selected(shell).filter(|t| t.server_id == host_id);
+            let target = PanelTarget::new(
                 "new_tab",
                 &host_id,
-                if new_workspace { "" } else { current.as_ref().map_or("", |t| t.workspace_id.as_str()) },
+                current.as_ref().map_or("", |t| t.workspace_id.as_str()),
                 current.as_ref().map_or("", |t| t.cwd.as_str()),
             )
             .with_id(new_id());
-            if worktree {
-                target.data = json!({ "source": "branch-off" });
-            }
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
         HostPurpose::AddProject => {
@@ -398,13 +390,13 @@ fn open_project_path(shell: &mut PaseoShell, ui: &UiContext, host_id: &str, path
     request(shell, ui, host_id, json!({ "type": "project.add.request", "cwd": trimmed }), "project.add.response", Pending::Refresh { host_id: host_id.to_string() });
 }
 
-pub(crate) fn new_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, new_workspace: bool, worktree: bool) {
-    choose_host(shell, cx, ui, HostPurpose::NewSession { new_workspace, worktree });
+pub(crate) fn new_session(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext) {
+    choose_host(shell, cx, ui, HostPurpose::NewSession);
 }
 
 /// `_openWorkspacePanel`.
 fn open_workspace_panel(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, kind: &str, explorer: bool) {
-    let Some(target) = selected(shell).filter(|t| !t.workspace_id.is_empty()) else {
+    let Some(target) = selected(shell).filter(|t| !t.cwd.is_empty()) else {
         toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
         return;
     };
@@ -412,10 +404,20 @@ fn open_workspace_panel(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, kin
     open_tab(shell, cx, ui, next, if explorer { TabPlacement::Explorer } else { TabPlacement::Main });
 }
 
-/// `_openDefaultExplorer`: Files and Changes, Changes in front.
+/// Default supporting views follow the selected session's host and directory.
 fn open_default_explorer(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext) {
-    open_workspace_panel(shell, cx, ui, "files", true);
-    open_workspace_panel(shell, cx, ui, "changes_tree", true);
+    let Some(target) = selected(shell).filter(|t| !t.cwd.is_empty()) else {
+        toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
+        return;
+    };
+    let previous = shell.data.layout.explorer_focus_for(&target);
+    for kind in ["files", "git_log", "git_commit"] {
+        let next = PanelTarget::new(kind, &target.server_id, &target.workspace_id, &target.cwd);
+        open_tab(shell, cx, ui, next, TabPlacement::Explorer);
+    }
+    if let Some(key) = previous {
+        shell.data.layout.select_explorer_tab(&key);
+    }
 }
 
 /// `_toggleCompactExplorer`.
@@ -426,20 +428,7 @@ fn toggle_compact_explorer(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext) 
         shell.redraw(cx);
         return;
     }
-    let Some(target) = layout.selected().cloned().filter(|t| !t.workspace_id.is_empty()) else { return };
-    if in_workspace(layout.selected_explorer_target(), &target) {
-        shell.data.layout.show_compact_explorer(true);
-        shell.redraw(cx);
-        return;
-    }
-    let views: Vec<&PanelTarget> = layout.explorer_targets().into_iter().filter(|t| in_workspace(Some(t), &target)).collect();
-    let existing = layout
-        .explorer_focus_for(&target)
-        .or_else(|| views.iter().find(|t| t.kind == "changes_tree").or(views.first()).map(|t| t.key()));
-    match existing {
-        Some(key) => shell.data.layout.select_explorer_tab(&key),
-        None => open_default_explorer(shell, cx, ui),
-    }
+    open_default_explorer(shell, cx, ui);
     shell.redraw(cx);
 }
 
@@ -456,75 +445,6 @@ fn split_with_launcher(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, axis
     shell.redraw(cx);
 }
 
-/// `_workspaceRootAgents`.
-fn workspace_root_agents<'a>(state: &'a Value, workspace: &PanelTarget) -> Vec<&'a Value> {
-    let Some(host) = hosts::host(state, &workspace.server_id) else { return Vec::new() };
-    let agents: Vec<&Value> = host.agents().collect();
-    let parent_workspace = |id: &str| agents.iter().find(|a| j::text(a, "id") == id).map(|a| j::text(a, "workspaceId")).unwrap_or("");
-    agents
-        .iter()
-        .copied()
-        .filter(|agent| {
-            if j::text(agent, "workspaceId") != workspace.workspace_id || hosts::is_archived(agent) || j::text(agent, "id").is_empty() {
-                return false;
-            }
-            let parent = parent_agent_id(agent);
-            if parent.is_empty() {
-                return true;
-            }
-            let pw = parent_workspace(&parent);
-            !pw.is_empty() && pw != workspace.workspace_id
-        })
-        .collect()
-}
-
-/// `_workspaceTabs`: pane tabs of the workspace (not Files/Changes), root agents in agent-id
-/// order across the slots the opened ones hold, unopened ones right after the last slot.
-pub fn workspace_tabs(shell: &PaseoShell, state: &Value, target: &PanelTarget) -> Vec<PanelTarget> {
-    let layout = &shell.data.layout;
-    let tabs: Vec<PanelTarget> = layout
-        .panes()
-        .iter()
-        .flat_map(|pane| pane.tabs.iter())
-        .filter_map(|key| layout.target(key))
-        .filter(|tab| in_workspace(Some(tab), target) && tab.kind != "files" && tab.kind != "changes_tree")
-        .cloned()
-        .collect();
-    if target.workspace_id.is_empty() {
-        return tabs;
-    }
-    let roots = workspace_root_agents(state, target);
-    let root_ids: Vec<&str> = roots.iter().map(|a| j::text(a, "id")).collect();
-    let reconciled = |tab: &PanelTarget| tab.kind == "agent" && tab.id.as_deref().is_some_and(|id| root_ids.contains(&id));
-    let open: Vec<String> = tabs.iter().filter(|t| t.kind == "agent").filter_map(|t| t.id.clone()).collect();
-    let mut agents: Vec<PanelTarget> = tabs.iter().filter(|t| reconciled(t)).cloned().collect();
-    agents.extend(
-        roots
-            .iter()
-            .filter(|a| !open.iter().any(|id| id == j::text(a, "id")))
-            .map(|a| navigation_agent_target(&target.server_id, a, None)),
-    );
-    agents.sort_by(|a, b| a.id.cmp(&b.id));
-    let slots = tabs.iter().filter(|t| reconciled(t)).count();
-    let last_slot = tabs.iter().rposition(&reconciled);
-    let mut out = Vec::new();
-    if last_slot.is_none() {
-        out.extend(agents.iter().cloned());
-    }
-    let mut slot = 0;
-    for (index, tab) in tabs.iter().enumerate() {
-        if reconciled(tab) {
-            out.push(agents[slot].clone());
-            slot += 1;
-        } else {
-            out.push(tab.clone());
-        }
-        if Some(index) == last_slot {
-            out.extend(agents.iter().skip(slots).cloned());
-        }
-    }
-    out
-}
 
 // ---------------------------------------------------------------------------------------------
 // Closing (closeTab / closePane / canCloseWindow with guards)
@@ -725,7 +645,6 @@ fn finish_closing(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, after
                 None => ui.core.remove_host(&host_id),
             }
         }
-        AfterClose::Archive { host_id, workspaces } => archive_workspaces(shell, cx, ui, &host_id, workspaces.into(), Vec::new()),
     }
     shell.redraw(cx);
 }
@@ -807,63 +726,6 @@ pub fn close_workspace_tabs(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
     close_tabs(shell, cx, ui, keys, true, AfterClose::Nothing);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Archive / recover (navigation_actions.dart)
-
-fn archive_workspaces(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, mut remaining: VecDeque<Value>, mut confirmed: Vec<Value>) {
-    use crate::features::git::policy::{resolve_risk_reasons, worktree_archive_risk_reasons};
-    while let Some(workspace) = remaining.pop_front() {
-        if j::text(&workspace, "workspaceKind") == "worktree" {
-            let git = j::object(&workspace, "gitRuntime");
-            let diff = workspace.get("diffStat").filter(|v| v.is_object());
-            let reasons = worktree_archive_risk_reasons(
-                git.get("isDirty").and_then(Value::as_bool),
-                git.get("aheadOfOrigin").and_then(Value::as_i64),
-                diff,
-            );
-            let lines = resolve_risk_reasons(&reasons, &|msg| {
-                let args: Vec<(&str, &str)> = msg.args.iter().map(|(k, v)| (*k, v.as_str())).collect();
-                tr_args(&msg.key, &args)
-            });
-            if !lines.is_empty() {
-                let name = j::text_or(&workspace, "name", j::text(&workspace, "id")).to_string();
-                confirm(
-                    shell,
-                    cx,
-                    &tr_args("workspace.git.actions.archiveWarning.title", &[("workspaceName", &name)]),
-                    &lines.join("\n"),
-                    &tr("workspace.git.actions.archiveWarning.confirm"),
-                    true,
-                    ShellOverlay::ArchiveRisk { host_id: host_id.to_string(), current: workspace, remaining: remaining.into(), confirmed },
-                );
-                return;
-            }
-        }
-        confirmed.push(workspace);
-    }
-    for workspace in confirmed {
-        let workspace_id = j::text(&workspace, "id").to_string();
-        request(
-            shell,
-            ui,
-            host_id,
-            json!({ "type": "archive_workspace_request", "workspaceId": workspace_id }),
-            "archive_workspace_response",
-            Pending::ArchiveWorkspace { host_id: host_id.to_string(), workspace_id },
-        );
-    }
-}
-
-fn recover_workspace(shell: &mut PaseoShell, ui: &UiContext, host_id: &str, workspace_id: &str) {
-    request(
-        shell,
-        ui,
-        host_id,
-        json!({ "type": "workspace.recovery.inspect.request", "workspaceId": workspace_id }),
-        "workspace.recovery.inspect.response",
-        Pending::RecoverInspect { host_id: host_id.to_string(), workspace_id: workspace_id.to_string() },
-    );
-}
 
 fn workspace_value(state: &Value, host_id: &str, workspace_id: &str) -> Option<Value> {
     hosts::host(state, host_id).and_then(|h| h.workspace(workspace_id).cloned())
@@ -952,11 +814,8 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
     let compact = shell.data.compact;
     let int = |key: &str, fallback: i64| j::int(args, key, fallback);
     match action {
-        "agent.new" | "workspace.project.pick" | "workspace.new" => new_session(shell, cx, ui, true, false),
-        "worktree.new" => new_session(shell, cx, ui, true, true),
-        "workspace.tab.menu.open" | "workspace.tab.target.agent" => new_session(shell, cx, ui, false, false),
+        "agent.new" | "workspace.project.pick" | "workspace.tab.menu.open" | "workspace.tab.target.agent" => new_session(shell, cx, ui),
         "workspace.terminal.new" => new_terminal(shell, cx, ui, TabPlacement::Main),
-        "workspace.tab.target.changes" => open_workspace_panel(shell, cx, ui, "changes_tree", true),
         "workspace.tab.target.gitLog" => {
             let supported = target.as_ref().and_then(|t| hosts::host(&ui.state, &t.server_id)).is_some_and(|h| h.supports(crate::features::git::log::FEATURE));
             if supported {
@@ -965,6 +824,7 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
                 toast(shell, cx, tr("workspace.git.log.states.unsupported"), true);
             }
         }
+        "workspace.tab.target.gitCommit" => open_workspace_panel(shell, cx, ui, "git_commit", true),
         "workspace.tab.target.files" => open_workspace_panel(shell, cx, ui, "files", true),
         // Closing a view must not change the session's lifecycle.
         "workspace.tab.close.current" => {
@@ -1040,11 +900,12 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
         "sidebar.toggle.right" => {
             if compact {
                 toggle_compact_explorer(shell, cx, ui);
-            } else if shell.data.layout.explorer_tabs.is_empty() {
-                open_default_explorer(shell, cx, ui);
+            } else if shell.data.layout.explorer_visible
+                && target.as_ref().is_some_and(|target| in_workspace(shell.data.layout.selected_explorer_target(), target))
+            {
+                shell.data.layout.show_explorer(false);
             } else {
-                let visible = shell.data.layout.explorer_visible;
-                shell.data.layout.show_explorer(!visible);
+                open_default_explorer(shell, cx, ui);
             }
         }
         "sidebar.toggle.both" => {
@@ -1083,26 +944,7 @@ pub fn execute(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, action: 
             };
             set_preference(shell, ui, "theme", json!(next));
         }
-        "workspace.archive" => {
-            let Some(target) = target else { return };
-            let Some(workspace) = workspace_value(&ui.state, &target.server_id, &target.workspace_id) else { return };
-            let keys = guarded_keys(shell);
-            close_tabs(shell, cx, ui, keys, false, AfterClose::Archive { host_id: target.server_id, workspaces: vec![workspace] });
-        }
-        "workspace.pin" => {
-            let Some(target) = target.filter(|t| !t.workspace_id.is_empty()) else { return };
-            let pinned = workspace_value(&ui.state, &target.server_id, &target.workspace_id)
-                .is_none_or(|w| j::is_null_or_missing(&w, "pinnedAt"));
-            request(
-                shell,
-                ui,
-                &target.server_id,
-                json!({ "type": "workspace.pin.set.request", "workspaceId": target.workspace_id, "pinned": pinned }),
-                "workspace.pin.set.response",
-                Pending::Refresh { host_id: target.server_id.clone() },
-            );
-        }
-        "workspace.navigate.index" | "workspace.navigate.relative" => navigate_session(shell, cx, ui, action, args),
+        "session.navigate.index" | "session.navigate.relative" => navigate_session(shell, cx, ui, action, args),
         "session.next-attention" => next_attention(shell, cx, ui),
         "agent.interrupt" => {
             if let Some(target) = target.filter(|t| t.kind == "agent" && t.id.is_some()) {
@@ -1356,7 +1198,7 @@ fn navigate(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: Rout
         Route::Files { host_id, workspace_id, path: Some(path) } => open_file(shell, cx, ui, &host_id, &workspace_id, &path, false),
         Route::Git { host_id, workspace_id } => {
             let cwd = cwd_of(&host_id, &workspace_id);
-            open_tab(shell, cx, ui, PanelTarget::new("changes_tree", &host_id, &workspace_id, &cwd), TabPlacement::Explorer);
+            open_tab(shell, cx, ui, PanelTarget::new("git_log", &host_id, &workspace_id, &cwd), TabPlacement::Explorer);
         }
         Route::Settings { host_id, page } => open_settings(shell, cx, host_id, &page),
         Route::Schedules { host_id } => show_page(shell, cx, Page::Schedules { host_id }),
@@ -1461,13 +1303,6 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
                 ui.core.refresh_host(&host_id);
             }
         },
-        Pending::ArchiveWorkspace { host_id, workspace_id } => match response_message(result) {
-            Some(message) => toast(shell, cx, message, true),
-            None => {
-                close_workspace_tabs(shell, cx, ui, &host_id, &[workspace_id]);
-                ui.core.refresh_host(&host_id);
-            }
-        },
         Pending::RemoveProject { host_id } => match response_message(result) {
             Some(message) => toast(shell, cx, message, true),
             None => {
@@ -1528,27 +1363,6 @@ pub fn on_response(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, _req
             }
         }
         Pending::Sheet { sheet, tag } => sheets::route_response(shell, cx, ui, sheet, &tag, result),
-        Pending::RecoverInspect { host_id, workspace_id } => {
-            if let Some(message) = response_message(result) {
-                return toast(shell, cx, message, true);
-            }
-            let state = result.as_ref().map(|p| j::object(p, "state").clone()).unwrap_or(Value::Null);
-            if j::text(&state, "kind") != "recoverable" {
-                let fallback = tr("shell.commands.restoreUnavailable");
-                let message = j::text_or(&state, "message", &fallback).to_string();
-                return toast(shell, cx, message, true);
-            }
-            let message = format!("{}\n{}\n{}", j::text(&state, "workspaceName"), j::text(&state, "action"), j::text(&state, "branch"));
-            confirm(
-                shell,
-                cx,
-                &tr("shell.commands.restoreTitle"),
-                &message,
-                &tr("workspace.route.recovery.restoreAction"),
-                false,
-                ShellOverlay::RestoreWorkspace { host_id, workspace_id },
-            );
-        }
         Pending::LabelCatalog => {
             if let Ok(payload) = result {
                 for label in j::array(payload, "labels") {
@@ -1592,29 +1406,13 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
                 shell.data.overlays.open_sheet(Box::new(history::ImportSheet::new(&target.server_id, "")));
             }
         }
-        "hdr:explorer" => {
-            if compact {
-                toggle_compact_explorer(shell, cx, ui);
-            } else if !shell.data.layout.explorer_visible && shell.data.layout.explorer_tabs.is_empty() {
-                if selected(shell).is_some_and(|t| !t.workspace_id.is_empty()) {
-                    open_default_explorer(shell, cx, ui);
-                }
-            } else {
-                let visible = shell.data.layout.explorer_visible;
-                shell.data.layout.show_explorer(!visible);
-            }
-        }
+        "hdr:explorer" => execute(shell, cx, ui, "sidebar.toggle.right", &Value::Null),
         "hdr:menu" => header_menu(shell, cx, &state, anchor_of(shell, id)),
         "hdr:scripts" => {
             if let Some(target) = selected(shell)
                 && let Some(workspace) = workspace_value(&state, &target.server_id, &target.workspace_id)
             {
                 scripts_menu(shell, cx, target, workspace, anchor_of(shell, id));
-            }
-        }
-        "hdr:tabs" => {
-            if let Some(target) = selected(shell) {
-                shell.data.overlays.open_sheet(Box::new(workspace_tabs::WorkspaceTabsSheet::new(target)));
             }
         }
         "explorer:new" => explorer_new_tab(shell, cx, anchor_of(shell, id)),
@@ -1625,8 +1423,7 @@ pub fn click(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, id: &str, 
                 shell.data.layout.show_explorer(false);
             }
         }
-        "empty:new" => new_session(shell, cx, ui, false, false),
-        "nav:new-workspace" => new_session(shell, cx, ui, true, false),
+        "empty:new" | "nav:new-workspace" => new_session(shell, cx, ui),
         "nav:history" => {
             let host = selected(shell).map(|t| t.server_id).or_else(|| hosts::hosts(&state).first().map(|h| h.server_id().to_string()));
             match host {
@@ -1687,7 +1484,7 @@ fn click_prefixed(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, state
         }
     } else if let Some(pane) = id.strip_prefix("panenew:") {
         shell.data.layout.focus_pane(pane);
-        new_session(shell, cx, ui, false, false);
+        new_session(shell, cx, ui);
     } else if let Some(sid) = id.strip_prefix("host:") {
         sidebar::toggle_collapsed(ui, &format!("host:{sid}"));
     } else if let Some(sid) = id.strip_prefix("hostplus:") {
@@ -1963,112 +1760,36 @@ fn rename_tab(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, target: Panel
     prompt(shell, cx, &title, &current, ShellOverlay::RenameTab { target });
 }
 
-/// Compact switcher row menu (`MobileTabTrailingAccessory`).
-pub fn workspace_tab_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, tab: PanelTarget, workspace: PanelTarget, anchor: Rect) {
-    let tabs = workspace_tabs(shell, state, &workspace);
-    let index = tabs.iter().position(|t| t.key() == tab.key());
-    let agent = tab.kind == "agent";
-    let id = tab.id.clone().unwrap_or_default();
-    let mut entries = Vec::new();
-    if agent {
-        entries.push(item("resume", tr("workspace.tabs.menu.copyResumeCommand"), "copy"));
-        entries.push(MenuItem::new("agentId", tr("workspace.tabs.menu.copyAgentId")).icon("copy").hint(id.chars().take(7).collect::<String>()).entry());
-    }
-    if tab.kind == "file" {
-        entries.push(item("path", tr("workspace.tabs.menu.copyFilePath"), "copy"));
-    }
-    if agent {
-        entries.push(item("rename", tr("workspace.tabs.menu.rename"), "pencil"));
-        entries.push(MenuEntry::Separator);
-    }
-    entries.push(MenuItem::new("above", tr("workspace.tabs.menu.closeAbove")).icon("arrow-left-to-line").enabled(index.is_some_and(|i| i > 0)).entry());
-    entries.push(
-        MenuItem::new("below", tr("workspace.tabs.menu.closeBelow"))
-            .icon("arrow-right-to-line")
-            .enabled(index.is_some_and(|i| i + 1 < tabs.len()))
-            .entry(),
-    );
-    entries.push(MenuItem::new("others", tr("workspace.tabs.menu.closeOthers")).icon("copy-x").enabled(tabs.len() > 1).entry());
-    if agent {
-        entries.push(item("reload", tr("workspace.tabs.menu.reloadAgent"), "rotate-cw"));
-    }
-    entries.push(item("close", tr("workspace.tabs.menu.close"), "x"));
-    let title = chrome::kind_label(&tab);
-    menu(shell, cx, anchor, Some(title), entries, MenuOptions { align_end: true, ..MenuOptions::default() }, ShellOverlay::WorkspaceTabMenu { tab, workspace });
-}
 
-fn workspace_tab_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, tab: PanelTarget, workspace: PanelTarget, value: &str) {
-    let tabs = workspace_tabs(shell, &ui.state.clone(), &workspace);
-    let index = tabs.iter().position(|t| t.key() == tab.key()).unwrap_or(0);
-    // Unopened root agents in the switcher have no tab to close.
-    let open = |list: Vec<PanelTarget>, shell: &PaseoShell| -> Vec<String> {
-        list.into_iter().map(|t| t.key()).filter(|k| shell.data.layout.target(k).is_some()).collect()
-    };
-    match value {
-        "resume" => copy_resume_command(shell, cx, ui, &tab),
-        "agentId" => copy(shell, cx, tab.id.as_deref().unwrap_or(""), "workspace.tabs.toasts.agentIdCopiedLabel"),
-        "path" => {
-            let path = j::text_or(&tab.data, "path", tab.id.as_deref().unwrap_or("")).to_string();
-            copy(shell, cx, &path, "workspace.tabs.toasts.filePathCopiedLabel");
-        }
-        "rename" => rename_tab(shell, cx, ui, tab),
-        "above" => {
-            let keys = open(tabs[..index].to_vec(), shell);
-            close_bulk(shell, cx, keys, "workspace.tabs.confirmations.closeTabsLeftTitle", AfterClose::Nothing);
-        }
-        "below" => {
-            let keys = open(tabs[index + 1..].to_vec(), shell);
-            close_bulk(shell, cx, keys, "workspace.tabs.confirmations.closeTabsRightTitle", AfterClose::Nothing);
-        }
-        "others" => {
-            let key = tab.key();
-            let keys = open(tabs.into_iter().filter(|t| t.key() != key).collect(), shell);
-            close_bulk(shell, cx, keys, "workspace.tabs.confirmations.closeOtherTabsTitle", AfterClose::Nothing);
-        }
-        "reload" => reload_agent(shell, cx, ui, &tab),
-        "close" => close_tabs(shell, cx, ui, vec![tab.key()], true, AfterClose::Nothing),
-        _ => {}
-    }
-}
-
-/// Original explorer "+" (`SUPPORTING_LAUNCH_ORDER` minus browser).
+/// Supporting views available from the explorer "+".
 fn explorer_new_tab(shell: &mut PaseoShell, cx: &mut Cx, anchor: Rect) {
     let (keys, _) = chrome::explorer_keys(shell);
     let kinds: Vec<String> = keys.iter().filter_map(|k| shell.data.layout.target(k)).map(|t| t.kind.clone()).collect();
     let mut entries = Vec::new();
-    if !kinds.iter().any(|k| k == "changes_tree") {
-        entries.push(item("changes_tree", tr("panels.diff.changesLabel"), crate::common::icons::for_tab_kind("changes_tree")));
+    for (kind, label) in [
+        ("files", "panels.files.label"),
+        ("git_log", "workspace.git.log.title"),
+        ("git_commit", "workspace.git.commit.title"),
+    ] {
+        if !kinds.iter().any(|k| k == kind) {
+            entries.push(item(kind, tr(label), crate::common::icons::for_tab_kind(kind)));
+        }
     }
     entries.push(item("terminal", tr("workspace.tabs.fallback.terminal"), crate::common::icons::for_tab_kind("terminal")));
-    if !shell.data.compact {
-        entries.push(item("working_diff", tr("panels.diff.diffLabel"), crate::common::icons::for_tab_kind("working_diff")));
-    }
-    if !kinds.iter().any(|k| k == "files") {
-        entries.push(item("files", tr("panels.files.label"), crate::common::icons::for_tab_kind("files")));
-    }
-    entries.push(item("new_tab", tr("workspace.tabs.fallback.agent"), "square-pen"));
     entries.push(item("pull_request", tr("panels.pullRequest.label"), crate::common::icons::for_tab_kind("pull_request")));
     menu(shell, cx, anchor, Some(tr("workspace.tabs.actions.newTab")), entries, MenuOptions::default(), ShellOverlay::ExplorerNewTab);
 }
 
 fn explorer_new_tab_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, value: &str) {
-    if value == "terminal" {
-        new_terminal(shell, cx, ui, TabPlacement::Explorer);
-        return;
+    match value {
+        "terminal" => new_terminal(shell, cx, ui, TabPlacement::Explorer),
+        "files" | "git_log" | "git_commit" | "pull_request" => open_workspace_panel(shell, cx, ui, value, true),
+        _ => {}
     }
-    if value != "new_tab" {
-        open_workspace_panel(shell, cx, ui, value, true);
-        return;
-    }
-    let Some(target) = selected(shell).filter(|t| !t.workspace_id.is_empty()) else {
-        return toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
-    };
-    let draft = PanelTarget::new("new_tab", &target.server_id, &target.workspace_id, &target.cwd).with_id(new_id());
-    open_tab(shell, cx, ui, draft, TabPlacement::Explorer);
 }
 
 /// `workspace.terminal.new` (`createTerminal` of `useWorkspaceTerminals`): a default shell in
-/// the focused workspace, opened as its terminal tab once the daemon created it.
+/// the selected session's directory, opened once the daemon created it.
 fn new_terminal(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, placement: TabPlacement) {
     let Some(target) = selected(shell).filter(|t| !t.workspace_id.is_empty()) else {
         return toast(shell, cx, tr("shell.commands.openSessionFirst"), true);
@@ -2077,33 +1798,20 @@ fn new_terminal(shell: &mut PaseoShell, cx: &mut Cx, ui: &UiContext, placement: 
     if !host.connected() {
         return toast(shell, cx, tr("workspace.terminal.hostDisconnected"), true);
     }
-    let cwd = host
-        .workspace(&target.workspace_id)
-        .map(|w| j::text(w, "workspaceDirectory"))
-        .filter(|dir| !dir.is_empty())
-        .unwrap_or(target.cwd.as_str())
-        .to_string();
+    let cwd = target.cwd.clone();
     let message = json!({ "type": "create_terminal_request", "cwd": cwd, "workspaceId": target.workspace_id });
     let pending = Pending::CreateTerminal { host_id: target.server_id.clone(), workspace_id: target.workspace_id.clone(), cwd, placement };
     request(shell, ui, &target.server_id, message, "create_terminal_response", pending);
 }
 
-/// `WorkspaceHeaderMenu` (copy path/branch, import session, show setup; compact scripts first),
-/// led by the selected session's actions so the header `⋯` reaches them on every layout.
+/// Session actions and directory tools, with scripts first on compact layouts.
 fn header_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect) {
     let target = selected(shell);
     let workspace = target.as_ref().and_then(|t| workspace_value(state, &t.server_id, &t.workspace_id));
-    let directory = workspace
-        .as_ref()
-        .map(|w| j::text_or(w, "workspaceDirectory", target.as_ref().map_or("", |t| t.cwd.as_str())).to_string())
-        .unwrap_or_else(|| target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default());
+    let directory = target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default();
     let branch = workspace.as_ref().map(|w| j::text(j::object(w, "gitRuntime"), "currentBranch").trim().to_string()).unwrap_or_default();
     let has_branch = !branch.is_empty() && branch != "HEAD";
     let is_git = workspace.as_ref().is_some_and(|w| !j::is_null_or_missing(w, "gitRuntime") || j::text(w, "projectKind") == "git");
-    let show_setup = workspace.as_ref().is_some_and(|w| {
-        !j::is_null_or_missing(w, "setupStatus")
-            || !target.as_ref().and_then(|t| hosts::host(state, &t.server_id)).is_some_and(|h| h.supports("workspaceSetupObservation"))
-    });
     let mut entries = Vec::new();
     let session_title = target.as_ref().filter(|t| t.kind == "agent").map(|agent| chrome::title(state, agent));
     if let Some(agent) = target.as_ref().filter(|t| t.kind == "agent") {
@@ -2121,7 +1829,6 @@ fn header_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect)
             }
         }
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::Label(tr("workspace.header.actions.workspaceActions")));
     }
     if shell.data.compact && workspace.as_ref().is_some_and(|w| !j::array(w, "scripts").is_empty()) {
         entries.push(item("scripts", tr("workspace.scripts.title"), "play"));
@@ -2136,21 +1843,14 @@ fn header_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, anchor: Rect)
         entries.push(item("copyBranch", tr("workspace.header.actions.copyBranchName"), "copy"));
     }
     entries.push(MenuItem::new("import", tr("workspace.header.actions.importSession")).icon("import").enabled(target.is_some()).entry());
-    if show_setup {
-        entries.push(MenuEntry::Separator);
-        entries.push(item("setup", tr("workspace.header.actions.showSetup"), "settings"));
-    }
-    let title = Some(session_title.unwrap_or_else(|| tr("workspace.header.actions.workspaceActions")));
+    let title = Some(session_title.unwrap_or_else(|| tr("shell.menu.sessionActions")));
     menu(shell, cx, anchor, title, entries, MenuOptions::default(), ShellOverlay::HeaderMenu { target });
 }
 
 fn header_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, target: Option<PanelTarget>, value: &str) {
     let state = ui.state.clone();
     let workspace = target.as_ref().and_then(|t| workspace_value(&state, &t.server_id, &t.workspace_id));
-    let directory = workspace
-        .as_ref()
-        .map(|w| j::text_or(w, "workspaceDirectory", target.as_ref().map_or("", |t| t.cwd.as_str())).to_string())
-        .unwrap_or_else(|| target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default());
+    let directory = target.as_ref().map(|t| t.cwd.clone()).unwrap_or_default();
     if let (Some(action), Some(target)) = (value.strip_prefix("conversation:"), target.as_ref()) {
         if let Some(panel) = shell.data.panels.get(&target.key()) {
             panels::run_conversation_action(cx, panel, action);
@@ -2184,7 +1884,7 @@ fn header_menu_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, t
                 open_tab(shell, cx, ui, next, TabPlacement::Main);
             }
         }
-        "setup" | "scripts" => {
+        "scripts" => {
             if let (Some(target), Some(workspace)) = (target, workspace) {
                 let root = j::text_or(&workspace, "projectRootPath", &directory).to_string();
                 let next = PanelTarget::new("setup", &target.server_id, &target.workspace_id, &directory).with_data(json!({ "repoRoot": root }));
@@ -2433,7 +2133,6 @@ fn project_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &st
     let order: Vec<String> = sidebar::ordered_projects(&host, &stored).iter().map(|p| sidebar::project_key(&host, p)).collect();
     let entries = [
         ("new", "sessionNavigation.newSession"),
-        ("worktree", "shell.commands.newWorktreeSession"),
         ("history", "sessions.title"),
         ("import", "importSession.title"),
         ("rename", "sidebar.project.actions.rename"),
@@ -2441,19 +2140,12 @@ fn project_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &st
         ("icon", "sidebar.project.actions.chooseIcon"),
         ("resetIcon", "sidebar.project.actions.resetIcon"),
         ("settings", "sidebar.project.actions.openSettings"),
-        ("archive", "sidebar.project.actions.archiveAll"),
         ("up", "settings.appearance.sidebar.moveUp"),
         ("down", "settings.appearance.sidebar.moveDown"),
         ("remove", "sidebar.project.actions.remove"),
     ]
     .iter()
-    .map(|(value, key)| {
-        let label = tr(key);
-        match *value {
-            "worktree" => MenuItem::new(*value, label).hint(crate::shell::shortcuts::current_label_for_help_id("new-worktree").unwrap_or_default()).entry(),
-            _ => MenuItem::new(*value, label).entry(),
-        }
-    })
+    .map(|(value, key)| MenuItem::new(*value, tr(key)).entry())
     .collect();
     menu(shell, cx, anchor, None, entries, MenuOptions::default(), ShellOverlay::ProjectMenu { host_id: host_id.to_string(), project, order });
 }
@@ -2485,11 +2177,6 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
     match action {
         "new" => {
             let target = PanelTarget::new("new_tab", host_id, "", &root).with_data(json!({ "project": project }));
-            open_tab(shell, cx, ui, target, TabPlacement::Main);
-        }
-        // `worktree.new` for this project: the new-session form starts on "New worktree".
-        "worktree" => {
-            let target = PanelTarget::new("new_tab", host_id, "", &root).with_id(new_id()).with_data(json!({ "project": project, "source": "branch-off" }));
             open_tab(shell, cx, ui, target, TabPlacement::Main);
         }
         "history" => {
@@ -2539,10 +2226,6 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
             "project.rename.response",
             Pending::Refresh { host_id: host_id.to_string() },
         ),
-        "archive" => {
-            let workspaces: VecDeque<Value> = host.workspaces().iter().filter(|w| j::text(w, "projectId") == project_id).cloned().collect();
-            archive_workspaces(shell, cx, ui, host_id, workspaces, Vec::new());
-        }
         "remove" => {
             let count = host.workspaces().iter().filter(|w| j::text(w, "projectId") == project_id).count();
             confirm(
@@ -2560,8 +2243,7 @@ fn project_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_
 }
 
 /// The sidebar session row's menu; History rows (`with_open`) lead with "Open".
-pub(crate) fn session_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, host_id: &str, agent: Value, anchor: Rect, with_open: bool) {
-    let pinned = workspace_value(state, host_id, j::text(&agent, "workspaceId")).is_some_and(|w| !j::is_null_or_missing(&w, "pinnedAt"));
+pub(crate) fn session_menu(shell: &mut PaseoShell, cx: &mut Cx, _state: &Value, host_id: &str, agent: Value, anchor: Rect, with_open: bool) {
     let mut entries = Vec::new();
     if with_open {
         entries.push(MenuItem::new("open", tr("sessions.actions.open")).entry());
@@ -2570,58 +2252,17 @@ pub(crate) fn session_menu(shell: &mut PaseoShell, cx: &mut Cx, state: &Value, h
     if j::is_null_or_missing(&agent, "archivedAt") {
         entries.push(MenuItem::new("reload", tr("workspace.tabs.menu.reloadAgent")).entry());
     }
-    entries.extend([
-        MenuItem::new("archive", tr("agentList.archiveSheet.archive")).entry(),
-        MenuItem::new("labels", tr("workspaceLabels.manage.open")).entry(),
-        MenuItem::new("pin", tr(if pinned { "sidebar.workspace.actions.unpin" } else { "sidebar.workspace.actions.pin" })).entry(),
-        MenuItem::new("unread", tr("sidebar.workspace.actions.markUnread")).entry(),
-        MenuItem::new("recover", tr("sidebar.workspace.actions.recover")).entry(),
-        MenuItem::new("archiveWorkspace", tr("workspace.git.actions.archive.label")).entry(),
-    ]);
+    entries.push(MenuItem::new("archive", tr("agentList.archiveSheet.archive")).entry());
     menu(shell, cx, anchor, None, entries, MenuOptions::default(), ShellOverlay::SessionMenu { host_id: host_id.to_string(), agent });
 }
 
 fn session_action(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, host_id: &str, agent: &Value, action: &str) {
-    let state = ui.state.clone();
     let agent_id = j::text(agent, "id").to_string();
-    let workspace_id = j::text(agent, "workspaceId").to_string();
-    let workspace = workspace_value(&state, host_id, &workspace_id);
     let title = {
         let t = j::text(agent, "title");
         if t.is_empty() { tr("sessionNavigation.untitled") } else { t.to_string() }
     };
-    let refresh = Pending::Refresh { host_id: host_id.to_string() };
     match action {
-        "labels" => match workspace {
-            Some(workspace) => {
-                shell.data.overlays.open_sheet(Box::new(labels::LabelsSheet::new(host_id.to_string(), Some(workspace))));
-            }
-            None => toast(shell, cx, tr("shell.commands.workspaceUnavailable"), true),
-        },
-        "recover" => recover_workspace(shell, ui, host_id, &workspace_id),
-        "archiveWorkspace" => {
-            let list: VecDeque<Value> = workspace.into_iter().collect();
-            archive_workspaces(shell, cx, ui, host_id, list, Vec::new());
-        }
-        "pin" => {
-            let pinned = workspace.as_ref().is_none_or(|w| j::is_null_or_missing(w, "pinnedAt"));
-            request(
-                shell,
-                ui,
-                host_id,
-                json!({ "type": "workspace.pin.set.request", "workspaceId": workspace_id, "pinned": pinned }),
-                "workspace.pin.set.response",
-                refresh,
-            );
-        }
-        "unread" => request(
-            shell,
-            ui,
-            host_id,
-            json!({ "type": "workspace.mark_unread.request", "workspaceId": workspace_id }),
-            "workspace.mark_unread.response",
-            refresh,
-        ),
         "open" => open_agent(shell, ui, host_id, &agent_id, None, TabPlacement::Main),
         "rename" => prompt(shell, cx, &tr("workspace.tabs.menu.renameAgent"), &title, ShellOverlay::RenameSession { host_id: host_id.to_string(), agent_id }),
         "reload" => reload_agent(shell, cx, ui, &navigation_agent_target(host_id, agent, None)),
@@ -2858,7 +2499,6 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                 }
             }
         }
-        ShellOverlay::WorkspaceTabMenu { tab, workspace } => workspace_tab_menu_result(shell, cx, ui, tab, workspace, &value),
         ShellOverlay::HostMenu { host_id, order } => host_action(shell, cx, ui, &host_id, &value, &order),
         ShellOverlay::ProjectMenu { host_id, project, order } => project_action(shell, cx, ui, &host_id, &project, &value, &order),
         ShellOverlay::SessionMenu { host_id, agent } => session_action(shell, cx, ui, &host_id, &agent, &value),
@@ -2928,23 +2568,6 @@ pub fn shell_overlay_result(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiCont
                     "agent_archived",
                     Pending::ArchiveSession { host_id: host_id.clone(), agent_id: agent_id.clone() },
                 );
-            }
-        }
-        ShellOverlay::ArchiveRisk { host_id, current, remaining, confirmed: mut list } => {
-            if confirmed {
-                list.push(current);
-            }
-            archive_workspaces(shell, cx, ui, &host_id, remaining.into(), list);
-        }
-        ShellOverlay::RestoreWorkspace { host_id, workspace_id } => {
-            if confirmed {
-                let id = ui.core.request_with_timeout(
-                    &host_id,
-                    json!({ "type": "workspace.recovery.restore.request", "workspaceId": workspace_id }),
-                    "workspace.recovery.restore.response",
-                    Some(std::time::Duration::from_secs(150)),
-                );
-                shell.data.pending.insert(id, Pending::Refresh { host_id });
             }
         }
         ShellOverlay::RenameTab { target } => {
@@ -3190,7 +2813,7 @@ fn open_route(shell: &mut PaseoShell, cx: &mut Cx, ui: &mut UiContext, route: &P
             if hosts::host(&ui.state, server_id).is_none() {
                 return false;
             }
-            host_chosen(shell, cx, ui, HostPurpose::NewSession { new_workspace: true, worktree: false }, server_id.clone());
+            host_chosen(shell, cx, ui, HostPurpose::NewSession, server_id.clone());
             true
         }
     }

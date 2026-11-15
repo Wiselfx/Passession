@@ -259,23 +259,7 @@ impl ProjectService {
         Ok(changed)
     }
     pub async fn environment(&self, id: &str) -> Result<BTreeMap<String, String>> {
-        let mut env = self.teardown_environment(id).await?;
-        let workspace = self
-            .workspace(id)
-            .await?
-            .ok_or_else(|| anyhow!("Workspace not found: {id}"))?;
-        if workspace["kind"] == "worktree" {
-            let root = workspace["worktreeRoot"]
-                .as_str()
-                .unwrap_or(text(&workspace, "cwd")?);
-            env.insert(
-                "PASEO_WORKTREE_PORT".into(),
-                runtime::ensure_worktree_runtime_port(Path::new(root))
-                    .await?
-                    .to_string(),
-            );
-        }
-        Ok(env)
+        self.teardown_environment(id).await
     }
     pub async fn teardown_environment(&self, id: &str) -> Result<BTreeMap<String, String>> {
         let workspace = self
@@ -482,6 +466,7 @@ impl ProjectService {
         Ok(record)
     }
     pub async fn create_workspace(&self, input: &Value) -> Result<Value> {
+        reject_worktree_source(&input["source"])?;
         if input["internal"] == true {
             bail!("Public internal workspaces were removed; use background workspace creation.")
         }
@@ -520,107 +505,12 @@ impl ProjectService {
                 self.create_directory(Path::new(text(source, "path")?), &options)
                     .await?
             }
-            "worktree" => self.create_worktree(source, &options).await?,
+            "worktree" => return Err(unsupported_worktrees()),
             _ => bail!("Unexpected workspace source"),
         };
         created["created"] = json!(true);
         created["creationKind"] = json!("created");
         Ok(created)
-    }
-    async fn create_worktree(&self, source: &Value, options: &Value) -> Result<Value> {
-        let app = self.app()?;
-        let id = options["workspaceId"]
-            .as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(store::generate_workspace_id);
-        if self.workspace(&id).await?.is_some() {
-            bail!("Workspace already exists: {id}")
-        }
-        let background = self.background(options).await?;
-        let requested_project = if let Some(id) = source["projectId"].as_str() {
-            Some(self.active_project(id).await?)
-        } else {
-            None
-        };
-        let cwd = source["cwd"]
-            .as_str()
-            .or_else(|| {
-                requested_project
-                    .as_ref()
-                    .and_then(|p| p["rootPath"].as_str())
-            })
-            .ok_or_else(|| {
-                RequestError::new(
-                    "source_required",
-                    "cwd or projectId is required for a worktree-backed workspace",
-                )
-            })?;
-        let cwd = self.absolute(Path::new(cwd))?;
-        let checkout = self.checkout(&cwd).await?;
-        let source_root = PathBuf::from(
-            checkout["worktreeRoot"]
-                .as_str()
-                .unwrap_or(&cwd.to_string_lossy()),
-        );
-        let mut request = source.clone();
-        if let Some(context) = options.get("firstAgentContext") {
-            request["firstAgentContext"] = context.clone();
-        }
-        if request.get("refName").is_none()
-            && let Some(base) = source.get("baseBranch") {
-                request["refName"] = base.clone();
-            }
-        let created = worktrees::create(
-            &app.home,
-            &app.config.snapshot(),
-            &cwd,
-            &request,
-            &app.git.forge,
-            &app.config.environment(),
-            app.cancel.child_token(),
-        )
-        .await?;
-        let mut persisted = false;
-        let result=async {
-            let worktree=&created["worktree"];let repo=Path::new(text(&created,"repoRoot")?);
-            let project=if let Some(project)=requested_project{project}else{
-                let candidates=self.list_workspaces().await?;
-                let existing=candidates.iter().find(|w|w["archivedAt"].is_null()&&store::equivalent_paths(w["cwd"].as_str().unwrap_or(""),&cwd.to_string_lossy())).or_else(||candidates.iter().find(|w|w["archivedAt"].is_null()&&store::equivalent_paths(w["cwd"].as_str().unwrap_or(""),&repo.to_string_lossy())));
-                match existing {Some(w)=>match self.project(text(w,"projectId")?).await? {Some(p)=>p,None=>self.register_project(repo).await?},None=>self.register_project(repo).await?}
-            };
-            let root=Path::new(text(worktree,"worktreePath")?);
-            let target=worktrees::map_workspace_cwd(&source_root,&cwd,root).await?;
-            if !tokio::fs::metadata(&target).await.map(|m|m.is_dir()).unwrap_or(false){bail!("Selected project directory is missing from the worktree: {}",target.display())}
-            worktrees::seed_paseo_config_file(&cwd,&target).await?;
-            if created["intent"]["kind"]=="branch-off" {runtime::write_worktree_first_agent_branch_auto_name_metadata(root,text(worktree,"branchName")?).await?;}
-            let mut record=store::initial_workspace_placement(&json!({"source":"created_worktree","cwd":target,"worktreeRoot":root,"branch":worktree["branchName"],"baseBranch":worktree["comparisonBaseRef"],"mainRepoRoot":repo}));
-            record["workspaceId"]=json!(id);record["projectId"]=project["projectId"].clone();record["title"]=json!(initial_title(options));record["createdAt"]=json!(now());record["updatedAt"]=record["createdAt"].clone();record["background"]=json!(background);
-            let intent=&created["intent"];
-            if intent["kind"]=="checkout-change-request"&&intent["headRepository"].as_str().is_some_and(|s|!s.is_empty()){
-                record["untrustedSource"]=json!({"kind":"change_request","forge":intent["forge"],"number":intent["changeRequestNumber"],"headRepository":intent["headRepository"]});
-            }
-            let mut record=store::create_workspace(record)?;
-            self.storage().await?.upsert_workspace(record.clone()).await?;persisted=true;
-            self.emit_workspace_hook("workspace.created",&record).await;
-            if let Err(error)=app.git.retain_observation(Path::new(text(&record,"cwd")?)).await{tracing::warn!(%error,"Created workspace observation unavailable");}
-            self.publish_workspace(&id).await?;
-            app.terminals.start_setup(&id).await?;
-            if let Some(context)=options.get("firstAgentContext"){self.schedule_name(&record,context);}
-            record["createdWorktree"]=json!({"worktree":created["worktree"],"intent":created["intent"],"repoRoot":created["repoRoot"],"workspace":record.clone(),"created":true});
-            Ok(record)
-        }.await;
-        if result.is_err() && !persisted
-            && let Err(error) = worktrees::rollback_created(
-                &app.home,
-                &app.config.snapshot(),
-                &created,
-                app.cancel.child_token(),
-            )
-            .await
-            {
-                tracing::warn!(%error,"Failed to roll back created worktree; retaining owned resources");
-            }
-        result
     }
     pub async fn refresh_workspace(&self, workspace: Value) -> Result<Value> {
         let cwd = Path::new(text(&workspace, "cwd")?);
@@ -752,13 +642,12 @@ impl ProjectService {
     }
     pub async fn archive_workspace(&self, actor: &Value, id: &str) -> Result<Value> {
         let _guard = self.lifecycle.lock().await;
-        self.archive_locked(actor, id, true, None).await
+        self.archive_locked(actor, id, None).await
     }
     async fn archive_locked(
         &self,
         actor: &Value,
         id: &str,
-        remove_disk: bool,
         auto_url: Option<&str>,
     ) -> Result<Value> {
         let app = self.app()?;
@@ -779,22 +668,11 @@ impl ProjectService {
                 if let Some(archived)=self.workspace(id).await?{self.emit_workspace_hook("workspace.archived",&archived).await;}
                 if let Err(error)=app.git.release_observation(Path::new(text(&workspace,"cwd")?)).await{tracing::warn!(%error,"Failed to release workspace observation");}
             }
-            let mut removed=false;
-            if remove_disk&&workspace["isPaseoOwnedWorktree"]==true {
-                let root=workspace["worktreeRoot"].as_str().unwrap_or(text(&workspace,"cwd")?);
-                let blocked=workspace.get("untrustedSource").is_some_and(|source|!source.is_null());
-                let teardown=if blocked||!workspace["archivedAt"].is_null(){Ok(())}else{app.terminals.teardown(id).await};
-                if let Err(error)=teardown{tracing::warn!(%error,workspace_id=id,"Worktree teardown failed; preserving directory");}else{
-                    let mut referenced=false;
-                    for other in self.list_workspaces().await?{if other["archivedAt"].is_null(){let backing=other["worktreeRoot"].as_str().unwrap_or(text(&other,"cwd")?);if same_path(Path::new(backing),Path::new(root)).await{referenced=true;break}}}
-                    if !referenced&& let Some(repo)=workspace["mainRepoRoot"].as_str(){match worktrees::remove(&app.home,&app.config.snapshot(),Path::new(repo),Path::new(root),app.cancel.child_token()).await{Ok(())=>removed=true,Err(error)=>tracing::warn!(%error,"Worktree removal failed; workspace remains archived")}}
-                }
-            }
             self.runtime_ports.release_plan(id);
             app.terminals.remove_workspace_runtime(id);
             self.publish_workspace(id).await?;
             let archived=self.workspace(id).await?.unwrap();
-            Ok(json!({"workspaceId":id,"archivedAgentIds":agents,"removedDirectory":removed,"archivedAt":archived["archivedAt"],"error":null}))
+            Ok(json!({"workspaceId":id,"archivedAgentIds":agents,"removedDirectory":false,"archivedAt":archived["archivedAt"],"error":null}))
         }.await;
         self.directory_state.clear_archiving(&ids);
         self.publish_workspace(id).await?;
@@ -892,6 +770,69 @@ impl ProjectService {
             || self.handle_wire(context, message).await?)
     }
 }
+pub(crate) fn unsupported_worktrees() -> anyhow::Error {
+    RequestError::new(
+        "unsupported",
+        "Managed worktrees are no longer supported. Use an existing local directory.",
+    )
+    .into()
+}
+
+fn reject_worktree_source(source: &Value) -> Result<()> {
+    if source["kind"] == "worktree" {
+        return Err(unsupported_worktrees());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn worktree_creation_is_rejected_before_service_or_filesystem_access() {
+        let service = ProjectService::new(Weak::new());
+        let error = service.create_workspace(&json!({
+            "type":"workspace.create.request",
+            "source":{"kind":"worktree","cwd":"/not-accessed","action":"branch-off"}
+        })).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<RequestError>().unwrap().code, "unsupported");
+        assert!(reject_worktree_source(&json!({"kind":"directory","path":"/local"})).is_ok());
+    }
+
+    #[tokio::test]
+    async fn archiving_legacy_owned_directory_preserves_user_files() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let cwd = root.path().join("checkout");
+        tokio::fs::create_dir(&cwd).await.unwrap();
+        tokio::fs::write(cwd.join("uncommitted.txt"), b"user work").await.unwrap();
+        let store = store::Store::load(&home).await.unwrap();
+        store.upsert_project(store::create_project(json!({
+            "projectId":"prj_retirement","rootPath":root.path(),"kind":"git",
+            "displayName":"Project","createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
+        })).unwrap()).await.unwrap();
+        store.upsert_workspace(store::create_workspace(json!({
+            "workspaceId":"wks_retirement","projectId":"prj_retirement","cwd":cwd,
+            "kind":"worktree","displayName":"Existing directory","worktreeRoot":cwd,
+            "mainRepoRoot":root.path(),"isPaseoOwnedWorktree":true,
+            "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
+        })).unwrap()).await.unwrap();
+        let app = AppState::new(home, root.path().into(), std::env::current_exe().unwrap());
+        app.config.initialize_with_overrides(&json!({"listen":"127.0.0.1:0"})).await.unwrap();
+        app.transport.prepare().await.unwrap();
+        app.projects.initialize().await.unwrap();
+        app.agents.initialize().await.unwrap();
+        let archived = app.projects.archive_workspace(&json!({"kind":"system"}), "wks_retirement").await.unwrap();
+        assert_eq!(archived["removedDirectory"], false);
+        assert!(archived["archivedAt"].is_string());
+        assert_eq!(tokio::fs::read(cwd.join("uncommitted.txt")).await.unwrap(), b"user work");
+        assert!(root.path().is_dir());
+        app.cancel.cancel();
+        app.transport.shutdown().await.unwrap();
+    }
+}
+
 fn hook_workspace(workspace: &Value) -> Value {
     json!({"id":workspace["workspaceId"],"projectId":workspace["projectId"],"cwd":workspace["cwd"],"name":workspace["title"],"archivedAt":workspace["archivedAt"]})
 }

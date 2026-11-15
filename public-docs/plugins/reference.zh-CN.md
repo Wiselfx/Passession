@@ -83,13 +83,13 @@ async fn main() -> Result<()> {
 | `plugin.on(name, callback)` | 接收事件 JSON，处理后返回 null；按注册顺序执行，错误会记日志但不跳过后续处理函数。 |
 | `plugin.before(name, callback)` | 接收 `{"request": ...}`；返回 null 保留请求，或返回完整的变更后请求。 |
 
-事件包括 `agent.created`、`agent.closed`、`agent.turn_started`、`agent.turn_ended`、`agent.permission_requested`、`agent.permission_resolved`、`agent.archived`、`workspace.created`、`workspace.archived`。公开后台 Agent 参与，私有临时辅助 Agent 不参与。归档通知不证明清理已完成。轮次结束包含 `agent`、`turnId`、`outcome`（`completed`、`failed`、`canceled`）；不要依赖已废弃且为空的 `timeline`。
+事件包括 `agent.created`、`agent.closed`、`agent.turn_started`、`agent.turn_ended`、`agent.permission_requested`、`agent.permission_resolved`、`agent.archived`、`workspace.created`、`workspace.archived`。工作区事件描述保留的内部归属记录，不是产品工作区或 Git worktree 生命周期。公开后台 Agent 参与，私有临时辅助 Agent 不参与。归档通知不证明运行时清理已完成，也不表示删除目录。轮次结束包含 `agent`、`turnId`、`outcome`（`completed`、`failed`、`canceled`）；不要依赖已废弃且为空的 `timeline`。
 
-前置钩子：`agent.create` 可变更除 `cwd` 外的公开配置以及启动 `env`；`agent.session_open` 仅可变更 `env`；`workspace.create` 变更显式工作区创建请求。保留无关字段与前序变更。`env` 是启动覆盖值，不是完整继承环境。会话打开包括创建、恢复、刷新、导入和历史读取。遵守取消；不要把每个权限请求都当成 shell 命令，也不要把权限解决当成轮次结束。
+前置钩子：`agent.create` 可变更除 `cwd` 外的公开配置以及启动 `env`；`agent.session_open` 仅可变更 `env`；保留的 `workspace.create` 钩子变更显式内部目录归属创建请求。不支持 worktree 来源。保留无关字段与前序变更。`env` 是启动覆盖值，不是完整继承环境。会话打开包括创建、恢复、刷新、导入和历史读取。遵守取消；不要把每个权限请求都当成 shell 命令，也不要把权限解决当成轮次结束。
 
 ## 已连接主机和 Paseo SDK {#connected-hosts}
 
-`context.daemon.client().await?` 返回 `Arc<paseo_client::DaemonClient>`。惰性连接通过插件 IPC 桥接文本和二进制帧，不需要额外令牌或网络连接。宿主关闭使缓存会话失效，下次调用会重新打开逻辑会话。普通 Agent、工作区、权限、Provider 和配置操作使用 [Rust 客户端 SDK](../sdk/reference.zh-CN.md)。需要历史时读取有界片段，不要默认记录私密对话。主机 ID、路径和工作区 ID 属于各 daemon 连接，不能跨主机混用。
+`context.daemon.client().await?` 返回 `Arc<paseo_client::DaemonClient>`。惰性连接通过插件 IPC 桥接文本和二进制帧，不需要额外令牌或网络连接。宿主关闭使缓存会话失效，下次调用会重新打开逻辑会话。普通 Agent、目录、权限、Provider 和配置操作使用 [Rust 客户端 SDK](../sdk/reference.zh-CN.md)。需要历史时读取有界片段，不要默认记录私密对话。主机 ID、路径和内部 `workspaceId` 属于各 daemon 连接，不能跨主机混用。
 
 ## 持久化设置 {#settings-screens}
 

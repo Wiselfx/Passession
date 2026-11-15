@@ -93,6 +93,7 @@ pub fn features(config: &Value, hoplite: bool) -> Value {
         "workspaceLabels",
         "daemonStatusRpc",
         "gitLog",
+        "gitSelectedCommit",
         "readOnlyAgentTimeline",
     ] {
         result.insert(name.to_owned(), Value::Bool(true));
@@ -106,4 +107,12 @@ pub fn features(config: &Value, hoplite: bool) -> Value {
         result.insert("relayConfig".into(), Value::Bool(true));
     }
     Value::Object(result)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn selected_commit_capability_is_advertised() {
+        assert_eq!(super::features(&serde_json::json!({}), false)["gitSelectedCommit"], true);
+    }
 }

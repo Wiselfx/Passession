@@ -60,7 +60,7 @@ All prompts use `session.prompt`, including messages and structured commands. Ea
 
 ## Permissions and cancellation
 
-Emit `session.permission` with the session ID and a request containing a stable permission ID, descriptive name/detail, kind and the actual allowed actions. For example, the inspector offers `allow`/`deny` for a specific workspace-relative file. Handle the matching incoming `session.permission` response by validating the permission ID and chosen behavior before executing the read. Emit `session.permission_resolved` and the resulting turn outcome; a denied action must not run.
+Emit `session.permission` with the session ID and a request containing a stable permission ID, descriptive name/detail, kind and the actual allowed actions. For example, the inspector offers `allow`/`deny` for a specific file relative to the session directory. Handle the matching incoming `session.permission` response by validating the permission ID and chosen behavior before executing the read. Emit `session.permission_resolved` and the resulting turn outcome; a denied action must not run.
 
 Permissions are structured operations, not universally shell strings. Preserve question/approval choices from the underlying agent; never manufacture approval or silently select a permissive default. Session cancellation must stop active work and settle pending permissions. Closing/reloading a plugin while approval is outstanding must not leave a detached action running.
 

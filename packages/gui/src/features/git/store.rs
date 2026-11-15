@@ -1,8 +1,7 @@
 //! State shared by every git view of the window: per-checkout status and PR
 //! status (original `CheckoutGitState`), the action runner
 //! (`CheckoutGitActionsStore`), checkout invalidations
-//! (`CheckoutInvalidations`), workspace comparisons
-//! (`WorkingDiffComparisons`), review drafts (`ReviewDraft` registry) and the
+//! (`CheckoutInvalidations`), review drafts (`ReviewDraft` registry) and the
 //! unsupported-timeline registry.
 //!
 //! Every git root calls [`GitStore::begin_event`] first in `handle_event`; the
@@ -11,12 +10,12 @@
 //! [`GitStoreChanged`], so every root re-syncs in the follow-up dispatch.
 
 use super::host;
-use super::json::{array, error_message, flag, object, text};
+use super::json::{flag, object, text};
 use super::policy::{ActionStatus, normalize_pr_status_payload};
 use super::review::{ReviewDraft, storage_key};
 use super::text::{t, tr};
 use super::wire::{self, Failure};
-use crate::common::{UiContext, UiEffect};
+use crate::common::UiContext;
 use makepad_widgets::*;
 use paseo_gui_core::{CoreEvent, CoreHandle, RequestId};
 use serde_json::{Value, json};
@@ -113,20 +112,6 @@ impl CheckoutState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ActionCheck {
-    /// `gitRequest`: payload error or rejection fails.
-    Git,
-    /// `payload.success != true` fails (discard, archive).
-    RequireSuccess,
-}
-
-/// What a finished action does besides invalidating its checkout.
-#[derive(Clone, Debug)]
-pub enum ActionFollowUp {
-    None,
-    SuggestPostShipArchive,
-}
 
 struct ActionRun {
     host: String,
@@ -134,22 +119,13 @@ struct ActionRun {
     action_id: String,
     /// The in-flight step stays at the front until its response succeeds.
     steps: VecDeque<(String, Value)>,
-    check: ActionCheck,
     failure: String,
     success_label: Option<String>,
-    follow_up: ActionFollowUp,
 }
 
 impl ActionRun {
     fn accept_response(&mut self, result: &Result<Value, paseo_gui_core::CoreError>) -> Result<(), Failure> {
-        let outcome = match self.check {
-            ActionCheck::Git => wire::git_result(result).map(|_| ()),
-            ActionCheck::RequireSuccess => match wire::checkout_result(result) {
-                Ok(payload) if payload.get("success") == Some(&Value::Bool(true)) => Ok(()),
-                Ok(payload) => Err(Failure::message(error_message(&payload).unwrap_or_else(|| self.failure.clone()))),
-                Err(failure) => Err(failure),
-            },
-        };
+        let outcome = wire::git_result(result).map(|_| ());
         if outcome.is_ok() {
             self.steps.pop_front();
         }
@@ -169,15 +145,13 @@ pub struct ActionFailure {
     /// A lost response is not evidence that a mutation did not run.
     pub retryable: bool,
     steps: Vec<(String, Value)>,
-    check: ActionCheck,
     success_label: Option<String>,
-    follow_up: ActionFollowUp,
 }
 
 /// Owner of the review prompts the store opens.
 const REVIEW_OWNER: &str = "widget:git-review";
 
-/// What a reviewed Commit or Create PR runs once confirmed.
+/// What a reviewed Create PR runs once confirmed.
 #[derive(Clone, Debug)]
 pub struct ReviewPlan {
     pub host: String,
@@ -185,12 +159,8 @@ pub struct ReviewPlan {
     pub success_label: Option<String>,
 }
 
-/// A Commit / Create PR review in progress (one per window).
+/// A Create PR review in progress (one per window).
 enum Review {
-    /// Listing the files the commit includes.
-    CommitFiles { plan: ReviewPlan, generation: u64 },
-    /// The commit message prompt (empty lets the host write it).
-    CommitMessage { plan: ReviewPlan, prompt: u64 },
     /// Title (first line) and description of the pull request.
     PrText { plan: ReviewPlan, base: String, prompt: u64 },
     /// The base branch, prefilled.
@@ -198,10 +168,9 @@ enum Review {
 }
 
 impl Review {
-    fn prompt(&self) -> Option<u64> {
+    fn prompt(&self) -> u64 {
         match self {
-            Review::CommitFiles { .. } => None,
-            Review::CommitMessage { prompt, .. } | Review::PrText { prompt, .. } | Review::PrBase { prompt, .. } => Some(*prompt),
+            Review::PrText { prompt, .. } | Review::PrBase { prompt, .. } => *prompt,
         }
     }
 }
@@ -210,8 +179,6 @@ enum Pending {
     StatusRead { key: CheckoutKey, seq: u64 },
     PrStatus { key: CheckoutKey, generation: u64 },
     Action(ActionRun),
-    Archive { key: CheckoutKey, workspace_id: String, failure: String },
-    ReviewFiles { generation: u64 },
 }
 
 enum StoreTimer {
@@ -229,17 +196,12 @@ pub struct GitStore {
     checkouts: HashMap<CheckoutKey, CheckoutState>,
     invalidations: HashMap<CheckoutKey, u64>,
     action_status: HashMap<(CheckoutKey, String), ActionStatus>,
-    post_ship_archive: HashSet<CheckoutKey>,
-    archiving: HashSet<CheckoutKey>,
-    comparisons: HashMap<String, String>,
-    pub comparisons_revision: u64,
     drafts: HashMap<String, ReviewDraft>,
     unsupported_timelines: HashSet<String>,
     pending: HashMap<RequestId, Pending>,
     timers: Vec<(Timer, StoreTimer)>,
     failures: HashMap<CheckoutKey, ActionFailure>,
     review: Option<Review>,
-    review_generation: u64,
 }
 
 impl GitStore {
@@ -277,7 +239,7 @@ impl GitStore {
                 }
             }
         }
-        if self.review.as_ref().and_then(Review::prompt).is_some() {
+        if self.review.is_some() {
             for (id, args) in crate::common::overlay::take_answers(REVIEW_OWNER) {
                 self.on_review_answer(cx, ui, id, &args);
             }
@@ -546,42 +508,6 @@ impl GitStore {
                 self.changed(cx);
             }
             Pending::Action(run) => self.continue_action(cx, ui, run, result),
-            Pending::ReviewFiles { generation } => self.on_review_files(cx, ui, generation, result),
-            Pending::Archive {
-                key: checkout,
-                workspace_id,
-                failure,
-            } => {
-                self.archiving.remove(&checkout);
-                let outcome = match wire::checkout_result(result) {
-                    Ok(payload) => {
-                        let rejected = payload.get("error").is_some_and(|e| !e.is_null())
-                            || payload.get("success") == Some(&Value::Bool(false))
-                            || payload.get("accepted") == Some(&Value::Bool(false));
-                        if rejected {
-                            Err(error_message(&payload).unwrap_or_else(|| failure.clone()))
-                        } else {
-                            Ok(())
-                        }
-                    }
-                    Err(error) => Err(wire::message_or(&error, failure.clone())),
-                };
-                match outcome {
-                    Ok(()) => {
-                        let closing: Vec<String> = host::tabs(ui)
-                            .iter()
-                            .filter(|tab| tab.server_id == checkout.0 && tab.workspace_id == workspace_id)
-                            .map(|tab| tab.key())
-                            .collect();
-                        for tab_key in closing {
-                            ui.push(UiEffect::CloseTab { tab_key });
-                        }
-                        ui.core.refresh_host(&checkout.0);
-                    }
-                    Err(message) => ui.toast(message, true),
-                }
-                self.changed(cx);
-            }
         }
     }
 
@@ -612,13 +538,6 @@ impl GitStore {
             .unwrap_or_default()
     }
 
-    pub fn post_ship_archive_suggested(&self, host_id: &str, cwd: &str) -> bool {
-        self.post_ship_archive.contains(&key(host_id, cwd))
-    }
-
-    pub fn archiving(&self, host_id: &str, cwd: &str) -> bool {
-        self.archiving.contains(&key(host_id, cwd))
-    }
 
     fn set_action_status(&mut self, cx: &mut Cx, checkout: &CheckoutKey, action_id: &str, status: ActionStatus) {
         let entry = (checkout.clone(), action_id.to_owned());
@@ -647,50 +566,11 @@ impl GitStore {
         steps: Vec<(&str, Value)>,
         failure_key: &str,
         success_label: Option<String>,
-        follow_up: ActionFollowUp,
-    ) {
-        self.run_checked(cx, host_id, cwd, action_id, steps, ActionCheck::Git, failure_key, success_label, follow_up);
-    }
-
-    /// [`run_action`](Self::run_action) whose steps must answer `success: true`.
-    pub fn run_success_action(
-        &mut self,
-        cx: &mut Cx,
-        host_id: &str,
-        cwd: &str,
-        action_id: &str,
-        steps: Vec<(&str, Value)>,
-        failure_key: &str,
-    ) {
-        self.run_checked(
-            cx,
-            host_id,
-            cwd,
-            action_id,
-            steps,
-            ActionCheck::RequireSuccess,
-            failure_key,
-            None,
-            ActionFollowUp::None,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_checked(
-        &mut self,
-        cx: &mut Cx,
-        host_id: &str,
-        cwd: &str,
-        action_id: &str,
-        steps: Vec<(&str, Value)>,
-        check: ActionCheck,
-        failure_key: &str,
-        success_label: Option<String>,
-        follow_up: ActionFollowUp,
     ) {
         let steps = steps.into_iter().map(|(kind, fields)| (kind.to_owned(), fields)).collect();
-        self.start_run(cx, host_id, cwd, action_id, steps, check, t(failure_key), success_label, follow_up);
+        self.start_run(cx, host_id, cwd, action_id, steps, t(failure_key), success_label);
     }
+
 
     #[allow(clippy::too_many_arguments)]
     fn start_run(
@@ -700,10 +580,8 @@ impl GitStore {
         cwd: &str,
         action_id: &str,
         steps: Vec<(String, Value)>,
-        check: ActionCheck,
         failure: String,
         success_label: Option<String>,
-        follow_up: ActionFollowUp,
     ) {
         let checkout = key(host_id, cwd);
         if self.action_status(host_id, cwd, action_id) == ActionStatus::Pending {
@@ -717,10 +595,8 @@ impl GitStore {
             cwd: cwd.to_owned(),
             action_id: action_id.to_owned(),
             steps: steps.into(),
-            check,
             failure,
             success_label,
-            follow_up,
         };
         self.set_action_status(cx, &checkout, action_id, ActionStatus::Pending);
         self.send_next_step(run);
@@ -763,11 +639,6 @@ impl GitStore {
                         action_id: run.action_id.clone(),
                     },
                 ));
-                if let ActionFollowUp::SuggestPostShipArchive = run.follow_up
-                    && self.post_ship_archive.insert(checkout.clone())
-                {
-                    self.changed(cx);
-                }
                 if let Some(label) = run.success_label {
                     ui.toast(label, false);
                 }
@@ -784,9 +655,7 @@ impl GitStore {
                         message,
                         retryable: action_retryable(result),
                         steps: run.steps.into(),
-                        check: run.check,
                         success_label: run.success_label,
-                        follow_up: run.follow_up,
                     },
                 );
                 self.set_action_status(cx, &checkout, &run.action_id, ActionStatus::Idle);
@@ -814,12 +683,12 @@ impl GitStore {
         if !failure.retryable || self.action_status(host_id, cwd, &failure.action_id) == ActionStatus::Pending {
             return;
         }
-        let ActionFailure { action_id, title, steps, check, success_label, follow_up, .. } = failure.clone();
-        self.start_run(cx, host_id, cwd, &action_id, steps, check, title, success_label, follow_up);
+        let ActionFailure { action_id, title, steps, success_label, .. } = failure.clone();
+        self.start_run(cx, host_id, cwd, &action_id, steps, title, success_label);
     }
 
     // -----------------------------------------------------------------------
-    // Commit / Create PR review.
+    // Create PR review.
 
     fn open_review_prompt(ui: &mut UiContext, title: &str, message: &str, initial: &str, placeholder: &str, confirm: &str, multiline: bool) -> u64 {
         use crate::common::overlay as shared;
@@ -830,55 +699,6 @@ impl GitStore {
                 shared::prompt_text(ui, title, Some(message), initial, placeholder, confirm)
             }
         })
-    }
-
-    /// Commit through a review: lists the files it includes, then asks for
-    /// the message (empty lets the host write one) before committing.
-    pub fn review_commit(&mut self, cx: &mut Cx, plan: ReviewPlan) {
-        if self.review.is_some() || self.action_status(&plan.host, &plan.cwd, "commit") == ActionStatus::Pending {
-            return;
-        }
-        let Some(core) = self.core.clone() else { return };
-        self.review_generation += 1;
-        let generation = self.review_generation;
-        let compare = super::model::normalize_compare("uncommitted", "", false, Some("summary"));
-        let request = wire::send(&core, &plan.host, "checkout.diff.get.request", json!({ "cwd": plan.cwd, "compare": compare }));
-        self.pending.insert(request, Pending::ReviewFiles { generation });
-        self.review = Some(Review::CommitFiles { plan, generation });
-        self.changed(cx);
-    }
-
-    fn take_review_files(&mut self, generation: u64) -> Option<ReviewPlan> {
-        if !matches!(self.review.as_ref(), Some(Review::CommitFiles { generation: current, .. }) if *current == generation) {
-            return None;
-        }
-        match self.review.take() {
-            Some(Review::CommitFiles { plan, .. }) => Some(plan),
-            _ => None,
-        }
-    }
-
-    fn on_review_files(&mut self, cx: &mut Cx, ui: &mut UiContext, generation: u64, result: &Result<Value, paseo_gui_core::CoreError>) {
-        let Some(plan) = self.take_review_files(generation) else { return };
-        let listed = wire::checkout_result(result).and_then(|payload| match error_message(&payload) {
-            Some(message) => Err(Failure::message(message)),
-            None => Ok(array(&payload, "files").iter().map(|f| text(f, "path").to_owned()).collect::<Vec<_>>()),
-        });
-        let message = match listed {
-            Ok(paths) => commit_files_message(&paths),
-            Err(failure) => tr("workspace.git.actions.review.filesUnavailable", &[("error", failure.message)]),
-        };
-        let prompt = Self::open_review_prompt(
-            ui,
-            &t("workspace.git.actions.review.commitTitle"),
-            &message,
-            "",
-            &t("workspace.git.actions.review.commitPlaceholder"),
-            &t("workspace.git.actions.review.commit"),
-            true,
-        );
-        self.review = Some(Review::CommitMessage { plan, prompt });
-        self.changed(cx);
     }
 
     /// Create PR through a review: title and description (empty lets the
@@ -902,7 +722,7 @@ impl GitStore {
     }
 
     fn take_review_answer(&mut self, id: u64, args: &Value) -> Option<(Review, Option<String>)> {
-        if self.review.as_ref().and_then(Review::prompt) != Some(id) {
+        if self.review.as_ref().map(Review::prompt) != Some(id) {
             return None;
         }
         let review = self.review.take()?;
@@ -916,17 +736,6 @@ impl GitStore {
         // Cancel (or a dismissed prompt) ends the review without running anything.
         let Some(answer) = answer else { return };
         match review {
-            Review::CommitFiles { .. } => {}
-            Review::CommitMessage { plan, .. } => {
-                let mut fields = json!({ "addAll": true });
-                let message = answer.trim();
-                if !message.is_empty() {
-                    fields["message"] = json!(message);
-                }
-                let steps = vec![("checkout_commit_request".to_owned(), fields)];
-                let failure = t("workspace.git.actions.toasts.failedCommit");
-                self.start_run(cx, &plan.host, &plan.cwd, "commit", steps, ActionCheck::Git, failure, plan.success_label, ActionFollowUp::None);
-            }
             Review::PrText { plan, base, .. } => {
                 let (title, body) = split_title_body(&answer);
                 let prompt = Self::open_review_prompt(
@@ -954,80 +763,9 @@ impl GitStore {
                 }
                 let steps = vec![("checkout_pr_create_request".to_owned(), fields)];
                 let failure = t("workspace.git.actions.toasts.failedCreatePr");
-                self.start_run(cx, &plan.host, &plan.cwd, "create-pr", steps, ActionCheck::Git, failure, plan.success_label, ActionFollowUp::None);
+                self.start_run(cx, &plan.host, &plan.cwd, "create-pr", steps, failure, plan.success_label);
             }
         }
-    }
-
-    /// Original `useWorkspaceArchive` after confirmation: archive, close the
-    /// workspace's tabs and refresh the host list.
-    pub fn archive_workspace(&mut self, cx: &mut Cx, ui: &mut UiContext, host_id: &str, cwd: &str, workspace_id: &str) {
-        if !host::connected(ui, host_id) {
-            ui.toast(t("sidebar.workspace.toasts.hostDisconnected"), true);
-            return;
-        }
-        let checkout = key(host_id, cwd);
-        if !self.archiving.insert(checkout.clone()) {
-            return;
-        }
-        let request = wire::send(
-            &ui.core,
-            host_id,
-            "archive_workspace_request",
-            json!({ "workspaceId": workspace_id }),
-        );
-        self.pending.insert(
-            request,
-            Pending::Archive {
-                key: checkout,
-                workspace_id: workspace_id.to_owned(),
-                failure: t("sidebar.workspace.toasts.archiveFailed"),
-            },
-        );
-        self.changed(cx);
-    }
-
-    // -----------------------------------------------------------------------
-    // Comparisons (original `WorkingDiffComparisons`).
-
-    pub fn comparison_key(host_id: &str, workspace_id: &str, cwd: &str) -> String {
-        let encode = |value: &str| {
-            let mut out = String::new();
-            for byte in value.bytes() {
-                if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
-                    out.push(byte as char);
-                } else {
-                    out.push_str(&format!("%{byte:02X}"));
-                }
-            }
-            out
-        };
-        let workspace = workspace_id.trim();
-        let trimmed = cwd.trim();
-        let normalized = if trimmed == "/" { trimmed } else { trimmed.trim_end_matches('/') };
-        let checkout = if workspace.is_empty() {
-            format!("cwd={}", encode(normalized))
-        } else {
-            format!("workspace={}", encode(workspace))
-        };
-        format!("working-diff:server={}:{checkout}", encode(host_id.trim()))
-    }
-
-    pub fn resolve_comparison(&self, host_id: &str, workspace_id: &str, cwd: &str) -> String {
-        self.comparisons
-            .get(&Self::comparison_key(host_id, workspace_id, cwd))
-            .cloned()
-            .unwrap_or_else(|| "all".to_owned())
-    }
-
-    pub fn select_comparison(&mut self, cx: &mut Cx, host_id: &str, workspace_id: &str, cwd: &str, comparison: &str) {
-        let id = Self::comparison_key(host_id, workspace_id, cwd);
-        if self.comparisons.get(&id).map(String::as_str) == Some(comparison) {
-            return;
-        }
-        self.comparisons.insert(id, comparison.to_owned());
-        self.comparisons_revision += 1;
-        self.changed(cx);
     }
 
     // -----------------------------------------------------------------------
@@ -1112,22 +850,6 @@ fn action_retryable(result: &Result<Value, paseo_gui_core::CoreError>) -> bool {
     }
 }
 
-/// Files listed in the commit review (the rest counted).
-const REVIEW_FILES_SHOWN: usize = 12;
-
-/// The commit review's body: how many files the commit includes and their paths.
-fn commit_files_message(paths: &[String]) -> String {
-    if paths.is_empty() {
-        return t("workspace.git.actions.review.noFiles");
-    }
-    let mut lines = vec![tr("workspace.git.actions.review.files", &[("count", paths.len().to_string())])];
-    lines.extend(paths.iter().take(REVIEW_FILES_SHOWN).map(|path| format!("• {path}")));
-    if paths.len() > REVIEW_FILES_SHOWN {
-        lines.push(tr("workspace.git.actions.review.moreFiles", &[("count", (paths.len() - REVIEW_FILES_SHOWN).to_string())]));
-    }
-    lines.join("\n")
-}
-
 /// A pull request's title (the first non-empty line) and description (the rest).
 fn split_title_body(text: &str) -> (String, String) {
     let text = text.trim();
@@ -1149,7 +871,6 @@ mod tests {
     fn cancelled_review_never_submits_and_empty_confirm_is_distinct() {
         let mut store = GitStore::default();
         for review in [
-            Review::CommitMessage { plan: review_plan(), prompt: 7 },
             Review::PrText { plan: review_plan(), base: "main".into(), prompt: 7 },
             Review::PrBase { plan: review_plan(), title: "Title".into(), body: String::new(), prompt: 7 },
         ] {
@@ -1159,24 +880,10 @@ mod tests {
             assert!(store.review.is_none());
             assert!(store.take_review_answer(7, &json!({ "text": "duplicate" })).is_none());
         }
-        store.review = Some(Review::CommitMessage { plan: review_plan(), prompt: 8 });
+        store.review = Some(Review::PrText { plan: review_plan(), base: "main".into(), prompt: 8 });
         assert!(store.take_review_answer(7, &json!({ "text": "stale" })).is_none());
         let (_, answer) = store.take_review_answer(8, &json!({ "text": "" })).unwrap();
         assert_eq!(answer.as_deref(), Some(""));
-    }
-
-    #[test]
-    fn stale_file_list_keeps_the_current_review() {
-        let mut store = GitStore {
-            review: Some(Review::PrText { plan: review_plan(), base: "main".into(), prompt: 7 }),
-            ..Default::default()
-        };
-        assert!(store.take_review_files(1).is_none());
-        assert_eq!(store.review.as_ref().and_then(Review::prompt), Some(7));
-        store.review = Some(Review::CommitFiles { plan: review_plan(), generation: 2 });
-        assert!(store.take_review_files(1).is_none());
-        assert!(store.take_review_files(2).is_some());
-        assert!(store.review.is_none());
     }
 
     #[test]
@@ -1189,10 +896,8 @@ mod tests {
                 ("checkout_pull_request".into(), json!({})),
                 ("checkout_push_request".into(), json!({})),
             ]),
-            check: ActionCheck::Git,
             failure: "Failed".into(),
             success_label: None,
-            follow_up: ActionFollowUp::None,
         };
         assert!(run.accept_response(&Ok(json!({ "success": true }))).is_ok());
         assert!(run.accept_response(&Ok(json!({ "error": { "message": "Push rejected" } }))).is_err());

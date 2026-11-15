@@ -1,6 +1,6 @@
 ---
 title: Metadata generation
-description: How Paseo uses providers to generate branch names, commit messages, and pull request text, and how to configure them.
+description: How Paseo uses providers to generate commit messages and pull request text, and how to configure them.
 nav: Metadata generation
 order: 42
 category: Configuration
@@ -10,14 +10,10 @@ category: Configuration
 
 Paseo asks a language model to write short pieces of text for you so you don't have to. This is separate from the agent you're talking to: it's a small, one-shot call made in the background.
 
-Paseo generates these kinds of metadata:
+Paseo can draft Git metadata for your existing checkout:
 
-- **Workspace titles** — a short, task-shaped label for a workspace, shown in the sidebar.
-- **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
-
-A workspace title and its branch name are produced together from the same prompt, but you configure their wording independently (see below).
 
 ## How a model is chosen
 
@@ -34,9 +30,9 @@ In Automatic mode, Paseo builds an ordered list of candidates and tries each one
 
 Each default is a match on the model id or name, so the first enabled provider that ships a matching model wins. Defaults with no match are skipped. Duplicates are removed, then generation tries the list top to bottom. The default order prefers small, fast, cheap models for these short tasks before falling back to whatever you have selected.
 
-In Manual mode, Paseo tries only your configured models, in your order. It never adds the built-in defaults or the selected model, so your prompts and diffs only go to providers you chose. If every configured model fails, generation fails: workspace titles and branch names are not generated, and commits and pull requests get placeholder text. Pick a model that works for these tasks.
+In Manual mode, Paseo tries only your configured models, in your order. It never adds the built-in defaults or the selected model, so your prompts and diffs only go to providers you chose. If every configured model fails, commits and pull requests get placeholder text. Pick a model that works for these tasks and review the generated text before submitting.
 
-Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by default) with the provider, the model and the error. Look there when a manual model doesn't produce titles, branch names, commit messages or pull request text.
+Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by default) with the provider, the model and the error. Look there when a manual model doesn't produce commit messages or pull request text.
 
 ## Choose a model
 
@@ -69,13 +65,11 @@ The Settings screen replaces only the first entry and preserves the rest of a cu
 
 ## Per-project instructions
 
-You can steer the wording of each kind of metadata per repository with a `paseo.json` file at your repo root. Paseo reads it from the committed version of the base branch, the same way it reads worktree config.
+You can steer Git metadata wording per repository with an on-disk `paseo.json` at the checkout root reported by `git rev-parse --show-toplevel`. Paseo does not read this configuration from a committed base-branch version. An externally created linked Git worktree uses its own checkout's file.
 
 ```json
 {
   "metadataGeneration": {
-    "title": { "instructions": "Keep titles to a few words, no leading verb." },
-    "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
     "pullRequest": { "instructions": "Include a Testing section in the body." }
   }

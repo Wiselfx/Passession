@@ -42,7 +42,7 @@ pub(super) fn inspect(
         "LastUsage":if usage.is_null(){Value::Null}else{json!({"InputTokens":usage["inputTokens"].as_u64().unwrap_or(0),"OutputTokens":usage["outputTokens"].as_u64().unwrap_or(0),"CachedTokens":usage["cachedInputTokens"].as_u64().unwrap_or(0),"CostUsd":usage["totalCostUsd"].as_f64().unwrap_or(0.0)})},
         "Capabilities":if caps.is_null(){Value::Null}else{json!({"Streaming":caps["supportsStreaming"].as_bool().unwrap_or(false),"Persistence":caps["supportsSessionPersistence"].as_bool().unwrap_or(false),"DynamicModes":caps["supportsDynamicModes"].as_bool().unwrap_or(false),"McpServers":caps["supportsMcpServers"].as_bool().unwrap_or(false)})},
         "AvailableModes":agent["availableModes"].as_array().map(|modes|modes.iter().map(|m|json!({"id":m["id"],"label":m["label"]})).collect::<Vec<_>>()),
-        "PendingPermissions":array(&agent["pendingPermissions"]).iter().map(|p|json!({"id":p["id"],"tool":p["name"].as_str().unwrap_or("unknown")})).collect::<Vec<_>>(),"Worktree":agent["labels"]["paseo.worktree"],"ParentAgentId":agent["labels"]["paseo.parent-agent-id"]});
+        "PendingPermissions":array(&agent["pendingPermissions"]).iter().map(|p|json!({"id":p["id"],"tool":p["name"].as_str().unwrap_or("unknown")})).collect::<Vec<_>>(),"ParentAgentId":agent["labels"]["paseo.parent-agent-id"]});
     if options.format != super::super::output::Format::Table && !options.quiet {
         return Ok(Output::new(data));
     }
@@ -91,9 +91,7 @@ pub(super) fn inspect(
     }
     let permissions = array(&data["PendingPermissions"]);
     rows.push(json!({"key":"PendingPermissions","value":if permissions.is_empty(){"[]".into()}else{permissions.iter().map(|p|format!("{} ({})",text(p,"id"),text(p,"tool"))).collect::<Vec<_>>().join(", ")}}));
-    for key in ["Worktree", "ParentAgentId"] {
-        rows.push(json!({"key":key,"value":data[key].as_str().unwrap_or("null")}));
-    }
+    rows.push(json!({"key":"ParentAgentId","value":data["ParentAgentId"].as_str().unwrap_or("null")}));
     let quiet = rows
         .iter()
         .map(|r| text(r, "key"))

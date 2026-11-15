@@ -1,4 +1,4 @@
-//! The Changes document (original diff_view.dart `DiffDocument`): every
+//! The commit document (original diff_view.dart `DiffDocument`): every
 //! changed file in one scroll view with a sticky per-file header. Headers come
 //! from the summary; a file's patch is requested only when its placeholder is
 //! drawn near the viewport, and collapsed files never load. Rows are
@@ -71,8 +71,8 @@ struct FileModel {
     heights: Option<RowHeights>,
 }
 
-/// (split, wrap, text width, comment revision).
-type HeightKey = (bool, bool, i64, u64);
+/// (split, wrap, text width).
+type HeightKey = (bool, bool, i64);
 /// Cache key, row tops relative to the body, total body height.
 type RowHeights = (HeightKey, Vec<f64>, f64);
 
@@ -161,17 +161,6 @@ impl FileModel {
         self.heights = None;
     }
 
-    /// The comment context: up to three lines either side within the hunk.
-    pub fn context_for(&self, index: usize) -> Vec<DiffLine> {
-        let hunk = self.lines[index].hunk;
-        let start = index.saturating_sub(3);
-        let end = (index + 4).min(self.lines.len());
-        self.lines[start..end]
-            .iter()
-            .filter(|l| l.kind != LineKind::Header && l.hunk == hunk)
-            .cloned()
-            .collect()
-    }
 
     /// Highlights each hunk's old and new sides as whole sequences so
     /// multi-line comments and strings keep their state, then splits per line.
@@ -227,12 +216,10 @@ impl FileModel {
 pub enum DocHit {
     Header(String),
     Expand { path: String, start: usize },
-    /// The gutter of a numbered line: comment on that side.
-    Gutter { path: String, line: usize, side: &'static str },
+    /// Opens the file at the numbered line.
+    Gutter { path: String, line: usize },
     LineMenu { path: String, line: usize },
     Retry(String),
-    EditComment(String),
-    DeleteComment(String),
 }
 
 /// The line a gutter or menu targets.
@@ -240,7 +227,6 @@ pub enum DocHit {
 pub struct LineTarget {
     pub path: String,
     pub line: DiffLine,
-    pub context: Vec<DiffLine>,
 }
 
 /// Inputs of one document draw.
@@ -250,13 +236,9 @@ pub struct DocInput<'a> {
     pub patch_errors: &'a HashMap<String, String>,
     pub patch_revision: u64,
     pub collapsed: &'a HashSet<String>,
-    /// path → "side:line" → review draft comments.
-    pub comments: &'a HashMap<String, HashMap<String, Vec<Value>>>,
-    pub comments_revision: u64,
     pub split: bool,
     pub wrap: bool,
     pub syntax_theme: &'a str,
-    pub bottom_inset: f64,
 }
 
 pub struct DiffDoc {
@@ -717,7 +699,6 @@ impl DiffDoc {
         Some(LineTarget {
             path: path.to_owned(),
             line: model.lines.get(index)?.clone(),
-            context: model.context_for(index),
         })
     }
 
@@ -729,46 +710,6 @@ impl DiffDoc {
         self.models.get_mut(path).unwrap()
     }
 
-    /// Comments shown under a cell (original `bodies`).
-    fn bodies<'a>(input: &'a DocInput<'_>, path: &str, line: &DiffLine, side: &str, unified: bool) -> Vec<&'a Value> {
-        let Some(file) = input.comments.get(path) else {
-            return Vec::new();
-        };
-        let number = if side == "old" { line.old_number } else { line.new_number };
-        let mut bodies: Vec<&Value> = Vec::new();
-        if let Some(number) = number
-            && let Some(found) = file.get(&format!("{side}:{number}"))
-        {
-            bodies.extend(found.iter());
-        }
-        if unified
-            && line.kind == LineKind::Context
-            && let Some(old) = line.old_number
-            && let Some(found) = file.get(&format!("old:{old}"))
-        {
-            bodies.extend(found.iter());
-        }
-        bodies
-    }
-
-    fn comment_card_height(cx: &mut Cx2d, paint: &mut GitPaint, body: &str, width: f64) -> f64 {
-        let size = typography().content_font_size;
-        let line = (size * 1.4).round();
-        let measured = paint.measure_wrapped(cx, Font::Regular, size, body, (width - 24.0 - 60.0).max(40.0));
-        16.0 + measured.min(line * 2.0).max(line).max(26.0 - 16.0)
-    }
-
-    fn thread_height(cx: &mut Cx2d, paint: &mut GitPaint, bodies: &[&Value], width: f64) -> f64 {
-        if bodies.is_empty() {
-            return 0.0;
-        }
-        let cards: f64 = bodies
-            .iter()
-            .map(|b| Self::comment_card_height(cx, paint, text(b, "body"), width - 24.0))
-            .sum();
-        16.0 + cards + 6.0 * (bodies.len() as f64 - 1.0)
-    }
-
     fn cell_text_height(cx: &mut Cx2d, paint: &mut GitPaint, content: &str, width: f64) -> f64 {
         let lh = line_height();
         let size = typography().code_font_size;
@@ -776,10 +717,10 @@ impl DiffDoc {
     }
 
     /// Row tops of a loaded body, cached per layout; returns the total height.
-    fn ensure_heights(cx: &mut Cx2d, paint: &mut GitPaint, input: &DocInput<'_>, path: &str, model: &mut FileModel, column_width: f64) -> f64 {
+    fn ensure_heights(cx: &mut Cx2d, paint: &mut GitPaint, input: &DocInput<'_>, model: &mut FileModel, column_width: f64) -> f64 {
         let lh = line_height();
         let gutter = gutter_width(model.max_line);
-        let key = (input.split, input.wrap, column_width.round() as i64, input.comments_revision);
+        let key = (input.split, input.wrap, column_width.round() as i64);
         if let Some((cached, _, total)) = &model.heights
             && *cached == key
         {
@@ -797,23 +738,19 @@ impl DiffDoc {
                 Row::Hidden { .. } => lh,
                 Row::Line(index) => {
                     let line = &lines[index];
-                    let side = if line.kind == LineKind::Remove { "old" } else { "new" };
-                    let base = if input.wrap && line.kind != LineKind::Header {
+                    if input.wrap && line.kind != LineKind::Header {
                         Self::cell_text_height(cx, paint, &line.content, text_width)
                     } else {
                         lh
-                    };
-                    let bodies = Self::bodies(input, path, line, side, true);
-                    base + Self::thread_height(cx, paint, &bodies, column_width)
+                    }
                 }
                 Row::Pair(left, right) => {
                     let mut height: f64 = lh;
-                    for (cell, side) in [(left, "old"), (right, "new")] {
+                    for cell in [left, right] {
                         let Some(index) = cell else { continue };
                         let line = &lines[index];
                         let base = if input.wrap { Self::cell_text_height(cx, paint, &line.content, text_width) } else { lh };
-                        let bodies = Self::bodies(input, path, line, side, false);
-                        height = height.max(base + Self::thread_height(cx, paint, &bodies, column_width));
+                        height = height.max(base);
                     }
                     height
                 }
@@ -845,7 +782,7 @@ impl DiffDoc {
                     return message;
                 }
                 let model = self.model(path, patch, input.patch_revision);
-                Self::ensure_heights(cx, paint, input, path, model, column_width)
+                Self::ensure_heights(cx, paint, input, model, column_width)
             }
         }
     }
@@ -912,7 +849,7 @@ impl DiffDoc {
             blocks.push((path, y, HEADER_HEIGHT + body));
             y += HEADER_HEIGHT + body;
         }
-        self.content_height = y + 24.0 + input.bottom_inset;
+        self.content_height = y + 24.0;
         // Original `SelectionArea` edge auto-scroll while a selection drag is
         // held beyond the viewport: faster the farther out, frames only while it runs.
         let mut autoscroll = false;
@@ -1105,7 +1042,7 @@ impl DiffDoc {
             Self::draw_message(cx, paint, dvec2(clip.pos.x, origin.y), clip.size.x, "No textual changes.", None);
             return;
         }
-        Self::ensure_heights(cx, paint, input, path, &mut model, column_width);
+        Self::ensure_heights(cx, paint, input, &mut model, column_width);
         let lh = line_height();
         let view_top = clip.pos.y;
         let view_bottom = clip.pos.y + clip.size.y;
@@ -1151,7 +1088,7 @@ impl DiffDoc {
                     let line = &model.lines[index];
                     let side = if line.kind == LineKind::Remove { "old" } else { "new" };
                     let cell = rect(origin.x, top, width, bottom - top);
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), Some((index, line)), runs, side, true, cell, gutter, clip, syntax);
+                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), Some((index, line)), runs, side, cell, gutter, clip, syntax);
                 }
                 Row::Pair(left, right) => {
                     let left_runs = left.and_then(|i| Self::cell_runs(&mut model, path, i, input.wrap));
@@ -1160,8 +1097,8 @@ impl DiffDoc {
                     let right_cell = rect(origin.x + column_width + 1.0, top, column_width, bottom - top);
                     let left_line = left.map(|i| (i, &model.lines[i]));
                     let right_line = right.map(|i| (i, &model.lines[i]));
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), left_line, left_runs, "old", false, left_cell, gutter, clip, syntax);
-                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 1), right_line, right_runs, "new", false, right_cell, gutter, clip, syntax);
+                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 0), left_line, left_runs, "old", left_cell, gutter, clip, syntax);
+                    self.draw_cell(cx, paint, input, path, (file_index, row_key, 1), right_line, right_runs, "new", right_cell, gutter, clip, syntax);
                 }
             }
         }
@@ -1177,8 +1114,7 @@ impl DiffDoc {
     }
 
     /// Original `_cell`: gutter sized to the widest number, a 1px rule, then
-    /// syntax-coloured code inset by 8px, the line actions button and any
-    /// inline review thread under the line.
+    /// syntax-coloured code inset by 8px and the line actions button.
     #[allow(clippy::too_many_arguments)]
     fn draw_cell(
         &mut self,
@@ -1190,7 +1126,6 @@ impl DiffDoc {
         line: Option<(usize, &DiffLine)>,
         runs: Option<Vec<Run>>,
         side: &'static str,
-        unified: bool,
         cell: Rect,
         gutter: f64,
         clip: Rect,
@@ -1214,16 +1149,10 @@ impl DiffDoc {
             LineKind::Remove => colors.danger,
             _ => colors.muted,
         };
-        let bodies = Self::bodies(input, path, line, side, unified);
-        let thread = Self::thread_height(cx, paint, &bodies, cell.size.x);
-        let line_box = rect(cell.pos.x, cell.pos.y, cell.size.x, cell.size.y - thread);
-        paint.fill(cx, cell, colors.surface0);
+        let line_box = cell;
         paint.fill(cx, line_box, background);
         let number = gutter_number(line, side);
         let gutter_rect = rect(cell.pos.x, cell.pos.y, gutter, line_box.size.y);
-        if !bodies.is_empty() {
-            paint.fill(cx, gutter_rect, colors.surface2);
-        }
         let (file_index, row_key, side_index) = piece;
         let piece_clip = intersect(cell, clip);
         if let Some(number) = number {
@@ -1234,7 +1163,7 @@ impl DiffDoc {
             if let Some((laid, origin)) = paint.line_layout(cx, Font::Mono, code_size, x, cell.pos.y, lh, &label, label_width + 1.0) {
                 self.pieces.push(Piece { key: (file_index, row_key, side_index * 2), laid, origin, clip: piece_clip, header: false });
             }
-            self.hits.push_clipped(gutter_rect, clip, DocHit::Gutter { path: path.to_owned(), line: index, side });
+            self.hits.push_clipped(gutter_rect, clip, DocHit::Gutter { path: path.to_owned(), line: index });
         }
         paint.fill(cx, rect(cell.pos.x + gutter, cell.pos.y, 1.0, line_box.size.y), colors.border);
         let text_x = cell.pos.x + gutter + 1.0 + 8.0;
@@ -1286,36 +1215,6 @@ impl DiffDoc {
             }
             paint.icon(cx, "ellipsis", 14.0, colors.muted, button.center());
             self.hits.push_clipped(button, clip, hit);
-        }
-        if bodies.is_empty() {
-            return;
-        }
-        // Original inline review thread.
-        let size = typography().content_font_size;
-        let mut y = line_box.pos.y + line_box.size.y + 8.0;
-        for body in bodies {
-            let card_height = Self::comment_card_height(cx, paint, text(body, "body"), cell.size.x - 24.0);
-            let card = rect(cell.pos.x + 12.0, y, cell.size.x - 24.0, card_height);
-            paint.rounded(cx, card, colors.surface2, 8.0, Some((colors.border_accent, 1.0)));
-            let text_area = rect(card.pos.x + 12.0, card.pos.y + 8.0, card.size.x - 24.0 - 60.0, card_height - 16.0);
-            paint.begin_clip(cx, text_area);
-            paint.text_wrapped(cx, Font::Regular, size, colors.foreground, text_area.pos, text(body, "body"), text_area.size.x);
-            paint.end_clip(cx);
-            let id = text(body, "id").to_owned();
-            let center_y = card.pos.y + card_height / 2.0;
-            let edit = rect(card.pos.x + card.size.x - 12.0 - 26.0 - 4.0 - 26.0, center_y - 13.0, 26.0, 26.0);
-            let delete = rect(card.pos.x + card.size.x - 12.0 - 26.0, center_y - 13.0, 26.0, 26.0);
-            for (area, icon, color, hit) in [
-                (edit, "pencil", colors.muted, DocHit::EditComment(id.clone())),
-                (delete, "trash-2", colors.danger, DocHit::DeleteComment(id.clone())),
-            ] {
-                if self.hovered.as_ref() == Some(&hit) {
-                    paint.rounded(cx, area, colors.surface3, 13.0, None);
-                }
-                paint.icon(cx, icon, 14.0, color, area.center());
-                self.hits.push_clipped(area, clip, hit);
-            }
-            y += card_height + 6.0;
         }
     }
 

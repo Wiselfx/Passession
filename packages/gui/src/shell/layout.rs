@@ -121,13 +121,13 @@ pub const MAIN_PANE: &str = "main";
 pub const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
 pub const DEFAULT_EXPLORER_WIDTH: f64 = 340.0;
 
-/// Removed surfaces (browser, executable plugin) that are dropped when a saved layout is restored.
-const REMOVED_KINDS: [&str; 2] = ["browser", "plugin"];
+/// Removed surfaces that are dropped when a saved layout is restored.
+const REMOVED_KINDS: [&str; 4] = ["browser", "plugin", "changes_tree", "working_diff"];
 
 /// Tabs shown on top of the tab they were opened from (the original's compact-sheet and child
 /// targets): compact Back closes them, and closing one returns to its opener.
 pub fn is_detail_kind(kind: &str) -> bool {
-    matches!(kind, "file" | "working_diff" | "commit_diff" | "provider_subagent" | "pull_request" | "execution_log" | "project_settings" | "git_log")
+    matches!(kind, "file" | "commit_diff" | "provider_subagent" | "pull_request" | "execution_log" | "project_settings" | "git_log" | "git_commit")
 }
 
 #[derive(Clone, Debug)]
@@ -138,7 +138,7 @@ pub struct Layout {
     pub maximized_pane: Option<String>,
     pub explorer_tabs: Vec<String>,
     pub selected_explorer: Option<String>,
-    /// Per-workspace Explorer focus (`_explorerFocus`), keyed by `[serverId, workspaceId]`.
+    /// Per-directory Explorer focus, keyed by host and cwd.
     explorer_focus: HashMap<(String, String), String>,
     pub explorer_visible: bool,
     pub explorer_width: f64,
@@ -212,10 +212,10 @@ impl Layout {
     }
 
     fn explorer_workspace(target: &PanelTarget) -> (String, String) {
-        (target.server_id.clone(), target.workspace_id.clone())
+        (target.server_id.clone(), target.cwd.clone())
     }
 
-    /// `explorerFocusFor`: the view a workspace's Explorer last focused, while still open.
+    /// The view a directory's Explorer last focused, while still open.
     pub fn explorer_focus_for(&self, workspace: &PanelTarget) -> Option<String> {
         self.explorer_focus
             .get(&Self::explorer_workspace(workspace))
@@ -300,6 +300,10 @@ impl Layout {
 
     /// `openExplorer(target, focus:)`.
     pub fn open_explorer(&mut self, target: PanelTarget, focus: bool) {
+        if matches!(target.kind.as_str(), "agent" | "draft" | "new_tab") {
+            self.open(target, false);
+            return;
+        }
         let key = target.key();
         self.upsert(target);
         for pane in self.tree.panes_mut() {
@@ -798,7 +802,9 @@ impl Layout {
         let focused = j::text(saved, "focusedPane");
         layout.focused_pane = if focused.is_empty() { layout.tree.first_pane_id() } else { focused.to_string() };
         for key in j::array(saved, "explorerTabs").iter().filter_map(Value::as_str) {
-            if layout.target(key).is_some() && !seen.iter().any(|s| s == key) {
+            if layout.target(key).is_some_and(|target| !matches!(target.kind.as_str(), "agent" | "draft" | "new_tab"))
+                && !seen.iter().any(|s| s == key)
+            {
                 seen.push(key.to_string());
                 layout.explorer_tabs.push(key.to_string());
             }
@@ -1071,6 +1077,73 @@ mod tests {
     }
 
     #[test]
+    fn restored_sessions_and_creation_tabs_leave_the_supporting_sidebar() {
+        for target in [agent("a"), PanelTarget::new("draft", "srv", "ws", "/w").with_id("d"), PanelTarget::new("new_tab", "srv", "ws", "/w")] {
+            let saved = json!({
+                "tabs": [target.to_json()],
+                "tree": {"kind": "pane", "id": "main", "tabs": []},
+                "explorerTabs": [target.key()],
+                "selectedExplorer": target.key(),
+            });
+            let mut layout = Layout::restore(&saved);
+            assert_eq!(layout.selected(), Some(&target));
+            assert!(layout.explorer_tabs.is_empty());
+            assert_eq!(layout.selected_explorer, None);
+            layout.open_explorer(target.clone(), true);
+            assert_eq!(layout.selected(), Some(&target));
+            assert!(layout.explorer_tabs.is_empty());
+            assert_eq!(layout.compact_destination, CompactDestination::Agent);
+        }
+    }
+
+    #[test]
+    fn restore_drops_working_changes_but_preserves_history_and_commit_views() {
+        let session = agent("a");
+        let changes = PanelTarget::new("changes_tree", "srv", "ws", "/w");
+        let working = PanelTarget::new("working_diff", "srv", "ws", "/w");
+        let history = PanelTarget::new("commit_diff", "srv", "ws", "/w").with_id("abc123");
+        let log = PanelTarget::new("git_log", "srv", "ws", "/w");
+        let commit = PanelTarget::new("git_commit", "srv", "ws", "/w");
+        let saved = json!({
+            "tabs": [session.to_json(), changes.to_json(), working.to_json(), history.to_json(), log.to_json(), commit.to_json()],
+            "tree": {"kind": "pane", "id": "main", "tabs": [session.key(), working.key(), history.key()], "selected": working.key()},
+            "explorerTabs": [changes.key(), log.key(), commit.key()],
+            "selectedExplorer": changes.key(),
+            "tabOpeners": {(working.key()): session.key(), (history.key()): session.key()},
+        });
+        let layout = Layout::restore(&saved);
+        assert_eq!(layout.tabs.len(), 4);
+        assert!(layout.target(&changes.key()).is_none());
+        assert!(layout.target(&working.key()).is_none());
+        assert_eq!(layout.focused().tabs, vec![session.key(), history.key()]);
+        assert_eq!(layout.selected().map(PanelTarget::key), Some(session.key()));
+        assert_eq!(layout.explorer_tabs, vec![log.key(), commit.key()]);
+        assert_eq!(layout.selected_explorer, Some(log.key()));
+        assert_eq!(layout.openers.len(), 1);
+        assert_eq!(super::super::panels::root_kind("git_commit"), Some(super::super::panels::RootKind::Git));
+        assert_eq!(super::super::panels::root_kind("working_diff"), None);
+    }
+
+    #[test]
+    fn compact_git_views_return_to_the_session_and_keep_host_directory_identity() {
+        for kind in ["git_log", "git_commit"] {
+            let mut layout = sessions();
+            let target = PanelTarget::new(kind, "srv", "ws", "/w");
+            layout.open(target.clone(), false);
+            assert!(back(&mut layout));
+            assert_eq!(layout.selected(), Some(&agent("a")));
+            layout.open_explorer(target.clone(), true);
+            assert!(back(&mut layout));
+            assert_eq!(layout.compact_destination, CompactDestination::Agent);
+            assert_eq!(layout.selected(), Some(&agent("a")));
+            assert_eq!(layout.target(&target.key()), Some(&target));
+            assert_eq!(layout.explorer_focus_for(&agent("a")), Some(target.key()));
+            assert_eq!(layout.explorer_focus_for(&PanelTarget::agent("other", "ws", "/w", "a", "")), None);
+            assert_eq!(layout.explorer_focus_for(&PanelTarget::agent("srv", "ws", "/elsewhere", "a", "")), None);
+        }
+    }
+
+    #[test]
     fn restore_drops_removed_kinds_keeps_terminals_and_places_unplaced_tabs_in_the_focused_pane() {
         let terminal = PanelTarget::new("terminal", "srv", "ws", "/w").with_id("t");
         let browser = PanelTarget::new("browser", "srv", "ws", "/w").with_id("b");
@@ -1131,22 +1204,6 @@ mod tests {
         layout.replace_tab(&owner, agent("must-not-open"));
         assert_eq!(layout.to_json(), before);
         assert_eq!(layout.navigation_serial, serial);
-    }
-
-    #[test]
-    fn creation_completion_replacement_preserves_explorer_slot_and_focused_session() {
-        let mut layout = sessions();
-        let creation = PanelTarget::new("new_tab", "srv", "ws", "/w").with_id("creation");
-        let owner = creation.key();
-        layout.open_explorer(creation, true);
-        let destination = PanelTarget::new("terminal", "srv", "ws", "/w").with_id("created");
-        layout.replace_tab(&owner, destination.clone());
-        assert_eq!(layout.explorer_tabs, vec![destination.key()]);
-        assert_eq!(layout.selected_explorer, Some(destination.key()));
-        assert_eq!(layout.compact_destination, CompactDestination::Explorer);
-        assert_eq!(shown(&layout), Some(agent("a").key()));
-        assert_eq!(layout.explorer_focus_for(&agent("a")), Some(destination.key()));
-        assert!(layout.target(&owner).is_none());
     }
 
     #[test]

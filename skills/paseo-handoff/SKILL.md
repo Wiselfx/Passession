@@ -17,7 +17,7 @@ Read the **paseo** skill. Call `list_profiles` before choosing the receiving age
 ## Parsing arguments
 
 1. **Agent profile** — explicit profile name first; otherwise choose the profile whose `notes` best match the work. Materialize it into `create_agent` as described by the **paseo** skill. If no profile fits, use Paseo's provider discovery fallback.
-2. **Isolation** — "in a worktree" / "worktree" → create a workspace with `isolation: "worktree"`, using a short branch name derived from the task.
+2. **Directory** — use the requested existing directory on the selected host, or inherit the caller's directory. If the user requests a worktree, use an existing externally managed worktree path; Paseo does not provision one. Resolve the intended path before launching.
 3. **Task description** — anything else the user said.
 
 ## The handoff prompt
@@ -54,11 +54,11 @@ The receiving agent has zero context. Include:
 
 ## Launch
 
-Prepare the handoff in a dedicated workspace:
+Prepare the handoff as a fresh session:
 
-1. Select the current workspace or call `create_workspace` with the requested isolation.
-2. Call `create_agent` with a `[Handoff] <task>` title, the briefing as initial prompt, and the selected `workspaceId` when explicit placement is needed.
-3. Return the agent and workspace to the user, explaining that it remains in your subagent track until they detach it manually.
+1. Select the existing local directory; preserve any directories and worktrees already in use.
+2. Call `create_agent` with a `[Handoff] <task>` title, the briefing as initial prompt, and `cwd` for explicit placement. An agent-scoped call may omit `cwd` to inherit the caller's directory.
+3. Return the agent and directory to the user, explaining that it remains in your subagent track until they detach it manually.
 
 Do not encode independence as a create mode and do not invoke CLI or wire-level detach operations. Detach is a user gesture in the subagents track.
 

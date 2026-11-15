@@ -78,6 +78,6 @@ async fn main() -> Result<()> {
 ## 接下来
 
 - [Agent](agents.zh-CN.md)：后续消息、标签、父子关系、结构化输出。
-- [工作区](workspaces.zh-CN.md)：放置、后台任务、终端。
+- [会话与目录](workspaces.zh-CN.md)：本地目录、内部归属、终端。
 - [事件](events.zh-CN.md)：持有式订阅与历史修复。
 - [参考](reference.zh-CN.md)：认证、relay、SSH、协议 API。

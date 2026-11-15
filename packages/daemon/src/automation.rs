@@ -126,6 +126,9 @@ fn parse_cadence(value: &Value) -> Result<Cadence> {
     Ok(c)
 }
 fn parse_target(value: &Value) -> Result<Target> {
+    if value["type"] == "new-agent" && value["config"]["isolation"] == "worktree" {
+        return Err(crate::projects::unsupported_worktrees());
+    }
     let mut value = value.clone();
     if value["type"] == "self" {
         value["type"] = json!("agent");

@@ -4,16 +4,15 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 use crate::{state::AppState, terminals::CreateTerminal};
 
-pub(crate) fn definitions(_agent_scope: bool) -> Vec<Value> {
+pub(crate) fn definitions(agent_scope: bool) -> Vec<Value> {
     let string = || json!({"type":"string"});
-    let nonempty = || json!({"type":"string","minLength":1});
     let boolean = || json!({"type":"boolean"});
     let definition = |name: &str,
                       title: &str,
@@ -26,69 +25,25 @@ pub(crate) fn definitions(_agent_scope: bool) -> Vec<Value> {
     };
     vec![
         definition(
-            "create_workspace",
-            "Create workspace",
-            "Create a workspace using an existing local checkout or a new Paseo-managed worktree.",
-            json!({
-                "isolation":{"type":"string","enum":["local","worktree"]},
-                "path":{"type":"string","description":"Local directory or source checkout. Defaults to your current workspace. Local isolation adopts an existing directory and never creates one."},
-                "projectId":{"type":"string","description":"Existing project id to own the workspace."},
-                "title":{"type":"string","minLength":1,"x-trim":true},
-                "background":{"type":"boolean","description":"True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks."},
-                "mode":{"type":"string","enum":["branch-off","checkout-branch","checkout-pr"],"description":"Worktree creation mode. Defaults to branch-off."},
-                "worktreeSlug":{"type":"string","minLength":1,"x-trim":true},
-                "branchName":{"type":"string","minLength":1,"x-trim":true,"description":"New branch name for branch-off mode."},
-                "baseBranch":{"type":"string","minLength":1,"x-trim":true,"description":"Base ref for branch-off mode."},
-                "branch":{"type":"string","minLength":1,"x-trim":true,"description":"Existing branch for checkout-branch mode."},
-                "prNumber":{"type":"integer","minimum":1,"description":"Pull request or change request number for checkout-pr mode."},
-                "forge":{"type":"string","minLength":1,"x-trim":true,"description":"Forge for checkout-pr mode. Defaults to the source checkout."}
-            }),
-            &["isolation"],
+            "list_scripts",
+            "List scripts",
+            "List configured scripts for an agent's directory, including lifecycle, service port, proxy URL, health, and terminal ID.",
+            json!({"agentId":{"type":"string","description":"Agent whose directory owns the scripts. Defaults to the calling agent."}}),
+            if agent_scope { &[] } else { &["agentId"] },
         ),
         definition(
-            "list_workspaces",
-            "List workspaces",
-            "List active workspaces.",
-            json!({"includeBackground":{"type":"boolean","default":false}}),
-            &[],
+            "start_script",
+            "Start script",
+            "Start a configured paseo.json script in an agent's directory.",
+            json!({"agentId":{"type":"string"},"scriptName":{"type":"string","minLength":1}}),
+            if agent_scope { &["scriptName"] } else { &["agentId", "scriptName"] },
         ),
         definition(
-            "archive_workspace",
-            "Archive workspace",
-            "Archive a workspace and everything it owns.",
-            json!({"workspaceId":nonempty()}),
-            &["workspaceId"],
-        ),
-        definition(
-            "rename_workspace",
-            "Rename workspace",
-            "Rename a workspace by setting its user-visible title. Omit workspaceId to rename your current workspace.",
-            json!({
-                "workspaceId":{"type":"string","minLength":1,"x-trim":true,"description":"Workspace id to rename. Omit to rename your current workspace."},
-                "title":{"type":"string","minLength":1,"x-trim":true,"description":"New user-visible workspace title."}
-            }),
-            &["title"],
-        ),
-        definition(
-            "list_workspace_scripts",
-            "List workspace scripts",
-            "List configured workspace scripts and their lifecycle, service port, proxy URL, health, and terminal ID.",
-            json!({"workspaceId":{"type":"string","description":"Workspace ID whose configured scripts to list."}}),
-            &["workspaceId"],
-        ),
-        definition(
-            "start_workspace_script",
-            "Start workspace script",
-            "Start one configured workspace script through Paseo's managed workspace-script launcher.",
-            json!({"workspaceId":{"type":"string","description":"Workspace ID containing the configured script."},"scriptName":{"type":"string","minLength":1,"description":"Configured paseo.json script name to start."}}),
-            &["workspaceId", "scriptName"],
-        ),
-        definition(
-            "stop_workspace_script",
-            "Stop workspace script",
-            "Stop a running workspace script through its supervised terminal lifecycle.",
-            json!({"workspaceId":{"type":"string","description":"Workspace ID containing the running script."},"scriptName":{"type":"string","minLength":1,"description":"Configured paseo.json script name to stop."}}),
-            &["workspaceId", "scriptName"],
+            "stop_script",
+            "Stop script",
+            "Stop a configured script in an agent's directory.",
+            json!({"agentId":{"type":"string"},"scriptName":{"type":"string","minLength":1}}),
+            if agent_scope { &["scriptName"] } else { &["agentId", "scriptName"] },
         ),
         definition(
             "list_terminals",
@@ -134,6 +89,25 @@ pub(crate) fn definitions(_agent_scope: bool) -> Vec<Value> {
     ]
 }
 
+#[cfg(test)]
+mod tool_contract_tests {
+    use super::*;
+
+    #[test]
+    fn tool_catalog_exposes_session_scripts_without_workspace_lifecycle() {
+        let tools = definitions(true);
+        for retired in ["create_workspace", "list_workspaces", "rename_workspace", "archive_workspace", "list_workspace_scripts", "start_workspace_script", "stop_workspace_script"] {
+            assert!(!tools.iter().any(|tool| tool["name"] == retired));
+        }
+        for name in ["list_scripts", "start_script", "stop_script"] {
+            let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+            let properties = &tool["inputSchema"]["properties"];
+            assert!(properties.get("agentId").is_some());
+            assert!(properties.get("workspaceId").is_none());
+        }
+    }
+}
+
 pub(crate) async fn execute(
     app: &Arc<AppState>,
     caller: Option<&str>,
@@ -142,89 +116,24 @@ pub(crate) async fn execute(
     cancel: CancellationToken,
     _updates: Option<Sender<Value>>,
 ) -> Result<Value> {
-    // Once admitted, do not drop a mutating service future on cancellation: a PTY,
-    // worktree, or archive may already have committed external effects.
+    // Once admitted, do not drop a mutating terminal operation on cancellation.
     if cancel.is_cancelled() {
         bail!("Tool call cancelled before execution");
     }
     let result = match name {
-        "create_workspace" => create_workspace(app, caller, &input).await?,
-        "list_workspaces" => {
-            let include_background = flag(&input, "includeBackground", false);
-            let workspaces = app
-                .projects
-                .list_workspaces()
-                .await?
-                .into_iter()
-                .filter(|workspace| {
-                    !archived(workspace)
-                        && (include_background || !flag(workspace, "background", false))
-                })
-                .map(|workspace| workspace_summary(&workspace))
-                .collect::<Vec<_>>();
-            json!({"workspaces":workspaces})
-        }
-        "archive_workspace" => {
-            let id = required(&input, "workspaceId")?;
-            let workspace = app
-                .projects
-                .workspace(id)
-                .await?
-                .filter(|workspace| !archived(workspace))
-                .with_context(|| format!("Workspace not found: {id}"))?;
-            let result = app
-                .projects
-                .archive_workspace(&super::actor(caller), required(&workspace, "workspaceId")?)
-                .await?;
-            json!({"workspaceId":id,"archivedAgentIds":result["archivedAgentIds"],"removedDirectory":result["removedDirectory"]})
-        }
-        "rename_workspace" => {
-            if input.get("workspaceId").is_some() && trimmed(&input, "workspaceId").is_none() {
-                return Err(super::input_error("workspaceId must not be empty"));
+        "list_scripts" | "start_script" | "stop_script" => {
+            if input.get("workspaceId").is_some() {
+                return Err(super::input_error("Use agentId to select the script directory"));
             }
-            let id = if let Some(id) = trimmed(&input, "workspaceId") {
-                id.to_owned()
-            } else if let Some(caller) = caller {
-                let agent = caller_agent(app, caller).await?;
-                agent
-                    .get("workspaceId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        super::input_error(format!(
-                            "Caller agent {caller} has no current workspace"
-                        ))
-                    })?
-                    .to_owned()
-            } else {
-                return Err(super::input_error(
-                    "workspaceId is required outside an agent-scoped session",
-                ));
-            };
-            let title = required(&input, "title")?.trim();
-            if title.is_empty() {
-                return Err(super::input_error("title is required"));
+            let id = input.get("agentId").and_then(Value::as_str).or(caller)
+                .ok_or_else(|| super::input_error("agentId is required outside an agent-scoped session"))?;
+            let agent = caller_agent(app, id).await?;
+            let owner = required(&agent, "workspaceId")?;
+            match name {
+                "list_scripts" => json!({"scripts":app.terminals.script_list(owner).await?}),
+                "start_script" => json!({"script":app.terminals.script_start(owner, required(&input,"scriptName")?).await?}),
+                _ => json!({"script":app.terminals.script_stop(owner, required(&input,"scriptName")?).await?}),
             }
-            let workspace = app
-                .projects
-                .workspace(&id)
-                .await?
-                .ok_or_else(|| super::input_error(format!("Workspace {id} not found")))?;
-            if archived(&workspace) {
-                return Err(super::input_error(format!("Workspace {id} is archived")));
-            }
-            if !app.projects.rename_workspace(&id, Some(title)).await? {
-                return Err(super::input_error(format!("Workspace {id} not found")));
-            }
-            json!({"success":true,"workspaceId":id,"title":title})
-        }
-        "list_workspace_scripts" => {
-            json!({"scripts":app.terminals.script_list(required(&input,"workspaceId")?).await?})
-        }
-        "start_workspace_script" => {
-            json!({"script":app.terminals.script_start(required(&input,"workspaceId")?, required(&input,"scriptName")?).await?})
-        }
-        "stop_workspace_script" => {
-            json!({"script":app.terminals.script_stop(required(&input,"workspaceId")?, required(&input,"scriptName")?).await?})
         }
         "list_terminals" => {
             let cwd = if flag(&input, "all", false) {
@@ -249,11 +158,12 @@ pub(crate) async fn execute(
             let cwd =
                 resolve_scoped_cwd(app, caller, input.get("cwd").and_then(Value::as_str)).await?;
             let workspace_id = if let Some(caller) = caller {
-                caller_agent(app, caller)
-                    .await?
-                    .get("workspaceId")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+                let agent = caller_agent(app, caller).await?;
+                if agent["cwd"].as_str() == cwd.to_str() {
+                    agent["workspaceId"].as_str().map(str::to_owned)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -455,150 +365,6 @@ async fn existing_terminal(
         .map_err(|_| super::input_error(format!("Terminal {id} not found")))
 }
 
-async fn create_workspace(
-    app: &Arc<AppState>,
-    caller: Option<&str>,
-    input: &Value,
-) -> Result<Value> {
-    for key in [
-        "title",
-        "worktreeSlug",
-        "branchName",
-        "baseBranch",
-        "branch",
-        "forge",
-    ] {
-        if input.get(key).is_some() && trimmed(input, key).is_none() {
-            return Err(super::input_error(format!("{key} must not be empty")));
-        }
-    }
-    let caller_workspace = if let Some(caller) = caller {
-        caller_agent(app, caller)
-            .await?
-            .get("workspaceId")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    } else {
-        None
-    };
-    let isolation = required(input, "isolation")?;
-    let mut source = if isolation == "local" {
-        let cwd =
-            resolve_scoped_cwd(app, caller, input.get("path").and_then(Value::as_str)).await?;
-        match tokio::fs::metadata(&cwd).await {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => {
-                return Err(super::input_error(format!(
-                    "Directory not found: {}",
-                    cwd.display()
-                )));
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                return Err(super::input_error(format!(
-                    "Directory not found: {}",
-                    cwd.display()
-                )));
-            }
-            Err(error) => return Err(error.into()),
-        }
-        absent(
-            input,
-            &[
-                "mode",
-                "worktreeSlug",
-                "branchName",
-                "baseBranch",
-                "branch",
-                "prNumber",
-                "forge",
-            ],
-            "Worktree options require isolation worktree",
-        )?;
-        json!({"kind":"directory","path":cwd})
-    } else {
-        let cwd = if input.get("path").is_some()
-            || input
-                .get("projectId")
-                .and_then(Value::as_str)
-                .is_none_or(str::is_empty)
-        {
-            resolve_scoped_cwd(app, caller, input.get("path").and_then(Value::as_str)).await?
-        } else {
-            let id = required(input, "projectId")?;
-            let project = app
-                .projects
-                .project(id)
-                .await?
-                .filter(|project| !archived(project))
-                .with_context(|| format!("Project not found: {id}"))?;
-            PathBuf::from(required(&project, "rootPath")?)
-        };
-        let mut source = json!({"kind":"worktree","cwd":cwd});
-        match input
-            .get("mode")
-            .and_then(Value::as_str)
-            .unwrap_or("branch-off")
-        {
-            "branch-off" => {
-                absent(
-                    input,
-                    &["branch", "prNumber", "forge"],
-                    "branch, prNumber, and forge require a checkout mode",
-                )?;
-                source["action"] = json!("branch-off");
-                copy_trimmed(input, "branchName", &mut source, "branchName")?;
-                copy_trimmed(input, "baseBranch", &mut source, "refName")?;
-            }
-            "checkout-branch" => {
-                let branch = trimmed(input, "branch").ok_or_else(|| {
-                    super::input_error("branch is required for checkout-branch mode")
-                })?;
-                absent(
-                    input,
-                    &["branchName", "baseBranch", "prNumber", "forge"],
-                    "branchName, baseBranch, prNumber, and forge are not valid for checkout-branch mode",
-                )?;
-                source["action"] = json!("checkout");
-                source["refName"] = json!(branch);
-            }
-            "checkout-pr" => {
-                let number = input.get("prNumber").ok_or_else(|| {
-                    super::input_error("prNumber is required for checkout-pr mode")
-                })?;
-                absent(
-                    input,
-                    &["branchName", "baseBranch", "branch"],
-                    "branchName, baseBranch, and branch are not valid for checkout-pr mode",
-                )?;
-                source["action"] = json!("checkout");
-                let mut checkout = json!({"kind":"change_request","number":number});
-                copy_trimmed(input, "forge", &mut checkout, "forge")?;
-                source["checkoutSource"] = checkout;
-            }
-            mode => bail!("Invalid worktree mode: {mode}"),
-        }
-        copy_trimmed(input, "worktreeSlug", &mut source, "worktreeSlug")?;
-        source
-    };
-    if let Some(project) = input.get("projectId") {
-        source["projectId"] = project.clone();
-    }
-    let mut request = json!({"source":source});
-    copy_trimmed(input, "title", &mut request, "title")?;
-    if let Some(background) = input.get("background") {
-        request["background"] = background.clone();
-    }
-    if let Some(id) = caller_workspace {
-        request["callerWorkspaceId"] = json!(id);
-    }
-    let workspace = app.projects.create_workspace(&request).await?;
-    Ok(workspace_summary(&workspace))
-}
 
 pub(crate) async fn resolve_scoped_cwd(
     app: &Arc<AppState>,
@@ -677,44 +443,6 @@ fn flag(value: &Value, key: &str, default: bool) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
-fn archived(value: &Value) -> bool {
-    value
-        .get("archivedAt")
-        .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
-}
-
-fn absent(input: &Value, fields: &[&str], message: &str) -> Result<()> {
-    if fields.iter().any(|field| input.get(*field).is_some()) {
-        return Err(super::input_error(message));
-    }
-    Ok(())
-}
-
-fn copy_trimmed(input: &Value, key: &str, output: &mut Value, target: &str) -> Result<()> {
-    if let Some(value) = input.get(key) {
-        let value = value
-            .as_str()
-            .ok_or_else(|| super::input_error(format!("{key} must be a string")))?
-            .trim();
-        if value.is_empty() {
-            return Err(super::input_error(format!("{key} is required")));
-        }
-        output[target] = json!(value);
-    }
-    Ok(())
-}
-
-fn workspace_summary(workspace: &Value) -> Value {
-    let mut summary = json!({
-        "workspaceId":workspace["workspaceId"],"projectId":workspace["projectId"],"cwd":workspace["cwd"],
-        "isolation":if workspace["kind"] == "worktree" { "worktree" } else { "local" },
-        "kind":workspace["kind"],"title":workspace["title"]
-    });
-    if let Some(background) = workspace.get("background") {
-        summary["background"] = background.clone();
-    }
-    summary
-}
 
 fn terminal_summary(terminal: &Value) -> Value {
     json!({"id":terminal["id"],"name":terminal["name"],"cwd":terminal["cwd"]})

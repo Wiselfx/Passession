@@ -1,6 +1,6 @@
 ---
 title: CLI 参考
-description: "Paseo CLI 参考：在终端中管理项目、工作区、Agent、插件、脚本、定时任务、daemon 和权限。"
+description: "Paseo CLI 参考：在终端中管理项目、会话、插件、脚本、定时任务、daemon 和权限。"
 nav: CLI 参考
 ---
 
@@ -10,7 +10,7 @@ Rust Paseo CLI 用于从终端管理 Agent 和 daemon。本文面向尚未发布
 
 直接运行 `paseo` 打开 CLI 聊天。显式设置使用 `paseo onboard`，托管运行使用 `paseo daemon start` 和 `paseo daemon status`。默认主目录仍为 `~/.paseo`。
 
-> **Agent 编排**：你可以让编程 Agent 使用 Paseo CLI 启动和管理其他 Agent。Paseo 会识别发起调用的 Agent，因此通过 CLI 创建的执行者与通过 MCP 创建的执行者获得相同的工作区和父级默认值。
+> **Agent 编排**：你可以让编程 Agent 使用 Paseo CLI 启动和管理其他 Agent。Paseo 会识别调用方，使 CLI 和 MCP 创建的执行者获得相同的目录与父级默认值。
 
 ## 速查 {#quick-reference}
 
@@ -86,7 +86,7 @@ JSON 输出不会包含连接凭据。
 
 `update --meta` 替换指定的键；`--remove-meta` 删除键。替换连接会保留已固定的 daemon 身份。
 只有确认目标已改变后，才应同时使用 `--replace-identity` 和 `--connection`。
-`rm` 删除已保存的连接；该主机上的 Agent 和工作区会继续运行。
+`rm` 删除已保存的连接；该主机上的会话会继续运行。
 
 ## Provider 诊断 {#provider-diagnostics}
 
@@ -109,23 +109,21 @@ paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --no-wait "run the focused test suite"
 paseo run --output-schema schema.json "name this branch"
-paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
-paseo run --workspace <workspace-id> "review the current diff"
+paseo run --cwd ~/dev/my-app "implement feature X"
+paseo run --cwd ~/dev/my-app "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
 paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}' "summarize release notes"
 ```
 
-在人工操作的 shell 中，不带参数的 `paseo run` 会为当前目录创建一个新的本地工作区。使用 `--workspace <id>` 把 Agent 加入一个已有的工作区，或者使用 `--new-workspace local|worktree` 为这次运行显式创建一个单独的工作区。
+在人工操作的 shell 中，`paseo run` 在当前目录启动会话。使用 `--cwd <path>` 选择目标主机上的另一个现有目录。Paseo 不为运行创建 Git worktree 或检出分支。
 
-创建 worktree 时接受 `--worktree-mode branch-off|checkout-branch|checkout-pr`，以及相应的 `--new-branch`/`--base`、`--branch` 或 `--pr-number`/`--forge` 选项。使用 `--worktree-slug` 选择托管目录的 slug。
-
-当一个已有的 Paseo Agent 运行同样的命令时，Paseo 会通过 `PASEO_AGENT_ID` 识别它。如果没有显式指定位置，新的 Agent 会成为它在同一工作区中的子 Agent。`--workspace` 可以把这个子 Agent 放到其他地方，而不改变它的父 Agent。
+已有的 Paseo Agent 运行该命令时，Paseo 通过 `PASEO_AGENT_ID` 识别调用方。未显式指定目录时，新 Agent 成为调用方的子 Agent 并使用其目录。`--cwd` 改变工作目录，不改变父子关系。
 
 使用 `--output-schema` 只返回符合 schema 的 JSON 输出。你可以传入 schema 文件路径，或内联的 JSON schema 对象。此模式不能与 `--no-wait` 一起使用。
 
 `paseo run` 默认等待完成。使用 `--no-wait` 可以立即返回，同时让 Agent 继续运行，`paseo send` 也使用同一个参数。
 
-旧的 `run --background` 和 `-d` 别名仍然表示 `--no-wait`。它们已被弃用，不会出现在帮助中，并会向 stderr 输出警告。请在脚本中使用 `--no-wait`。工作区的可见性通过 `workspace create --background` 单独选择；本版本不会改变 `run --background` 的含义。
+旧的 `run --background` 和 `-d` 别名仍表示 `--no-wait`。它们已弃用、隐藏于帮助，并向 stderr 输出警告。脚本中请使用 `--no-wait`。
 
 ## 项目 {#projects}
 
@@ -145,7 +143,7 @@ paseo project rename <project-id> --reset
 paseo project delete <project-id>
 ```
 
-`--reset` 恢复由项目目录推导出的名称。删除项目会归档它的活动工作区，并把项目从 Paseo 中移除。它不会删除项目目录。
+`--reset` 恢复由项目目录推导出的名称。删除项目会移除注册信息并归档其活动的内部目录归属记录，不会删除项目目录或 Git worktree。
 
 对于本地 daemon，`paseo project create [path]` 默认使用当前目录，并在 CLI 所在机器上解析相对路径。当你使用全局的 `--host` 选项或 `PASEO_HOST` 时，请提供目标 daemon 能访问的路径：
 
@@ -153,83 +151,30 @@ paseo project delete <project-id>
 paseo --host devbox:6767 project create /srv/repos/api
 ```
 
-远程 daemon 会在它自己的机器上解释这个路径。项目如何对工作目录和会话分组，见[工作区](/docs/workspaces)。
-
-## 工作区 {#workspaces}
-
-如果你想在启动 Agent 之前先准备好文件，可以单独创建工作区：
-
-```bash
-paseo workspace create --isolation local --path ~/dev/my-app --title main
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode branch-off \
-  --new-branch feature/auth \
-  --worktree-slug feature-auth \
-  --base origin/main
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode checkout-branch \
-  --branch feature/existing \
-  --worktree-slug existing-copy
-
-paseo workspace create \
-  --isolation worktree \
-  --path ~/dev/my-app \
-  --mode checkout-pr \
-  --pr-number 2186
-```
-
-添加 `--background` 可以把工作区从默认的发现结果中隐藏。它的 Agent 和终端保留普通的历史记录、持久化、钩子和重启恢复。`--no-background` 显式覆盖从调用方工作区继承的设置；省略时，由 Paseo Agent 运行则继承，在人工操作的 shell 中默认为 false。可见性只能在创建时设置。
-
-```bash
-paseo workspace create --isolation local --background --path /path/to/repo
-paseo run --workspace <workspace-id> --no-wait "review the checkout flow"
-```
-
-无论在列表中是否可见，都可以通过确切的工作区 ID 和 Agent ID 访问它们。
-
-然后列出、使用、重命名或归档它：
-
-```bash
-paseo workspace ls
-paseo workspace ls --background               # Also include background workspaces
-paseo run --workspace <workspace-id> "implement authentication"
-paseo workspace rename <workspace-id> "Auth rework"
-paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
-paseo workspace archive <workspace-id>
-```
-
-当 Paseo 无法从源检出推断代码托管平台时，为 PR 检出添加 `--forge <name>`。setup 钩子和服务见 [Git worktree](/docs/worktrees)。
+远程 daemon 在自己的机器上解释该路径。主机 → 目录 → 会话的导航模型见[会话与目录](/docs/workspaces)。
 
 ## 终端 {#terminals}
 
-这些命令控制主机上 daemon 端的 PTY。应用以 **Terminal** 标签页打开交互式 shell，并以只读日志显示脚本/设置任务的输出。
+这些命令控制主机上 daemon 端的 PTY。应用以 **Terminal** 标签页打开交互式 shell，并以只读日志显示脚本输出。
 
-当多个工作区共享同一个目录时，请使用工作区 ID：
+通过 `--agent` 选择会话，或通过 `--cwd` 选择目录：
 
 ```bash
-paseo terminal create --workspace <workspace-id> --name Development
-paseo terminal ls --workspace <workspace-id> --json
+paseo terminal create --agent <agent-id> --name Development
+paseo terminal ls --cwd ~/dev/my-app --json
 paseo terminal send-keys <terminal-id> -l "echo ready"
 paseo terminal send-keys <terminal-id> Enter
 paseo terminal capture <terminal-id>
 paseo terminal kill <terminal-id>
 ```
 
-创建时默认使用工作区目录。添加 `--cwd <absolute-path>` 可以修改进程目录，同时仍由该工作区拥有。未知或已归档的工作区 ID 会失败。
+`--agent <id>` 选择会话的目录归属。不传它时，创建使用 `--cwd` 或当前目录。`ls --all` 列出主机上的所有终端，不能与 Agent 或目录过滤同时使用。
 
-不带 `--workspace` 时，创建会打开 `--cwd` 或当前目录对应的项目，并复用其中最早的活动工作区。不带 `--workspace` 的列表会按 `--cwd` 或当前目录过滤，可能包含多个工作区。`ls --all` 列出主机上的所有终端，不能与目录或工作区过滤条件一起使用。
+使用 `--json` 获得结构化输出，用全局 `--host` 指定另一个 daemon。结果为协议兼容保留内部 `workspaceId`；请选择会话和目录，而不是管理这些 ID。
 
-创建和列表的结果包含 `id`、`name`、`cwd` 和 `workspaceId`。使用 `--json` 获得结构化输出，使用全局的 `--host` 选项指定另一个 daemon。这些命令需要一个支持[工作区终端 API](/docs/sdk/reference#clientterminals) 的主机；较旧的主机会返回一条更新提示。
+## 脚本 {#scripts}
 
-## 工作区脚本 {#workspace-scripts}
-
-列出、启动和停止在工作区的 `paseo.json` 中配置的脚本：
+列出、启动和停止所选目录 `paseo.json` 中配置的脚本：
 
 ```bash
 paseo script ls
@@ -237,9 +182,9 @@ paseo script start web
 paseo script stop web
 ```
 
-Paseo 默认选择目录为当前目录的工作区。传入 `--cwd <path>` 选择另一个目录，当一个目录有多个工作区时传入 `--workspace <workspace-id>`。使用全局的 `--host` 选项指定另一个 daemon。这些命令也接受 `--json` 等标准输出选项。
+传入 `--agent <agent-id>` 选择会话的目录归属，或 `--cwd <path>` 选择另一个目录。都不传时使用当前目录。全局 `--host` 指定另一个 daemon；也支持 `--json` 等输出选项。
 
-输出包含每个脚本的生命周期和受监管的终端 ID。服务还包含它们分配到的端口、代理 URL 和健康状态。`paseo.json` 的配置见 [Git worktree](/docs/worktrees#scripts-and-services)。
+输出包含脚本生命周期和受监管的终端 ID。服务还包含端口、代理 URL 和健康状态。配置见[项目脚本与服务](/docs/worktrees#scripts-and-services)。
 
 ## 插件 {#plugins}
 
@@ -290,11 +235,11 @@ paseo plugin install release:<HTTPS-archive-URL> --version <semver> --sha256 <di
 ## 列出 Agent {#listing-agents}
 
 ```bash
-paseo ls                    # Non-archived agents in active workspaces
-paseo ls -a                 # Also include archived agents
-paseo ls -g                 # Non-archived agents across all workspaces
-paseo ls -a -g --json       # All agents, including archived, as JSON
-paseo ls --background       # Also include agents in background workspaces
+paseo ls                    # 活动目录归属中的未归档会话
+paseo ls -a                 # 同时包含已归档会话
+paseo ls -g                 # 未归档会话，包括非活动目录归属
+paseo ls -a -g --json       # 所有会话，包括已归档会话
+paseo ls --background       # 同时包含保留的后台会话
 ```
 
 ## 流式输出 {#streaming-output}
@@ -514,7 +459,7 @@ paseo wait "$agent_id"
 paseo logs "$agent_id" --tail 5
 ```
 
-由于 Agent A 的 ID 存在于环境变量中，除非指定了 `--workspace`，Agent B 会作为它的子 Agent 创建在同一个工作区中。
+Agent A 的 ID 存在于环境变量中，因此 Agent B 会成为它的子 Agent。未传入 `--cwd` 时继承调用方目录。
 
 简单的实现加验证循环：
 

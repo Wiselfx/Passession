@@ -54,7 +54,7 @@ pub fn catalog() -> Vec<Binding> {
 /// Original `buildKeyboardShortcutHelpSections` order and title keys.
 pub const SECTIONS: &[(&str, &str)] = &[
     ("general", "general"),
-    ("workspaces", "workspaces"),
+    ("sessions", "sessions"),
     ("tabs-panes", "tabsPanes"),
     ("layout", "layout"),
     ("agent-input", "agentInput"),

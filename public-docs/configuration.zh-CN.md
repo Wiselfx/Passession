@@ -68,11 +68,11 @@ daemon 会在应用任何内容之前校验整个文件。它会应用运行时�
 paseo daemon restart
 ```
 
-运行时安全的设置包括：中继启用、MCP 设置、主机名、CORS 来源、受信任的代理、Git 进程限制、Agent 和脚本/设置任务终端配置、Provider 定义、元数据生成、应用基础 URL、Provider 目录超时，以及全局插件开关。删除其中某个设置会应用该字段缺省时的行为；删除某个 Provider 会把它从之后的启动中移除。
+运行时安全的设置包括：中继启用、MCP 设置、主机名、CORS 来源、受信任的代理、Git 进程限制、Agent 和脚本终端配置、Provider 定义、元数据生成、应用基础 URL、Provider 目录超时，以及全局插件开关。删除其中某个设置会应用该字段缺省时的行为；删除某个 Provider 会把它从之后的启动中移除。
 
 当你删除 `daemon.relay.enabled` 时，新的主目录会保持中继关闭。如果 daemon 启动时其配置就已经省略了这个字段，它会为了兼容而保持旧版的中继开启行为。编辑较旧的配置时，请显式设置 `daemon.relay.enabled`。
 
-监听地址、身份验证、中继端点和 TLS、worktree 分配、服务代理地址和日志设置需要重启。重新加载会先应用同一文件中的其他有效编辑，再报告这些路径。
+监听地址、身份验证、中继端点和 TLS、服务代理地址和日志设置需要重启。重新加载会先应用同一文件中的其他有效编辑，再报告这些路径。
 
 部署环境变量仍然具有最终决定权。当启动覆盖项阻止文件设置生效时，重新加载会在 `overrideControlledPaths` 中报告。主机名和 CORS 来源等列表仍会跨来源追加。要让文件值生效，请停止部署并在不带覆盖项的情况下重新启动。
 
@@ -82,20 +82,6 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 心智模型见 [Provider](/docs/providers)，Paseo 可以启动的全部 Agent 见[支持的 Provider](/docs/supported-providers)。要让 Claude 指向兼容 Anthropic 的端点（Z.AI、Alibaba/Qwen）、使用多个配置、自定义二进制文件、ACP Agent，以及了解 `additionalModels` 的合并行为，见[自定义 Provider](/docs/custom-providers)。完整的字段参考在 GitHub 上的 [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md)。
 
-## worktree {#worktrees}
-
-新的 worktree 默认创建在 `$PASEO_HOME/worktrees` 下。要把新的 worktree 放到其他位置，请设置 `worktrees.root`：
-
-```json
-{
-  "worktrees": {
-    "root": "/mnt/fast/paseo-worktrees"
-  }
-}
-```
-
-相对路径基于 `PASEO_HOME` 解析。已有的 worktree 保持原位；修改此设置只会改变 Paseo 之后创建和发现由 Paseo 管理的 worktree 的位置。
-
 ## 已移除的语音设置 {#removed-speech-settings}
 
 不再支持语音识别、语音对话和 TTS。配置规范化会丢弃旧的顶层 `providers`、`features.dictation` 和 `features.voiceMode` 设置，不会移除 `agents.providers` 下的 Agent 配置。
@@ -104,7 +90,7 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 Rust daemon 提供 API，不提供内置 Web 产品客户端。请使用原生桌面/移动应用或 Rust CLI 连接。移动端只连接远程桌面/服务器 daemon，不在本地运行 daemon。
 
-已移除的 `features.webUi` 和 `daemon.browserTools` 设置会在规范化时丢弃。没有可启用的 Web UI 或内嵌浏览器自动化。交互式 **Terminal** 会话和脚本/设置任务的 PTY 都在 daemon 上运行；脚本/设置任务的输出在客户端中以只读日志显示。
+已移除的 `features.webUi` 和 `daemon.browserTools` 设置会在规范化时丢弃。没有可启用的 Web UI 或内嵌浏览器自动化。交互式 **Terminal** 会话和脚本 PTY 都在 daemon 上运行；脚本输出在客户端中以只读日志显示。
 
 ## 日志 {#logging}
 

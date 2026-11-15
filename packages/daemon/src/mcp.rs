@@ -26,8 +26,6 @@ use tokio_util::sync::CancellationToken;
 /// handler failures become routed tool errors.
 const HOST_TOOLS: &[&str] = &[
     "create_agent",
-    "create_workspace",
-    "list_workspaces",
     "send_agent_prompt",
     "get_agent_status",
     "get_agent_activity",
@@ -288,13 +286,9 @@ async fn execute_local(
         schedule_tools::execute(app, caller, name, input).await
     } else if matches!(
         name,
-        "create_workspace"
-            | "list_workspaces"
-            | "archive_workspace"
-            | "rename_workspace"
-            | "list_workspace_scripts"
-            | "start_workspace_script"
-            | "stop_workspace_script"
+        "list_scripts"
+            | "start_script"
+            | "stop_script"
             | "list_terminals"
             | "create_terminal"
             | "kill_terminal"
@@ -334,12 +328,6 @@ impl NativeToolExecutor for BoundExecutor {
         app.mcp
             .execute_grant(&self.token, name, input, cancel, updates)
             .await
-    }
-}
-pub(crate) fn actor(caller: Option<&str>) -> Value {
-    match caller {
-        Some(id) => json!({"kind":"agent","agentId":id}),
-        None => json!({"kind":"owner"}),
     }
 }
 pub(crate) fn input_error(message: impl Into<String>) -> anyhow::Error {

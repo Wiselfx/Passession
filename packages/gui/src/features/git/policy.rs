@@ -1,6 +1,6 @@
 //! Forge presentation, merge capability and the git action policy (original
 //! git/forge.ts, git/merge-capability.ts, git/forges/*.ts, git/policy.ts,
-//! git/pr-hint.ts and git/worktree-archive-warning.ts).
+//! git/pr-hint.ts).
 
 use super::json::{flag, flag_or, int, object, opt_int, text};
 use super::model::format_base_ref_label;
@@ -468,7 +468,6 @@ pub struct ActionsInput {
     pub pull_request_mergeable: String,
     pub merge_capability: Option<MergeCapability>,
     pub has_remote: bool,
-    pub is_paseo_owned_worktree: bool,
     pub is_on_base_branch: bool,
     pub has_uncommitted_changes: bool,
     pub base_ref_available: bool,
@@ -477,7 +476,6 @@ pub struct ActionsInput {
     pub behind_base_count: i64,
     pub ahead_of_origin: Option<i64>,
     pub behind_of_origin: Option<i64>,
-    pub should_promote_archive: bool,
     pub ship_default: &'static str,
     pub runtime: HashMap<&'static str, ActionRuntime>,
 }
@@ -498,7 +496,6 @@ impl Default for ActionsInput {
             pull_request_mergeable: "UNKNOWN".into(),
             merge_capability: None,
             has_remote: false,
-            is_paseo_owned_worktree: false,
             is_on_base_branch: false,
             has_uncommitted_changes: false,
             base_ref_available: false,
@@ -507,7 +504,6 @@ impl Default for ActionsInput {
             behind_base_count: 0,
             ahead_of_origin: None,
             behind_of_origin: None,
-            should_promote_archive: false,
             ship_default: "pr",
             runtime: HashMap::new(),
         }
@@ -651,7 +647,6 @@ pub fn build_git_actions(input: &ActionsInput) -> GitActions {
         "merge-from-base",
         simple("merge-from-base", true, merge_from_base_unavailable(input)),
     );
-    all.insert("archive-workspace", simple("archive-workspace", true, None));
 
     let primary_id = primary_action_id(input);
     let mut secondary_ids: Vec<&'static str> = vec!["pull", "push", "pull-and-push"];
@@ -665,12 +660,10 @@ pub fn build_git_actions(input: &ActionsInput) -> GitActions {
                 .filter(|id| should_show_pull_request_action(input, id)),
         );
     }
-    secondary_ids.push("archive-workspace");
     GitActions {
         primary: primary_id.and_then(|id| all.get(id).cloned()),
         secondary: secondary_ids
             .into_iter()
-            .filter(|id| *id != "archive-workspace" || primary_id != Some("archive-workspace"))
             .filter_map(|id| all.get(id).cloned())
             .collect(),
     }
@@ -700,9 +693,6 @@ fn pr_action(input: &ActionsInput) -> GitAction {
 }
 
 fn primary_action_id(input: &ActionsInput) -> Option<&'static str> {
-    if input.should_promote_archive {
-        return Some("archive-workspace");
-    }
     if input.has_uncommitted_changes {
         return Some("commit");
     }
@@ -732,9 +722,6 @@ fn primary_action_id(input: &ActionsInput) -> Option<&'static str> {
     }
     if input.github_features_enabled && input.has_pull_request && input.pull_request_url.is_some() {
         return Some("pr");
-    }
-    if input.is_paseo_owned_worktree {
-        return Some("archive-workspace");
     }
     None
 }
@@ -792,11 +779,7 @@ fn can_push(input: &ActionsInput) -> bool {
 }
 
 fn has_pushable_commits(input: &ActionsInput) -> bool {
-    if input.ahead_of_origin.unwrap_or(0) > 0 {
-        return true;
-    }
-    // No-upstream Paseo worktrees are first-pushable: the daemon push sets upstream.
-    input.is_paseo_owned_worktree && input.ahead_of_origin.is_none() && input.ahead_count > 0
+    input.ahead_of_origin.unwrap_or(0) > 0
 }
 
 fn can_merge_from_base(input: &ActionsInput) -> bool {
@@ -985,7 +968,6 @@ fn merge_pr_unavailable(input: &ActionsInput) -> Option<Msg> {
 /// Inputs of the original `deriveGitActionsState` beyond status and PR payload.
 pub struct ActionsContext<'a> {
     pub status_loading: bool,
-    pub post_ship_archive_suggested: bool,
     pub auto_merge_actions_enabled: bool,
     pub ship_default: &'static str,
     pub base_fallback_label: &'a str,
@@ -1013,7 +995,7 @@ pub fn actions_input_from(
         || status.is_some_and(|s| s.get("error").is_some_and(|e| !e.is_null()))
         || context.status_loading;
     let mut runtimes = HashMap::new();
-    for id in ALL_ACTION_IDS.iter().copied().chain(["archive-workspace"]) {
+    for id in ALL_ACTION_IDS.iter().copied() {
         runtimes.insert(id, runtime(id, actions_disabled));
     }
     ActionsInput {
@@ -1034,7 +1016,6 @@ pub fn actions_input_from(
             .to_owned(),
         merge_capability: derive_merge_capability(pr.get("forgeSpecific"), pr.get("github")),
         has_remote: flag(git, "hasRemote"),
-        is_paseo_owned_worktree: flag(git, "isPaseoOwnedWorktree"),
         is_on_base_branch: is_git && text(git, "currentBranch") == base_ref_label,
         has_uncommitted_changes,
         base_ref_available: !base_ref.is_empty(),
@@ -1043,8 +1024,6 @@ pub fn actions_input_from(
         behind_base_count: int(ahead_behind, "behind"),
         ahead_of_origin: opt_int(git, "aheadOfOrigin"),
         behind_of_origin: opt_int(git, "behindOfOrigin"),
-        should_promote_archive: !has_uncommitted_changes
-            && (context.post_ship_archive_suggested || flag(pr, "isMerged")),
         ship_default: context.ship_default,
         runtime: runtimes,
     }
@@ -1080,7 +1059,6 @@ pub fn action_label_keys(id: &str, has_pull_request: bool, base_ref_label: &str)
             Msg::new("workspace.git.actions.mergeFromBase.pending"),
             Msg::new("workspace.git.actions.mergeFromBase.success"),
         ],
-        "archive-workspace" => group("archive"),
         id if id.starts_with("merge-pr-") => [
             Msg::new(format!("workspace.git.actions.mergePr.{}", &id["merge-pr-".len()..])),
             Msg::new("workspace.git.actions.mergePr.pending"),
@@ -1102,85 +1080,6 @@ pub fn action_label_keys(id: &str, has_pull_request: bool, base_ref_label: &str)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Worktree archive warning.
-
-/// Original `buildWorktreeArchiveRiskReasons`.
-pub fn worktree_archive_risk_reasons(
-    is_dirty: Option<bool>,
-    ahead_of_origin: Option<i64>,
-    diff_stat: Option<&Value>,
-) -> Vec<Msg> {
-    let mut reasons = Vec::new();
-    let additions = diff_stat.map(|s| int(s, "additions")).unwrap_or(0);
-    let deletions = diff_stat.map(|s| int(s, "deletions")).unwrap_or(0);
-    let has_diff_stat_changes = diff_stat.is_some() && (additions > 0 || deletions > 0);
-    let uncommitted = is_dirty == Some(true) || (is_dirty.is_none() && has_diff_stat_changes);
-    const W: &str = "workspace.git.actions.archiveWarning";
-    if uncommitted {
-        let mut parts = Vec::new();
-        if additions > 0 {
-            parts.push(
-                Msg::new(if additions == 1 { format!("{W}.addedLine") } else { format!("{W}.addedLines") })
-                    .arg("count", additions),
-            );
-        }
-        if deletions > 0 {
-            parts.push(
-                Msg::new(if deletions == 1 { format!("{W}.deletedLine") } else { format!("{W}.deletedLines") })
-                    .arg("count", deletions),
-            );
-        }
-        if parts.is_empty() {
-            reasons.push(Msg::new(format!("{W}.uncommittedChanges")));
-        } else {
-            // The diff stat parts are resolved by the reader and joined with ", ".
-            let mut message = Msg::new(format!("{W}.uncommittedChangesWithDiff"));
-            message.args.push(("diffStat", String::new()));
-            reasons.push(message);
-            reasons.extend(parts.into_iter().map(|mut part| {
-                part.args.push(("__part", String::new()));
-                part
-            }));
-        }
-    }
-    let ahead = ahead_of_origin.unwrap_or(0);
-    if ahead > 0 {
-        reasons.push(
-            Msg::new(if ahead == 1 { format!("{W}.unpushedCommit") } else { format!("{W}.unpushedCommits") })
-                .arg("count", ahead),
-        );
-    }
-    reasons
-}
-
-/// Resolves [`worktree_archive_risk_reasons`] into display lines: diff stat
-/// parts (marked `__part`) fold into the preceding `diffStat` argument.
-pub fn resolve_risk_reasons(reasons: &[Msg], resolve: &dyn Fn(&Msg) -> String) -> Vec<String> {
-    let mut lines: Vec<(Msg, Vec<String>)> = Vec::new();
-    for reason in reasons {
-        if reason.args.iter().any(|(name, _)| *name == "__part") {
-            let mut part = reason.clone();
-            part.args.retain(|(name, _)| *name != "__part");
-            if let Some((_, parts)) = lines.last_mut() {
-                parts.push(resolve(&part));
-            }
-            continue;
-        }
-        lines.push((reason.clone(), Vec::new()));
-    }
-    lines
-        .into_iter()
-        .map(|(mut reason, parts)| {
-            for arg in &mut reason.args {
-                if arg.0 == "diffStat" {
-                    arg.1 = parts.join(", ");
-                }
-            }
-            resolve(&reason)
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -1201,17 +1100,6 @@ mod tests {
         assert_eq!(build_git_actions(&behind).primary.unwrap().id, "pull");
     }
 
-    #[test]
-    fn no_upstream_paseo_worktree_with_commits_is_first_pushable() {
-        let worktree = ActionsInput {
-            has_remote: true,
-            is_paseo_owned_worktree: true,
-            ahead_count: 2,
-            ship_default: "merge",
-            ..input()
-        };
-        assert_eq!(build_git_actions(&worktree).primary.unwrap().id, "push");
-    }
 
     #[test]
     fn unavailable_pull_explains_itself_instead_of_being_hidden() {
@@ -1244,21 +1132,20 @@ mod tests {
     }
 
     #[test]
-    fn merged_pr_without_local_changes_promotes_archive() {
+    fn merged_pr_keeps_its_navigation_action() {
         let mut runtime = |_: &'static str, disabled: bool| ActionRuntime { disabled, status: ActionStatus::Idle };
         let built = actions_input_from(
             Some(&json!({"isGit": true, "currentBranch": "feat", "baseRef": "main"})),
             Some(&json!({"status": {"url": "https://github.com/a/b/pull/1", "isMerged": true}})),
             &ActionsContext {
                 status_loading: false,
-                post_ship_archive_suggested: false,
                 auto_merge_actions_enabled: false,
                 ship_default: "pr",
                 base_fallback_label: "base",
             },
             &mut runtime,
         );
-        assert_eq!(build_git_actions(&built).primary.unwrap().id, "archive-workspace");
+        assert_eq!(build_git_actions(&built).primary.unwrap().id, "pr");
     }
 
     #[test]
@@ -1286,20 +1173,6 @@ mod tests {
         assert_eq!(select_pr_hint(Some(&json!({"status": {"url": "https://codeberg.org/a/b/pulls/3/files", "state": "closed"}}))).unwrap().number, 3);
     }
 
-    #[test]
-    fn worktree_reasons_use_diff_stat_only_when_dirtiness_is_unknown() {
-        let stat = json!({"additions": 3, "deletions": 1});
-        assert!(worktree_archive_risk_reasons(Some(false), Some(0), Some(&stat)).is_empty());
-        let reasons = worktree_archive_risk_reasons(None, Some(2), Some(&stat));
-        let lines = resolve_risk_reasons(&reasons, &|m: &Msg| {
-            let args: Vec<String> = m.args.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            format!("{}({})", m.key, args.join(","))
-        });
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("uncommittedChangesWithDiff(diffStat="));
-        assert!(lines[0].contains("addedLines(count=3)"));
-        assert!(lines[1].contains("unpushedCommits(count=2)"));
-    }
 
     #[test]
     fn legacy_auth_state_maps_from_features_flag() {

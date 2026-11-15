@@ -6,7 +6,7 @@ Paseo 原生 SDK 让 Rust 应用驱动 daemon，保留既有协议与资源 ID�
 
 | Crate | 用途 |
 | --- | --- |
-| `paseo-client` | Tokio 客户端，本地/远程/relay/SSH 传输，Agent/工作区 RPC，订阅、分页及文件/终端二进制传输。 |
+| `paseo-client` | Tokio 客户端，本地/远程/relay/SSH 传输，Agent RPC、内部归属记录、订阅、分页及文件/终端二进制传输。 |
 | `paseo-protocol` | 无损协议消息、原生验证、Provider 目录、路由、时间线辅助函数和加密传输编解码。 |
 | `paseo-highlight` | 原生语法解析、借用 token、主题，以及完整文档结果的分批交付。 |
 
@@ -23,7 +23,7 @@ Paseo 原生 SDK 让 Rust 应用驱动 daemon，保留既有协议与资源 ID�
 ## 指南
 
 - [Agent](agents.zh-CN.md)
-- [工作区](workspaces.zh-CN.md)
+- [会话与目录](workspaces.zh-CN.md)
 - [Provider](providers.zh-CN.md) 和 [Provider 选项](provider-options.zh-CN.md)
 - [事件与历史](events.zh-CN.md)
 - [实践示例](recipes.zh-CN.md)

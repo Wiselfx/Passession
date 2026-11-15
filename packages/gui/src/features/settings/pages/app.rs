@@ -258,41 +258,6 @@ fn draw_sidebar(ui: &mut Ui, s: &Settings, v: &View) {
         t("settings.appearance.sidebar.header.description"),
     );
     nav_card(ui, s, v, "sidebarFooterItems", &["usage"], t("settings.appearance.sidebar.footer.title"), t("settings.appearance.sidebar.footer.description"));
-    let row_items = obj(&v.prefs, "sidebarRowItems").clone();
-    card_section(ui, &t("sidebar.display.heading"), |ui| {
-        let title_source = if str_of(&v.prefs, "workspaceTitleSource") == "branch" { "branch" } else { "title" };
-        let options = vec![("title".into(), t("sidebar.display.titleSource.title")), ("branch".into(), t("sidebar.display.titleSource.branch"))];
-        let ctl = select_ctl("pref.workspaceTitleSource", t("sidebar.display.titleSource.label"), title_source, options, 220.0, true, pref_pick("workspaceTitleSource"));
-        ui.row(row(t("sidebar.display.titleSource.label")).control(ctl));
-        for entry in ["branch", "project", "host", "changeRequest", "services", "labels"] {
-            let on = row_items.get(entry).and_then(Value::as_bool) != Some(false);
-            let base = row_items.clone();
-            let act = handler(move |s, env| {
-                let mut next = base.clone();
-                next.insert(entry.into(), Value::Bool(!on));
-                s.save_pref(env, "sidebarRowItems", Some(Value::Object(next)));
-            });
-            ui.row(row(t(&format!("sidebar.display.show.{entry}"))).control(switch(format!("pref.sidebarRowItems.{entry}"), on, Some(act))));
-        }
-        let checks = match v.prefs.get("sidebarChecksDisplay").and_then(Value::as_str) {
-            Some(value) if !value.is_empty() => value.to_string(),
-            _ => "iconAndText".into(),
-        };
-        let options = ["iconAndText", "icon", "none"].iter().map(|o| (o.to_string(), t(&format!("sidebar.display.checks.{o}")))).collect();
-        let ctl = select_ctl("pref.sidebarChecksDisplay", t("sidebar.display.show.checks"), &checks, options, 220.0, true, pref_pick("sidebarChecksDisplay"));
-        ui.row(row(t("sidebar.display.show.checks")).control(ctl));
-        let trailing = match v.prefs.get("sidebarWorkspaceTrailing").and_then(Value::as_str) {
-            Some(value) if !value.is_empty() => value.to_string(),
-            _ => "timestamp".into(),
-        };
-        let options = vec![
-            ("timestamp".into(), t("sidebar.display.show.timestamp")),
-            ("diff".into(), t("sidebar.display.show.diff")),
-            ("none".into(), t("sidebar.display.checks.none")),
-        ];
-        let ctl = select_ctl("pref.sidebarWorkspaceTrailing", t("sidebar.display.show.timestamp"), &trailing, options, 220.0, true, pref_pick("sidebarWorkspaceTrailing"));
-        ui.row(row(t("sidebar.display.show.timestamp")).control(ctl));
-    });
 }
 
 fn panel_label(id: &str) -> String {

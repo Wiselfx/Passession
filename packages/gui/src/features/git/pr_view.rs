@@ -183,7 +183,6 @@ impl PrView {
             vec![("checkout.refresh.request", serde_json::json!({}))],
             "workspace.git.diff.failedRefresh",
             None,
-            super::store::ActionFollowUp::None,
         );
     }
 

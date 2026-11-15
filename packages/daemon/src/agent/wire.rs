@@ -514,14 +514,5 @@ fn error_code(error: &anyhow::Error, fallback: &str) -> String {
     if let Some(error) = error.downcast_ref::<crate::projects::store::StoreError>() {
         return error.code.to_owned();
     }
-    if error
-        .downcast_ref::<crate::projects::worktrees::WorktreeError>()
-        .is_some()
-    {
-        return crate::projects::worktrees::wire_error(error)["code"]
-            .as_str()
-            .unwrap_or(fallback)
-            .to_owned();
-    }
     fallback.to_owned()
 }

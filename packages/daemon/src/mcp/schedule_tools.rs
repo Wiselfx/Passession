@@ -17,7 +17,6 @@ pub(crate) fn definitions(agent_scope: bool) -> Vec<Value> {
     let heartbeat = create.clone();
     create["provider"] = json!({"type":"string","description":"Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session."});
     create["cwd"] = json!({"type":"string"});
-    create["isolation"] = json!({"enum":["local","worktree"]});
     let mut out = vec![
         definition(
             "create_schedule",

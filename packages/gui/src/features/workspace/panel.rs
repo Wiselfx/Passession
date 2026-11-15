@@ -77,9 +77,8 @@ impl WorkspacePanel {
                     .find(|value| !value.is_empty())
                     .unwrap_or("")
                     .to_owned();
-                let workspace_id = tab.map(|t| t.workspace_id.clone()).unwrap_or_default();
                 if let Some(mut project) = self.view.wa_project_settings_view(id!(project)).borrow_mut() {
-                    project.set_project(cx, &host_id, &root, &workspace_id, &tab_key);
+                    project.set_project(cx, &host_id, &root, &tab_key);
                 }
             }
             WorkspaceTarget::NewTab { host_id, workspace_id, cwd: target_cwd, tab_id, source } => {

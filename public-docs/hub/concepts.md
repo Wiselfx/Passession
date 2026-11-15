@@ -28,7 +28,7 @@ GitHub / Slack / Discord / manual request
 - A **connection** lets Hub receive events from GitHub, Slack, or Discord.
 - A **daemon** is a registered machine running the Paseo daemon.
 - A **project** groups one configuration with the connections and daemons it uses.
-- An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
+- An **environment** names where a workflow step runs: a daemon and an existing local working directory.
 - A **trigger** says which provider event can start a workflow and which events are allowed through.
 - A **workflow** is the ordered set of steps that runs after a trigger matches.
 - A **step** starts one agent execution, with its own prompt, agent selection, credentials, reply capabilities, and limits.

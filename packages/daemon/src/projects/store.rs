@@ -966,12 +966,6 @@ pub fn derive_workspace_display_name(cwd: &str, checkout: &Value) -> String {
 }
 pub fn initial_workspace_placement(input: &Value) -> Value {
     let cwd = input["cwd"].as_str().unwrap_or("");
-    if input["source"] == "created_worktree" {
-        return json!({"cwd":cwd,"kind":"worktree",
-            "displayName":input["branch"].as_str().filter(|s| !s.is_empty()).unwrap_or(cwd),
-            "branch":input["branch"],"worktreeRoot":input["worktreeRoot"],"baseBranch":input["baseBranch"],
-            "isPaseoOwnedWorktree":true,"mainRepoRoot":input["mainRepoRoot"]});
-    }
     let checkout = &input["checkout"];
     let git = checkout["isGit"] == true;
     json!({"cwd":cwd,"kind":derive_workspace_kind(checkout),"displayName":derive_workspace_display_name(cwd,checkout),

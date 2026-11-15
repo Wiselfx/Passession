@@ -10,12 +10,11 @@ Use product terms consistently across the Rust daemon, Makepad client, CLI and e
 - **Directory** — A path on one host. `(serverId, cwd)` is the relevant identity; equal paths on two hosts remain distinct.
 - **Session tree** — The primary sidebar hierarchy **host → directory → session**. Empty directories and a single host still have rows. Search temporarily expands matching ancestors without replacing saved collapse state.
 - **Project** — A host-local registered root with stable membership/identity. Repository metadata does not silently rekey or rehome it.
-- **Workspace** — A durable orchestration entity for a directory/local checkout/worktree, associated sessions, scripts and state. Workspaces remain available through Command Center and APIs, but are not sidebar grouping rows.
-- **Workspace kind** — The persisted Git-derived kind (`directory`, `local_checkout`, `worktree`), not the user's transient create choice.
-- **Isolation** — The create-time choice to reuse a checkout or create a separate worktree.
-- **Worktree** — A Git worktree used for isolated work; not a synonym for project, workspace or host.
-- **Placement** — A workspace's stable project relationship plus its checkout snapshot.
-- **Explorer** — The supporting native Files/Changes navigation surface. It is distinct from the session tree.
+- **Directory owner (`workspaceId`)** — Internal durable identity retained in storage and the wire protocol for session, terminal and script ownership. Workspace is not a product creation, selection or navigation concept.
+- **Checkout kind** — Git-derived directory classification (`directory`, `local_checkout`, `worktree`), not a creation option.
+- **Worktree** — An existing Git working directory managed outside Paseo. Paseo can use it as a local directory but does not create, restore or delete it.
+- **Placement** — A directory owner's stable project relationship and recorded checkout facts.
+- **Explorer** — The supporting native Files/Git Log/Commit surface, distinct from the session tree.
 - **Pane / tab / sheet** — Presentation containers, not agent or daemon lifetimes. Closing a tab does not archive a session; closing a log view does not stop a service.
 
 ## Agents and configuration
@@ -37,10 +36,10 @@ Use product terms consistently across the Rust daemon, Makepad client, CLI and e
 - **Markdown preview** — Native rendering of source Markdown; no embedded browser or executable HTML/React client runtime.
 - **Source editor** — Native editing of a host-side file, with draft/revision/save ownership. A remote file is not a local-client path.
 - **Summary-first diff** — Load file-tree/statistics first, then individual patch bodies on demand.
-- **PTY** — Daemon-owned pseudo-terminal behind every terminal and setup/script process. Clients never own one.
-- **Terminal** — An interactive shell PTY opened from New session → Launch → Terminal and shown as a terminal tab. Clients send it input; the focused client sets its size.
-- **Script logs** — Read-only output/replay of script or setup execution, with real running/completed/failed state.
-- **Workspace script** — A named `paseo.json` command. A **service** is the long-running kind; not every script is a service.
+- **PTY** — Daemon-owned pseudo-terminal behind every terminal and script process. Clients never own one.
+- **Terminal** — An interactive shell PTY opened from New Session → Launch → Terminal and shown as a terminal tab. Clients send it input; the focused client sets its size.
+- **Script logs** — Read-only output/replay of script execution, with real running/completed/failed state.
+- **Project script** — A named `paseo.json` command. A **service** is the long-running kind; not every script is a service.
 - **Schedule** — A durable trigger/cadence for sending work or creating an agent. **Heartbeat** is a recurring prompt associated with an existing agent's lifecycle.
 - **MCP** — Model Context Protocol client/server integration and tools; not embedded browser automation.
 - **Forge** — A Git hosting service. **Change request** is the neutral term; display PR or MR according to the actual service.

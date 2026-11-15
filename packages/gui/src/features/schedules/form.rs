@@ -1,7 +1,7 @@
 //! The create/edit sheet (Flutter `schedule_form_sheet.dart`, original
 //! `components/schedules/schedule-form-sheet.tsx`). New-agent schedules show Name, Prompt,
 //! Host (edit or several hosts), Project (once a host is chosen), then — once a project is
-//! chosen — Model, Thinking, Mode, Isolation (git project on a multiplicity host) and
+//! chosen — Model, Thinking, Mode and
 //! Archive on finish (multiplicity hosts), then Cadence and Max runs; a heartbeat edit
 //! shows its read-only Target and the Cadence.
 
@@ -73,7 +73,6 @@ live_design! {
                             }
                             thinking_field = <WaFormField> { thinking = <WaFieldButton> { field_size: Adaptive } }
                             mode_field = <WaFormField> { mode = <WaFieldButton> { field_size: Adaptive } }
-                            isolation_field = <WaFormField> { isolation = <WaFieldButton> { field_size: Adaptive } }
                             archive_field = <WaFormField> { archive = <WaToggle> {} }
                             cadence_field = <WaFormField> {
                                 cadence_preset = <WaFieldButton> { field_size: Adaptive }
@@ -162,8 +161,6 @@ pub struct WaScheduleEditor {
     #[rust]
     catalog_scope: Option<String>,
     #[rust]
-    isolation: String,
-    #[rust]
     archive: bool,
     #[rust]
     cadence_changed: bool,
@@ -211,15 +208,6 @@ impl WaScheduleEditor {
         !self.cwd.trim().is_empty()
     }
 
-    fn can_use_worktree(&self, ctx: &UiContext) -> bool {
-        self.multiplicity(ctx) && self.project(ctx).is_some_and(|p| str_of(p, "projectKind") == "git")
-    }
-
-    /// `resolveEffectiveIsolation`: a worktree choice holds while the snapshot resolves, then
-    /// falls back to local when the project cannot host one.
-    fn effective_isolation(&self, ctx: &UiContext) -> &'static str {
-        if self.isolation == "worktree" && (self.can_use_worktree(ctx) || self.catalog_loading) { "worktree" } else { "local" }
-    }
 
     fn can_manage(&self, ctx: &UiContext) -> bool {
         self.host(ctx).is_none_or(|h| h.has_permission("automation.manage"))
@@ -487,6 +475,10 @@ impl WaScheduleEditor {
             return;
         }
         self.error = None;
+        if self.schedule.as_ref().is_some_and(|schedule| str_of(object_of(object_of(schedule, "target"), "config"), "isolation") == "worktree") {
+            self.error = Some(l("Worktree schedules are no longer supported. Create a new schedule for a local directory.").into());
+            return;
+        }
         let Some(server) = self.server_id.clone().filter(|id| host::host(&ctx.state, id).is_some()) else {
             self.error = Some(t("common.errors.daemonClientUnavailable"));
             return;
@@ -499,7 +491,6 @@ impl WaScheduleEditor {
         let lifecycle = self.multiplicity(ctx);
         let name = self.name.trim().to_owned();
         let schedule_id = self.schedule.as_ref().and_then(|s| s.get("id").cloned()).unwrap_or(Value::Null);
-        let isolation = self.effective_isolation(ctx);
         let optional = |value: &str| if value.is_empty() { Value::Null } else { Value::String(value.to_owned()) };
         let fields = if self.heartbeat {
             json!({ "scheduleId": schedule_id, "cadence": self.cadence() })
@@ -512,7 +503,7 @@ impl WaScheduleEditor {
             config.insert("cwd".into(), self.cwd.trim().into());
             if lifecycle {
                 config.insert("archiveOnFinish".into(), self.archive.into());
-                config.insert("isolation".into(), isolation.into());
+                config.insert("isolation".into(), "local".into());
             }
             let mut fields = Map::new();
             fields.insert("scheduleId".into(), schedule_id);
@@ -535,7 +526,7 @@ impl WaScheduleEditor {
             }
             if lifecycle {
                 config.insert("archiveOnFinish".into(), self.archive.into());
-                config.insert("isolation".into(), isolation.into());
+                config.insert("isolation".into(), "local".into());
             }
             if !name.is_empty() {
                 config.insert("title".into(), name.clone().into());
@@ -755,10 +746,6 @@ impl WaScheduleEditor {
             }
             self.open_select(cx, "mode", request);
         }
-        if view.wa_button(id!(isolation)).clicked(actions) {
-            let options = vec![SelectOption::new("local", l("Local")).glyph("folder"), SelectOption::new("worktree", l("Worktree")).glyph("git-branch")];
-            self.open_select(cx, "isolation", SelectRequest::new(l("Isolation"), options).selected(Some(self.effective_isolation(ctx))));
-        }
         if view.wa_button(id!(cadence_preset)).clicked(actions) {
             let options = model::CADENCE_PRESETS.iter().map(|(id, label, _)| SelectOption::new(*id, l(label))).collect();
             let preset = model::CADENCE_PRESETS.iter().find(|p| p.2 == self.cron.trim()).map(|p| p.0);
@@ -775,7 +762,6 @@ impl WaScheduleEditor {
                 }
                 "thinking" => self.set_thinking(&value),
                 "mode" => self.mode = value,
-                "isolation" => self.isolation = value,
                 "cadence" => {
                     if let Some(preset) = model::CADENCE_PRESETS.iter().find(|p| p.0 == value) {
                         self.cron = preset.2.to_owned();
@@ -901,14 +887,6 @@ impl WaScheduleEditor {
             set_field(cx, &view.wa_button(id!(mode)), label.as_deref(), l("Default mode"));
             set_optional(cx, &mode_field.widget(id!(hint)), "");
         }
-        let show_isolation = has_project && self.can_use_worktree(ctx);
-        field(id!(isolation_field), l("Isolation"), show_isolation, cx);
-        if show_isolation {
-            let worktree = self.effective_isolation(ctx) == "worktree";
-            let isolation = view.wa_button(id!(isolation));
-            isolation.set_text(cx, if worktree { l("Worktree") } else { l("Local") });
-            isolation.set_icon(cx, if worktree { "git-branch" } else { "folder" });
-        }
         let show_archive = has_project && self.multiplicity(ctx);
         field(id!(archive_field), l("Archive on finish"), show_archive, cx);
         view.pswitch(id!(archive)).set_value(cx, self.archive);
@@ -990,7 +968,6 @@ impl WaScheduleEditorRef {
         };
         next.cwd = str_of(saved, "cwd").to_owned();
         next.archive = saved.get("archiveOnFinish") != Some(&Value::Bool(false));
-        next.isolation = if str_of(saved, "isolation") == "worktree" { "worktree".into() } else { "local".into() };
         next.saved_zone = !saved_zone.is_empty();
         next.timezone = if saved_zone.is_empty() { timezone::device_time_zone() } else { saved_zone };
         next.name = str_of(&source, "name").to_owned();

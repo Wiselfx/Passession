@@ -58,9 +58,8 @@ agents:
 | `daemon`   | 仅 daemon  | 已注册的 daemon slug，在修订激活时解析。                             |
 | `cwd`      | 仅 daemon  | daemon 上的绝对工作目录。                                            |
 | `image`    | fly/docker | 镜像名称。                                                           |
-| `worktree` | 否         | `branch-off`、`checkout-branch` 或 `checkout-pr` 目标。              |
 
-对于 `worktree`，`branch-off` 使用 `newBranch` 和可选的 `base`，`checkout-branch` 使用 `branch`，`checkout-pr` 使用正整数 `prNumber`。
+将 `cwd` 指向 daemon 上已有的本地目录。不支持创建 worktree，不要配置 `worktree` 目标。
 
 ```yaml
 environments:
@@ -68,19 +67,9 @@ environments:
     kind: daemon
     daemon: build-server
     cwd: /workspace/project
-    worktree:
-      mode: branch-off
-      newBranch: trigger-${{ paseo.execution.id }}
-      base: origin/main
 ```
 
-`newBranch` 是一个分支名字符串。在其中嵌入 `${{ paseo.execution.id }}`，它会渲染为该次执行的 UUID，这样每次执行都会从 `base` 分出自己的分支，并在 Hub 重试或恢复该执行时保留这个分支。
-
-一次执行就是一次 step 运行，因此选择同一环境的两个 step 会得到各自独立的分支。
-
-`${{ paseo.execution.id }}` 是 `newBranch` 唯一接受的表达式。`paseo.prompt`、`paseo.context`、`paseo.inputs.*`、`values.*`、`steps.<id>.outputs.*` 以及 Provider 事件字段在这里都不可用，任何一个都会在编写它的字段处导致文件包激活失败，例如 `.paseo/hub.yml.environments.review.worktree.newBranch`。
-
-`${{ paseo.execution.id }}` 出现在文件包中其他任何位置时，同样会导致激活失败。`branch` 和 `prNumber` 只接受字面值。
+若执行之间不能共享文件，请在 Paseo 之外准备独立目录。已有的外部管理 Git worktree 可通过路径选择。Paseo 不为每次执行创建分支，也不删除或迁移已有目录。
 
 环境是一个完整的具名对象。step 选择它的名称；对象不会被继承、合并或部分覆盖。
 
@@ -267,7 +256,7 @@ Hub 不读取 TOML 或单体的 `triggers` 部分，CLI 也不会改写这两种
 
 键使用现有的表达式语法，必须解析为长度不超过 512 个字符的非空字符串。自定义键和 Provider 的对话标识位于不同的命名空间。不同项目中的相同键不会共享 Agent。
 
-已有的会话会保留它的 daemon、Agent 配置、目标、环境和工具契约。为同一个键修改这些设置会失败并给出说明；请选择另一个键或 **New agent**。提示词和输出目标属于每次到达，可以变化。worktree 分支在会话首次创建时选定，并在之后的到达中复用。
+已有的会话会保留它的 daemon、Agent 配置、目标目录、环境和工具契约。为同一个键修改这些设置会失败并给出说明；请选择另一个键或 **New agent**。提示词和输出目标属于每次到达，可以变化。
 
 后续消息会引导正在运行的 Agent，但不会延长它的运行截止时间或凭据有效期。当 `run.env` 中有 `run.github` 授权或连接令牌时，后续消息共享正在运行的 Agent 的凭据。所有请求都完成后，Hub 会撤销租用的令牌；下一次到达会用新的凭据启动新的 Agent。没有临时凭据的 Agent 在完成后可以被复用。
 

@@ -140,7 +140,7 @@ async fn ensure_connection(
             ),
         )),
         Connection::Connect => {
-            ensure!(prompts::confirm(&format!("Connect this daemon to {origin} and allow Hub workflows to create and control workspaces and agents?"),true,&ctx.cancel).await?,error("PROMPT_CANCELLED","A connected daemon is required to create the trigger."));
+            ensure!(prompts::confirm(&format!("Connect this daemon to {origin} and allow Hub workflows to create and control agent sessions?"),true,&ctx.cancel).await?,error("PROMPT_CANCELLED","A connected daemon is required to create the trigger."));
             connect(origin, &["hub.execute"], http, store, ctx).await
         }
     }
@@ -157,8 +157,8 @@ pub(super) async fn continue_login(
         Connection::Pending=>{wait_connected(origin,ctx).await?;}
         Connection::Conflict(other)=>eprintln!("This daemon is connected to {other}. Disconnect it before connecting to {origin}."),
         Connection::Connect=>{
-            if prompts::confirm("Connect this daemon to Paseo Hub?\nConnecting lets Hub identify this daemon and show whether it is online. It does not allow Hub to create workspaces or run agents.",true,&ctx.cancel).await? {
-                let execution=prompts::confirm("Allow Hub automations to run agents on this daemon?\nThis lets workflows triggered from integrations create workspaces and run agents here. Agents can access files and run commands allowed by their workspace runtime.",false,&ctx.cancel).await?;
+            if prompts::confirm("Connect this daemon to Paseo Hub?\nConnecting lets Hub identify this daemon and show whether it is online. It does not allow Hub to create or run agent sessions.",true,&ctx.cancel).await? {
+                let execution=prompts::confirm("Allow Hub automations to run agents on this daemon?\nThis lets workflows triggered from integrations create and run agent sessions here. Agents can access files in their directories and run commands allowed by their runtime.",false,&ctx.cancel).await?;
                 connect(origin,if execution{&["hub.execute"]}else{&[]},http,store,ctx).await?;
                 if !execution{eprintln!("Daemon connected with no permissions. Enable Hub automations later: paseo hub permissions grant hub.execute");}
             }else{eprintln!("Skipped daemon connection. Connect later with: paseo hub connect {origin}");}

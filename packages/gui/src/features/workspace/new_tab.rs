@@ -1,7 +1,6 @@
-//! New session / new workspace / add project (Flutter `new_tab_panel.dart`, original
-//! `new-workspace-screen.tsx` + `NewWorkspaceForm`): project, host, base ref and launch
-//! fields, the composer card (prompt, attachments, model controls), the add-project
-//! directory options, and creation with a persisted immutable intent whose receipt is
+//! New session / add project: project, host and launch fields, the composer card
+//! (prompt, attachments, model controls), directory preparation, and creation with
+//! a persisted immutable intent whose receipt is
 //! recovered instead of creating a duplicate.
 //!
 //! Agent form resolution, attachment helpers, file uploads and forge auto-attach come from
@@ -23,18 +22,18 @@ use super::kit::{
     set_optional, sync_input, TriggerLead, WaButtonWidgetExt, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt,
     WaRepeatWidgetRefExt, WaTriggerWidgetRefExt,
 };
-use super::new_tab_model::{self as model, BranchItem};
+use super::new_tab_model as model;
 use super::observe::{ObsEvent, Observation};
 use super::rpc::{array_of, new_id, object_of, payload, require_success, str_of, str_or, Pending, RpcError};
 use super::select::{Leading, SelectOption, SelectRequest, WaSelectWidgetExt, WaSelectWidgetRefExt};
-use crate::common::{PanelTarget, TabPlacement, UiContext, UiEffect};
+use crate::common::{PanelTarget, UiContext, UiEffect};
 use crate::common::file_drop::FileDropZone;
 use crate::common::overlay::{self, MenuItem};
 use crate::features::composer::forge::ForgeAutoAttach;
 use crate::features::composer::{agent_form, attachments, controls_model, forge, ops};
 use crate::features::files::picker::{RemoteFolderPickerAction, RemoteFolderPickerWidgetExt};
 use crate::common::paint::{Font, Painter, TextSpec, rect};
-use crate::common::widgets::{PSegmentedWidgetRefExt, PSwitchWidgetRefExt, Segment, SurfaceWidgetRefExt};
+use crate::common::widgets::{PSegmentedWidgetRefExt, Segment, SurfaceWidgetRefExt};
 use crate::common::clock;
 use crate::common::provider_icon::ProviderIconWidgetRefExt;
 use crate::features::composer::ui::draw::DrawComposerImage;
@@ -63,9 +62,6 @@ live_design! {
         disc: <PaseoPainter> {}
         draw_image: <DrawComposerImage> {}
     }
-    WaOptionField = <WaField> {
-        hint = <View> { width: Fill, height: Fit, visible: false, text = <WaSmall> {} }
-    }
     // `_input(suffix: _fieldAction(...))`: an inline ghost xs search action inside the field.
     WaSearchInput = <View> {
         width: Fill, height: Fit, flow: Overlay, align: { x: 1.0, y: 0.5 }
@@ -74,11 +70,6 @@ live_design! {
             width: Fit, height: Fit, margin: { right: 4. }
             search = <WaButtonGhost> { size: Xs, icon: "search" }
         }
-    }
-    // Original switch rows: base label growing beside the 34x20 switch.
-    WaSwitchRow = <View> {
-        width: Fill, height: Fit, flow: Right, spacing: 12., align: { y: 0.5 }
-        label = <WaText> {}
     }
 
     pub WaNewTabView = {{WaNewTabView}} {
@@ -100,7 +91,6 @@ live_design! {
                             buttons = <View> {
                                 width: Fill, height: Fit, flow: RightWrap, spacing: 8., padding: { left: 16., right: 16., bottom: 16. }
                                 recover = <WaButtonPrimary> {}
-                                open_workspace = <WaButtonOutline> {}
                                 open_session = <WaButtonOutline> {}
                                 new_attempt = <WaButtonGhost> {}
                             }
@@ -113,15 +103,8 @@ live_design! {
                         padding: { left: 16., right: 16., bottom: 16. }
                         project_field = <WaTrigger> {}
                         host_field = <WaTrigger> {}
-                        isolation_field = <WaTrigger> {}
-                        branch_field = <WaTrigger> {}
                         spacer = <View> { width: Fill, height: 1. }
                         launch_field = <WaTrigger> {}
-                    }
-                    // New worktree isolation: the branch the worktree creates.
-                    worktree = <View> {
-                        width: Fill, height: Fit, visible: false, padding: { left: 16., right: 16., bottom: 16. }
-                        worktree_branch = <WaOptionField> { worktree_branch_input = <WaInput> {} }
                     }
                     composer = <View> {
                         width: Fill, height: Fit, padding: { left: 16., right: 16., bottom: 16. }
@@ -190,7 +173,6 @@ live_design! {
                     options = <View> {
                         width: Fill, height: Fit, flow: Down, spacing: 16., visible: false
                         padding: { left: 16., right: 16., top: 16. }
-                        existing_row = <WaSwitchRow> { existing = <WaToggle> {} }
                         source_field = <WaField> { source = <WaFieldButton> {} }
                         directory_field = <WaField> {
                             row = <View> {
@@ -199,11 +181,6 @@ live_design! {
                                 browse = <WaButtonOutline> { size: Md, icon: "folder-open" }
                             }
                         }
-                        ref_field = <WaField> { row = <WaSearchInput> {} }
-                        branch_name_field = <WaOptionField> { branch_input = <WaInput> {} }
-                        pr_field = <WaField> { pr_input = <WaInput> { input = { is_numeric_only: true } } }
-                        forge_field = <WaOptionField> { forge_input = <WaInput> {} }
-                        project_path_field = <WaOptionField> { project_path_input = <WaInput> {} }
                         repo_field = <WaField> { row = <WaSearchInput> {} }
                         protocol_field = <WaField> { protocol = <PSegmented> {} }
                         dirname_field = <WaField> { dirname_input = <WaInput> {} }
@@ -213,10 +190,6 @@ live_design! {
                             prepare = <WaButtonPrimary> { icon: "folder-plus" }
                             inspect_prepared = <WaButtonGhost> {}
                         }
-                        title_field = <WaField> { title_input = <WaInput> {} }
-                        agent_row = <WaSwitchRow> { with_agent = <WaToggle> {} }
-                        profile_field = <WaField> { profile = <WaFieldButton> {} }
-                        add_project_row = <View> { width: Fill, height: Fit, add_project = <WaButtonOutline> { icon: "folder-open" } }
                     }
                 }
             }
@@ -436,15 +409,12 @@ type TextField = fn(&mut WaNewTabView) -> &mut String;
 
 #[derive(Clone, Debug)]
 enum Req {
-    Profiles,
-    DefaultRef(String),
+    RepositoryStatus(String),
     Providers(u64),
     Features(String),
     AddProject,
     Prepare,
     SearchRepos,
-    Branches,
-    Validate,
     CreateFeatures,
     Submit,
     ForgeSearch { lookup: u64, index: usize, cwd: String },
@@ -490,16 +460,6 @@ pub struct WaNewTabView {
     #[rust]
     prompt: String,
     #[rust]
-    branch: String,
-    #[rust]
-    ref_name: String,
-    #[rust]
-    pr: String,
-    #[rust]
-    forge_name: String,
-    #[rust]
-    project_path: String,
-    #[rust]
     repo: String,
     #[rust]
     directory_name: String,
@@ -508,11 +468,7 @@ pub struct WaNewTabView {
     #[rust]
     clone_protocol: String,
     #[rust]
-    profile_id: Option<String>,
-    #[rust]
     catalog_cwd: String,
-    #[rust]
-    with_agent: bool,
     /// Launch choice (`LaunchControl`): Terminal opens a daemon shell instead of a chat.
     #[rust]
     launch_terminal: bool,
@@ -549,19 +505,11 @@ pub struct WaNewTabView {
     #[rust]
     provider_scope: Option<String>,
     #[rust]
-    profiles: Vec<Value>,
-    #[rust]
-    profiles_error: Option<String>,
-    #[rust]
     features: Vec<Value>,
     #[rust]
     features_key: String,
     #[rust]
-    default_ref: Option<BranchItem>,
-    #[rust]
-    default_ref_cwd: Option<String>,
-    #[rust]
-    ref_label: Option<String>,
+    repository_status_cwd: Option<String>,
     #[rust]
     remote_url: Option<String>,
     #[rust]
@@ -601,8 +549,6 @@ pub struct WaNewTabView {
     forge_timer: Timer,
     #[rust]
     forge_items: Vec<Value>,
-    #[rust]
-    branch_items: Vec<BranchItem>,
     #[rust]
     repositories: Vec<Value>,
     #[rust]
@@ -669,7 +615,6 @@ impl WaNewTabView {
         self.source = str_or(&data, "source", self.target.source.as_deref().unwrap_or("directory")).to_owned();
         self.clone_protocol = "https".into();
         let add_project = data.get("addProject") == Some(&Value::Bool(true));
-        self.with_agent = !add_project;
         self.options_open = add_project;
         let draft = object_of(&data, "creationDraft");
         self.title = str_of(draft, "title").to_owned();
@@ -700,10 +645,7 @@ impl WaNewTabView {
         self.connected = self.host(ctx).is_some_and(|h| h.connected());
         self.last_status = self.host(ctx).map(|h| h.status());
         self.legacy_forge = self.host(ctx).is_some_and(|h| attachments::uses_legacy_forge(h.server_info()));
-        if self.connected {
-            self.pending.send(&ctx.core, &self.target.host_id, "get_daemon_config_request", json!({}), Req::Profiles);
-        }
-        self.load_default_ref(ctx);
+        self.load_repository_status(ctx);
         self.load_providers(ctx);
         if self.intent.is_some() {
             self.recover(ctx);
@@ -718,10 +660,6 @@ impl WaNewTabView {
         self.target.data.get("addProject") == Some(&Value::Bool(true))
     }
 
-    /// The submission creates a new worktree (branch off, existing branch or pull request).
-    fn worktree(&self) -> bool {
-        !self.existing && matches!(self.source.as_str(), "branch-off" | "checkout" | "pr")
-    }
 
     /// Terminal is the launch choice (never for Add project, which has no launch field).
     fn terminal(&self) -> bool {
@@ -741,14 +679,14 @@ impl WaNewTabView {
         preferences
     }
 
-    fn load_default_ref(&mut self, ctx: &UiContext) {
+    fn load_repository_status(&mut self, ctx: &UiContext) {
         let cwd = self.path.trim().to_owned();
-        if !self.connected || cwd.is_empty() || self.default_ref_cwd.as_deref() == Some(cwd.as_str()) {
+        if !self.connected || cwd.is_empty() || self.repository_status_cwd.as_deref() == Some(cwd.as_str()) {
             return;
         }
-        self.default_ref_cwd = Some(cwd.clone());
-        self.default_ref = None;
-        self.pending.send(&ctx.core, &self.target.host_id, "checkout_status_request", json!({ "cwd": cwd }), Req::DefaultRef(cwd));
+        self.repository_status_cwd = Some(cwd.clone());
+        self.remote_url = None;
+        self.pending.send(&ctx.core, &self.target.host_id, "checkout_status_request", json!({ "cwd": cwd }), Req::RepositoryStatus(cwd));
     }
 
     fn load_providers(&mut self, ctx: &UiContext) {
@@ -773,7 +711,7 @@ impl WaNewTabView {
 
     /// Offered provider features for the current selection (`use-draft-agent-features`).
     fn load_features(&mut self, ctx: &UiContext) {
-        if !self.with_agent || self.config.get("provider").and_then(Value::as_str).unwrap_or("").is_empty() {
+        if self.add_project() || self.config.get("provider").and_then(Value::as_str).unwrap_or("").is_empty() {
             self.features.clear();
             self.features_key.clear();
             return;
@@ -802,19 +740,19 @@ impl WaNewTabView {
         Self::remember(ctx, agent_form::remember_user_selection(&preferences, &self.config, &next));
         self.config = next;
         self.config_touched = true;
-        self.profile_id = None;
         self.load_features(ctx);
     }
 
     fn set_directory(&mut self, cx: &mut Cx, ctx: &UiContext, directory: &str) {
         self.path = directory.to_owned();
         self.catalog_cwd = directory.to_owned();
+        self.existing = !self.target.workspace_id.is_empty() && directory == self.target.cwd;
         self.terminal_workspace = None;
-        self.ref_name.clear();
-        self.ref_label = None;
+        if !model::SOURCES.contains(&self.source.as_str()) {
+            self.source = "directory".into();
+        }
         sync_input(cx, &self.view.wa_input(id!(path)), directory);
-        sync_input(cx, &self.view.wa_input(id!(ref_field.row.input_box)), &self.ref_name);
-        self.load_default_ref(ctx);
+        self.load_repository_status(ctx);
         self.load_providers(ctx);
         self.sync_forge(cx, ctx);
     }
@@ -916,10 +854,8 @@ impl WaNewTabView {
                 return self.create_terminal(ctx, workspace_id, directory);
             }
         }
-        // `isEmptyWorkspaceSubmission`: no prompt and no attachments creates the workspace alone.
-        // A Terminal launch creates it without an agent or a naming context.
         let has_input = !terminal && (!self.prompt.trim().is_empty() || !self.images.is_empty() || !self.attachments.is_empty());
-        let with_agent = !terminal && self.with_agent && (self.existing || has_input);
+        let with_agent = !terminal && !self.add_project();
         if with_agent && self.catalog_cwd != cwd {
             forget_timer(&mut self.directory_timer);
             self.catalog_cwd = cwd;
@@ -932,28 +868,20 @@ impl WaNewTabView {
         if !self.existing && matches!(self.source.as_str(), "clone" | "new-directory") {
             return self.fail(ctx, l("Prepare the directory before creating a session.").into(), true);
         }
-        if !self.existing && self.source == "checkout" && self.ref_name.trim().is_empty() {
-            return self.fail(ctx, l("Choose the branch to check out.").into(), true);
-        }
-        if !self.existing && self.source == "pr" && !model::valid_pr_number(&self.pr) {
-            return self.fail(ctx, l("Enter a positive pull/merge request number.").into(), true);
+        if !model::SOURCES.contains(&self.source.as_str()) {
+            return self.fail(ctx, l("Worktree creation is no longer supported. Choose a local directory.").into(), true);
         }
         // new-workspace-screen.tsx createWorkspaceChatAgent: the effective model, mode and
         // thinking option; the selection is remembered on submit.
         let mut effective = agent_form::effective_submit_config(&self.config, &self.providers);
+        if self.add_project() {
+            self.busy = true;
+            self.pending.send(&ctx.core, &self.target.host_id, "project.add.request", json!({ "cwd": cwd }), Req::AddProject);
+            return;
+        }
         let local_features = effective.as_object_mut().and_then(|m| m.remove("featureValues")).unwrap_or(Value::Null);
         self.busy = true;
         self.create = Some(CreateDraft { cwd: cwd.clone(), with_agent, has_input, effective, local_features });
-        if !self.existing && matches!(self.source.as_str(), "branch-off" | "checkout") && !self.ref_name.trim().is_empty() {
-            self.pending.send(
-                &ctx.core,
-                &self.target.host_id,
-                "validate_branch_request",
-                json!({ "cwd": cwd, "branchName": self.ref_name.trim() }),
-                Req::Validate,
-            );
-            return;
-        }
         self.create_features(ctx);
     }
 
@@ -1013,18 +941,7 @@ impl WaNewTabView {
             request.extend(agent);
             request.insert("workspaceId".into(), self.target.workspace_id.clone().into());
         } else {
-            let default_ref = self.default_ref.as_ref().map(|d| d.ref_name.clone());
-            let source = model::workspace_source(&model::SourceFields {
-                source: &self.source,
-                cwd: &draft.cwd,
-                ref_name: &self.ref_name,
-                default_ref: default_ref.as_deref(),
-                branch: &self.branch,
-                pr: &self.pr,
-                forge: &self.forge_name,
-                project_path: &self.project_path,
-            });
-            request.insert("source".into(), source);
+            request.insert("source".into(), model::workspace_source(&draft.cwd));
             if draft.with_agent {
                 request.insert("agent".into(), Value::Object(agent));
             }
@@ -1059,6 +976,11 @@ impl WaNewTabView {
     fn submit(&mut self, ctx: &UiContext) {
         let Some(intent) = self.intent.clone() else { return };
         let kind = str_of(&intent, "kind").to_owned();
+        if kind == "workspace" && str_of(object_of(object_of(&intent, "request"), "source"), "kind") != "directory" {
+            self.busy = false;
+            self.error = Some(l("Worktree creation is no longer supported. Choose a local directory.").into());
+            return;
+        }
         let message = super::rpc::message(&format!("{kind}.create.request"), object_of(&intent, "request").clone());
         let id = ctx.core.request_with_timeout(
             &self.target.host_id,
@@ -1095,7 +1017,7 @@ impl WaNewTabView {
                 self.finish(ctx, &result);
             }
             "failed" => {
-                self.error = Some(str_or(&snapshot, "error", l("Creation failed. Inspect any created workspace before starting again.")).to_owned());
+                self.error = Some(str_or(&snapshot, "error", l("Creation failed. Inspect any created session or directory before starting again.")).to_owned());
             }
             _ => {}
         }
@@ -1160,9 +1082,10 @@ impl WaNewTabView {
             self.terminal_workspace = Some((workspace_id.clone(), cwd.clone()));
             self.create_terminal(ctx, workspace_id, cwd);
         } else if agent_id.is_empty() {
-            let target = PanelTarget::new("setup", &self.target.host_id, &workspace_id, &cwd)
-                .with_title(str_or(&workspace, "name", l("Session")))
-                .with_data(json!({ "repoRoot": str_or(&workspace, "projectRootPath", &cwd) }));
+            let target = PanelTarget::new("new_tab", &self.target.host_id, &workspace_id, &cwd)
+                .with_id(new_id())
+                .with_title(t("sessionNavigation.newSession"))
+                .with_data(json!({ "creationDraft": { "title": self.title, "prompt": self.prompt, "config": self.config, "launch": "chat" } }));
             ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
         } else {
             let target = PanelTarget::agent(&self.target.host_id, &workspace_id, &cwd, &agent_id, str_of(&agent, "title"))
@@ -1198,12 +1121,11 @@ impl WaNewTabView {
             if reconnected && self.intent.is_some() && !self.finishing && self.observation.is_none() {
                 self.recover(ctx);
             }
-            if reconnected && self.default_ref.is_none() {
-                self.default_ref_cwd = None;
-                self.load_default_ref(ctx);
+            if reconnected {
+                self.repository_status_cwd = None;
+                self.load_repository_status(ctx);
             }
             if reconnected {
-                self.pending.send(&ctx.core, &self.target.host_id, "get_daemon_config_request", json!({}), Req::Profiles);
                 self.load_providers(ctx);
             }
             self.sync_forge(cx, ctx);
@@ -1283,26 +1205,17 @@ impl WaNewTabView {
             Ok(body)
         };
         match req {
-            Req::Profiles => match checked(result, "get_daemon_config_request") {
-                Ok(body) => {
-                    self.profiles = array_of(object_of(&body, "config"), "agentProfiles").to_vec();
-                    self.profiles_error = None;
-                }
-                Err(error) => self.profiles_error = Some(error.to_string()),
-            },
-            Req::DefaultRef(cwd) => {
-                if self.default_ref_cwd.as_deref() != Some(cwd.as_str()) {
+            Req::RepositoryStatus(cwd) => {
+                if self.repository_status_cwd.as_deref() != Some(cwd.as_str()) {
                     return;
                 }
                 match checked(result, "checkout_status_request") {
                     Ok(status) => {
                         let remote = str_of(&status, "remoteUrl");
                         self.remote_url = (!remote.is_empty()).then(|| remote.to_owned());
-                        self.default_ref = model::default_ref(&status);
                         self.sync_forge(cx, ctx);
                     }
-                    // Without status the trigger keeps the original "main" fallback.
-                    Err(_) => self.default_ref = None,
+                    Err(_) => self.remote_url = None,
                 }
             }
             Req::AttachmentForge(scope) => {
@@ -1383,21 +1296,6 @@ impl WaNewTabView {
                     Err(error) => self.error = Some(error.to_string()),
                 }
             }
-            Req::Branches => {
-                self.busy = false;
-                match checked(result, "branch_suggestions_request") {
-                    Ok(body) => {
-                        self.branch_items = model::build_branch_items(&model::branch_details(&body));
-                        self.open_ref_picker(cx);
-                    }
-                    Err(error) => self.error = Some(error.to_string()),
-                }
-            }
-            Req::Validate => match checked(result, "validate_branch_request") {
-                Ok(body) if body.get("exists") == Some(&Value::Bool(true)) => self.create_features(ctx),
-                Ok(_) => self.fail(ctx, l("The selected branch or base ref does not exist.").into(), true),
-                Err(error) => self.fail(ctx, error.to_string(), true),
-            },
             // Offered features; none when the list cannot be loaded.
             Req::CreateFeatures => {
                 let offered = result.ok().map(|b| Value::Array(array_of(&b, "features").to_vec())).unwrap_or(Value::Array(Vec::new()));
@@ -1488,7 +1386,7 @@ impl WaNewTabView {
                 let terminal_id = str_of(&terminal, "id").to_owned();
                 if terminal_id.is_empty() {
                     self.opened = false;
-                    return self.fail(ctx, t("newWorkspace.errors.createWorktreeFailed"), true);
+                    return self.fail(ctx, l("The host did not return a terminal.").into(), true);
                 }
                 self.terminal_workspace = None;
                 self.opened = true;
@@ -1504,29 +1402,6 @@ impl WaNewTabView {
         ctx.effects.push(UiEffect::Toast { message, is_error: true });
     }
 
-    fn open_ref_picker(&mut self, cx: &mut Cx) {
-        let checkout = self.source == "checkout";
-        let selected = if !self.ref_name.trim().is_empty() {
-            Some(self.ref_name.trim().to_owned())
-        } else if checkout {
-            None
-        } else {
-            self.default_ref.as_ref().map(|d| d.ref_name.clone())
-        };
-        let options = self
-            .branch_items
-            .iter()
-            .map(|item| {
-                let value = if checkout { &item.branch_name } else { &item.ref_name };
-                SelectOption::new(value.clone(), item.name.clone()).glyph("git-branch").trailing(item.divergence.clone().unwrap_or_default())
-            })
-            .collect();
-        let request = SelectRequest::new(t("newWorkspace.refPicker.title"), options)
-            .selected(selected.as_deref())
-            .searchable(t("newWorkspace.refPicker.searchPlaceholder"))
-            .empty(t("newWorkspace.refPicker.noMatchingRefs"));
-        self.view.wa_select(id!(select)).open(cx, "ref", request);
-    }
 
     fn open_forge_picker(&mut self, cx: &mut Cx) {
         let attached: Vec<String> = self
@@ -1833,32 +1708,17 @@ impl WaNewTabView {
         let pending_intent = self.intent.is_some();
         let locked = self.busy || pending_intent;
         // Text fields.
-        let text_fields: [(&[LiveId], TextField); 10] = [
-            (id!(ref_field.row.input_box), |s| &mut s.ref_name),
-            (id!(branch_input), |s| &mut s.branch),
-            (id!(pr_input), |s| &mut s.pr),
-            (id!(forge_input), |s| &mut s.forge_name),
-            (id!(project_path_input), |s| &mut s.project_path),
+        let text_fields: [(&[LiveId], TextField); 3] = [
             (id!(repo_field.row.input_box), |s| &mut s.repo),
             (id!(dirname_input), |s| &mut s.directory_name),
-            (id!(title_input), |s| &mut s.title),
             (id!(path), |s| &mut s.path),
-            (id!(worktree_branch_input), |s| &mut s.branch),
         ];
         for (index, (path, field)) in text_fields.into_iter().enumerate() {
             if let Some(text) = view.wa_input(path).changed(actions) {
                 *field(self) = text;
-                // The inline worktree field and advanced options edit one branch.
-                if index == 1 {
-                    sync_input(cx, &view.wa_input(id!(worktree_branch_input)), &self.branch);
-                } else if index == 9 {
-                    sync_input(cx, &view.wa_input(id!(branch_input)), &self.branch);
-                }
-                // 0: the ref field, 8: the directory.
-                if index == 0 {
-                    self.ref_label = None;
-                }
-                if index == 8 {
+                if index == 2 {
+                    self.existing = !self.target.workspace_id.is_empty() && self.path.trim() == self.target.cwd;
+                    self.terminal_workspace = None;
                     // Directory edits refresh the catalog after 350ms.
                     cx.stop_timer(self.directory_timer);
                     self.directory_timer = cx.start_timeout(0.35);
@@ -1888,10 +1748,10 @@ impl WaNewTabView {
             self.view.redraw(cx);
         }
         // Field triggers.
-        if view.wa_trigger(id!(project_field)).clicked(actions) && !self.existing && !pending_intent {
+        if view.wa_trigger(id!(project_field)).clicked(actions) && !pending_intent {
             self.open_project_picker(cx, ctx);
         }
-        if view.wa_trigger(id!(host_field)).clicked(actions) && !self.existing && !pending_intent {
+        if view.wa_trigger(id!(host_field)).clicked(actions) && !pending_intent {
             let mut options: Vec<SelectOption> = host::hosts(&ctx.state)
                 .iter()
                 .map(|h| SelectOption::new(h.id(), h.label()).leading(Leading::Status(h.status())))
@@ -1899,21 +1759,6 @@ impl WaNewTabView {
             options.push(SelectOption::new("\u{0}add-host", l("Add host")).glyph("plus"));
             let request = SelectRequest::new(t("newWorkspace.fields.host"), options).selected(Some(&self.target.host_id));
             view.wa_select(id!(select)).open(cx, "host", request);
-        }
-        if view.wa_trigger(id!(isolation_field)).clicked(actions) && !pending_intent && !self.busy {
-            let options = vec![
-                SelectOption::new("directory", t("newWorkspace.isolation.local")).glyph("folder"),
-                SelectOption::new("branch-off", t("newWorkspace.isolation.worktree")).glyph("git-branch"),
-            ];
-            let selected = if self.worktree() { "branch-off" } else { "directory" };
-            let request = SelectRequest::new(t("newWorkspace.isolation.label"), options).selected(Some(selected));
-            view.wa_select(id!(select)).open(cx, "isolation", request);
-        }
-        if view.wa_trigger(id!(branch_field)).clicked(actions) && !pending_intent && !self.path.trim().is_empty() {
-            self.request_branches(ctx);
-        }
-        if view.wa_button(id!(ref_field.search)).clicked(actions) && !locked {
-            self.request_branches(ctx);
         }
         if view.wa_trigger(id!(launch_field)).clicked(actions) && !pending_intent && !self.busy {
             // `LaunchControl`: Chat and the blank Terminal. Terminal profiles and their Manage
@@ -1984,32 +1829,13 @@ impl WaNewTabView {
             self.options_open = !self.options_open;
             self.view.redraw(cx);
         }
-        if let Some(active) = view.pswitch(id!(existing)).changed(actions) {
-            self.existing = active;
-            if active {
-                self.with_agent = true;
-            }
-            self.view.redraw(cx);
-        }
-        if let Some(active) = view.pswitch(id!(with_agent)).changed(actions) {
-            self.with_agent = active;
-            self.load_features(ctx);
-            self.view.redraw(cx);
-        }
         if view.wa_button(id!(source)).clicked(actions) {
-            let glyphs = ["folder", "git-branch", "git-branch", "git-pull-request", "download", "folder-plus"];
-            let labels = [
-                l("Existing checkout or directory"),
-                l("New worktree: branch off"),
-                l("New worktree: existing branch"),
-                l("New worktree: pull / merge request"),
-                l("Clone GitHub repository"),
-                l("Create remote directory"),
-            ];
+            let glyphs = ["folder", "download", "folder-plus"];
+            let labels = [l("Existing checkout or directory"), l("Clone GitHub repository"), l("Create remote directory")];
             let options = model::SOURCES.iter().zip(labels).zip(glyphs).map(|((id, label), glyph)| SelectOption::new(*id, label).glyph(glyph)).collect();
-            view.wa_select(id!(select)).open(cx, "source", SelectRequest::new(t("newWorkspace.isolation.label"), options).selected(Some(&self.source)));
+            view.wa_select(id!(select)).open(cx, "source", SelectRequest::new(l("Directory source"), options).selected(Some(&self.source)));
         }
-        if view.wa_button(id!(browse)).clicked(actions) && !self.existing {
+        if view.wa_button(id!(browse)).clicked(actions) {
             self.open_browser(cx, ctx.compact);
         }
         if view.wa_button(id!(inspect_prepared)).clicked(actions) {
@@ -2027,30 +1853,9 @@ impl WaNewTabView {
         if view.wa_button(id!(prepare)).clicked(actions) && !self.preparation_unknown && !locked {
             self.prepare_directory(ctx);
         }
-        if view.wa_button(id!(profile)).clicked(actions) {
-            let mut options = vec![SelectOption::new("", l("Custom configuration"))];
-            options.extend(self.profiles.iter().map(|p| SelectOption::new(str_of(p, "id"), str_of(p, "name"))));
-            view.wa_select(id!(select)).open(cx, "profile", SelectRequest::new(l("Agent profile"), options).selected(Some(self.profile_id.as_deref().unwrap_or(""))));
-        }
-        if view.wa_button(id!(add_project)).clicked(actions) && !locked {
-            if self.path.trim().is_empty() {
-                self.fail(ctx, l("Choose a remote directory.").into(), false);
-            } else {
-                self.busy = true;
-                self.error = None;
-                self.pending.send(&ctx.core, &self.target.host_id, "project.add.request", json!({ "cwd": self.path.trim() }), Req::AddProject);
-            }
-        }
         // Pending card.
         if view.wa_button(id!(recover)).clicked(actions) && !self.busy {
             self.recover(ctx);
-        }
-        if view.wa_button(id!(open_workspace)).clicked(actions) && let Some(snapshot) = &self.snapshot {
-            let workspace = object_of(snapshot, "workspace");
-            let cwd = str_or(workspace, "workspaceDirectory", &self.path).to_owned();
-            let target = PanelTarget::new("setup", &self.target.host_id, str_of(snapshot, "workspaceId"), &cwd)
-                .with_data(json!({ "repoRoot": str_or(workspace, "projectRootPath", &self.path) }));
-            ctx.effects.push(UiEffect::OpenTab { target, placement: TabPlacement::Main });
         }
         if view.wa_button(id!(open_session)).clicked(actions) && let Some(snapshot) = &self.snapshot {
             ctx.effects.push(UiEffect::OpenSession { host_id: self.target.host_id.clone(), agent_id: str_of(snapshot, "agentId").to_owned() });
@@ -2060,7 +1865,7 @@ impl WaNewTabView {
                 cx,
                 "new-attempt",
                 l("Start a new creation attempt?"),
-                l("The host reported failure. Any partial workspace or agent remains available below; a new attempt uses a new identity."),
+                l("The host reported failure. Any partial session and directory remain intact; a new attempt uses a new identity."),
                 l("New attempt"),
                 false,
             );
@@ -2079,14 +1884,6 @@ impl WaNewTabView {
         self.handle_folder(cx, actions, ctx);
     }
 
-    fn request_branches(&mut self, ctx: &mut UiContext) {
-        if self.busy {
-            return;
-        }
-        self.busy = true;
-        self.error = None;
-        self.pending.send(&ctx.core, &self.target.host_id, "branch_suggestions_request", json!({ "cwd": self.path.trim(), "query": "", "limit": 100 }), Req::Branches);
-    }
 
     fn open_project_picker(&mut self, cx: &mut Cx, ctx: &UiContext) {
         let Some(host) = self.host(ctx) else { return };
@@ -2190,14 +1987,6 @@ impl WaNewTabView {
                 let target = PanelTarget::new("new_tab", &value, "", "").with_id(new_id()).with_title(t("sessionNavigation.newSession")).with_data(Value::Object(data));
                 ctx.effects.push(UiEffect::ReplaceTab { tab_key: self.target.tab_key.clone(), target });
             }
-            "ref" => {
-                let checkout = self.source == "checkout";
-                if let Some(item) = self.branch_items.iter().find(|i| (if checkout { &i.branch_name } else { &i.ref_name }) == &value) {
-                    self.ref_label = Some(item.name.clone());
-                }
-                self.ref_name = value;
-                sync_input(cx, &self.view.wa_input(id!(ref_field.row.input_box)), &self.ref_name);
-            }
             "launch" => {
                 let terminal = value == "terminal";
                 if terminal != self.launch_terminal {
@@ -2210,52 +1999,8 @@ impl WaNewTabView {
                 sync_input(cx, &self.view.wa_input(id!(repo_field.row.input_box)), &self.repo);
             }
             "source" => {
-                // `clearPickerSelectionForTargetChange`.
-                if value != self.source {
-                    self.ref_name.clear();
-                    self.ref_label = None;
-                    sync_input(cx, &self.view.wa_input(id!(ref_field.row.input_box)), &self.ref_name);
-                }
                 self.source = value;
-            }
-            // The new-session row's Local / New worktree choice. Local keeps the tab's
-            // workspace when it has one; New worktree branches off into a new workspace.
-            "isolation" => {
-                let worktree = value == "branch-off";
-                if worktree != self.worktree() {
-                    self.ref_name.clear();
-                    self.ref_label = None;
-                    sync_input(cx, &self.view.wa_input(id!(ref_field.row.input_box)), &self.ref_name);
-                }
-                self.existing = !worktree && !self.target.workspace_id.is_empty();
-                self.source = if worktree { "branch-off" } else { "directory" }.into();
-                if self.existing {
-                    self.with_agent = true;
-                }
-            }
-            "profile" if value.is_empty() => self.profile_id = Some(String::new()),
-            "profile" => {
-                if let Some(profile) = self.profiles.iter().find(|p| str_of(p, "id") == value).cloned() {
-                    let preferences = Self::form_preferences(ctx);
-                    let mut fields = Map::new();
-                    for key in ["provider", "model", "modeId", "thinkingOptionId"] {
-                        fields.insert(key.into(), str_of(&profile, key).trim().into());
-                    }
-                    fields.insert("featureValues".into(), object_of(&profile, "featureValues").clone());
-                    let next = agent_form::apply_profile_choice(&Value::Object(fields), &preferences, &self.providers);
-                    let remembered = agent_form::remember_profile_selection(
-                        &preferences,
-                        str_of(&self.config, "provider"),
-                        &self.providers,
-                        &next,
-                        object_of(&profile, "featureValues"),
-                    );
-                    Self::remember(ctx, remembered);
-                    self.profile_id = Some(value);
-                    self.config = next;
-                    self.config_touched = true;
-                    self.load_features(ctx);
-                }
+                self.existing = self.source == "directory" && !self.target.workspace_id.is_empty() && self.path.trim() == self.target.cwd;
             }
             "model" => {
                 if let Some((provider, model_id)) = value.split_once('\u{0}') {
@@ -2373,7 +2118,6 @@ impl WaNewTabView {
             self.synced = true;
             for (path, text) in [
                 (id!(path), self.path.clone()),
-                (id!(title_input), self.title.clone()),
                 (id!(prompt), self.prompt.clone()),
             ] {
                 sync_input(cx, &view.wa_input(path), &text);
@@ -2405,9 +2149,6 @@ impl WaNewTabView {
             recover.set_text(cx, l("Recover / refresh creation"));
             recover.set_busy(cx, self.busy);
             let snapshot = self.snapshot.clone().unwrap_or(Value::Null);
-            let open_ws = view.wa_button(id!(open_workspace));
-            open_ws.set_visible(cx, !str_of(&snapshot, "workspaceId").is_empty());
-            open_ws.set_text(cx, l("Open created workspace"));
             let open_session = view.wa_button(id!(open_session));
             open_session.set_visible(cx, !str_of(&snapshot, "agentId").is_empty());
             open_session.set_text(cx, l("Open created session"));
@@ -2450,42 +2191,12 @@ impl WaNewTabView {
         let show_project = !(add_project && self.options_open);
         project_trigger.set_visible(cx, show_project);
         project_trigger.set(cx, &t("newWorkspace.fields.project"), &project_name, &tip("newWorkspace.tooltips.project"), project_lead);
-        project_trigger.set_enabled(cx, !self.existing && !pending_intent);
+        project_trigger.set_enabled(cx, !pending_intent);
         let host_status = host.map(|h| h.status()).unwrap_or(Connection::Disconnected);
         let host_trigger = view.wa_trigger(id!(host_field));
         let host_label = host.map(|h| h.label()).unwrap_or_else(|| l("Host").to_owned());
         host_trigger.set(cx, &t("newWorkspace.fields.host"), &host_label, &tip("newWorkspace.tooltips.host"), TriggerLead::Status(host_status));
-        host_trigger.set_enabled(cx, !self.existing && !pending_intent);
-        // New session: Local or New worktree, next to Branch (Add project picks its source
-        // among all of them in the options).
-        let worktree = self.worktree();
-        let isolation_trigger = view.wa_trigger(id!(isolation_field));
-        isolation_trigger.set_visible(cx, !add_project);
-        let (isolation_label, isolation_icon) =
-            if worktree { (t("newWorkspace.isolation.worktree"), "git-branch") } else { (t("newWorkspace.isolation.local"), "folder") };
-        isolation_trigger.set(cx, &t("newWorkspace.isolation.label"), &isolation_label, &tip("newWorkspace.tooltips.isolation"), TriggerLead::Icon(isolation_icon));
-        isolation_trigger.set_enabled(cx, !pending_intent && !self.busy);
-        let worktree_row = view.widget(id!(worktree));
-        let show_worktree_name = !add_project && worktree && self.source == "branch-off";
-        worktree_row.set_visible(cx, show_worktree_name);
-        if show_worktree_name {
-            let field = worktree_row.widget(id!(worktree_branch));
-            field.widget(id!(label)).set_text(cx, l("New branch name"));
-            set_optional(cx, &field.widget(id!(hint)), l("Automatic if empty"));
-            view.wa_input(id!(worktree_branch_input)).set_is_read_only(cx, pending_intent || self.busy);
-        }
-        let show_branch = !self.existing && matches!(self.source.as_str(), "branch-off" | "checkout");
-        let branch_trigger = view.wa_trigger(id!(branch_field));
-        branch_trigger.set_visible(cx, show_branch);
-        let branch_value = if !self.ref_name.trim().is_empty() {
-            self.ref_label.clone().unwrap_or_else(|| self.ref_name.trim().to_owned())
-        } else if self.source == "checkout" {
-            t("newWorkspace.refPicker.startingRef")
-        } else {
-            self.default_ref.as_ref().map(|d| d.name.clone()).unwrap_or_else(|| "main".into())
-        };
-        branch_trigger.set(cx, &t("newWorkspace.fields.branch"), &branch_value, &tip("newWorkspace.tooltips.startingRef"), TriggerLead::Icon("git-branch"));
-        branch_trigger.set_enabled(cx, !pending_intent && !self.path.trim().is_empty());
+        host_trigger.set_enabled(cx, !pending_intent);
         let terminal = self.terminal();
         let launch = view.wa_trigger(id!(launch_field));
         launch.set_visible(cx, !add_project);
@@ -2497,7 +2208,7 @@ impl WaNewTabView {
             // Launch keeps its badge at the row's end; the selectors share the rest
             // (16px row insets, 8px between the selectors, spacer and launch).
             let launch_w = if add_project { 0.0 } else { launch.badge_width(cx).min(240.0) };
-            let selectors = [(&project_trigger, show_project), (&host_trigger, true), (&isolation_trigger, !add_project), (&branch_trigger, show_branch)];
+            let selectors = [(&project_trigger, show_project), (&host_trigger, true)];
             let naturals: Vec<f64> = selectors.iter().filter(|(_, shown)| *shown).map(|(trigger, _)| trigger.badge_width(cx)).collect();
             let gaps = naturals.len() + usize::from(!add_project);
             let available = self.column_width - 32.0 - launch_w - 8.0 * gaps as f64;
@@ -2539,12 +2250,12 @@ impl WaNewTabView {
         view.widget(id!(composer)).set_visible(cx, !terminal);
         view.widget(id!(terminal_launch)).set_visible(cx, terminal);
         let prompt = view.wa_input(id!(prompt));
-        prompt.set_visible(cx, self.with_agent);
+        prompt.set_visible(cx, !add_project);
         prompt.set_is_read_only(cx, locked);
         prompt.set_empty_text(cx, t(if self.compact { "composer.placeholders.mobile" } else { "composer.placeholders.desktop" }));
-        let preview = if self.with_agent { String::new() } else if self.title.is_empty() { t("newWorkspace.title") } else { self.title.clone() };
+        let preview = if !add_project { String::new() } else { t("sidebar.actions.addProject") };
         set_optional(cx, &view.widget(id!(title_preview)), &preview);
-        view.widget(id!(agent_controls)).set_visible(cx, self.with_agent);
+        view.widget(id!(agent_controls)).set_visible(cx, !add_project);
         let attach = view.wa_button(id!(attach));
         attach.set_enabled(cx, self.connected && !locked);
         attach.set_tooltip(cx, &t("composer.input.addAttachment"));
@@ -2620,22 +2331,22 @@ impl WaNewTabView {
         let submit = view.wa_button(id!(submit));
         let creating = self.busy || (pending_intent && !self.opened);
         submit.set_busy(cx, creating);
-        submit.set_text(cx, &if self.with_agent || creating { String::new() } else { t("newWorkspace.create") });
-        submit.set_icon(cx, if self.with_agent { "corner-down-left" } else { "" });
+        submit.set_text(cx, &if !add_project || creating { String::new() } else { t("sidebar.actions.addProject") });
+        submit.set_icon(cx, if !add_project { "corner-down-left" } else { "" });
         submit.set_enabled(cx, self.can_create());
-        submit.set_tooltip(cx, &t("newWorkspace.create"));
+        submit.set_tooltip(cx, &t(if add_project { "sidebar.actions.addProject" } else { "sessionNavigation.newSession" }));
         let open_terminal = view.wa_button(id!(open_terminal));
         open_terminal.set_busy(cx, terminal && creating);
         open_terminal.set_text(cx, &if creating { String::new() } else { t("newWorkspace.launch.openTerminal") });
         open_terminal.set_enabled(cx, self.can_create());
-        set_optional(cx, &view.widget(id!(error)), self.error.as_deref().or(self.profiles_error.as_deref()).unwrap_or(""));
+        set_optional(cx, &view.widget(id!(error)), self.error.as_deref().unwrap_or(""));
         let import = view.wa_button(id!(import_session));
         import.set_visible(cx, !self.compact);
         import.set_text(cx, &t("importSession.title"));
         import.set_pill(cx, !self.compact);
         let toggle = view.wa_button(id!(options_toggle));
         toggle.set_visible(cx, add_project);
-        toggle.set_text(cx, l("Workspace options"));
+        toggle.set_text(cx, l("Directory options"));
         toggle.set_trailing(cx, if self.options_open { "chevron-up" } else { "chevron-down" });
         toggle.set_pill(cx, !self.compact);
         view.widget(id!(bottom)).set_visible(cx, !self.compact || add_project);
@@ -2657,7 +2368,7 @@ impl WaNewTabView {
     fn layout_prompt(&mut self, cx: &mut Cx2d, alignment_changed: bool) {
         let view = self.root();
         let prompt = view.wa_input(id!(prompt));
-        if !self.with_agent || self.terminal() || !prompt.visible() {
+        if self.add_project() || self.terminal() || !prompt.visible() {
             self.prompt_layout = None;
             return;
         }
@@ -2741,25 +2452,17 @@ impl WaNewTabView {
 
     fn present_options(&mut self, cx: &mut Cx) {
         let view = self.root();
-        let existing_row = view.widget(id!(existing_row));
-        existing_row.set_visible(cx, !self.target.workspace_id.is_empty());
-        existing_row.widget(id!(label)).set_text(cx, l("Use this existing workspace"));
-        view.pswitch(id!(existing)).set_value(cx, self.existing);
         let source_field = view.widget(id!(source_field));
         source_field.set_visible(cx, !self.existing);
-        source_field.widget(id!(label)).set_text(cx, &t("newWorkspace.isolation.label"));
+        source_field.widget(id!(label)).set_text(cx, l("Directory source"));
         let source_label = match self.source.as_str() {
-            "branch-off" => l("New worktree: branch off"),
-            "checkout" => l("New worktree: existing branch"),
-            "pr" => l("New worktree: pull / merge request"),
             "clone" => l("Clone GitHub repository"),
             "new-directory" => l("Create remote directory"),
+            source if !model::SOURCES.contains(&source) => l("Worktree creation is no longer supported. Choose a local directory."),
             _ => l("Existing checkout or directory"),
         };
         view.wa_button(id!(source)).set_text(cx, source_label);
         let source_icon = match self.source.as_str() {
-            "branch-off" | "checkout" => "git-branch",
-            "pr" => "git-pull-request",
             "clone" => "download",
             "new-directory" => "folder-plus",
             _ => "folder",
@@ -2771,28 +2474,10 @@ impl WaNewTabView {
             _ => l("Remote directory"),
         };
         view.widget(id!(directory_field.label)).set_text(cx, directory_label);
-        view.wa_input(id!(path)).set_is_read_only(cx, self.existing);
+        view.wa_input(id!(path)).set_is_read_only(cx, self.busy || self.intent.is_some());
         let browse = view.wa_button(id!(browse));
-        browse.set_enabled(cx, !self.existing);
+        browse.set_enabled(cx, !self.busy && self.intent.is_none());
         browse.set_tooltip(cx, l("Browse remote directories"));
-        let show_ref = !self.existing && matches!(self.source.as_str(), "branch-off" | "checkout");
-        view.widget(id!(ref_field)).set_visible(cx, show_ref);
-        view.widget(id!(ref_field.label)).set_text(cx, &if self.source == "checkout" { l("Branch to check out").to_owned() } else { t("newWorkspace.refPicker.startingRef") });
-        let branch_field = view.widget(id!(branch_name_field));
-        branch_field.set_visible(cx, !self.existing && self.source == "branch-off");
-        branch_field.widget(id!(label)).set_text(cx, l("New branch name"));
-        set_optional(cx, &branch_field.widget(id!(hint)), l("Automatic if empty"));
-        let pr = !self.existing && self.source == "pr";
-        view.widget(id!(pr_field)).set_visible(cx, pr);
-        view.widget(id!(pr_field.label)).set_text(cx, l("Pull / merge request number"));
-        let forge_field = view.widget(id!(forge_field));
-        forge_field.set_visible(cx, pr);
-        forge_field.widget(id!(label)).set_text(cx, l("Forge"));
-        set_optional(cx, &forge_field.widget(id!(hint)), l("Optional; the host detects the repository"));
-        let path_field = view.widget(id!(project_path_field));
-        path_field.set_visible(cx, pr);
-        path_field.widget(id!(label)).set_text(cx, l("Forge project path"));
-        set_optional(cx, &path_field.widget(id!(hint)), l("Optional"));
         let clone = !self.existing && self.source == "clone";
         view.widget(id!(repo_field)).set_visible(cx, clone);
         view.widget(id!(repo_field.label)).set_text(cx, l("Repository or search query"));
@@ -2800,7 +2485,6 @@ impl WaNewTabView {
         view.widget(id!(protocol_field.label)).set_text(cx, l("Clone protocol"));
         let segment = |value: &str, label: &str| Segment { value: value.into(), label: label.into(), icon: None, enabled: true };
         view.psegmented(id!(protocol)).set_options(cx, vec![segment("https", "HTTPS"), segment("ssh", "SSH")], &self.clone_protocol);
-        view.wa_button(id!(ref_field.search)).set_tooltip(cx, &t("newWorkspace.refPicker.searchPlaceholder"));
         view.wa_button(id!(repo_field.search)).set_tooltip(cx, l("Search GitHub repositories"));
         let new_dir = !self.existing && self.source == "new-directory";
         view.widget(id!(dirname_field)).set_visible(cx, new_dir);
@@ -2823,27 +2507,6 @@ impl WaNewTabView {
         let inspect = view.wa_button(id!(inspect_prepared));
         inspect.set_visible(cx, self.preparation_unknown);
         inspect.set_text(cx, l("Inspect and select prepared directory"));
-        view.widget(id!(title_field.label)).set_text(cx, &t("newWorkspace.titlePlaceholder"));
-        let agent_row = view.widget(id!(agent_row));
-        agent_row.set_visible(cx, !self.existing);
-        agent_row.widget(id!(label)).set_text(cx, &t("newWorkspace.launch.chat"));
-        view.pswitch(id!(with_agent)).set_value(cx, self.with_agent);
-        let profile_field = view.widget(id!(profile_field));
-        profile_field.set_visible(cx, self.with_agent);
-        profile_field.widget(id!(label)).set_text(cx, l("Agent profile"));
-        let profile_label = self
-            .profile_id
-            .as_deref()
-            .filter(|id| !id.is_empty())
-            .and_then(|id| self.profiles.iter().find(|p| str_of(p, "id") == id))
-            .map(|p| str_of(p, "name").to_owned())
-            .unwrap_or_else(|| l("Custom configuration").to_owned());
-        view.wa_button(id!(profile)).set_text(cx, &profile_label);
-        let add_row = view.widget(id!(add_project_row));
-        add_row.set_visible(cx, !self.existing && self.source == "directory");
-        let add = view.wa_button(id!(add_project));
-        add.set_text(cx, l("Add project without a workspace"));
-        add.set_enabled(cx, !self.busy && self.intent.is_none());
     }
 }
 
@@ -3031,7 +2694,7 @@ impl Widget for WaNewTabView {
             if self.directory_timer.is_event(event).is_some() {
                 self.directory_timer = Timer::default();
                 self.catalog_cwd = self.path.trim().to_owned();
-                self.load_default_ref(ctx);
+                self.load_repository_status(ctx);
                 self.load_providers(ctx);
                 self.sync_forge(cx, ctx);
                 self.view.redraw(cx);
@@ -3070,7 +2733,7 @@ impl Widget for WaNewTabView {
         }
         if self.focus_prompt {
             self.focus_prompt = false;
-            if self.with_agent && !self.terminal() {
+            if !self.add_project() && !self.terminal() {
                 self.view.wa_input(id!(prompt)).set_key_focus(cx);
             }
         }
@@ -3216,7 +2879,7 @@ mod completion_tests {
                 h.view.receive(&mut h.ctx, &receipt);
                 h.view.answer(&mut h.cx, &mut h.ctx, Req::Submit, Ok(response));
                 assert_eq!(h.apply(), 1);
-                h.assert_destination(if agent { "agent" } else { "setup" });
+                h.assert_destination(if agent { "agent" } else { "new_tab" });
                 assert!(h.view.intent.is_none());
                 assert_eq!(other_window.to_json(), other_window_before);
             }
@@ -3275,6 +2938,35 @@ mod completion_tests {
         h.view.answer(&mut h.cx, &mut h.ctx, terminal_request(), Ok(terminal));
         assert_eq!(h.apply(), 1);
         h.assert_destination("terminal");
+    }
+
+    #[test]
+    fn creation_submission_rejects_legacy_worktree_replay_without_changing_intent() {
+        let mut h = Harness::new(true, false);
+        h.view.intent.as_mut().unwrap()["request"]["source"] = json!({"kind": "worktree", "cwd": "/project", "action": "branch-off"});
+        let intent = h.view.intent.clone();
+        h.view.submit(&h.ctx);
+        assert_eq!(h.view.intent, intent);
+        assert!(!h.view.busy);
+        assert!(h.view.error.as_deref().is_some_and(|error| error.contains("Worktree")));
+        assert_eq!(h.apply(), 0);
+    }
+
+    #[test]
+    fn empty_chat_submission_creates_session_in_existing_directory() {
+        let mut h = Harness::new(false, false);
+        h.view.intent = None;
+        h.view.prompt.clear();
+        h.view.path = "/existing/worktree".into();
+        h.view.catalog_cwd = h.view.path.clone();
+        h.view.source = "directory".into();
+        h.view.start_create(&mut h.ctx);
+        assert!(h.view.create.as_ref().is_some_and(|draft| draft.with_agent && !draft.has_input));
+        h.view.create_submit(&mut h.ctx, Value::Null);
+        let request = object_of(h.view.intent.as_ref().unwrap(), "request");
+        assert_eq!(request["source"], json!({"kind": "directory", "path": "/existing/worktree"}));
+        assert_eq!(request["agent"]["config"]["cwd"], "/existing/worktree");
+        assert!(request["agent"].get("initialPrompt").is_none());
     }
 
     #[test]

@@ -345,3 +345,75 @@ fn browser_cross_field_refinements_survive_schema_migration() {
     message["command"]["args"]["url"] = json!("file:///private");
     assert!(validate_session(&message, Direction::Outbound).is_err());
 }
+
+#[test]
+fn selected_commit_rpc_validates_session_and_websocket_boundaries() {
+    let request = json!({
+        "type":"checkout.commit_selected.request", "cwd":"/repo",
+        "paths":["name with spaces.txt", ":(glob)*"], "message":"Summary\n\nBody",
+        "requestId":"selected-1",
+    });
+    let assert_valid = |message: Value, direction| {
+        validate_session(&message, direction).unwrap();
+        let envelope = json!({"type":"session","message":message});
+        parse_envelope(&serde_json::to_vec(&envelope).unwrap(), direction).unwrap();
+    };
+    assert_valid(request.clone(), Direction::Inbound);
+    for (field, value) in [
+        ("paths", json!([])),
+        ("paths", json!([""])),
+        ("paths", json!([4])),
+        ("message", json!("")),
+        ("message", json!(" \n\t")),
+        ("message", Value::Null),
+    ] {
+        let mut invalid = request.clone();
+        invalid[field] = value;
+        assert!(validate_session(&invalid, Direction::Inbound).is_err());
+        assert!(parse_envelope(
+            &serde_json::to_vec(&json!({"type":"session","message":invalid})).unwrap(),
+            Direction::Inbound,
+        ).is_err());
+    }
+    let success = json!({
+        "type":"checkout.commit_selected.response",
+        "payload":{"cwd":"/repo","success":true,"error":null,"commitSha":"abc123","requestId":"selected-1"},
+    });
+    assert_valid(success.clone(), Direction::Outbound);
+    let mut missing_sha = success;
+    missing_sha["payload"].as_object_mut().unwrap().remove("commitSha");
+    assert!(validate_session(&missing_sha, Direction::Outbound).is_err());
+    assert_valid(json!({
+        "type":"checkout.commit_selected.response",
+        "payload":{"cwd":"/repo","success":false,"error":{"code":"UNKNOWN","message":"Select at least one changed file"},"requestId":"selected-1"},
+    }), Direction::Outbound);
+    // The new operation does not narrow the legacy message/generation contract.
+    assert_valid(json!({
+        "type":"checkout_commit_request","cwd":"/repo","requestId":"legacy",
+    }), Direction::Inbound);
+}
+
+#[test]
+fn retired_worktree_requests_and_refusals_remain_wire_compatible() {
+    let request = json!({
+        "type":"create_paseo_worktree_request","requestId":"old-client",
+        "cwd":"/existing/repo","action":"branch-off","worktreeSlug":"feature","refName":"main"
+    });
+    assert_eq!(SessionMessage::parse(request.clone(), Direction::Inbound).unwrap().into_value(), request);
+    for response in [
+        json!({"type":"create_paseo_worktree_response","payload":{
+            "requestId":"old-client","workspace":null,"setupTerminalId":null,
+            "errorCode":"unsupported","error":"Managed worktrees are no longer supported"
+        }}),
+        json!({"type":"paseo_worktree_archive_response","payload":{
+            "requestId":"old-client","success":false,"removedAgents":[],
+            "error":{"code":"UNKNOWN","message":"Managed worktrees are no longer supported"}
+        }}),
+        json!({"type":"paseo_worktree_list_response","payload":{
+            "requestId":"old-client","worktrees":[],
+            "error":{"code":"UNKNOWN","message":"Managed worktrees are no longer supported"}
+        }}),
+    ] {
+        assert_eq!(SessionMessage::parse(response.clone(), Direction::Outbound).unwrap().into_value(), response);
+    }
+}

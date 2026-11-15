@@ -57441,6 +57441,81 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "checkout.commit_selected.response"
+                },
+                "payload": {
+                  "type": "object",
+                  "properties": {
+                    "cwd": {
+                      "type": "string"
+                    },
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "commitSha": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "error": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cwd",
+                    "success",
+                    "error",
+                    "requestId"
+                  ],
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "success": {
+                            "const": true
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "commitSha"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "payload"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "checkout_commit_response"
                 },
                 "payload": {

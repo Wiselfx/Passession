@@ -58,7 +58,7 @@ nav: Provider 插件
 
 ## 权限与取消 {#permissions-and-cancellation}
 
-发送 `session.permission`，包含会话 ID，以及稳定权限 ID、描述性名称/详情、类型和实际允许操作。例如文件检查器对具体相对文件提供 `allow`/`deny`。处理对应 `session.permission` 响应时，先校验权限 ID 与行为，再执行读取；发送 `session.permission_resolved` 和轮次结果。拒绝的操作不能运行。
+发送 `session.permission`，包含会话 ID，以及稳定权限 ID、描述性名称/详情、类型和实际允许操作。例如文件检查器对相对于会话目录的具体文件提供 `allow`/`deny`。处理对应 `session.permission` 响应时，先校验权限 ID 与行为，再执行读取；发送 `session.permission_resolved` 和轮次结果。拒绝的操作不能运行。
 
 权限是结构化操作，不一定是 shell 字符串。保留底层 Agent 的问题/批准选项，不伪造批准或默认选择更宽松权限。取消会话必须停止工作并解决待处理权限。批准等待期间关闭/重新加载插件，不能留下脱离管理的操作继续运行。
 

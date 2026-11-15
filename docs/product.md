@@ -6,7 +6,7 @@ Paseo is an environment for running, monitoring, and interacting with coding age
 
 ## Agents are the focus
 
-The central workflow is giving an agent a task, understanding what it is doing, providing direction, and reviewing the result. Markdown, source editing, summary-first diffs, remote folder selection, interactive terminals on the host and read-only script/setup logs support that work. The sidebar is host → directory → session, with a directory's live terminals listed after its sessions; workspaces remain orchestration entities rather than sidebar groups.
+The central workflow is giving an agent a task, understanding what it is doing, providing direction, and reviewing the result. Markdown, source editing, Git Log, selected-change commits, remote folder selection, interactive terminals and read-only script logs support that work. The sidebar is host → directory → session, with live terminals after the directory's sessions. Sessions open directly as tabs. New work uses an existing host-side directory; there is no Workspace creation step or managed worktree lifecycle.
 
 Paseo should make this workflow coherent across providers and devices. You should be able to use the agent that fits a task and keep working from another device without rebuilding your environment around it.
 
@@ -50,7 +50,7 @@ Convenience and ownership should work together. Offering a straightforward way t
 
 ## A lean core that keeps improving
 
-The core provides the shared experience: starting work, interacting with agents, understanding their state, and moving between workspaces and devices.
+The core provides the shared experience: starting work, interacting with agents, understanding their state, and moving between sessions and devices.
 
 Core development continues through improvements to reliability, performance, interaction design, and workflows with broad value. A lean core takes ongoing work.
 
@@ -64,7 +64,7 @@ The boundary can evolve. Some built-in capabilities may eventually make more sen
 
 Built-in integrations run in Rust. Optional native backend executables can add providers, RPCs, lifecycle behavior, usage sources and settings data through the Rust `paseo-plugin` SDK. Paseo runtime and repository tooling do not require Node; external agent programs retain their own runtime requirements.
 
-Executable React UI-plugin compatibility and embedded browser/automation are intentionally excluded. There is no Electron, Chromium or webview fallback for these surfaces. Terminals are daemon PTYs presented natively: interactive shells as Terminal tabs, script and setup output as read-only logs.
+Executable React UI-plugin compatibility and embedded browser/automation are intentionally excluded. There is no Electron, Chromium or webview fallback for these surfaces. Terminals are daemon PTYs presented natively: interactive shells as Terminal tabs, script output as read-only logs.
 
 Paseo's role is to preserve the backend and SDK interfaces while making the native client boundary explicit. See [backend extensions](plugins.md) for the supported runtime and contribution scope.
 

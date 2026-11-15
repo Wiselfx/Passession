@@ -8,7 +8,7 @@ nav: 原生客户端
 
 Rust daemon **不捆绑或提供产品网页客户端**。原生客户端使用 Rust（Makepad），支持 Linux、macOS、Windows、Android 和 iOS。文档网站与产品应用是两个独立项目。
 
-不要把启用 `features.webUi`、设置 `PASEO_WEB_UI_ENABLED` 或访问 `http://localhost:6767/` 当作安装步骤；这些旧操作不会生成原生客户端。HTTP/WebSocket API、MCP 和工作区服务代理仍是 daemon 功能，但不代表包含浏览器 UI。
+不要把启用 `features.webUi`、设置 `PASEO_WEB_UI_ENABLED` 或访问 `http://localhost:6767/` 当作安装步骤；这些旧操作不会生成原生客户端。HTTP/WebSocket API、MCP 和项目服务代理仍是 daemon 功能，但不代表包含浏览器 UI。
 
 ## 自托管 daemon {#self-host-the-daemon}
 
@@ -32,4 +32,4 @@ paseo daemon status
 
 ## 审查与测试 {#review-and-test-work}
 
-原生客户端提供聊天、Markdown、源码编辑、远程文件夹、摘要优先的 diff、计划任务和只读脚本/设置日志。工作区服务仍可运行你自己项目的网页应用，请在外部浏览器打开其 URL；这与 Paseo 网页客户端或内嵌自动化不同。
+原生客户端提供聊天、Markdown、源码编辑、远程文件夹、摘要优先的 diff、计划任务和只读脚本日志。项目服务仍可运行你自己项目的网页应用，请在外部浏览器打开其 URL；这与 Paseo 网页客户端或内嵌自动化不同。

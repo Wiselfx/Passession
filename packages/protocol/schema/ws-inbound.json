@@ -6261,6 +6261,41 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "checkout.commit_selected.request"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "requestId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "cwd",
+                "paths",
+                "message",
+                "requestId"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "checkout_commit_request"
                 },
                 "cwd": {

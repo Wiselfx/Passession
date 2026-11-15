@@ -12,7 +12,6 @@ mod scheduler;
 use crate::{state::AppState, transport::RequestContext};
 use anyhow::{Result, anyhow, bail};
 pub use command::resolve_diff_base;
-pub(crate) use facts::current_branch;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -235,12 +234,6 @@ impl GitService {
             if published {
                 *entry.snapshot.value.lock().await = Some((generation, value.clone()));
             }
-            drop(_flight);
-            if published
-                && let Some(app) = self.app.upgrade()
-                    && let Err(error) = app.projects.observe_git_snapshot(&value).await {
-                        tracing::warn!(%error,"Checkout snapshot lifecycle notification failed");
-                    }
             Ok(value)
         })
     }

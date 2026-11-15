@@ -64,7 +64,7 @@ Discord 起步配置使用 `discord.mention`、你的 Discord 用户 ID 和 `dis
 
 ## 启动超时 {#startup-timeout}
 
-Hub 最多等待 **两分钟**让 Agent 启动，包括创建 worktree、启动 Provider 以及接受初始提示词。对于较慢的机器，请在触发器 YAML 中设置 `run.startup_timeout`：
+Hub 最多等待 **两分钟**让 Agent 启动，包括在已配置目录中启动 Provider 以及接受初始提示词。对于较慢的机器，请在触发器 YAML 中设置 `run.startup_timeout`：
 
 ```yaml
 name: inspect

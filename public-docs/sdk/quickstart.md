@@ -78,6 +78,6 @@ Run your application with `cargo run`; this may create real provider work and in
 ## Next
 
 - [Agents](agents.md): follow-ups, labels, parentage, structured output.
-- [Workspaces](workspaces.md): placement, background work and terminals.
+- [Sessions and directories](workspaces.md): local placement, internal ownership and terminals.
 - [Events](events.md): owned subscriptions and history repair.
 - [Reference](reference.md): authentication, relay, SSH and protocol APIs.

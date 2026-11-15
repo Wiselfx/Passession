@@ -1058,9 +1058,6 @@ impl GitService {
             app.transport
                 .publish_event(json!({"type":"checkout_status_update","payload":payload}))
                 .await?;
-            let mut owned_snapshot = snapshot.clone();
-            owned_snapshot["cwd"] = json!(alias);
-            app.projects.observe_git_snapshot(&owned_snapshot).await?;
         }
         app.projects.reconcile_checkout(cwd).await?;
         Ok(())

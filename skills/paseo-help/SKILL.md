@@ -1,6 +1,6 @@
 ---
 name: paseo-help
-description: Answer questions about the Paseo product and app, including setup, configuration, connectivity, providers, workspaces, updates, logs, and troubleshooting. Use when a user inside Paseo asks how Paseo works, how to configure it, or why something is broken; use the paseo skill instead to operate agents and workspaces through MCP or the CLI.
+description: Answer questions about the Paseo product and app, including setup, configuration, connectivity, providers, sessions, local directories, updates, logs, and troubleshooting. Use when a user inside Paseo asks how Paseo works, how to configure it, or why something is broken; use the paseo skill instead to operate agents and scripts through MCP or the CLI.
 ---
 
 # Paseo Help
@@ -39,7 +39,7 @@ Record which host the user is viewing and which machine or container runs it. A 
 
 Apply later checks to the daemon runtime, not automatically to the client device:
 
-- Provider binaries, credentials, `PATH`, workspaces, config, and daemon logs live on the daemon machine or inside its container.
+- Provider binaries, credentials, `PATH`, session directories, config, and daemon logs live on the daemon machine or inside its container.
 - App version and app logs live on the client device.
 - A desktop-managed daemon follows the Desktop app lifecycle and update path.
 - A standalone daemon follows its own CLI/npm lifecycle and may use a different `PASEO_HOME` or listen address.
@@ -68,7 +68,7 @@ Use these defaults on the machine where the daemon or Desktop app actually runs.
 - Daemon config: `~/.paseo/config.json`
 - Daemon log: `~/.paseo/daemon.log`
 - Agent state directory: `~/.paseo/agents/`
-- Default managed worktree root: `~/.paseo/worktrees/`
+- Historical worktree directories may remain under `~/.paseo/worktrees/`; Paseo no longer creates or cleans them up. Do not delete or migrate them during troubleshooting.
 - macOS desktop log: `~/Library/Logs/Paseo/main.log`
 - Linux desktop log: `~/.config/Paseo/logs/main.log`
 - Windows desktop log: `%APPDATA%\Paseo\logs\main.log`

@@ -56,7 +56,7 @@ run.agent.mode: Mode 'default' is not available for provider 'opencode'
 
 控制台中的触发器默认为 **Same conversation**。同一个 Slack 或 Discord 线程中的消息、同一个 GitHub issue 或 Pull Request 上的事件，以及同一个 Linear issue 上的事件，都会在该项目中继续现有的 Agent。没有对话的事件会启动一个新的 Agent。
 
-如果 Agent 正忙，新的提示词会引导它当前的工作。每次到达都保留各自的输出限制和完成状态。如果可复用的工作区已被归档，Hub 会在发送提示词之前请 Paseo 恢复它。
+如果 Agent 正忙，新的提示词会引导它当前的工作。每次到达都保留各自的输出限制和完成状态。如果可复用会话的内部归属记录已被归档，Hub 会在发送提示词之前请 Paseo 恢复该记录。本地目录必须仍然存在，恢复不会重新创建 worktree。
 
 选择 **Custom key** 可以按某个输入对到达的事件分组，选择 **New agent** 则让它们彼此独立。自包含的触发器文档也可以表达同样的选择：
 

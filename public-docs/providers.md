@@ -8,9 +8,9 @@ category: Providers
 
 # Providers
 
-Paseo runs **existing coding agents you've installed and authenticated**, with native chat, source/Markdown editing, summary-first diffs and read-only script/setup logs. Run several agents in parallel, choose a provider for each task and review their work in the same client. Your subscriptions, configuration, skills and MCP servers stay intact. Built-in adapters run in Rust; external provider executables keep their own runtime requirements.
+Paseo runs **existing coding agents you've installed and authenticated**, with native chat, source/Markdown editing, summary-first diffs and read-only script logs. Run several agents in parallel, choose a provider for each task and review their work in the same client. Your subscriptions, configuration, skills and MCP servers stay intact. Built-in adapters run in Rust; external provider executables keep their own runtime requirements.
 
-To try the workflow, [run parallel tasks in separate worktrees](/docs/parallel-development).
+To try the workflow, [run parallel sessions in existing directories](/docs/parallel-development).
 
 ## Mental model
 

@@ -1,5 +1,5 @@
 //! `CommandCenterPanel` (Flutter `ui/command_center.dart` `_CommandCenter`): the query
-//! input with the Files scope chip, the file search, the action / workspace / agent / file
+//! input with the Files scope chip, the file search, the action / session / file
 //! sections, keyboard selection with reveal-once scrolling and row activation. The DSL
 //! lives in `command_center/mod.rs`.
 
@@ -12,13 +12,12 @@ use super::results::{self, Contribution, Icon, Kind, ListRow, Projection, Result
 use super::{parse_ms, time_ago};
 use crate::common::provider_icon::ProviderIconWidgetRefExt;
 use crate::common::paint::{Font, Painter, TextSpec, rect};
-use crate::common::widgets::{agent_status_bucket, StatusBucket, StatusMarkWidgetRefExt, SurfaceRole, SurfaceWidgetRefExt};
+use crate::common::widgets::{agent_status_bucket, StatusMarkWidgetRefExt, SurfaceRole, SurfaceWidgetRefExt};
 use crate::features::files::kit::DrawFilesImage;
 use crate::common::{PanelTarget, TabPlacement, UiContext, UiEffect};
 use crate::features::workspace::host::{self, agent_of};
 use crate::features::workspace::i18n::{t, ta};
-use crate::features::workspace::identity::project_view_key;
-use crate::features::workspace::kit::{set_optional, set_project_icon, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt};
+use crate::features::workspace::kit::{set_optional, WaButtonWidgetRefExt, WaIconWidgetRefExt, WaInputWidgetExt, WaInputWidgetRefExt};
 use crate::features::workspace::rpc::{array_of, new_id, object_of, str_of, str_or, Pending};
 
 #[derive(Clone, Debug, DefaultNone)]
@@ -299,22 +298,11 @@ impl WaShortcutBadgeRef {
     }
 }
 
-fn workspace_bucket(status: &str) -> Option<StatusBucket> {
-    match status {
-        "needs_input" => Some(StatusBucket::NeedsInput),
-        "failed" => Some(StatusBucket::Failed),
-        "running" => Some(StatusBucket::Running),
-        "attention" => Some(StatusBucket::Attention),
-        "done" => Some(StatusBucket::Done),
-        _ => None,
-    }
-}
 
-/// Listed agents: not archived, top level, in a workspace.
+/// Listed sessions: not archived and top level.
 fn listed_agent(agent: &Value) -> bool {
     agent.get("archivedAt").is_none_or(Value::is_null)
         && agent.get("parentAgentId").is_none_or(Value::is_null)
-        && !str_of(agent, "workspaceId").is_empty()
 }
 
 impl CommandCenterPanel {
@@ -422,7 +410,7 @@ impl CommandCenterPanel {
         crate::common::shortcut_label(ctx, help_id).unwrap_or_default()
     }
 
-    /// Root and workspace actions in registry order.
+    /// Root and selected-session actions in registry order.
     fn contributions(&self, ctx: &UiContext) -> Vec<Contribution> {
         let compact = self.compact;
         let shortcuts = !host::is_mobile() && !compact;
@@ -453,23 +441,13 @@ impl CommandCenterPanel {
                 0,
                 t("shell.commandCenter.addProject"),
                 "folder-plus",
-                &["open", "project", "folder", "workspace", "repo", "프로젝트", "폴더", "열기", "저장소"],
+                &["open", "project", "folder", "repo", "프로젝트", "폴더", "열기", "저장소"],
                 Run::Effect(UiEffect::OpenTab { target, placement: TabPlacement::Main }),
                 true,
-                "new-agent",
+                "",
             ));
         }
-        out.push(root("new-workspace", 1, t("sidebar.actions.newWorkspace"), "plus", &["new", "workspace", "worktree", "branch", "새", "워크스페이스", "세션"], command("workspace.new", Value::Null), false, "new-workspace"));
-        out.push(root(
-            "new-worktree",
-            1,
-            t("shell.commandCenter.newWorktreeSession"),
-            "git-branch-plus",
-            &["new", "worktree", "branch", "session", "새", "워크트리", "브랜치", "세션"],
-            command("worktree.new", Value::Null),
-            false,
-            "new-worktree",
-        ));
+        out.push(root("new-session", 1, t("sessionNavigation.newSession"), "plus", &["new", "session", "chat", "새", "세션"], command("agent.new", Value::Null), false, "new-agent"));
         if let Some(effect) = next_attention(ctx, selected.as_ref()) {
             out.push(root(
                 "next-attention",
@@ -540,33 +518,31 @@ impl CommandCenterPanel {
             8,
             t("settings.shortcuts.help.toggleLeftSidebar"),
             "panel-left",
-            &["toggle", "sidebar", "left", "panel", "workspaces", "사이드바", "토글"],
+            &["toggle", "sidebar", "left", "panel", "sessions", "directories", "사이드바", "토글"],
             command("sidebar.toggle.left", Value::Null),
             true,
             "toggle-left-sidebar",
         ));
-        out.extend(self.workspace_contributions(ctx, &shortcut));
+        out.extend(self.session_contributions(ctx, &shortcut));
         out.sort_by(results::compare_contributions);
         out
     }
 
-    /// `workspace-contributions.ts` for the focused workspace.
-    fn workspace_contributions(&self, ctx: &UiContext, shortcut: &dyn Fn(&str) -> String) -> Vec<Contribution> {
+    /// Actions scoped to the selected session's directory and the global pane tabs.
+    fn session_contributions(&self, ctx: &UiContext, shortcut: &dyn Fn(&str) -> String) -> Vec<Contribution> {
         let Some(target) = Self::target(ctx).filter(|t| !t.server_id.is_empty() && !t.cwd.is_empty()) else { return Vec::new() };
         let host = host::host(&ctx.state, &target.server_id);
         let workspace = if target.workspace_id.is_empty() { None } else { host.and_then(|h| h.workspace(&target.workspace_id)).cloned() };
-        let section = t("workspace.header.actions.workspaceActions");
+        let section = t("shell.menu.sessionActions");
         let can_split = !host::is_mobile() && !self.compact;
         let is_git = workspace.as_ref().is_some_and(|w| w.get("gitRuntime").is_some_and(|g| !g.is_null()) || str_of(w, "projectKind") == "git");
         let branch = workspace.as_ref().map(|w| str_of(object_of(w, "gitRuntime"), "currentBranch").trim().to_owned()).unwrap_or_default();
-        let pinned = workspace.as_ref().is_some_and(|w| w.get("pinnedAt").is_some_and(|p| !p.is_null()));
-        let can_pin = workspace.is_some() && host.is_some_and(|h| h.supports("workspacePinning"));
         let pane = ctx.layout.panes.iter().find(|p| p.id == ctx.layout.focused_pane);
         let tab_keys: Vec<String> = pane.map(|p| p.tabs.clone()).unwrap_or_default();
         let tab_index = pane.and_then(|p| p.selected.as_ref()).and_then(|s| tab_keys.iter().position(|k| k == s));
         let item = |id: &str, rank: i64, title: String, icon: &'static str, keywords: Vec<String>, run: Run, query_only: bool, shortcut_id: &str| Contribution {
-            id: format!("workspace:{id}"),
-            group: "workspace".into(),
+            id: format!("session:{id}"),
+            group: "session".into(),
             group_rank: -1,
             rank,
             keywords,
@@ -581,13 +557,13 @@ impl CommandCenterPanel {
         let command = |action: &str, args: Value| Run::Command(action.to_owned(), args);
         let open = |key: &str| ta("shell.commandCenter.open", &[("name", &t(key))]);
         let copied = t("common.states.copied");
-        let path = workspace.as_ref().map(|w| str_or(w, "workspaceDirectory", &target.cwd).to_owned()).unwrap_or_else(|| target.cwd.clone());
-        let mut out = vec![item("tab:new-agent", 0, t("workspace.tabs.actions.newAgent"), "square-pen", kw(&["tab", "new", "agent", "chat"]), command("workspace.tab.target.agent", Value::Null), false, "workspace-tab-target-agent")];
+        let path = target.cwd.clone();
+        let mut out = Vec::new();
         if !target.workspace_id.is_empty() {
             out.push(item("tab:new-terminal", 2, t("workspace.tabs.actions.newTerminal"), "square-terminal", kw(&["terminal", "shell", "console"]), command("workspace.terminal.new", Value::Null), true, "workspace-terminal-new"));
         }
         if is_git {
-            out.push(item("tab:open:changes", 4, open("workspace.tabs.actions.changes"), "git-compare-arrows", kw(&["open", "changes", "tab", "supporting"]), command("workspace.tab.target.changes", Value::Null), true, ""));
+            out.push(item("tab:open:commit", 4, open("workspace.git.commit.title"), "git-commit-horizontal", kw(&["open", "git", "commit", "files"]), command("workspace.tab.target.gitCommit", Value::Null), true, ""));
             if host.is_some_and(|h| h.supports("gitLog")) {
                 out.push(item("tab:open:git-log", 3, t("workspace.git.log.open"), "git-graph", kw(&["open", "git", "log", "history", "graph", "branches", "commits", "dashboard", "깃", "로그", "커밋", "브랜치", "그래프"]), command("workspace.tab.target.gitLog", Value::Null), false, ""));
             }
@@ -661,72 +637,29 @@ impl CommandCenterPanel {
             out.push(item("pane:close", 60, t("settings.shortcuts.help.closePane"), "x", kw(&["pane", "close"]), command("workspace.pane.close", Value::Null), true, "workspace-pane-close"));
             out.push(item("pane:focus-mode-toggle", 62, t("settings.shortcuts.help.toggleFocusMode"), "arrow-down-to-line", kw(&["pane", "focus", "mode", "toggle"]), command("view.toggle.focus", Value::Null), true, "toggle-focus"));
         }
-        if can_pin {
-            let key = if pinned { "sidebar.workspace.actions.unpin" } else { "sidebar.workspace.actions.pin" };
-            out.push(item("workspace:pin", 20, t(key), if pinned { "pin-off" } else { "pin" }, kw(&["pin", "unpin", "favorite", "sticky"]), command("workspace.pin", Value::Null), false, "pin-workspace"));
-        }
         let copy_path = if path.is_empty() {
             Run::Error(t("sidebar.workspace.toasts.workspacePathUnavailable"))
         } else {
             Run::Effect(UiEffect::CopyText { text: path.clone(), toast: Some(t("sidebar.workspace.toasts.pathCopied")) })
         };
-        if workspace.is_some() {
-            // Query-only: archiving is never one stray Enter away.
-            out.push(item("workspace:archive", 21, t("settings.shortcuts.help.archiveWorkspace"), "archive", kw(&["archive", "workspace", "close", "remove", "보관", "워크스페이스", "닫기"]), command("workspace.archive", Value::Null), true, "archive-workspace"));
-        }
-        out.push(item("workspace:copy-path", 22, t("workspace.header.actions.copyPath"), "copy", kw(&["copy", "path", "directory", "folder", "cwd"]), copy_path, true, ""));
+        out.push(item("copy-path", 22, t("workspace.header.actions.copyPath"), "copy", kw(&["copy", "path", "directory", "folder", "cwd"]), copy_path, true, ""));
         if !branch.is_empty() {
             let mut words = kw(&["copy", "branch", "git"]);
             words.push(branch.clone());
             let effect = UiEffect::CopyText { text: branch.clone(), toast: Some(t("sidebar.workspace.toasts.branchNameCopied")) };
-            out.push(item("workspace:copy-branch-name", 23, t("workspace.header.actions.copyBranchName"), "git-branch", words, Run::Effect(effect), true, ""));
+            out.push(item("copy-branch-name", 23, t("workspace.header.actions.copyBranchName"), "git-branch", words, Run::Effect(effect), true, ""));
         }
-        out.push(item("workspace:toggle-explorer-sidebar", 25, t("workspace.tabs.explorerSidebar.toggle"), "panel-right", kw(&["toggle", "sidebar", "explorer", "files", "changes"]), command("sidebar.toggle.right", Value::Null), true, "toggle-right-sidebar"));
+        out.push(item("toggle-explorer-sidebar", 25, t("workspace.tabs.explorerSidebar.toggle"), "panel-right", kw(&["toggle", "sidebar", "explorer", "files", "git", "log", "commit"]), command("sidebar.toggle.right", Value::Null), true, "toggle-right-sidebar"));
         if !can_split {
-            out.push(item("workspace:toggle-focus-mode", 26, t("settings.shortcuts.help.toggleFocusMode"), "focus", kw(&["toggle", "focus", "zen", "distraction", "fullscreen"]), command("view.toggle.focus", Value::Null), true, "toggle-focus"));
+            out.push(item("toggle-focus-mode", 26, t("settings.shortcuts.help.toggleFocusMode"), "focus", kw(&["toggle", "focus", "zen", "distraction", "fullscreen"]), command("view.toggle.focus", Value::Null), true, "toggle-focus"));
         }
         out
     }
 
-    /// Workspace (rank 2) and agent (rank 3) rows, pinned below every action section.
+    /// Sessions are listed directly below the action sections.
     fn built_in_sections(&self, ctx: &UiContext) -> Vec<Section> {
         let hosts = host::hosts(&ctx.state);
         let show_host = hosts.len() > 1;
-        let mut workspaces = Vec::new();
-        let mut titles: Vec<(String, String)> = Vec::new();
-        for host in &hosts {
-            let label = host.label();
-            for workspace in host.workspaces() {
-                if workspace.get("archivingAt").is_some_and(|v| !v.is_null()) {
-                    continue;
-                }
-                let id = str_of(workspace, "id");
-                let title = if str_of(workspace, "title").trim().is_empty() { str_of(workspace, "name") } else { str_of(workspace, "title") }.to_owned();
-                titles.push((format!("{}:{id}", host.id()), title.clone()));
-                let project = object_of(workspace, "project");
-                let project_name = str_or(workspace, "projectDisplayName", str_of(project, "projectName")).to_owned();
-                let mut placement = project.clone();
-                if !placement.is_object() {
-                    placement = json!({});
-                }
-                placement["projectId"] = str_or(workspace, "projectId", str_of(project, "projectId")).into();
-                let mut row = ResultRow::new(
-                    format!("workspace:{}:{id}", host.id()),
-                    Kind::Workspace,
-                    title,
-                    Run::OpenWorkspace { host_id: host.id().to_owned(), workspace: workspace.clone() },
-                );
-                row.subtitle = results::join_subtitle(&[show_host.then_some(label.as_str()), Some(&project_name), Some(str_of(object_of(workspace, "gitRuntime"), "currentBranch"))]);
-                row.activity_at = parse_ms(workspace.get("statusEnteredAt"));
-                row.change_request_number = object_of(object_of(workspace, "githubRuntime"), "pullRequest").get("number").and_then(Value::as_i64);
-                row.icon = Icon::Project {
-                    name: project_name,
-                    view_key: project_view_key(host.id(), &placement),
-                    bucket: workspace_bucket(str_of(workspace, "status")),
-                };
-                workspaces.push(row);
-            }
-        }
         let mut agents = Vec::new();
         for host in &hosts {
             let label = host.label();
@@ -735,8 +668,7 @@ impl CommandCenterPanel {
                 if !listed_agent(agent) {
                     continue;
                 }
-                let key = format!("{}:{}", host.id(), str_of(agent, "workspaceId"));
-                let workspace_title = titles.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone()).unwrap_or_else(|| super::shorten(str_of(agent, "cwd")));
+                let directory = super::shorten(str_of(agent, "cwd"));
                 let target = crate::shell::commands::navigation_agent_target(host.id(), agent, None);
                 let mut row = ResultRow::new(
                     format!("agent:{}:{}", host.id(), str_of(agent, "id")),
@@ -744,7 +676,7 @@ impl CommandCenterPanel {
                     results::agent_label(str_of(agent, "title")).unwrap_or_else(|| t("workspace.tabs.loading")),
                     Run::Effect(UiEffect::OpenTab { target, placement: TabPlacement::Main }),
                 );
-                row.subtitle = results::join_subtitle(&[show_host.then_some(label.as_str()), Some(&workspace_title)]);
+                row.subtitle = results::join_subtitle(&[show_host.then_some(label.as_str()), Some(&directory)]);
                 row.hidden = vec![str_of(agent, "cwd").to_owned()];
                 row.activity_at = parse_ms(agent.get("lastActivityAt").filter(|v| !v.is_null()).or_else(|| agent.get("updatedAt")));
                 row.icon = Icon::Provider { provider: str_of(agent, "provider").to_owned(), bucket: Some(agent_status_bucket(agent)) };
@@ -752,7 +684,6 @@ impl CommandCenterPanel {
             }
         }
         vec![
-            Section { id: "workspaces".into(), band: 1, rank: 2, title: Some(t("shell.commandCenter.workspaces")), results: results::rank_workspaces(workspaces, &self.query), score: None },
             Section { id: "agents".into(), band: 1, rank: 3, title: Some(t("shell.commandCenter.agents")), results: results::rank_built_in(agents, &self.query), score: None },
         ]
     }
@@ -824,11 +755,6 @@ impl CommandCenterPanel {
             Run::Command(action, args) => cx.widget_action(uid, &scope.path, CommandCenterAction::Command { action, args }),
             Run::Effect(effect) => self.pending_effects.push(effect),
             Run::Error(message) => self.pending_effects.push(UiEffect::Toast { message, is_error: true }),
-            Run::OpenWorkspace { host_id, workspace } => {
-                if let Some(ctx) = scope.data.get_mut::<UiContext>() {
-                    self.pending_effects.push(open_workspace(ctx, &host_id, &workspace));
-                }
-            }
         }
         if let Some(ctx) = scope.data.get_mut::<UiContext>() {
             ctx.effects.append(&mut self.pending_effects);
@@ -939,7 +865,7 @@ impl CommandCenterPanel {
                             }
                             title.set(cx, spans, "");
                         }
-                        Kind::Workspace | Kind::Agent => {
+                        Kind::Agent => {
                             title.set(cx, vec![MatchSpan::new(&result.title, query, false)], "");
                             // The timestamp is its own text so a long subtitle truncates without
                             // pushing it out of view, and it is never matched.
@@ -962,12 +888,10 @@ impl CommandCenterPanel {
                     }
                     let glyph = item.wa_icon(id!(glyph));
                     let file = item.wa_file_icon(id!(file));
-                    let project = item.widget(id!(project));
                     let provider = item.widget(id!(provider_box));
                     let mark = item.widget(id!(mark_box));
                     glyph.set_visible(cx, false);
                     file.set_visible(cx, false);
-                    project.set_visible(cx, false);
                     provider.set_visible(cx, false);
                     mark.set_visible(cx, false);
                     match &result.icon {
@@ -979,12 +903,6 @@ impl CommandCenterPanel {
                         Icon::File(name) => {
                             file.set_visible(cx, true);
                             file.set_name(cx, name);
-                        }
-                        Icon::Project { name, view_key, bucket } => {
-                            project.set_visible(cx, true);
-                            set_project_icon(cx, &project, name, view_key);
-                            mark.set_visible(cx, bucket.is_some());
-                            item.status_mark(id!(mark)).set_status(cx, *bucket);
                         }
                         Icon::Provider { provider: name, bucket } => {
                             provider.set_visible(cx, true);
@@ -1043,7 +961,7 @@ const SETTINGS_PAGES: &[(&str, &str, &str, &[&str])] = &[
     ("diagnostics", "settings.sections.diagnostics", "stethoscope", &["diagnostics", "debug", "logs", "진단", "디버그", "로그"]),
     ("about", "settings.sections.about", "info", &["about", "version", "update", "정보", "버전", "업데이트"]),
     ("host/host", "settings.hostSections.host", "server", &["host", "overview", "daemon", "restart", "relay", "호스트", "개요", "데몬", "재시작", "릴레이"]),
-    ("host/projects", "settings.hostSections.projects", "folder-git-2", &["projects", "workspaces", "archive", "프로젝트", "워크스페이스", "보관"]),
+    ("host/projects", "settings.hostSections.projects", "folder-git-2", &["projects", "directories", "folders", "프로젝트", "폴더"]),
     ("host/connections", "settings.hostSections.connections", "network", &["connections", "pair", "qr", "device", "ssh", "relay", "연결", "페어링", "기기", "휴대폰"]),
     ("host/agents", "settings.hostSections.agents", "bot", &["agents", "skills", "prompt", "profiles", "mcp", "에이전트", "스킬", "프롬프트", "프로필"]),
     ("host/metadata", "settings.hostSections.metadata", "sparkles", &["metadata", "titles", "generation", "메타데이터", "제목", "생성"]),
@@ -1084,32 +1002,6 @@ fn settings_pages(host_id: Option<&str>) -> Vec<Contribution> {
     out
 }
 
-/// `navigateToWorkspace` without a target: the workspace agent that needs attention most
-/// opens first; otherwise its most recently active session, or a new session tab.
-fn open_workspace(ctx: &UiContext, host_id: &str, workspace: &Value) -> UiEffect {
-    let id = str_of(workspace, "id");
-    let agents: Vec<&Value> = host::host(&ctx.state, host_id)
-        .map(|h| h.agents().iter().map(agent_of).filter(|a| str_of(a, "workspaceId") == id).collect())
-        .unwrap_or_default();
-    let top_level = agents.iter().copied().filter(|a| str_of(object_of(a, "labels"), "paseo.parent-agent-id").trim().is_empty());
-    if let Some(agent) = results::pick_attention_agent(top_level) {
-        let target = crate::shell::commands::navigation_agent_target(host_id, agent, None);
-        return UiEffect::OpenTab { target, placement: TabPlacement::Main };
-    }
-    let mut latest: Option<(&Value, Option<i64>)> = None;
-    for agent in agents.iter().copied().filter(|a| listed_agent(a)) {
-        let at = parse_ms(agent.get("lastActivityAt").filter(|v| !v.is_null()).or_else(|| agent.get("updatedAt")));
-        if latest.is_none_or(|(_, best)| at.is_some() && best.is_none_or(|b| at.unwrap_or(0) > b)) {
-            latest = Some((agent, at));
-        }
-    }
-    if let Some((agent, _)) = latest {
-        let target = crate::shell::commands::navigation_agent_target(host_id, agent, None);
-        return UiEffect::OpenTab { target, placement: TabPlacement::Main };
-    }
-    let target = PanelTarget::new("new_tab", host_id, id, str_of(workspace, "workspaceDirectory")).with_id(new_id());
-    UiEffect::OpenTab { target, placement: TabPlacement::Main }
-}
 
 impl Widget for CommandCenterPanel {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {

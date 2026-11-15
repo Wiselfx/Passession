@@ -756,7 +756,7 @@ fn waiting_badge_width(ui: &mut Ui, cx: &mut Cx2d, count: usize) -> f64 {
     (ui.measure(cx, spec, &count.to_string()) + 10.0).max(18.0)
 }
 
-/// The 1–9 keycap a held Ctrl/⌘ shows on the first sessions (`workspace.navigate.index`).
+/// The 1–9 keycap a held Ctrl/⌘ shows on the first sessions (`session.navigate.index`).
 fn index_hint(ui: &mut Ui, cx: &mut Cx2d, slot: Rect, index: usize) {
     let p = ui.p;
     let r = rect(slot.pos.x + slot.size.x - 18.0, slot.pos.y + (slot.size.y - 18.0) * 0.5, 18.0, 18.0);
@@ -767,7 +767,6 @@ fn index_hint(ui: &mut Ui, cx: &mut Cx2d, slot: Rect, index: usize) {
 
 fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
     let query = shell.data.sidebar.query.trim().to_lowercase();
-    let trailing_diff = j::text(j::object(state, "preferences"), "sidebarWorkspaceTrailing") == "diff";
     let host_count = hosts::hosts(state).len();
     // While the pointer rests on the tree, rows keep the order they were drawn in.
     let holding = pointer_on_tree(shell.data.pointer.hover.as_deref());
@@ -935,7 +934,7 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
                 let title = j::text(agent, "title");
                 let title = if title.is_empty() { tr("sessionNavigation.untitled") } else { title.to_string() };
                 let hint = hints && index < 9;
-                let trailing = if trailing_diff || hint { String::new() } else { compact_time_ago(j::text_or(agent, "updatedAt", j::text(agent, "createdAt"))) };
+                let trailing = if hint { String::new() } else { compact_time_ago(j::text_or(agent, "updatedAt", j::text(agent, "createdAt"))) };
                 let trailing_w = if hovered { 32.0 } else if hint { 30.0 } else if trailing.is_empty() { 12.0 } else { ui.measure(cx, ui.spec(Font::Regular, 12.0, p.muted), &trailing) + 16.0 };
                 let slots = session_metrics.layout(row, 12.0, 14.0, (trailing_w - 12.0).max(0.0), 8.0);
                 ui.icon(cx, slots.leading, "message-square", 14.0, if attention { p.foreground } else { p.muted });

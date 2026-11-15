@@ -1,6 +1,6 @@
 //! The Command Center (Flutter `ui/command_center.dart`, original
 //! `command-center/command-center.tsx`): a top-anchored 640×560 palette (bottom sheet on
-//! phones) over actions, workspaces, agents and workspace files. Root `CommandCenterPanel`.
+//! phones) over actions, sessions and directory files. Root `CommandCenterPanel`.
 
 pub mod matching;
 pub mod panel;
@@ -75,13 +75,12 @@ live_design! {
         image: <DrawFilesImage> {}
     }
 
-    // A 16x20 icon slot: a Lucide glyph, a material file icon, a project square or a provider
+    // A 16x20 icon slot: a Lucide glyph, a material file icon or a provider
     // glyph, with the status mark knocked out at the corner.
     WaIconSlot = <View> {
         width: 16., height: 20., flow: Overlay, align: { x: 0.5, y: 0.5 }
         glyph = <WaIcon> { visible: false }
         file = <WaFileIconBase> { visible: false }
-        project = <WaProjectIcon> { visible: false }
         provider_box = <View> { width: Fit, height: Fit, visible: false, provider = <ProviderIcon> { width: 16., height: 16. } }
         mark_box = <View> {
             width: 16., height: 20., visible: false, align: { x: 1.0, y: 1.0 }

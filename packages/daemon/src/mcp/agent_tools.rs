@@ -37,17 +37,17 @@ pub(crate) fn definitions(agent_scope: bool) -> Vec<Value> {
         definition(
             "create_agent",
             "Create agent",
-            "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+            "Create an agent in an existing local directory. Agent-scoped calls inherit your directory when cwd is omitted and create your subagent. Top-level calls require cwd. Requires provider/model and an initial prompt; call list_providers and list_models first if uncertain.",
             json!({
                 "title":{"type":"string","x-trim":true,"minLength":1,"maxLength":60,"description":"Short descriptive title (<= 60 chars) summarizing the agent's focus."},
                 "provider":{"type":"string","x-trim":true,"description":"Required provider/model pair, for example codex/gpt-5.4."},
                 "labels":{"type":"object","additionalProperties":{"type":"string"},"description":"Labels to set on the agent"},
                 "settings":create_settings,
                 "initialPrompt":{"type":"string","x-trim":true,"minLength":1,"description":"Required first task to run immediately after creation."},
-                "workspaceId":{"type":"string","minLength":1,"description":"Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted."},
+                "cwd":{"type":"string","minLength":1,"description":"Existing local directory on the destination host. Defaults to the caller's directory for local agent-scoped calls; required for top-level or remote calls."},
                 "notifyOnFinish":{"type":"boolean","default":agent_scope,"description":if agent_scope { "Get notified when the created agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback." } else { "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission." }}
             }),
-            &["title", "provider", "initialPrompt"],
+            if agent_scope { &["title", "provider", "initialPrompt"] } else { &["title", "provider", "initialPrompt", "cwd"] },
         ),
         definition(
             "send_agent_prompt",
@@ -253,15 +253,12 @@ pub(crate) async fn execute(
             } else {
                 "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs."
             };
-            let mut response = json!({
+            let response = json!({
                 "agentId":live["id"], "type":snapshot["provider"],
                 "status":live["status"], "cwd":live["cwd"],
                 "currentModeId":live["currentModeId"], "availableModes":live["availableModes"],
                 "guidance":guidance
             });
-            if let Some(workspace) = live.get("workspaceId").filter(|value| !value.is_null()) {
-                response["workspaceId"] = workspace.clone();
-            }
             response
         }
         "send_agent_prompt" => {
@@ -431,62 +428,12 @@ pub(crate) async fn execute(
 }
 
 fn prepare_create(input: &mut Value, caller: Option<&str>) -> Result<()> {
-    if [
-        "worktreeName",
-        "branchName",
-        "baseBranch",
-        "refName",
-        "githubPrNumber",
-    ]
-    .iter()
-    .any(|key| input.get(key).is_some())
-        || input
-            .pointer("/workspace/source/kind")
-            .and_then(Value::as_str)
-            == Some("worktree")
-    {
-        bail!(
-            "Agent worktree placement was removed. Use create_workspace first, then create_agent with workspaceId."
-        );
+    strict_keys(input, &["title", "provider", "labels", "settings", "initialPrompt", "notifyOnFinish", "cwd"])?;
+    if input.get("cwd").is_some_and(|value| value.as_str().is_none_or(|cwd| cwd.trim().is_empty())) {
+        bail!("cwd must be a nonempty string");
     }
-    let legacy = ["relationship", "workspace", "cwd"]
-        .iter()
-        .any(|key| input.get(key).is_some());
-    let allowed = [
-        "title",
-        "provider",
-        "labels",
-        "settings",
-        "initialPrompt",
-        "notifyOnFinish",
-    ];
-    for key in input
-        .as_object()
-        .ok_or_else(|| anyhow!("Tool input must be an object"))?
-        .keys()
-    {
-        let placement = if legacy {
-            key == "relationship"
-                || key == "workspace"
-                || (caller.is_none()
-                    && ["cwd", "mode", "thinking", "features"].contains(&key.as_str()))
-        } else {
-            key == "workspaceId"
-        };
-        if !allowed.contains(&key.as_str()) && !placement {
-            bail!("Unrecognized create_agent argument: {key}");
-        }
-    }
-    for key in ["cwd", "mode", "thinking"] {
-        if input.get(key).is_some_and(|value| !value.is_string()) {
-            bail!("{key} must be a string");
-        }
-    }
-    if input
-        .get("features")
-        .is_some_and(|value| !value.is_object())
-    {
-        bail!("features must be an object");
+    if caller.is_none() && input.get("cwd").is_none() {
+        bail!("cwd is required outside an agent-scoped session");
     }
     for key in ["title", "provider", "initialPrompt"] {
         let trimmed = string(input, key)?.trim().to_owned();
@@ -554,120 +501,7 @@ async fn resolve_create(
         ),
         None => None,
     };
-    let parent_workspace = parent
-        .as_ref()
-        .and_then(|value| value.get("workspaceId"))
-        .and_then(Value::as_str);
-    let legacy = input.get("relationship").is_some()
-        || input.get("workspace").is_some()
-        || input.get("cwd").is_some();
-    let mut detached = false;
-    let placement = if legacy {
-        if input.get("relationship").is_some() != input.get("workspace").is_some() {
-            bail!("relationship and workspace must be provided together");
-        }
-        if let Some(relationship) = input.get("relationship") {
-            strict_keys(relationship, &["kind"])?;
-            detached = match string(relationship, "kind")? {
-                "detached" => true,
-                "subagent" if caller.is_some() => false,
-                "subagent" => bail!("relationship subagent requires an agent-scoped tool session"),
-                _ => bail!("relationship kind must be subagent or detached"),
-            };
-            input["workspace"].clone()
-        } else {
-            if caller.is_some() {
-                bail!("relationship and workspace are required for legacy agent-scoped creation");
-            }
-            let cwd = input
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    anyhow!("cwd is required for legacy top-level create_agent calls")
-                })?;
-            detached = true;
-            json!({"kind":"create","source":{"kind":"directory","path":cwd}})
-        }
-    } else if let Some(id) = input.get("workspaceId") {
-        json!({"kind":"existing","workspaceId":id})
-    } else if caller.is_some() {
-        json!({"kind":"current"})
-    } else {
-        json!({"kind":"create","source":{"kind":"directory","path":std::env::current_dir()?}})
-    };
-    if placement.get("cwd").is_some_and(|value| !value.is_string()) {
-        bail!("workspace cwd must be a string");
-    }
-    let (cwd, workspace_id) = match string(&placement, "kind")? {
-        "current" => {
-            strict_keys(&placement, &["kind", "cwd"])?;
-            let caller_id = caller.ok_or_else(|| {
-                anyhow!("workspace current requires an agent-scoped tool session")
-            })?;
-            let id = parent_workspace
-                .ok_or_else(|| anyhow!("Caller agent {caller_id} has no current workspace"))?;
-            (
-                Some(placement.get("cwd").cloned().unwrap_or_else(|| {
-                    parent.as_ref().expect("caller resolved above")["cwd"].clone()
-                })),
-                id.to_owned(),
-            )
-        }
-        "existing" => {
-            strict_keys(&placement, &["kind", "workspaceId", "cwd"])?;
-            let id = string(&placement, "workspaceId")?;
-            let workspace = app
-                .projects
-                .workspace(id)
-                .await?
-                .filter(|value| value.get("archivedAt").is_none_or(Value::is_null))
-                .ok_or_else(|| anyhow!("Workspace {id} not found"))?;
-            let cwd = if let Some(requested) = placement
-                .get("cwd")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
-                super::workspace_tools::resolve_scoped_cwd(app, caller, Some(requested)).await?
-            } else {
-                std::path::PathBuf::from(string(&workspace, "cwd")?)
-            };
-            (Some(json!(cwd)), id.to_owned())
-        }
-        "create" => {
-            strict_keys(&placement, &["kind", "source"])?;
-            let source = placement
-                .get("source")
-                .ok_or_else(|| anyhow!("workspace source is required"))?;
-            strict_keys(source, &["kind", "path"])?;
-            if source.get("path").is_some_and(|value| !value.is_string()) {
-                bail!("workspace source path must be a string");
-            }
-            if string(source, "kind")? != "directory" {
-                bail!("Use create_workspace first, then create_agent with workspaceId.");
-            }
-            let cwd = super::workspace_tools::resolve_scoped_cwd(
-                app,
-                caller,
-                source.get("path").and_then(Value::as_str),
-            )
-            .await?;
-            let workspace = app
-                .projects
-                .ensure_workspace_for_create(
-                    &cwd,
-                    &json!({"prompt":input["initialPrompt"]}),
-                    parent_workspace,
-                )
-                .await?;
-            (
-                Some(json!(cwd)),
-                string(&workspace, "workspaceId")?.to_owned(),
-            )
-        }
-        _ => bail!("workspace kind must be current, existing, or create"),
-    };
+    let cwd = super::workspace_tools::resolve_scoped_cwd(app, caller, input.get("cwd").and_then(Value::as_str)).await?;
     let selected_provider = provider_model(string(&input, "provider")?, true)?.0;
     let inherited = parent
         .as_ref()
@@ -677,15 +511,13 @@ async fn resolve_create(
     let object = input
         .as_object_mut()
         .ok_or_else(|| anyhow!("Tool input must be an object"))?;
-    object.remove("workspace");
-    object.remove("relationship");
-    object.remove("cwd");
-    if let Some(cwd) = cwd {
-        object.insert("cwd".to_owned(), cwd);
+    object.insert("cwd".to_owned(), json!(cwd));
+    if input_directory_inherited(&parent, &object["cwd"])
+        && let Some(id) = parent.as_ref().and_then(|parent| parent.get("workspaceId"))
+    {
+        object.insert("workspaceId".to_owned(), id.clone());
     }
-    object.insert("workspaceId".to_owned(), json!(workspace_id));
-    object.insert("detached".to_owned(), json!(detached));
-    if caller.is_some() && !detached {
+    if caller.is_some() {
         let identity = app.transport.identity();
         let server_id = string(&identity, "serverId")?;
         let labels = object.entry("labels").or_insert_with(|| json!({}));
@@ -703,7 +535,6 @@ async fn resolve_create(
             ("thinkingOptionId", "thinking"),
             ("features", "features"),
         ] {
-            // Legacy top-level settings take precedence over their nested equivalents.
             if !object.contains_key(target)
                 && let Some(value) = settings.get(key)
             {
@@ -712,6 +543,10 @@ async fn resolve_create(
         }
     }
     Ok(input)
+}
+
+fn input_directory_inherited(parent: &Option<Value>, cwd: &Value) -> bool {
+    parent.as_ref().is_some_and(|parent| parent["cwd"] == *cwd)
 }
 
 fn strict_keys(value: &Value, allowed: &[&str]) -> Result<()> {
@@ -857,3 +692,34 @@ fn retain_fields(input: &mut Value, fields: &[&str]) {
         object.retain(|key, _| fields.contains(&key.as_str()));
     }
 }
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+
+    fn input() -> Value {
+        json!({"title":"Task","provider":"codex/model","initialPrompt":"Do the task"})
+    }
+
+    #[test]
+    fn creation_uses_directory_or_inherits_calling_session() {
+        assert!(prepare_create(&mut input(), Some("parent")).is_ok());
+        assert!(prepare_create(&mut input(), None).is_err());
+        let mut local = input();
+        local["cwd"] = json!("/existing");
+        prepare_create(&mut local, None).unwrap();
+        assert_eq!(local["cwd"], "/existing");
+        for key in ["workspaceId", "workspace", "relationship", "worktree"] {
+            let mut retired = input();
+            retired[key] = json!("old");
+            assert!(prepare_create(&mut retired, Some("parent")).is_err());
+        }
+    }
+
+    #[test]
+    fn directory_inheritance_never_rehomes_an_explicit_directory() {
+        let parent = Some(json!({"cwd":"/parent","workspaceId":"owner"}));
+        assert!(input_directory_inherited(&parent, &json!("/parent")));
+        assert!(!input_directory_inherited(&parent, &json!("/other")));
+    }
+}
+

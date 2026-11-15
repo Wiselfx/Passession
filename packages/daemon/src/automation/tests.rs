@@ -15,6 +15,20 @@ async fn service() -> (tempfile::TempDir, AutomationService) {
 fn input() -> Value {
     json!({"name":" heartbeat ","prompt":" check status ","cadence":{"type":"every","everyMs":60000},"target":{"type":"agent","agentId":"00000000-0000-4000-8000-000000000001"}})
 }
+
+#[tokio::test]
+async fn worktree_schedules_remain_readable_but_cannot_be_created() {
+    let (_dir, service) = service().await;
+    let target = json!({"type":"new-agent","config":{"provider":"codex","cwd":"/repo","isolation":"worktree"}});
+    let saved: Target = serde_json::from_value(target.clone()).unwrap();
+    assert!(saved.validate().is_ok());
+    let mut request = input();
+    request["target"] = target;
+    let error = service.create(&request).await.unwrap_err();
+    assert_eq!(error.downcast_ref::<crate::projects::RequestError>().unwrap().code, "unsupported");
+    request["target"]["config"]["isolation"] = json!("local");
+    assert!(service.create(&request).await.is_ok());
+}
 #[tokio::test]
 async fn named_upsert_keeps_identity_and_history_but_rpc_create_does_not() {
     let (_dir, service) = service().await;

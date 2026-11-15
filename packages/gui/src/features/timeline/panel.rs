@@ -22,7 +22,7 @@ use super::outline::{self, Rail, RailEvent};
 use super::paint::{Draw, Look, MOBILE, RowState, now_seconds};
 use super::permission;
 use super::rows::{self, FindTarget, LiveFooter, RowContext, RowItem, RowKind};
-use super::session::{ActionKind, ChatSession, Completion, Cursor, ExecutionStatus, ForkTarget, Io, SessionKey, SyncStatus};
+use super::session::{ActionKind, ChatSession, Completion, Cursor, ExecutionStatus, Io, SessionKey, SyncStatus};
 use super::store::with_store;
 use super::tracks::{self, DeleteFinished, SubagentRow, TrackModel, TrackPanel};
 use crate::common::file_drop::FileDropZone;
@@ -306,8 +306,6 @@ struct HostFacts {
     /// (serverId, agent) for every host agent (subagent tracks, titles).
     agents: Vec<(String, Value)>,
     agent_row: Option<Value>,
-    additions: i64,
-    deletions: i64,
     preferences: Value,
     server_info: Value,
 }
@@ -319,7 +317,6 @@ enum Ask {
     ArchiveSubagent(SubagentRow),
     DeleteFinished,
     DetachSubagent(SubagentRow),
-    Fork { row: String, entry: Option<Rc<Value>> },
     Rewind { row: String, entry: Rc<Value> },
     Outline,
 }
@@ -831,11 +828,6 @@ impl ChatPanel {
             .iter()
             .find(|(server, agent)| *server == target.host_id && get(agent, "id") == target.agent_id.as_str())
             .map(|(_, a)| a.clone());
-        if let Some(workspace) = row.and_then(|r| list(get(r, "workspaces")).iter().find(|w| get(w, "id") == target.workspace_id.as_str())) {
-            let diff = get(workspace, "diffStat");
-            facts.additions = int_of(get(diff, "additions"));
-            facts.deletions = int_of(get(diff, "deletions"));
-        }
         facts.preferences = ui.preferences().clone();
         facts.server_info = server_info
             .or_else(|| row.map(|r| get(r, "serverInfo").clone()).filter(Value::is_object))
@@ -956,8 +948,7 @@ impl ChatPanel {
         let subagent = self.target.as_ref().is_some_and(ChatTarget::is_subagent);
         let tasks = if subagent { Vec::new() } else { self.latest_tasks() };
         let rows = self.subagent_rows();
-        let (a, d) = if subagent { (0, 0) } else { (self.host.additions, self.host.deletions) };
-        a > 0 || d > 0 || !rows.is_empty() || !tasks.is_empty() || self.delete_status != DeleteFinished::Idle
+        !rows.is_empty() || !tasks.is_empty() || self.delete_status != DeleteFinished::Idle
     }
 
     /// agent-panel.dart `_streamRows` + `_timeline` items, oldest first.
@@ -1383,7 +1374,7 @@ impl ChatPanel {
                 }
                 self.with_session(cx, ui, |s, io| s.action(io, ActionKind::Refresh, "refresh_agent_request", "status", json!({})));
             }
-            "fork" => self.fork(cx, ui, None, ForkTarget::Tab),
+            "fork" => self.fork(cx, ui, None),
             "archive" => {
                 let id = overlay::confirm(ui, &t("agentPanel.conversation.archiveTitle"), &t("agentPanel.conversation.archiveBody"), &t("agentList.archiveSheet.archive"), true);
                 self.asks.insert(id, Ask::Confirm("archive"));
@@ -1408,16 +1399,11 @@ impl ChatPanel {
     }
 
     /// hooks/use-fork-agent.ts: the fork context pinned to `entry` (or the
-    /// whole timeline so far), opened as a draft here or in a new workspace.
-    fn fork(&mut self, cx: &mut Cx, ui: &mut UiContext, entry: Option<Rc<Value>>, target: ForkTarget) {
+    /// whole timeline so far), opened as a new session draft in the same directory.
+    fn fork(&mut self, cx: &mut Cx, ui: &mut UiContext, entry: Option<Rc<Value>>) {
         let Some(snap) = self.snap.clone() else { return };
-        let Some(chat) = self.target.clone() else { return };
         if !self.feature("agentForkContext") {
             self.show_failure(t("message.actions.forkUnavailable"));
-            return;
-        }
-        if target == ForkTarget::Tab && chat.workspace_id.is_empty() {
-            self.show_failure(t("message.actions.forkMissingWorkspace"));
             return;
         }
         let mut fields = json!({});
@@ -1432,7 +1418,7 @@ impl ChatPanel {
                 fields["boundaryMessageId"] = message.clone();
             }
         }
-        self.with_session(cx, ui, |s, io| s.action(io, ActionKind::Fork { target }, "agent.fork_context.request", "agent.fork_context.response", fields));
+        self.with_session(cx, ui, |s, io| s.action(io, ActionKind::Fork, "agent.fork_context.request", "agent.fork_context.response", fields));
     }
 
     fn config(&self) -> Value {
@@ -1845,7 +1831,7 @@ impl ChatPanel {
                     Err(e) => self.show_failure(e.message),
                 }
             }
-            ActionKind::Fork { target } => {
+            ActionKind::Fork => {
                 for state in self.row_states.values() {
                     state.borrow_mut().menu_busy.retain(|k| !k.starts_with("fork:"));
                 }
@@ -1854,8 +1840,7 @@ impl ChatPanel {
                         let chat = self.target.clone().unwrap_or_default();
                         ui.push(UiEffect::OpenDraft {
                             host_id: chat.host_id.clone(),
-                            // An empty workspace makes the draft create its own at this checkout.
-                            workspace_id: if target == ForkTarget::Workspace { String::new() } else { chat.workspace_id.clone() },
+                            workspace_id: chat.workspace_id.clone(),
                             cwd: chat.cwd().to_owned(),
                             draft_id: uuid::Uuid::new_v4().to_string(),
                             title: t("agentPanel.conversation.forkTitle"),
@@ -2098,19 +2083,6 @@ impl ChatPanel {
                     s.request_on_host(io, &row.server_id, kind, "agent.detach.request", "agent.detach.response", json!({"agentId": agent_id}))
                 });
             }
-            Ask::Fork { row, entry } => {
-                if let Some(state) = self.row_states.get(&row) {
-                    let mut state = state.borrow_mut();
-                    state.menu_open.retain(|k| !k.starts_with("fork:"));
-                }
-                let Some(value) = get(args, "value").as_str() else { return };
-                let target = if value == "workspace" { ForkTarget::Workspace } else { ForkTarget::Tab };
-                if let Some(state) = self.row_states.get(&row) {
-                    let key = if entry.is_some() { format!("fork:{row}") } else { "fork:live".into() };
-                    state.borrow_mut().menu_busy.insert(key);
-                }
-                self.fork(cx, ui, entry, target);
-            }
             Ask::Rewind { row, entry } => {
                 if let Some(state) = self.row_states.get(&row) {
                     state.borrow_mut().menu_open.remove("rewind");
@@ -2207,15 +2179,10 @@ impl ChatPanel {
                 }
                 HitTarget::ForkMenu { completed } => {
                     let entry = if completed { self.entry_of(&row) } else { None };
-                    let entries = vec![
-                        MenuItem::new("tab", t("message.actions.forkInNewTab")).icon("split").entry(),
-                        MenuItem::new("workspace", t("message.actions.forkInNewWorkspace")).icon("split").entry(),
-                    ];
                     if let Some(state) = self.row_states.get(&row) {
-                        state.borrow_mut().menu_open.insert(if completed { format!("fork:{row}") } else { "fork:live".into() });
+                        state.borrow_mut().menu_busy.insert(if completed { format!("fork:{row}") } else { "fork:live".into() });
                     }
-                    let id = overlay::open_menu_with(ui, rect, None, entries, MenuOptions { sheet: false, ..Default::default() });
-                    self.asks.insert(id, Ask::Fork { row, entry });
+                    self.fork(cx, ui, entry);
                 }
                 HitTarget::PermissionAction { key, action } => {
                     let Some(snap) = &self.snap else { return };
@@ -2254,11 +2221,6 @@ impl ChatPanel {
             }
             "track:tasks" => self.open_track(cx, ui, TrackPanel::Tasks),
             "track:subagents" => self.open_track(cx, ui, TrackPanel::Subagents),
-            "track:diff" => {
-                if let Some(chat) = self.target.clone() {
-                    ui.push(UiEffect::OpenTab { target: PanelTarget::new("changes_tree", &chat.host_id, &chat.workspace_id, chat.cwd()), placement: TabPlacement::Main });
-                }
-            }
             "track-close" => self.close_modal(cx, ui),
             "delete-finished" => self.ask_delete_finished(ui),
             "find:next" => {
@@ -2898,7 +2860,6 @@ impl Widget for ChatPanel {
         let tracks_visible = self.tracks_visible();
         let rows = if tracks_visible { self.subagent_rows() } else { Vec::new() };
         let tasks = if tracks_visible && !subagent { self.latest_tasks() } else { Vec::new() };
-        let (additions, deletions) = if subagent { (0, 0) } else { (self.host.additions, self.host.deletions) };
         let toast = self.panel_toast();
         let prompts_active = self.active_prompt;
         let find_open = self.find_open;
@@ -2937,8 +2898,6 @@ impl Widget for ChatPanel {
                     tasks: &tasks,
                     rows: &rows,
                     delete: delete_status,
-                    additions,
-                    deletions,
                     can_delete_finished: !subagent,
                     can_detach,
                     host_id: &target.host_id,
@@ -3519,8 +3478,6 @@ impl ChatPanel {
                     tasks,
                     rows,
                     delete: self.delete_status,
-                    additions: self.host.additions,
-                    deletions: self.host.deletions,
                     can_delete_finished: !target.is_subagent(),
                     can_detach: self.feature("agentDetach"),
                     host_id: &target.host_id,

@@ -1,7 +1,7 @@
 use super::*;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     sync::{
         Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
@@ -15,12 +15,6 @@ pub(super) struct Reconciliation {
     cancel: CancellationToken,
     changes: watch::Sender<u64>,
     watchers: StdMutex<HashMap<PathBuf, RecommendedWatcher>>,
-    merges: StdMutex<MergeState>,
-}
-#[derive(Default)]
-struct MergeState {
-    open: VecDeque<(String, String)>,
-    in_flight: HashSet<String>,
 }
 impl Default for Reconciliation {
     fn default() -> Self {
@@ -29,7 +23,6 @@ impl Default for Reconciliation {
             cancel: CancellationToken::new(),
             changes: watch::channel(0).0,
             watchers: StdMutex::new(HashMap::new()),
-            merges: StdMutex::new(MergeState::default()),
         }
     }
 }
@@ -300,120 +293,6 @@ impl ProjectService {
                 if update.is_some() || project_changed {
                     self.publish_workspace(id).await?;
                 }
-            }
-        }
-        Ok(())
-    }
-    pub async fn observe_git_snapshot(&self, snapshot: &Value) -> Result<()> {
-        let cwd = text(snapshot, "cwd")?.to_owned();
-        let app = self.app()?;
-        let enabled = app.config.snapshot()["autoArchiveAfterMerge"] == true;
-        let pr = &snapshot["forge"]["pullRequest"];
-        let mut state = self
-            .reconciliation
-            .merges
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if !enabled {
-            state.open.retain(|(path, _)| path != &cwd);
-            return Ok(());
-        }
-        if pr["isMerged"] != true {
-            state.open.retain(|(path, _)| path != &cwd);
-            if pr["state"]
-                .as_str()
-                .is_some_and(|s| s.eq_ignore_ascii_case("open"))
-                && let Some(url) = pr["url"].as_str() {
-                    state.open.push_back((cwd, url.into()));
-                    while state.open.len() > 1024 {
-                        state.open.pop_front();
-                    }
-                }
-            return Ok(());
-        }
-        let Some(url) = pr["url"].as_str() else {
-            return Ok(());
-        };
-        if !state
-            .open
-            .iter()
-            .any(|(path, open)| path == &cwd && open == url)
-        {
-            state.open.retain(|(path, _)| path != &cwd);
-            return Ok(());
-        }
-        if !state.in_flight.insert(cwd.clone()) {
-            return Ok(());
-        }
-        drop(state);
-        let weak = self.app.clone();
-        let url = url.to_owned();
-        drop(app);
-        tokio::spawn(async move {
-            let Some(app) = weak.upgrade() else { return };
-            let service = app.projects.clone();
-            drop(app);
-            if let Err(error) = service.archive_merged_if_safe(&cwd, &url).await {
-                tracing::warn!(%error,"Failed to auto-archive attached workspaces");
-            }
-            service
-                .reconciliation
-                .merges
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .in_flight
-                .remove(&cwd);
-        });
-        Ok(())
-    }
-    async fn archive_merged_if_safe(&self, cwd: &str, url: &str) -> Result<()> {
-        let app = self.app()?;
-        let Some(snapshot) = app.git.cached_snapshot(Path::new(cwd)).await else {
-            return Ok(());
-        };
-        if snapshot["forge"]["pullRequest"]["isMerged"] != true
-            || snapshot["forge"]["pullRequest"]["url"] != url
-        {
-            self.reconciliation
-                .merges
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .open
-                .retain(|(path, _)| path != cwd);
-            return Ok(());
-        }
-        if snapshot["git"]["isDirty"] == true
-            || snapshot["git"]["aheadOfOrigin"]
-                .as_f64()
-                .is_some_and(|n| n > 0.0)
-        {
-            return Ok(());
-        }
-        if worktrees::ownership(
-            &app.home,
-            &app.config.snapshot(),
-            Path::new(cwd),
-            app.cancel.child_token(),
-        )
-        .await?["allowed"]
-            != true
-        {
-            return Ok(());
-        }
-        let records = self.list_workspaces().await?;
-        for workspace in records {
-            if workspace["archivedAt"].is_null()
-                && workspace["autoArchivedChangeRequestUrl"] != url
-                && store::equivalent_paths(text(&workspace, "cwd")?, cwd)
-            {
-                let _guard = self.lifecycle.lock().await;
-                self.archive_locked(
-                    &json!({"kind":"system"}),
-                    text(&workspace, "workspaceId")?,
-                    true,
-                    Some(url),
-                )
-                .await?;
             }
         }
         Ok(())

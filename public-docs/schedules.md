@@ -36,10 +36,10 @@ Both run on a cadence you set. To start an agent from an external event instead 
 - **[From the CLI](/docs/schedules-cli)** — `paseo schedule create`, for headless boxes and scripts.
 - **[Over MCP](/docs/mcp)** — agents create and manage schedules programmatically.
 
-## Keep run workspaces
+## Keep run sessions
 
-Each new-agent schedule run creates a workspace. **Archive on finish** is on by default: when the run ends, Paseo archives that workspace and its agent. With worktree isolation, archiving also removes the worktree after its last active workspace is archived.
+Each new-agent schedule run starts a session in the configured existing directory. Runs share that directory's files, so coordinate overlapping edits or choose separate directories for independent jobs.
 
-To keep runs available, open the schedule in the app's Schedules view, turn off **Archive on finish**, and save. Paseo keeps each run's workspace and agent active until you archive them; runs that fail before creating an agent are still cleaned up. This option also applies to local isolation; archiving a local workspace leaves the project directory in place.
+**Archive on finish** is on by default: when the run ends, Paseo archives its session and stops its terminals. To keep subsequent run sessions active, open the schedule in the app's Schedules view, turn off **Archive on finish**, and save. Archiving never deletes the directory or its files.
 
 The stored option is `target.config.archiveOnFinish`, a boolean that defaults to `true` when omitted. The CLI and MCP schedule tools do not expose this option; use the app to change it. Heartbeats use an existing agent and do not have this option.

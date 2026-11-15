@@ -12,13 +12,13 @@ The sidebar is **host → directory → session**. Every host has its own expand
 
 Search matches hosts, directory names and paths, session titles, and providers. Matching ancestors expand without replacing saved collapse preferences. A directory's plus action creates a session in that checkout on that host. Add Project includes a host-side folder browser: a remote host's path is never selected with a local OS file dialog.
 
-Workspace grouping controls are not part of this sidebar. Workspaces still exist for orchestration, worktrees, scripts, and Command Center navigation. Existing session IDs, history, files, configuration, and daemon storage remain in place. Closing a chat tab does not archive the session.
+Sessions run in existing local directories on the selected host. There is no separate Workspace product surface or managed Git worktree lifecycle. Existing external worktrees remain usable as directories; Paseo does not delete or migrate them. Session IDs, history, files, configuration, and internal ownership records remain in place. Closing a chat tab does not archive the session.
 
 ## Native application scope
 
 - Agent chat, permissions, provider/model selection, profiles, session import, and history.
 - Markdown rendering, file browsing and source editing, and summary-first Git diffs with patch bodies loaded on demand.
-- Interactive terminals: start a **Terminal** session on any host, from desktop or mobile. Every shell, setup script and service runs in a daemon-owned PTY; scripts show **read-only logs**. Terminal emulation is Ghostty's VT engine on both sides.
+- Interactive terminals: start a **Terminal** session on any host, from desktop or mobile. Every shell, explicitly started project script and service runs in a daemon-owned PTY; scripts show **read-only logs**. Terminal emulation is Ghostty's VT engine on both sides.
 - Schedules, MCP tools and servers, connected hosts, and remote directory selection.
 - Native desktop integration and local-daemon lifecycle, with remote-only mobile clients.
 - Generic effect-sound playback; no speech recognition, voice conversation or TTS.
