@@ -13,6 +13,7 @@
 
 - Version app, daemon, Tailnet and update-helper independently. Rebuild and deliver only changed component inputs, retain verified unchanged artifacts, and use a coherent desktop component store. Keep mobile installation atomic and macOS signed app cohorts intact.
 - Plan CI checks and native release jobs from affected dependency closures; skip native work and publication for a no-change release plan.
+- Publish Apple Silicon macOS alongside the Linux/Windows x64 and Android release through the new `linux-windows-x64-android-macos-arm64` scope.
 - Rename client update feeds from `flutter-*` to `app-*` and runtime identity to `app`, without compatibility aliases. Older clients using the previous feed need a manual installer update.
 - Redesign the Commit tab like IntelliJ's commit tool window: Changes and Unversioned Files groups, directory tree with compacted folder chains, tri-state checkboxes, status colours, expand/collapse and flat-list toggles, keyboard navigation and a resizable message area. Not-a-repository, offline, loading, no-change and failure states are distinct, and the commit button shows how many files it commits.
 - Turn Add project into its own form with a bottom primary action. A successful add shows a success callout that can open a New Session for that directory or reset the form, without leftover notices after the tab is reused.
