@@ -16,8 +16,6 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
-  GOMODCACHE: ${{ github.workspace }}/target/paseo-tailnet/modules
-  GOCACHE: ${{ github.workspace }}/target/paseo-tailnet/go-cache
 
 jobs:
   tests:
@@ -30,8 +28,16 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.93.1
+      # rust-cache prunes and restores target/; Go's read-only module tree there
+      # broke both restores. setup-go caches these paths and xtask builds with them.
+      - name: Keep Go caches outside the Cargo target directory
+        run: |
+          echo "GOMODCACHE=$RUNNER_TEMP/go-modules" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
+          # v1 drops entries that captured the former in-target Go module tree.
+          prefix-key: v1-rust
           shared-key: tests-linux-x64
       - name: Plan affected packages and native boundaries
         id: plan

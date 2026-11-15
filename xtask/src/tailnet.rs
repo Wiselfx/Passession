@@ -183,14 +183,32 @@ pub(crate) fn pinned_go(source: &Path) -> Result<String> {
     Ok(format!("go{pin}"))
 }
 
+/// Go module and build caches as `(GOMODCACHE, GOCACHE)`. Local builds keep them
+/// beside the Go outputs in Cargo's target directory. CI sets absolute
+/// `GOMODCACHE`/`GOCACHE` elsewhere: its Rust cache prunes and restores the target
+/// directory, which collides with Go's read-only module tree.
+pub(crate) fn go_caches() -> Result<(PathBuf, PathBuf)> {
+    let cache = target_root()?.join("paseo-tailnet");
+    let pick = |name: &str, default: PathBuf| {
+        env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or(default)
+    };
+    Ok((
+        pick("GOMODCACHE", cache.join("modules")),
+        pick("GOCACHE", cache.join("go-cache")),
+    ))
+}
+
 fn build(target: Target) -> Result<NativeBuild> {
     let source = root()?.join("packages/tailnet/native");
     let go = which::which(env::var_os("GO").unwrap_or_else(|| "go".into())).context(
         "Install the exact Go toolchain pinned in packages/tailnet/native/go.mod, or set GO",
     )?;
     let pin = pinned_go(&source)?;
-    let cache = target_root()?.join("paseo-tailnet");
-    let directory = cache.join(&target.triple);
+    let directory = target_root()?.join("paseo-tailnet").join(&target.triple);
+    let (modules, go_cache) = go_caches()?;
     fs::create_dir_all(&directory)?;
     let mut base = Command::new(&go);
     base.current_dir(&source)
@@ -199,8 +217,8 @@ fn build(target: Target) -> Result<NativeBuild> {
         .env("GOWORK", "off")
         .env("GOFLAGS", "")
         .env("GOMAXPROCS", "2")
-        .env("GOCACHE", cache.join("go-cache"))
-        .env("GOMODCACHE", cache.join("modules"))
+        .env("GOCACHE", go_cache)
+        .env("GOMODCACHE", modules)
         .env("CGO_ENABLED", "1")
         .env("GOOS", target.goos)
         .env("GOARCH", target.goarch)

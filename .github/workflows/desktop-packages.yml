@@ -17,8 +17,6 @@ env:
   PASEO_NATIVE_RELEASE: "1"
   PASEO_UPDATE_REPOSITORY: emotionbug/Passession
   SOURCE_SHA: ${{ github.sha }}
-  GOMODCACHE: ${{ github.workspace }}/target/paseo-tailnet/modules
-  GOCACHE: ${{ github.workspace }}/target/paseo-tailnet/go-cache
 
 jobs:
   linux:
@@ -27,8 +25,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.93.1
+      # rust-cache prunes and restores target/; Go's read-only module tree there
+      # broke both restores. setup-go caches these paths and xtask builds with them.
+      - name: Keep Go caches outside the Cargo target directory
+        run: |
+          echo "GOMODCACHE=$RUNNER_TEMP/go-modules" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
+          # v1 drops entries that captured the former in-target Go module tree.
+          prefix-key: v1-rust
           shared-key: native-release-linux-x64
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - name: Plan changed Linux components without publication

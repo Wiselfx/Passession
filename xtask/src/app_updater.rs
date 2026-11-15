@@ -38,7 +38,7 @@ pub fn desktop(platform: &str) -> Result<PathBuf> {
     );
     let go = which::which(env::var_os("GO").unwrap_or_else(|| "go".into()))
         .context("Install Go 1.27.4 or set GO to the pinned toolchain")?;
-    let cache = target_root()?.join("paseo-tailnet");
+    let (modules, go_cache) = tailnet::go_caches()?;
     let directory = target_root()?
         .join("paseo-app-updater")
         .join(format!("{platform}-{}", arch()?));
@@ -53,8 +53,8 @@ pub fn desktop(platform: &str) -> Result<PathBuf> {
             .env("GOFLAGS", "")
             .env("GOMAXPROCS", "2")
             .env("CGO_ENABLED", "0")
-            .env("GOCACHE", cache.join("go-cache"))
-            .env("GOMODCACHE", cache.join("modules"))
+            .env("GOCACHE", &go_cache)
+            .env("GOMODCACHE", &modules)
             .env("GOOS", goos)
             .env("GOARCH", goarch)
             .env_remove("GOEXPERIMENT")
