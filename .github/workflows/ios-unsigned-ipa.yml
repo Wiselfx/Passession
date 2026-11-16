@@ -1,0 +1,125 @@
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  # actions/checkout runs `git init`; a named default branch avoids git's hint.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  build:
+    name: unsigned IPA (iOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Xcode SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          targets: aarch64-apple-ios
+
+      # xtask builds the Tailnet library with the exact Go toolchain pinned in
+      # go.mod. Keep module/build caches outside target/, which rust tools prune.
+      - name: Keep Go caches outside the Cargo target directory
+        shell: bash
+        run: |
+          echo "GOMODCACHE=$RUNNER_TEMP/go-modules" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/tailnet/native/go.mod
+          cache: false
+
+      # libghostty-vt-sys compiles the pinned Ghostty commit with Zig 0.15.2.
+      # Digests are the official ziglang.org 0.15.2 release archives.
+      - name: Install Zig 0.15.2
+        shell: bash
+        env:
+          ZIG_VERSION: "0.15.2"
+        run: |
+          set -euo pipefail
+          target=aarch64-macos
+          ext=tar.xz
+          sha256=3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+          name="zig-$target-$ZIG_VERSION"
+          archive="$RUNNER_TEMP/$name.$ext"
+          curl -fsSL --retry 3 -o "$archive" "https://ziglang.org/download/$ZIG_VERSION/$name.$ext"
+          actual=$(shasum -a 256 < "$archive" | cut -d' ' -f1)
+          if [[ "$actual" != "$sha256" ]]; then
+            echo "Zig archive SHA-256 mismatch: expected $sha256, got $actual" >&2
+            exit 1
+          fi
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          rm "$archive"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
+          echo "GHOSTTY_CACHE_DIR=$RUNNER_TEMP/ghostty-cache" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/$name/zig" version
+
+      # Upstream emits an unsigned .app plus <name>-unsigned.app.zip when no
+      # provisioning profile is configured. No signing secrets are used here.
+      - name: Build iOS app
+        run: cargo xtask build-gui ios
+
+      # An IPA is a ZIP whose root contains Payload/<App>.app. The upstream
+      # unsigned archive zips the .app at the root, so repack it in IPA layout.
+      - name: Repack as unsigned IPA
+        id: ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=".dev/build/gui/ios/aarch64-apple-ios/release/Passession.app"
+          [[ -d "$app" ]] || { echo "Missing iOS app bundle: $app" >&2; exit 1; }
+          appzip=(artifacts/native/*-ios-arm64-unsigned.app.zip)
+          [[ -e "${appzip[0]}" ]] || { echo "Missing unsigned app archive" >&2; exit 1; }
+          stem=${appzip[0]%\.app.zip}
+          ipa="artifacts/native/$stem.ipa"
+          stage="$RUNNER_TEMP/ipa-stage"
+          rm -rf "$stage"
+          mkdir -p "$stage/Payload"
+          cp -a "$app" "$stage/Payload/Passession.app"
+          ditto -c -k --sequesterRsrc --keepParent "$stage/Payload" "$ipa"
+          echo "ipa=$ipa" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$ipa")" >> "$GITHUB_OUTPUT"
+          ls -lh "$ipa"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-unsigned-ipa
+          path: ${{ steps.ipa.outputs.ipa }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish IPA as a downloadable release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IPA: ${{ steps.ipa.outputs.ipa }}
+          NAME: ${{ steps.ipa.outputs.name }}
+        run: |
+          set -euo pipefail
+          tag="ios-unsigned-$(git rev-parse --short HEAD)"
+          notes="Unsigned iOS IPA from \`$GITHUB_SHA\`. Sideload with a tool that signs during installation (AltStore, Sideloadly); it is not App Store ready. Actions artifact: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$IPA" --clobber
+          else
+            gh release create "$tag" "$IPA" --prerelease --title "iOS unsigned IPA ($NAME)" --notes "$notes"
+          fi
