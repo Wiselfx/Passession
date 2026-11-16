@@ -45,6 +45,8 @@ impl Look {
 /// Per-row UI state keyed by the row's stable identity.
 #[derive(Default)]
 pub struct RowState {
+    /// External presentation changes invalidate retained row measurements and paint.
+    pub revision: u64,
     /// Measured timeline rows publish prepared snapshots only during measurement.
     pub managed_preparation: bool,
     pub preparing: bool,
@@ -92,6 +94,10 @@ pub struct RowState {
 }
 
 impl RowState {
+    pub fn invalidate(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// The shown expansion; the first read records `default` so a later tap
     /// flips exactly what was displayed.
     pub fn is_expanded(&mut self, key: &str, default: bool) -> bool {
@@ -102,6 +108,7 @@ impl RowState {
         let next = !self.expanded.get(key).copied().unwrap_or(false);
         self.expanded.insert(key.to_owned(), next);
         self.markdown_presentation.invalidate_interaction();
+        self.invalidate();
     }
 
     pub fn copied_now(&self, key: &str, now: f64) -> bool {
@@ -114,6 +121,10 @@ impl RowState {
     pub fn release_reveal_backlog(&mut self) {
         self.markdown_worker.release_backlog();
         self.reveals.clear();
+        // Unconditional: a worker or image result that redrew this row's list
+        // while the conversation was off screen was consumed by a draw that
+        // skipped the row, so its retained height and paint are stale.
+        self.invalidate();
     }
 }
 
@@ -127,6 +138,8 @@ pub struct Draw<'a> {
     pub now: f64,
     /// Area that a pacing/feedback redraw targets.
     pub area: Area,
+    /// Explicit row owner, including measurement before the first area exists.
+    pub owner: Option<DrawListId>,
     /// Whether anything animated was drawn (spinner, pacing, copy check).
     pub animating: bool,
 }
@@ -147,11 +160,11 @@ impl Draw<'_> {
         self.kit.dry
     }
 
-    /// The draw list a background result for this draw repaints: the owner's
-    /// area, or the list being drawn while the owner has no area yet (its first frame).
+    /// The draw list a background result repaints: the explicit row owner,
+    /// its area, or the current list before either is available.
     pub fn result_owner(&self, cx: &Cx2d) -> Option<DrawListId> {
-        self.area
-            .draw_list_id()
+        self.owner
+            .or_else(|| self.area.draw_list_id())
             .or_else(|| cx.get_current_draw_list_id())
     }
 }

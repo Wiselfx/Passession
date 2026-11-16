@@ -5,6 +5,7 @@
 ### Changed
 
 - The desktop and mobile client now repaints only the region that changed. The chrome, sidebar, each pane and the page are retained layers. Hover, scrolling, typing, streaming output and background results such as code highlighting, images, Mermaid diagrams, attachments and Git sheets repaint only the layer that shows them; other layers reuse their previous drawing. Shared-state updates repaint only the layers that present the change. A streaming session's activity timestamps repaint just that session, and recency lists refresh once per second. Window-wide repaints are reserved for theme, font and language changes and are enforced by a GUI clippy rule.
+- Reuse unchanged chat rows' measured heights and drawing during streaming. Content replacement, search, local controls, reflow and asynchronous results invalidate the affected rows; returning to a hidden conversation refreshes results received while away. Timestamp feedback expires correctly, and pointer exits clear retained hover feedback.
 
 ### Fixed
 

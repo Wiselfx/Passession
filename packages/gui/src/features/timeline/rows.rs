@@ -62,6 +62,126 @@ pub struct RowContext {
     pub epoch: Option<String>,
 }
 
+impl RowContext {
+    /// Compare only the context that can affect this row's drawing or hits.
+    /// `core` is a command dispatcher, not a rendered value; resource arrivals
+    /// and local interaction state are invalidated by the owning row widget.
+    pub fn same_for(&self, other: &Self, item: &RowItem) -> bool {
+        self.look == other.look
+            && ContextInputs::from(self).same_for(&ContextInputs::from(other), item)
+    }
+}
+
+// The production comparison runs on this borrowed projection so it can be
+// tested without starting a core runtime (CoreHandle has no test constructor).
+// `From` destructures RowContext exhaustively: a new field fails to compile
+// until it is classified here.
+#[derive(Clone, Copy)]
+struct ContextInputs<'a> {
+    host_id: &'a str,
+    agent_id: &'a str,
+    workspace_id: &'a str,
+    cwd: Option<&'a str>,
+    is_subagent: bool,
+    capabilities: &'a Value,
+    expanded_tools: bool,
+    auto_expand_reasoning: bool,
+    find: Option<&'a FindTarget>,
+    agent_titles: &'a HashMap<String, String>,
+    footer: &'a LiveFooter,
+    can_fork_cursor: bool,
+    epoch: Option<&'a str>,
+}
+
+impl<'a> From<&'a RowContext> for ContextInputs<'a> {
+    fn from(ctx: &'a RowContext) -> Self {
+        let RowContext {
+            // Compared by RowContext::same_for.
+            look: _,
+            // The fixed runtime's command dispatcher, not a rendered value.
+            core: _,
+            host_id,
+            agent_id,
+            workspace_id,
+            cwd,
+            is_subagent,
+            capabilities,
+            expanded_tools,
+            auto_expand_reasoning,
+            find,
+            agent_titles,
+            footer,
+            can_fork_cursor,
+            epoch,
+        } = ctx;
+        Self {
+            host_id,
+            agent_id,
+            workspace_id,
+            cwd: cwd.as_deref(),
+            is_subagent: *is_subagent,
+            capabilities,
+            expanded_tools: *expanded_tools,
+            auto_expand_reasoning: *auto_expand_reasoning,
+            find: find.as_ref(),
+            agent_titles,
+            footer,
+            can_fork_cursor: *can_fork_cursor,
+            epoch: epoch.as_deref(),
+        }
+    }
+}
+
+impl ContextInputs<'_> {
+    fn same_for(&self, other: &Self, item: &RowItem) -> bool {
+        if matches!(item.kind, RowKind::HistoryStart { .. } | RowKind::Inset(_)) {
+            return true;
+        }
+        // Conservative identity boundary, including identities used by actions.
+        if self.host_id != other.host_id
+            || self.agent_id != other.agent_id
+            || self.workspace_id != other.workspace_id
+        {
+            return false;
+        }
+        match &item.kind {
+            RowKind::Footer { host: None, .. } => {
+                self.is_subagent == other.is_subagent && self.footer == other.footer
+            }
+            RowKind::Footer { host: Some(_), .. } => {
+                self.is_subagent == other.is_subagent
+                    && self.can_fork_cursor == other.can_fork_cursor
+                    && self.epoch == other.epoch
+            }
+            RowKind::Permission { .. } => self.cwd == other.cwd,
+            RowKind::Entry { rows, index, .. } => {
+                let row = &rows[*index];
+                let seq = int_or(get(&row.entry, "seqStart"), i64::MIN);
+                self.cwd == other.cwd
+                    && effective_find(self.find, seq) == effective_find(other.find, seq)
+                    && match row.kind() {
+                        "user_message" => {
+                            self.is_subagent == other.is_subagent
+                                && self.capabilities == other.capabilities
+                        }
+                        "reasoning" => self.auto_expand_reasoning == other.auto_expand_reasoning,
+                        "tool_call" => {
+                            self.expanded_tools == other.expanded_tools
+                                && self.agent_titles == other.agent_titles
+                        }
+                        _ => true,
+                    }
+            }
+            RowKind::HistoryStart { .. } | RowKind::Inset(_) => true,
+        }
+    }
+}
+
+fn effective_find(find: Option<&FindTarget>, seq: i64) -> Option<(&str, usize)> {
+    find.filter(|target| target.row_seq == seq)
+        .map(|target| (target.query.as_str(), target.occurrence))
+}
+
 #[derive(Clone)]
 pub enum RowKind {
     HistoryStart {
@@ -105,6 +225,125 @@ impl RowItem {
             _ => None,
         }
     }
+
+    /// Exact rendered-input equality, independent of unrelated rows in the
+    /// shared timeline snapshot. Rc identity is only an immutable fast path.
+    pub fn same_content(&self, other: &Self) -> bool {
+        if self.id != other.id {
+            return false;
+        }
+        match (&self.kind, &other.kind) {
+            (RowKind::HistoryStart { loading: a }, RowKind::HistoryStart { loading: b }) => a == b,
+            (RowKind::Inset(a), RowKind::Inset(b)) => a == b,
+            (
+                RowKind::Permission {
+                    key: ak,
+                    request: a,
+                },
+                RowKind::Permission {
+                    key: bk,
+                    request: b,
+                },
+            ) => ak == bk && same_value(a, b),
+            (
+                RowKind::Entry {
+                    rows: a,
+                    index: ai,
+                    previous_tasks: ap,
+                    footer_below: af,
+                    streaming: ast,
+                    live: al,
+                    gap_below: ag,
+                },
+                RowKind::Entry {
+                    rows: b,
+                    index: bi,
+                    previous_tasks: bp,
+                    footer_below: bf,
+                    streaming: bst,
+                    live: bl,
+                    gap_below: bg,
+                },
+            ) => {
+                af == bf
+                    && ast == bst
+                    && al == bl
+                    && ag == bg
+                    && match (ap, bp) {
+                        (Some(a), Some(b)) => same_value(a, b),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                    && ((ai == bi && Rc::ptr_eq(a, b)) || same_stream_row(&a[*ai], &b[*bi]))
+            }
+            (
+                RowKind::Footer {
+                    rows: a,
+                    host: ah,
+                    timing: at,
+                },
+                RowKind::Footer {
+                    rows: b,
+                    host: bh,
+                    timing: bt,
+                },
+            ) => {
+                at == bt
+                    && match (ah, bh) {
+                        (None, None) => true,
+                        (Some(ah), Some(bh)) => {
+                            (ah == bh && Rc::ptr_eq(a, b))
+                                || (same_value(&a[*ah].entry, &b[*bh].entry)
+                                    && same_response(a, *ah, b, *bh))
+                        }
+                        _ => false,
+                    }
+            }
+            _ => false,
+        }
+    }
+}
+
+fn same_value(a: &Rc<Value>, b: &Rc<Value>) -> bool {
+    Rc::ptr_eq(a, b) || a == b
+}
+
+fn same_stream_row(a: &StreamRow, b: &StreamRow) -> bool {
+    same_value(&a.entry, &b.entry)
+        && match (&a.group, &b.group) {
+            (Some(a), Some(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+            }
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn same_response(a: &[StreamRow], ah: usize, b: &[StreamRow], bh: usize) -> bool {
+    let mut a = response_sources(a, ah);
+    let mut b = response_sources(b, bh);
+    loop {
+        match (a.next(), b.next()) {
+            (Some(a), Some(b)) if same_value(a, b) => {}
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
+/// Same response boundary and assistant sources as ResponseCopyCache::text,
+/// without allocating clipboard text during every cache-validity check.
+fn response_sources(rows: &[StreamRow], host: usize) -> impl Iterator<Item = &Rc<Value>> {
+    let mut first = host;
+    while first > 0
+        && super::layout::continues_response(Some(&rows[first - 1].entry), Some(&rows[first].entry))
+    {
+        first -= 1;
+    }
+    rows[first..=host]
+        .iter()
+        .filter(|row| row.kind() == "assistant_message")
+        .map(|row| &row.entry)
 }
 
 fn glyph_icon(glyph: ToolGlyph) -> &'static str {
@@ -1752,9 +1991,10 @@ fn footer(
                 };
                 let reveal_key = format!("stamp:{id}");
                 let swap = !duration.is_empty() && !stamp.is_empty();
-                let show_stamp = swap
-                    && (d.state.hover_hit.as_deref() == Some(reveal_key.as_str())
-                        || d.state.copied_now(&reveal_key, d.now - 1.5));
+                let revealing = swap && d.state.copied_now(&reveal_key, d.now - 1.5);
+                d.animating |= revealing;
+                let show_stamp = revealing
+                    || (swap && d.state.hover_hit.as_deref() == Some(reveal_key.as_str()));
                 let text = if show_stamp { stamp } else { primary };
                 let s = d.kit.label(
                     cx,
@@ -1923,6 +2163,390 @@ pub fn sheet_body(
                 None,
                 Some(fill),
             )
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_input_tests {
+    use super::*;
+
+    fn stream_row(seq: i64, kind: &str, text: &str, turn: &str) -> StreamRow {
+        StreamRow {
+            entry: Rc::new(json!({
+                "seqStart": seq, "seqEnd": seq, "turnId": turn,
+                "item": {"type": kind, "text": text}
+            })),
+            group: None,
+        }
+    }
+
+    fn item(kind: RowKind) -> RowItem {
+        RowItem {
+            id: "row".into(),
+            kind,
+        }
+    }
+
+    fn entry(rows: Rc<Vec<StreamRow>>, index: usize) -> RowItem {
+        item(RowKind::Entry {
+            rows,
+            index,
+            previous_tasks: None,
+            footer_below: false,
+            streaming: false,
+            live: false,
+            gap_below: 12.0,
+        })
+    }
+
+    fn completed(rows: Rc<Vec<StreamRow>>, host: usize) -> RowItem {
+        item(RowKind::Footer {
+            rows,
+            host: Some(host),
+            timing: None,
+        })
+    }
+
+    fn inputs<'a>(
+        capabilities: &'a Value,
+        titles: &'a HashMap<String, String>,
+        footer: &'a LiveFooter,
+    ) -> ContextInputs<'a> {
+        ContextInputs {
+            host_id: "host",
+            agent_id: "agent",
+            workspace_id: "workspace",
+            cwd: Some("/project"),
+            is_subagent: false,
+            capabilities,
+            expanded_tools: false,
+            auto_expand_reasoning: false,
+            find: None,
+            agent_titles: titles,
+            footer,
+            can_fork_cursor: false,
+            epoch: None,
+        }
+    }
+
+    #[test]
+    fn entry_equality_ignores_other_rows_but_detects_same_length_replacement() {
+        let first = stream_row(1, "assistant_message", "first", "a");
+        let rows = Rc::new(vec![first.clone()]);
+        let original = entry(rows.clone(), 0);
+        let appended = Rc::new(vec![
+            first.clone(),
+            stream_row(2, "assistant_message", "other", "b"),
+        ]);
+        assert!(original.same_content(&entry(appended, 0)));
+        let reconstructed = Rc::new(vec![stream_row(1, "assistant_message", "first", "a")]);
+        assert!(original.same_content(&entry(reconstructed, 0)));
+        let replaced = Rc::new(vec![stream_row(1, "assistant_message", "other", "a")]);
+        assert!(!original.same_content(&entry(replaced, 0)));
+        let prepended = Rc::new(vec![stream_row(0, "user_message", "older", "old"), first]);
+        assert!(original.same_content(&entry(prepended, 1)));
+    }
+
+    #[test]
+    fn entry_equality_includes_group_members_previous_tasks_and_flags() {
+        let earlier = stream_row(1, "tool_call", "first", "a").entry;
+        let latest = stream_row(2, "tool_call", "last", "a").entry;
+        let grouped = StreamRow {
+            entry: latest.clone(),
+            group: Some(vec![earlier.clone(), latest.clone()]),
+        };
+        let original = entry(Rc::new(vec![grouped.clone()]), 0);
+        let mut changed = grouped.clone();
+        changed.group.as_mut().unwrap()[0] = stream_row(1, "tool_call", "changed", "a").entry;
+        assert!(!original.same_content(&entry(Rc::new(vec![changed]), 0)));
+        let mut changed = grouped.clone();
+        changed.group.as_mut().unwrap().remove(0);
+        assert!(!original.same_content(&entry(Rc::new(vec![changed]), 0)));
+        let reconstructed = StreamRow {
+            entry: Rc::new((*latest).clone()),
+            group: Some(vec![
+                Rc::new((*earlier).clone()),
+                Rc::new((*latest).clone()),
+            ]),
+        };
+        assert!(original.same_content(&entry(Rc::new(vec![reconstructed]), 0)));
+
+        for field in 0..5 {
+            let mut changed = original.clone();
+            let RowKind::Entry {
+                previous_tasks,
+                footer_below,
+                streaming,
+                live,
+                gap_below,
+                ..
+            } = &mut changed.kind
+            else {
+                unreachable!()
+            };
+            match field {
+                0 => *previous_tasks = Some(Rc::new(json!({"items": []}))),
+                1 => *footer_below = true,
+                2 => *streaming = true,
+                3 => *live = true,
+                _ => *gap_below = 16.0,
+            }
+            assert!(!original.same_content(&changed));
+        }
+        let mut previous = original.clone();
+        let RowKind::Entry { previous_tasks, .. } = &mut previous.kind else {
+            unreachable!()
+        };
+        *previous_tasks = Some(Rc::new(json!({"items": [{"text": "old"}]})));
+        let mut changed = previous.clone();
+        let RowKind::Entry { previous_tasks, .. } = &mut changed.kind else {
+            unreachable!()
+        };
+        *previous_tasks = Some(Rc::new(json!({"items": [{"text": "new"}]})));
+        assert!(!previous.same_content(&changed));
+    }
+
+    #[test]
+    fn footer_equality_tracks_response_sources_boundaries_actions_and_timing() {
+        let rows = Rc::new(vec![
+            stream_row(1, "user_message", "question", "a"),
+            stream_row(2, "assistant_message", "first", "a"),
+            stream_row(3, "assistant_message", "last", "a"),
+        ]);
+        let original = completed(rows.clone(), 2);
+        let mut appended = (*rows).clone();
+        appended.push(stream_row(4, "user_message", "another question", "b"));
+        appended.push(stream_row(5, "assistant_message", "another response", "b"));
+        assert!(original.same_content(&completed(Rc::new(appended), 2)));
+
+        let mut changed = (*rows).clone();
+        changed[1] = stream_row(2, "assistant_message", "changed", "a");
+        assert!(!original.same_content(&completed(Rc::new(changed), 2)));
+        let mut boundary = (*rows).clone();
+        boundary.insert(2, stream_row(10, "user_message", "new boundary", "b"));
+        assert!(!original.same_content(&completed(Rc::new(boundary), 3)));
+        let mut prepended = (*rows).clone();
+        prepended.insert(
+            0,
+            stream_row(0, "assistant_message", "older response", "old"),
+        );
+        assert!(original.same_content(&completed(Rc::new(prepended), 3)));
+        for field in ["seqEnd", "messageId"] {
+            let mut changed = (*rows).clone();
+            let host = Rc::make_mut(&mut changed[2].entry);
+            if field == "seqEnd" {
+                host[field] = Value::Null;
+            } else {
+                host["item"][field] = json!("message");
+            }
+            assert!(!original.same_content(&completed(Rc::new(changed), 2)));
+        }
+        let mut timed = original.clone();
+        let RowKind::Footer { timing, .. } = &mut timed.kind else {
+            unreachable!()
+        };
+        *timing = Some(TurnTiming {
+            started_at: Some(10),
+            completed_at: 20,
+        });
+        assert!(!original.same_content(&timed));
+        let mut later = timed.clone();
+        let RowKind::Footer { timing, .. } = &mut later.kind else {
+            unreachable!()
+        };
+        timing.as_mut().unwrap().completed_at = 30;
+        assert!(!timed.same_content(&later));
+        assert!(!original.same_content(&item(RowKind::Footer {
+            rows,
+            host: None,
+            timing: None,
+        })));
+    }
+
+    #[test]
+    fn permission_history_and_inset_inputs_are_exact() {
+        let permission = item(RowKind::Permission {
+            key: "request".into(),
+            request: Rc::new(json!({"status": "pending", "question": "Allow?"})),
+        });
+        let rebuilt = item(RowKind::Permission {
+            key: "request".into(),
+            request: Rc::new(json!({"status": "pending", "question": "Allow?"})),
+        });
+        assert!(permission.same_content(&rebuilt));
+        let changed = item(RowKind::Permission {
+            key: "request".into(),
+            request: Rc::new(json!({"status": "approved", "question": "Allow?"})),
+        });
+        assert!(!permission.same_content(&changed));
+        let mut changed_key = rebuilt;
+        let RowKind::Permission { key, .. } = &mut changed_key.kind else {
+            unreachable!()
+        };
+        *key = "other".into();
+        assert!(!permission.same_content(&changed_key));
+        assert!(
+            !item(RowKind::HistoryStart { loading: false })
+                .same_content(&item(RowKind::HistoryStart { loading: true }))
+        );
+        assert!(!item(RowKind::Inset(12.0)).same_content(&item(RowKind::Inset(16.0))));
+        let mut renamed = permission.clone();
+        renamed.id = "other".into();
+        assert!(!permission.same_content(&renamed));
+    }
+
+    #[test]
+    fn moving_find_invalidates_only_old_and_new_targets() {
+        let capabilities = Value::Null;
+        let titles = HashMap::new();
+        let footer = LiveFooter::default();
+        let first = FindTarget {
+            query: "match".into(),
+            row_seq: 1,
+            occurrence: 0,
+        };
+        let second = FindTarget {
+            row_seq: 2,
+            ..first.clone()
+        };
+        let old = ContextInputs {
+            find: Some(&first),
+            ..inputs(&capabilities, &titles, &footer)
+        };
+        let new = ContextInputs {
+            find: Some(&second),
+            ..old
+        };
+        let rows: Rc<Vec<StreamRow>> = Rc::new(
+            (1..=3)
+                .map(|seq| stream_row(seq, "assistant_message", "match", "a"))
+                .collect(),
+        );
+        assert!(!old.same_for(&new, &entry(rows.clone(), 0)));
+        assert!(!old.same_for(&new, &entry(rows.clone(), 1)));
+        assert!(old.same_for(&new, &entry(rows.clone(), 2)));
+        let occurrence = FindTarget {
+            occurrence: 1,
+            ..first.clone()
+        };
+        let next = ContextInputs {
+            find: Some(&occurrence),
+            ..old
+        };
+        assert!(!old.same_for(&next, &entry(rows.clone(), 0)));
+        let query = FindTarget {
+            query: "different".into(),
+            ..first
+        };
+        let next = ContextInputs {
+            find: Some(&query),
+            ..old
+        };
+        assert!(!old.same_for(&next, &entry(rows, 0)));
+    }
+
+    #[test]
+    fn context_dependencies_are_scoped_to_their_rows() {
+        let capabilities = Value::Null;
+        let updated_capabilities = json!({"rewind": true});
+        let titles = HashMap::new();
+        let updated_titles: HashMap<String, String> =
+            HashMap::from([("agent".into(), "renamed".into())]);
+        let footer = LiveFooter::default();
+        let live_footer = LiveFooter {
+            live: true,
+            started_ms: Some(100),
+            pending_delivery: true,
+        };
+        let old = inputs(&capabilities, &titles, &footer);
+        let rows = Rc::new(vec![
+            stream_row(1, "user_message", "question", "a"),
+            stream_row(2, "assistant_message", "answer", "a"),
+            stream_row(3, "tool_call", "", "a"),
+            stream_row(4, "reasoning", "thinking", "a"),
+        ]);
+        let user = entry(rows.clone(), 0);
+        let assistant = entry(rows.clone(), 1);
+        let tool = entry(rows.clone(), 2);
+        let reasoning = entry(rows.clone(), 3);
+        let completed = completed(rows.clone(), 1);
+        let live = item(RowKind::Footer {
+            rows,
+            host: None,
+            timing: None,
+        });
+        let permission = item(RowKind::Permission {
+            key: "request".into(),
+            request: Rc::new(json!({})),
+        });
+        let changed = ContextInputs {
+            footer: &live_footer,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &live));
+        assert!(old.same_for(&changed, &completed));
+        assert!(old.same_for(&changed, &assistant));
+        let changed = ContextInputs {
+            can_fork_cursor: true,
+            epoch: Some("epoch"),
+            ..old
+        };
+        assert!(!old.same_for(&changed, &completed));
+        assert!(old.same_for(&changed, &live));
+        assert!(old.same_for(&changed, &assistant));
+        let changed = ContextInputs {
+            capabilities: &updated_capabilities,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &user));
+        assert!(old.same_for(&changed, &assistant));
+        let changed = ContextInputs {
+            is_subagent: true,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &user));
+        assert!(!old.same_for(&changed, &completed));
+        assert!(!old.same_for(&changed, &live));
+        let changed = ContextInputs {
+            expanded_tools: true,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &tool));
+        assert!(old.same_for(&changed, &assistant));
+        let changed = ContextInputs {
+            agent_titles: &updated_titles,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &tool));
+        let changed = ContextInputs {
+            auto_expand_reasoning: true,
+            ..old
+        };
+        assert!(!old.same_for(&changed, &reasoning));
+        assert!(old.same_for(&changed, &tool));
+        let changed = ContextInputs {
+            cwd: Some("/other"),
+            ..old
+        };
+        assert!(!old.same_for(&changed, &assistant));
+        assert!(!old.same_for(&changed, &permission));
+        for changed in [
+            ContextInputs {
+                host_id: "other",
+                ..old
+            },
+            ContextInputs {
+                agent_id: "other",
+                ..old
+            },
+            ContextInputs {
+                workspace_id: "other",
+                ..old
+            },
+        ] {
+            assert!(!old.same_for(&changed, &assistant));
+            assert!(!old.same_for(&changed, &permission));
         }
     }
 }

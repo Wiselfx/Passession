@@ -84,6 +84,15 @@ indexed ranges; caret, word and selected-prefix lookups reuse source indexes.
 paragraph into a new source string on every paint. Explicit selection copy
 materializes only the requested source range; code-copy hits share a `Substr`.
 
+Unchanged chat rows reuse their measured height and retained drawing. Scrolling
+and reflow still repaint at the final position: translating old glyphs would
+also retain old clipping and hit geometry. Give asynchronous work the row's own
+draw list during dry measurement, before it has an area; invalidating a parent
+does not invalidate retained children. Returning from a hidden timeline must
+invalidate its rows even when their source is unchanged, because a completion's
+redraw request may have been consumed while hidden. Timed feedback and native
+selection/input registration must stay active until they settle.
+
 The assistant pipeline no longer uses the previous desktop presentation cap.
 Full source reaches the parser and layout path; no new truncation was added.
 Synchronous Markdown entry points remain for other feature surfaces. Work still

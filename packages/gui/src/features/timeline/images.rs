@@ -321,8 +321,8 @@ fn settle(cx: &mut Cx, images: &mut Images, key: &str, state: ImageState) {
 }
 
 /// Records the draw list showing `key`'s placeholder, repainted once it settles.
-fn wait(cx: &Cx2d, images: &mut Images, key: &str) {
-    let Some(owner) = cx.get_current_draw_list_id() else {
+fn wait(owner: Option<DrawListId>, images: &mut Images, key: &str) {
+    let Some(owner) = owner else {
         return;
     };
     let owners = images.waiting.entry(key.to_owned()).or_default();
@@ -333,7 +333,8 @@ fn wait(cx: &Cx2d, images: &mut Images, key: &str) {
 
 /// The state of one assistant image occurrence, starting its acquisition on
 /// first sight. `occurrence` scopes file reads to the rendered message. A
-/// `Loading` answer records the draw list being drawn, repainted once it settles.
+/// `Loading` records the explicit owner (including during dry measurement), or
+/// the current draw list for callers without a retained row.
 pub fn image(
     cx: &mut Cx2d,
     core: Option<&CoreHandle>,
@@ -341,7 +342,9 @@ pub fn image(
     workspace_root: Option<&str>,
     source: &str,
     occurrence: &str,
+    owner: Option<DrawListId>,
 ) -> ImageState {
+    let owner = owner.or_else(|| cx.get_current_draw_list_id());
     // source.ts: SVGs show their alt text where the renderer cannot draw
     // them (Android/iOS) and are never fetched over http(s).
     let svg = is_svg(source);
@@ -375,7 +378,7 @@ pub fn image(
             images.order.retain(|k| k != &key);
             images.order.push_back(key.clone());
             if matches!(state, ImageState::Loading) {
-                wait(cx, images, &key);
+                wait(owner, images, &key);
             }
             return state;
         }
@@ -404,7 +407,7 @@ pub fn image(
                         .unwrap_or("")
                         .to_owned();
                     remember(images, &key, ImageState::Loading);
-                    wait(cx, images, &key);
+                    wait(owner, images, &key);
                     decode_in_background(key, bytes, mime);
                     return ImageState::Loading;
                 }
@@ -425,7 +428,7 @@ pub fn image(
                     },
                 );
                 remember(images, &key, ImageState::Loading);
-                wait(cx, images, &key);
+                wait(owner, images, &key);
                 ImageState::Loading
             }
             ImageSource::File { cwd, path } => {
@@ -461,7 +464,7 @@ pub fn image(
                 });
                 images.operations.insert(request, key.clone());
                 remember(images, &key, ImageState::Loading);
-                wait(cx, images, &key);
+                wait(owner, images, &key);
                 ImageState::Loading
             }
         }

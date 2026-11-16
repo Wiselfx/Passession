@@ -1834,7 +1834,15 @@ impl PrView {
         paint.rounded(cx, circle, fill, size / 2.0, None);
         let url = text(activity, "avatarUrl");
         if !url.is_empty() {
-            match images::image(cx, Some(&self.core), &self.target.server_id, None, url, "") {
+            match images::image(
+                cx,
+                Some(&self.core),
+                &self.target.server_id,
+                None,
+                url,
+                "",
+                None,
+            ) {
                 ImageState::Ready { texture, .. } => {
                     paint.texture(cx, circle, &texture, size / 2.0);
                     return;
@@ -2056,6 +2064,7 @@ impl PrView {
             state: &mut entry.state,
             now: now_seconds(),
             area: Area::Empty,
+            owner: None,
             animating: false,
         };
         let height = md::draw(

@@ -567,6 +567,7 @@ pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
                 state: &mut sheet.state,
                 now,
                 area: layer.area,
+                owner: None,
                 animating: false,
             };
             // An overlay root: it reaches the window's bottom edge and owns the system-bar padding.

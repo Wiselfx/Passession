@@ -1664,7 +1664,9 @@ impl ChatPanel {
                     )
                 });
             }
-            "fork" => self.fork(cx, ui, None),
+            "fork" => {
+                self.fork(cx, ui, None);
+            }
             "archive" => {
                 let id = overlay::confirm(
                     ui,
@@ -1718,13 +1720,15 @@ impl ChatPanel {
 
     /// hooks/use-fork-agent.ts: the fork context pinned to `entry` (or the
     /// whole timeline so far), opened as a new session draft in the same directory.
-    fn fork(&mut self, cx: &mut Cx, ui: &mut UiContext, entry: Option<Rc<Value>>) {
+    /// Whether a fork request was sent; only a sent request completes and
+    /// clears the menu's busy glyph.
+    fn fork(&mut self, cx: &mut Cx, ui: &mut UiContext, entry: Option<Rc<Value>>) -> bool {
         let Some(snap) = self.snap.clone() else {
-            return;
+            return false;
         };
         if !self.feature("agentForkContext") {
             self.show_failure(t("message.actions.forkUnavailable"));
-            return;
+            return false;
         }
         let mut fields = json!({});
         if let Some(entry) = &entry {
@@ -1746,7 +1750,8 @@ impl ChatPanel {
                 "agent.fork_context.response",
                 fields,
             )
-        });
+        })
+        .is_some()
     }
 
     fn config(&self) -> Value {
@@ -1788,26 +1793,44 @@ impl ChatPanel {
         };
         let request_id = get(request, "id").clone();
         let state = self.row_state(&format!("perm:{key}"));
-        if let Some(card) = state.borrow_mut().permission.as_mut() {
-            // One response per card until it resolves or fails.
-            if card.pending {
-                return;
+        {
+            let mut state = state.borrow_mut();
+            if let Some(card) = state.permission.as_mut() {
+                // One response per card until it resolves or fails.
+                if card.pending {
+                    return;
+                }
+                card.pending = true;
+                card.failed = false;
+                card.responding_action = Some(action.to_owned());
+                state.invalidate();
             }
-            card.pending = true;
-            card.failed = false;
-            card.responding_action = Some(action.to_owned());
         }
-        let key = key.to_owned();
-        self.with_session(cx, ui, |s, io| {
-            s.action_with_timeout(
-                io,
-                ActionKind::Permission { key },
-                "agent_permission_response",
-                "agent_permission_resolved",
-                json!({"requestId": request_id, "response": response}),
-                Duration::from_secs(15),
-            )
-        });
+        let sent = self
+            .with_session(cx, ui, |s, io| {
+                s.action_with_timeout(
+                    io,
+                    ActionKind::Permission {
+                        key: key.to_owned(),
+                    },
+                    "agent_permission_response",
+                    "agent_permission_resolved",
+                    json!({"requestId": request_id, "response": response}),
+                    Duration::from_secs(15),
+                )
+            })
+            .is_some();
+        if !sent {
+            // No completion will arrive to clear pending; show the card as failed.
+            let mut state = state.borrow_mut();
+            if let Some(card) = state.permission.as_mut()
+                && card.pending
+            {
+                card.pending = false;
+                card.failed = true;
+                state.invalidate();
+            }
+        }
         self.area.redraw(cx);
     }
 
@@ -2330,11 +2353,13 @@ impl ChatPanel {
         match kind {
             ActionKind::Permission { key } => {
                 let state = self.row_state(&format!("perm:{key}"));
-                if let Some(card) = state.borrow_mut().permission.as_mut() {
+                let mut state = state.borrow_mut();
+                if let Some(card) = state.permission.as_mut()
+                    && (card.pending || (result.is_err() && !card.failed))
+                {
                     card.pending = false;
-                    if result.is_err() {
-                        card.failed = true;
-                    }
+                    card.failed |= result.is_err();
+                    state.invalidate();
                 }
             }
             ActionKind::Rename | ActionKind::Detach | ActionKind::Cancel => match result {
@@ -2377,10 +2402,12 @@ impl ChatPanel {
             }
             ActionKind::Fork => {
                 for state in self.row_states.values() {
-                    state
-                        .borrow_mut()
-                        .menu_busy
-                        .retain(|k| !k.starts_with("fork:"));
+                    let mut state = state.borrow_mut();
+                    let before = state.menu_busy.len();
+                    state.menu_busy.retain(|k| !k.starts_with("fork:"));
+                    if state.menu_busy.len() != before {
+                        state.invalidate();
+                    }
                 }
                 match result {
                     Ok(body) if !get(&body, "attachment").is_null() => {
@@ -2404,7 +2431,10 @@ impl ChatPanel {
             }
             ActionKind::Rewind { mode, text } => {
                 for state in self.row_states.values() {
-                    state.borrow_mut().menu_busy.remove("rewind");
+                    let mut state = state.borrow_mut();
+                    if state.menu_busy.remove("rewind") {
+                        state.invalidate();
+                    }
                 }
                 match result {
                     Ok(_) if mode != "files" => {
@@ -2759,29 +2789,37 @@ impl ChatPanel {
             }
             Ask::Rewind { row, entry } => {
                 if let Some(state) = self.row_states.get(&row) {
-                    state.borrow_mut().menu_open.remove("rewind");
+                    let mut state = state.borrow_mut();
+                    if state.menu_open.remove("rewind") {
+                        state.invalidate();
+                    }
                 }
-                let Some(mode) = get(args, "value").as_str().map(str::to_owned) else {
-                    return;
-                };
-                if let Some(state) = self.row_states.get(&row) {
-                    state.borrow_mut().menu_busy.insert("rewind".into());
+                if !cancelled && let Some(mode) = get(args, "value").as_str().map(str::to_owned) {
+                    let item = get(&entry, "item");
+                    let text = str_of(get(item, "text")).to_owned();
+                    let message = get(item, "messageId").clone();
+                    let sent = self
+                        .with_session(cx, ui, |s, io| {
+                            s.action(
+                                io,
+                                ActionKind::Rewind {
+                                    mode: mode.clone(),
+                                    text,
+                                },
+                                "agent.rewind.request",
+                                "agent.rewind.response",
+                                json!({"messageId": message, "mode": mode}),
+                            )
+                        })
+                        .is_some();
+                    // Only a sent request completes and clears busy.
+                    if sent && let Some(state) = self.row_states.get(&row) {
+                        let mut state = state.borrow_mut();
+                        if state.menu_busy.insert("rewind".into()) {
+                            state.invalidate();
+                        }
+                    }
                 }
-                let item = get(&entry, "item");
-                let text = str_of(get(item, "text")).to_owned();
-                let message = get(item, "messageId").clone();
-                self.with_session(cx, ui, |s, io| {
-                    s.action(
-                        io,
-                        ActionKind::Rewind {
-                            mode: mode.clone(),
-                            text,
-                        },
-                        "agent.rewind.request",
-                        "agent.rewind.response",
-                        json!({"messageId": message, "mode": mode}),
-                    )
-                });
             }
             Ask::Outline => {
                 if let Some(seq) = get(args, "value")
@@ -2906,7 +2944,10 @@ impl ChatPanel {
                         );
                     }
                     if let Some(state) = self.row_states.get(&row) {
-                        state.borrow_mut().menu_open.insert("rewind".into());
+                        let mut state = state.borrow_mut();
+                        if state.menu_open.insert("rewind".into()) {
+                            state.invalidate();
+                        }
                     }
                     let id = overlay::open_menu_with(
                         ui,
@@ -2922,14 +2963,19 @@ impl ChatPanel {
                 }
                 HitTarget::ForkMenu { completed } => {
                     let entry = if completed { self.entry_of(&row) } else { None };
-                    if let Some(state) = self.row_states.get(&row) {
-                        state.borrow_mut().menu_busy.insert(if completed {
+                    // A request that was never sent has no completion to clear busy.
+                    if self.fork(cx, ui, entry)
+                        && let Some(state) = self.row_states.get(&row)
+                    {
+                        let mut state = state.borrow_mut();
+                        if state.menu_busy.insert(if completed {
                             format!("fork:{row}")
                         } else {
                             "fork:live".into()
-                        });
+                        }) {
+                            state.invalidate();
+                        }
                     }
-                    self.fork(cx, ui, entry);
                 }
                 HitTarget::PermissionAction { key, action } => {
                     let Some(snap) = &self.snap else { return };
@@ -3627,6 +3673,7 @@ impl Widget for ChatPanel {
                 canvas: &mut self.overlay_canvas,
                 look,
                 state: &mut self.chrome_state,
+                owner: None,
                 now: now_seconds(),
                 area: self.area,
                 animating: false,
@@ -3719,6 +3766,7 @@ impl Widget for ChatPanel {
                 canvas: &mut self.overlay_canvas,
                 look,
                 state: &mut self.chrome_state,
+                owner: None,
                 now: now_seconds(),
                 area: self.area,
                 animating: false,
@@ -3919,6 +3967,7 @@ impl Widget for ChatPanel {
                 canvas: &mut self.overlay_canvas,
                 look,
                 state: &mut self.chrome_state,
+                owner: None,
                 now: now_seconds(),
                 area: self.area,
                 animating: false,
@@ -4784,6 +4833,7 @@ impl ChatPanel {
                     canvas: &mut self.modal_canvas,
                     look,
                     state: &mut self.modal_state,
+                    owner: None,
                     now: now_seconds(),
                     area: self.area,
                     animating: false,
@@ -4817,6 +4867,7 @@ impl ChatPanel {
                     canvas: &mut self.modal_canvas,
                     look,
                     state: &mut self.modal_state,
+                    owner: None,
                     now: now_seconds(),
                     area: self.area,
                     animating: false,
@@ -4847,6 +4898,7 @@ impl ChatPanel {
                     canvas: &mut self.modal_canvas,
                     look,
                     state: &mut self.modal_state,
+                    owner: None,
                     now: now_seconds(),
                     area: self.area,
                     animating: false,
@@ -4874,6 +4926,7 @@ impl ChatPanel {
                             target.cwd.as_deref(),
                             url,
                             row,
+                            None,
                         ) {
                             ImageState::Ready {
                                 texture,
@@ -4895,6 +4948,7 @@ impl ChatPanel {
                     canvas: &mut self.modal_canvas,
                     look,
                     state: &mut self.modal_state,
+                    owner: None,
                     now: now_seconds(),
                     area: self.area,
                     animating: false,
@@ -4910,6 +4964,7 @@ impl ChatPanel {
                     canvas: &mut self.modal_canvas,
                     look,
                     state: &mut self.modal_state,
+                    owner: None,
                     now: now_seconds(),
                     area: self.area,
                     animating: false,

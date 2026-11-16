@@ -61,6 +61,43 @@ pub struct RowModel {
     pub state: Rc<RefCell<RowState>>,
 }
 
+/// Measurement and paint have separate validity: moving a row changes its clipped
+/// paint, not its intrinsic height. Never use a transcript-wide revision here.
+#[derive(Default)]
+struct RowCache {
+    measurement: Option<Measurement>,
+    paint_dirty: bool,
+    animating: bool,
+    viewport: Option<Rect>,
+}
+
+#[derive(Clone, Copy)]
+struct Measurement {
+    width: f64,
+    theme_epoch: u64,
+    revision: u64,
+    height: f64,
+}
+
+impl RowCache {
+    fn invalidate(&mut self) {
+        self.measurement = None;
+        self.paint_dirty = true;
+    }
+
+    fn height(&self, width: f64, theme_epoch: u64, revision: u64, dirty: bool) -> Option<f64> {
+        self.measurement
+            .filter(|measured| {
+                !dirty
+                    && !self.animating
+                    && measured.width == width
+                    && measured.theme_epoch == theme_epoch
+                    && measured.revision == revision
+            })
+            .map(|measured| measured.height)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Drag {
     None,
@@ -127,6 +164,8 @@ pub struct ChatRow {
     handle_endpoint: Option<TextHandleEndpoint>,
     #[rust]
     bar_drag: Option<scrollbar::BarDrag>,
+    #[rust]
+    cache: RowCache,
 }
 
 /// An overview group stays pinned to its newest call until the reader
@@ -153,13 +192,19 @@ impl ChatRow {
     /// Prepare the snapshot used by both passes and obtain its exact height.
     /// No draw list, hit area, selection run or glyph batch is replaced here.
     pub fn measure(&mut self, cx: &mut Cx2d, width: f64) -> f64 {
-        let Some(model) = self.model.clone() else {
+        let Some(model) = self.model.as_ref() else {
             return 0.0;
         };
         if width.is_finite() && width > 0.0 {
             self.last_width = width;
         }
         let width = self.last_width.max(1.0);
+        let epoch = crate::theme::epoch();
+        let revision = model.state.borrow().revision;
+        let dirty = cx.draw_event.draw_list_will_redraw(cx, self.draw_list.id());
+        if let Some(height) = self.cache.height(width, epoch, revision, dirty) {
+            return height;
+        }
         let now = now_seconds();
         self.prepared_time = Some(now);
         let (kit_dry, canvas_dry) = (self.kit.dry, self.canvas.dry);
@@ -176,25 +221,45 @@ impl ChatRow {
                 state: &mut state,
                 now,
                 area: self.area,
+                owner: Some(self.draw_list.id()),
                 animating: false,
             };
-            draw_row(cx, &mut d, &model.ctx, &model.item, 0.0, 0.0, width).0
+            let height = draw_row(cx, &mut d, &model.ctx, &model.item, 0.0, 0.0, width).0;
+            self.cache.animating = d.animating;
+            height
         };
         state.height = height;
         state.preparing = false;
         self.kit.dry = kit_dry;
         self.canvas.dry = canvas_dry;
+        self.cache.measurement = Some(Measurement {
+            width,
+            theme_epoch: epoch,
+            revision,
+            height,
+        });
+        self.cache.paint_dirty = true;
         height
     }
 
     pub fn set_model(&mut self, cx: &mut Cx, model: RowModel) {
-        if self
-            .model
-            .as_ref()
-            .is_none_or(|old| old.panel != model.panel || old.item.id != model.item.id)
-        {
+        let same_owner = self.model.as_ref().is_some_and(|old| {
+            old.panel == model.panel
+                && old.item.id == model.item.id
+                && Rc::ptr_eq(&old.state, &model.state)
+                && old.ctx.host_id == model.ctx.host_id
+                && old.ctx.agent_id == model.ctx.agent_id
+        });
+        if !same_owner {
             self.clear_selection(cx);
             model.state.borrow_mut().selection = None;
+        }
+        let unchanged = same_owner
+            && self.model.as_ref().is_some_and(|old| {
+                old.item.same_content(&model.item) && old.ctx.same_for(&model.ctx, &model.item)
+            });
+        if !unchanged {
+            self.cache.invalidate();
         }
         self.model = Some(model);
     }
@@ -346,6 +411,9 @@ impl ChatRow {
         let handled = self.tap_row(cx, scope, target);
         if before.is_some() && active(self) != before {
             self.post(cx, RowEventKind::RevealTop);
+        }
+        if handled {
+            self.area.redraw(cx);
         }
         handled
     }
@@ -838,15 +906,34 @@ impl Widget for ChatRow {
                 self.set_selection(cx, Some((0, self.canvas.source_len())));
             }
             Hit::KeyFocusLost(_) => self.clear_selection(cx),
+            // A click, recycled area or another pointer owner can replace
+            // Makepad's previous hover area before it emits HoverOut.
+            _ if matches!(event, Event::MouseMove(_) | Event::MouseLeave(_)) => {
+                self.set_hover(cx, None);
+            }
             _ => {}
         }
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let Some(model) = self.model.clone() else {
+        let Some(model) = self.model.as_ref() else {
             return DrawStep::done();
         };
-        self.draw_list.begin_always(cx);
+        // Glyph culling, hit geometry and native input anchors depend on the final
+        // rect and viewport. Repaint on movement rather than translating stale clips.
+        let dirty = cx.will_redraw(&mut self.draw_list, walk);
+        let repaint = dirty
+            || self.cache.paint_dirty
+            || self.cache.animating
+            || self.cache.viewport != self.canvas.viewport
+            || self.touch_selection
+            || self.answer_field.is_some()
+            || cx.text_actions_active(self.area);
+        if self.draw_list.begin_maybe(cx, repaint).is_err() {
+            cx.walk_turtle(walk);
+            return DrawStep::done();
+        }
+        let model = model.clone();
         cx.begin_turtle(walk, Layout::default());
         let origin = cx.turtle().pos();
         let width = cx.turtle().rect().size.x;
@@ -870,6 +957,7 @@ impl Widget for ChatRow {
                 state: &mut state,
                 now,
                 area: self.area,
+                owner: Some(self.draw_list.id()),
                 animating: false,
             };
             let (h, field) = draw_row(
@@ -984,7 +1072,10 @@ impl Widget for ChatRow {
                 },
             );
         }
-        if animating {
+        self.cache.paint_dirty = false;
+        self.cache.viewport = self.canvas.viewport;
+        self.cache.animating |= animating;
+        if self.cache.animating {
             self.next_frame = cx.new_next_frame();
         }
         DrawStep::done()
@@ -1027,5 +1118,46 @@ impl ChatRowRef {
         self.borrow()
             .map(|row| row.area.rect(cx))
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn settled() -> RowCache {
+        RowCache {
+            measurement: Some(Measurement {
+                width: 640.0,
+                theme_epoch: 3,
+                revision: 7,
+                height: 112.0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cached_height_rejects_reflow_state_and_async_invalidations() {
+        let cache = settled();
+        assert_eq!(cache.height(640.0, 3, 7, false), Some(112.0));
+        assert_eq!(cache.height(320.0, 3, 7, false), None);
+        assert_eq!(cache.height(640.0, 4, 7, false), None);
+        assert_eq!(cache.height(640.0, 3, 8, false), None);
+        // A matching source is insufficient when an image, font layout or
+        // highlight completed, or an interactive child requested a redraw.
+        assert_eq!(cache.height(640.0, 3, 7, true), None);
+    }
+
+    #[test]
+    fn pacing_and_recycled_models_cannot_freeze_a_cached_row() {
+        let mut cache = settled();
+        cache.animating = true;
+        assert_eq!(cache.height(640.0, 3, 7, false), None);
+        cache.animating = false;
+        assert_eq!(cache.height(640.0, 3, 7, false), Some(112.0));
+        cache.invalidate();
+        assert_eq!(cache.height(640.0, 3, 7, false), None);
+        assert!(cache.paint_dirty);
     }
 }

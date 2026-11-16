@@ -1103,6 +1103,7 @@ fn image(
     para: &Para,
     link: Option<&(String, FileLinkSourceType)>,
 ) -> f64 {
+    let owner = d.result_owner(cx);
     let state = images::image(
         cx,
         opts.core,
@@ -1110,6 +1111,7 @@ fn image(
         opts.workspace_root,
         url,
         opts.key,
+        owner,
     );
     match state {
         ImageState::Loading => 320.0,

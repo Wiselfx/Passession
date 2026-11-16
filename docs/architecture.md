@@ -62,7 +62,7 @@ File operations use the selected host. New Session and Add Project browse host-s
 
 Each window composes retained layers, like Android `RenderNode`s or iOS `CALayer`s. The window's own draw list holds only the background capture and the composition. The chrome (header, banner, tab strips, dividers and empty states), the sidebar, every pane root and the page each paint into their own `common::layer::Layer`. A layer that is not invalidated replays its retained draw calls, shell hit regions and overlay children instead of running its widgets again.
 
-Feature code keeps the ordinary Makepad contract: when a widget's own data changes, it redraws its own area (`self.redraw(cx)`, `area.redraw(cx)`). That repaints only the layer holding the area; nested draw lists repaint their ancestors, so a timeline row repaints its pane and the pane's list measurement. The shell repaints a layer by itself when:
+Feature code keeps the ordinary Makepad contract: when a widget's own data changes, it redraws its own area (`self.redraw(cx)`, `area.redraw(cx)`). That repaints only the layer holding the area; nested draw lists repaint their ancestors, so a timeline row repaints its pane and requests a list measurement pass. Unchanged rows can reuse their work under the [Markdown row-retention contract](markdown-renderer.md#streaming-work). The shell repaints a layer by itself when:
 
 - its rect changes;
 - its inputs change (focus, app activity, width class, safe-area insets, a different page root);
