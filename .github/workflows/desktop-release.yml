@@ -369,6 +369,9 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
           WIN_CSC_LINK: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_LINK || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ matrix.platform == 'windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+      - name: Verify Windows runtime preservation
+        if: matrix.platform == 'windows' && contains(matrix.components, 'daemon')
+        run: cargo test --locked --release -p paseo-daemon --lib preserved_runtime_copy_matches_the_runtime_digest
       - name: Record exact source, run and artifact hashes
         run: cargo xtask release record
         env:

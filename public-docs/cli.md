@@ -365,6 +365,24 @@ paseo daemon update wait <operation-id> --home ~/paseo-test
 
 `--from` and `--continuation-file` require a local `--home`. With `--host`, `update` installs only an official release through a daemon that advertises `durableDaemonUpdates`, and `status`/`wait` query it remotely; a lost acknowledgement is retried with the same operation ID.
 
+Windows daemons through 0.13.29 can fail during the first managed update with
+`Cannot determine free space for the installation store` or access denied while
+preserving the old runtime. A phone request still uses the running daemon's old
+update code. Unpack a complete fixed Windows daemon runtime and run **that runtime's
+CLI** from an independently opened PowerShell window, under the same Windows account
+and with the existing daemon home. Replace the example paths:
+
+```powershell
+& 'C:\path\to\fixed-runtime\paseo.exe' daemon update `
+  --home 'C:\path\to\existing-home' --from 'C:\path\to\fixed-runtime'
+```
+
+An agent-launched shell can report `Cannot launch the update executor outside the
+daemon job`: its Windows Job deliberately prevents child processes from escaping.
+Use a separately opened shell instead of weakening that process boundary. Do not
+overwrite the running executable or delete the operation journal. Wait for the
+operation to report `committed`; later phone updates then use the fixed daemon.
+
 To prepare an existing local build without claiming official release provenance:
 
 ```bash

@@ -290,6 +290,46 @@ fn untouched_form_keeps_its_defaults() {
 }
 
 #[test]
+fn ui_updates_preserve_the_form_before_during_and_after_submission() {
+    for method in ["setStatus", "setWidget", "setTitle", "setEditorText"] {
+        let mut mapper = Mapper::new("omp", "omp");
+        mapper.map(&json!({"type":"tool_execution_start","toolCallId":"ask-1","toolName":"ask","args":{"html":CLEANUP}}));
+        let update = json!({"type":"extension_ui_request","id":"ui-update","method":method});
+        mapper.map(&update);
+        let mut shown = 0;
+        let data = omp(CLEANUP, |dialog| {
+            let events = mapper.map(&dialog);
+            mapper.map(&update);
+            let Some(card) = events
+                .iter()
+                .find(|e| e["type"] == "permission_requested")
+                .map(|e| &e["request"])
+            else {
+                let replies = mapper.drain_responses();
+                assert_eq!(replies.len(), 1, "{method}: {dialog}");
+                return replies.into_iter().next().unwrap();
+            };
+            shown += 1;
+            assert_eq!(card["metadata"]["ompAskForm"], true, "{method}");
+            assert_eq!(mapper.pending_permissions(), vec![card.clone()]);
+            let response = json!({"behavior":"allow","updatedInput":{"answers":{},"selections":{
+                header(card, 0): {"options":[option(card, 0, "빌드 결과")]},
+                header(card, 1): {"options":[option(card, 1, "최신 롤백")]}
+            }}});
+            mapper
+                .permission_response(card["id"].as_str().unwrap(), &response)
+                .unwrap()
+        })
+        .unwrap_or_else(|| panic!("{method} cancelled the submitted form"));
+        assert_eq!(data["wine"], "target");
+        assert_eq!(data["items"], json!(["latest_backup"]));
+        assert_eq!(shown, 1, "{method} interrupted the form replay");
+        assert!(mapper.pending_permissions().is_empty());
+        assert!(mapper.drain_responses().is_empty());
+    }
+}
+
+#[test]
 fn joined_answers_keep_comma_labels_custom_text_and_editor_values() {
     const HTML: &str = r#"<form>
         <fieldset><legend>Store</legend>

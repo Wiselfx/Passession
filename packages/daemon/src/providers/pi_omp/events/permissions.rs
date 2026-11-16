@@ -121,6 +121,10 @@ impl Permissions {
     }
     pub fn dialog(&mut self, family: &str, provider: &str, event: &Value) -> Option<Value> {
         let method = string(&event["method"]);
+        // Status/widget updates share this channel but must not advance or discard a form.
+        if !matches!(method, "select" | "input" | "editor" | "confirm") {
+            return None;
+        }
         let id = string(&event["id"]);
         let mut stray = false;
         if family == "omp"
@@ -240,10 +244,8 @@ impl Permissions {
             }
         }
         if stray && let Some(question) = req["input"]["questions"].get_mut(0) {
-            question["question"] = json!(format!(
-                "{STRAY_NOTE}\n\n{}",
-                string(&question["question"])
-            ));
+            question["question"] =
+                json!(format!("{STRAY_NOTE}\n\n{}", string(&question["question"])));
         }
         self.requests.push(req.clone());
         Some(req)

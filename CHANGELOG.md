@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep OMP question forms pending and preserve submitted answers when status, widget or other one-way UI updates arrive. These updates no longer discard the form state and turn a submitted answer into "Ask tool was cancelled by the user".
+- Preserve unmanaged Windows daemon runtimes during the first managed update without failing with access denied after copying a file. Files are copied through a writable handle and flushed before restoring source permissions, including read-only files. The native Windows release job now runs the runtime-copy regression before accepting its artifacts.
+
 ## 0.13.29 - 2026-11-16
 
 ### Fixed

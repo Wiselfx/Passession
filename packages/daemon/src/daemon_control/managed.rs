@@ -1595,9 +1595,12 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
             }
             directories.push((target, metadata.permissions()));
         } else if metadata.is_file() {
-            fs::copy(entry.path(), &target)?;
-            fs::set_permissions(&target, metadata.permissions())?;
-            File::open(&target)?.sync_all()?;
+            // fs::copy also copies read-only attributes. Keep a writable handle
+            // through the flush, then restore the source permissions.
+            let mut file = File::create_new(&target)?;
+            std::io::copy(&mut File::open(entry.path())?, &mut file)?;
+            file.sync_all()?;
+            file.set_permissions(metadata.permissions())?;
         } else {
             bail!(
                 "Runtime contains a symlink or special file: {}",
@@ -2928,27 +2931,48 @@ mod tests {
         assert_eq!(removed.len(), 2);
     }
 
-    #[cfg(unix)]
     #[test]
     fn preserved_runtime_copy_matches_the_runtime_digest() {
+        #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
         let base = tempfile::tempdir().unwrap();
         let source = base.path().join("runtime");
         fs::create_dir_all(source.join("lib/nested")).unwrap();
         fs::write(source.join(EXECUTABLE), b"binary").unwrap();
+        #[cfg(unix)]
         fs::set_permissions(source.join(EXECUTABLE), fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(source.join("lib/nested/data"), b"data").unwrap();
+        #[cfg(unix)]
         fs::set_permissions(source.join("lib"), fs::Permissions::from_mode(0o500)).unwrap();
+        let license = source.join("LICENSE");
+        fs::write(&license, b"license text").unwrap();
+        let writable = fs::metadata(&license).unwrap().permissions();
+        let mut readonly = writable.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&license, readonly).unwrap();
         let copy = base.path().join("copy");
         copy_tree(&source, &copy).unwrap();
         assert_eq!(
             crate::daemon_admin::updater::tree_digest(&copy).unwrap(),
             crate::daemon_admin::updater::tree_digest(&source).unwrap()
         );
-        std::os::unix::fs::symlink("data", source.join("link")).unwrap();
-        assert!(copy_tree(&source, &base.path().join("rejected")).is_err());
-        fs::set_permissions(source.join("lib"), fs::Permissions::from_mode(0o700)).unwrap();
-        fs::set_permissions(copy.join("lib"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(fs::read(copy.join("LICENSE")).unwrap(), b"license text");
+        assert!(
+            fs::metadata(copy.join("LICENSE"))
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
+        assert!(fs::metadata(&license).unwrap().permissions().readonly());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("data", source.join("link")).unwrap();
+            assert!(copy_tree(&source, &base.path().join("rejected")).is_err());
+            fs::set_permissions(source.join("lib"), fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(copy.join("lib"), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::set_permissions(&license, writable.clone()).unwrap();
+        fs::set_permissions(copy.join("LICENSE"), writable).unwrap();
     }
 
     #[test]
