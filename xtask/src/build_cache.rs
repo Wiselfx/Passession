@@ -207,6 +207,20 @@ pub fn acquire() -> Result<Lease> {
 /// compiler flags win. Target-specific linker flags cannot leak into Android/iOS.
 pub fn configure(command: &mut Command) -> Result<()> {
     command.env("CARGO_TARGET_DIR", target_root()?);
+    // Cargo compares `rerun-if-env-changed` names with its own environment.
+    // `cargo xtask` exports xtask's package identity into it, so ring (which
+    // tracks CARGO_PKG_VERSION_PATCH) and its dependents rebuilt on every
+    // version bump. `cc` tracks SOURCE_DATE_EPOCH the same way: the release
+    // commit time is meant for package archives, yet it recompiled every C
+    // dependency on each release.
+    command.env_remove("SOURCE_DATE_EPOCH");
+    for (name, _) in env::vars_os() {
+        if name.to_str().is_some_and(|name| {
+            name.starts_with("CARGO_PKG_") || name.starts_with("CARGO_MANIFEST_")
+        }) {
+            command.env_remove(name);
+        }
+    }
     if env::var("PASEO_SCCACHE").as_deref() == Ok("1") && env::var_os("RUSTC_WRAPPER").is_none() {
         let wrapper =
             which::which("sccache").context("PASEO_SCCACHE=1 requires sccache on PATH")?;

@@ -1,4 +1,6 @@
 use std::env;
+use std::ffi::OsStr;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -126,31 +128,7 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
     // persistent cache never see a half-made or replaced Ghostty clone.
     let persistent_cache = PersistentCache::open();
 
-    // Locate ghostty source: env override > persistent cache > fetch into OUT_DIR.
-    let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
-        Ok(dir) => {
-            let p = PathBuf::from(dir);
-            assert!(
-                p.join("build.zig").exists(),
-                "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
-                p.display()
-            );
-            p
-        }
-        Err(_) => match &persistent_cache {
-            Some(cache) => cache.fetch_ghostty(),
-            None => fetch_ghostty(&out_dir),
-        },
-    };
-
-    // Build libghostty-vt via zig. Zig's local cache is content-addressed, so
-    // reusing a persistent one only skips work; it cannot change the outputs.
     let install_prefix = out_dir.join("ghostty-install");
-    let zig_cache_dir = persistent_cache
-        .as_ref()
-        .map_or_else(|| out_dir.join("zig-cache"), PersistentCache::zig_cache_dir);
-    let zig_global_cache_dir = out_dir.join("zig-global-cache");
-
     let optimize = zig_optimize_mode();
     let cpu = env::var("LIBGHOSTTY_VT_SYS_CPU").unwrap_or_else(|_| "baseline".to_owned());
     assert!(
@@ -175,7 +153,48 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
 
     // `ZIG` selects a Zig executable that is not on PATH.
     let zig = env::var_os("ZIG").unwrap_or_else(|| "zig".into());
-    let mut build = Command::new(zig);
+
+    // The persistent directory outlives Cargo's OUT_DIR, so the pinned build's
+    // installed outputs are kept there and copied back: a later run needs
+    // neither the clone nor the Zig build.
+    let cached_install = match &persistent_cache {
+        Some(cache) if env::var_os("GHOSTTY_SOURCE_DIR").is_none() => {
+            Some(cache.install_dir(&zig, &host, target, optimize, &cpu))
+        }
+        _ => None,
+    };
+    if let Some(cached) = &cached_install
+        && restore_install(cached, &install_prefix)
+    {
+        emit_install(link_mode, target, &install_prefix, ios_platform.is_some());
+        return;
+    }
+
+    // Locate ghostty source: env override > persistent cache > fetch into OUT_DIR.
+    let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
+        Ok(dir) => {
+            let p = PathBuf::from(dir);
+            assert!(
+                p.join("build.zig").exists(),
+                "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
+                p.display()
+            );
+            p
+        }
+        Err(_) => match &persistent_cache {
+            Some(cache) => cache.fetch_ghostty(),
+            None => fetch_ghostty(&out_dir),
+        },
+    };
+
+    // Build libghostty-vt via zig. Zig's local cache is content-addressed, so
+    // reusing a persistent one only skips work; it cannot change the outputs.
+    let zig_cache_dir = persistent_cache
+        .as_ref()
+        .map_or_else(|| out_dir.join("zig-cache"), PersistentCache::zig_cache_dir);
+    let zig_global_cache_dir = out_dir.join("zig-global-cache");
+
+    let mut build = Command::new(&zig);
     build
         .arg("build")
         .arg("-Demit-lib-vt=true")
@@ -232,11 +251,19 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
     if let Some(platform) = ios_platform {
         extract_xcframework_lib(&install_prefix, platform);
     }
+    if let Some(cached) = &cached_install {
+        store_install(&install_prefix, cached);
+    }
+    emit_install(link_mode, target, &install_prefix, ios_platform.is_some());
+}
 
+/// Checks the installed library and header, then emits Cargo's link and
+/// include metadata for them.
+fn emit_install(link_mode: LinkMode, target: &str, install_prefix: &Path, ios: bool) {
     let lib_dir = install_prefix.join("lib");
     let include_dir = install_prefix.join("include");
-    let search_dirs = library_search_dirs(target, &install_prefix);
-    if ios_platform.is_none() {
+    let search_dirs = library_search_dirs(target, install_prefix);
+    if !ios {
         warn_unused_xcframework(&lib_dir);
     }
 
@@ -423,8 +450,9 @@ fn fetch_ghostty(out_dir: &Path) -> PathBuf {
 
 /// `GHOSTTY_CACHE_DIR`: a directory that outlives Cargo's target directory
 /// (CI caches it between runs). It holds a reusable Ghostty clone
-/// (`ghostty-src`) and Zig's local cache (`zig-cache-<GHOSTTY_COMMIT>`); when
-/// unset, both stay in `OUT_DIR` as before.
+/// (`ghostty-src`), Zig's local cache (`zig-cache-<GHOSTTY_COMMIT>`) and the
+/// installed outputs of finished builds (`install-<GHOSTTY_COMMIT>-<inputs>`);
+/// when unset, clone and Zig cache stay in `OUT_DIR` as before.
 struct PersistentCache {
     dir: PathBuf,
     _lock: std::fs::File,
@@ -445,7 +473,7 @@ impl PersistentCache {
         lock.lock()
             .unwrap_or_else(|e| panic!("failed to lock {}: {e}", lock_path.display()));
         let cache = Self { dir, _lock: lock };
-        cache.remove_stale_zig_caches();
+        cache.remove_stale();
         Some(cache)
     }
 
@@ -455,8 +483,46 @@ impl PersistentCache {
         self.dir.join(format!("zig-cache-{GHOSTTY_COMMIT}"))
     }
 
-    fn remove_stale_zig_caches(&self) {
+    /// Named by everything that selects the Zig build's outputs: this script
+    /// (pinned commit, flags), the Zig release, host, target, optimize mode,
+    /// CPU model and the externally provided NDK and Zig packages.
+    fn install_dir(
+        &self,
+        zig: &OsStr,
+        host: &str,
+        target: &str,
+        optimize: &str,
+        cpu: &str,
+    ) -> PathBuf {
+        let version = Command::new(zig)
+            .arg("version")
+            .output()
+            .unwrap_or_else(|error| panic!("failed to execute zig version: {error}"));
+        assert!(
+            version.status.success(),
+            "zig version failed with status {}",
+            version.status
+        );
+        let mut inputs = DefaultHasher::new();
+        (
+            include_str!("build.rs"),
+            version.stdout,
+            host,
+            target,
+            optimize,
+            cpu,
+            env::var_os("ANDROID_NDK_HOME"),
+            env::var_os("GHOSTTY_ZIG_SYSTEM_DIR"),
+        )
+            .hash(&mut inputs);
+        self.dir
+            .join(format!("install-{GHOSTTY_COMMIT}-{:016x}", inputs.finish()))
+    }
+
+    /// Removes Zig caches and installed outputs of other Ghostty commits.
+    fn remove_stale(&self) {
         let current = self.zig_cache_dir();
+        let installs = format!("install-{GHOSTTY_COMMIT}-");
         let entries = std::fs::read_dir(&self.dir)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", self.dir.display()));
         for entry in entries {
@@ -466,8 +532,11 @@ impl PersistentCache {
             let stale = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("zig-cache"));
-            if stale && path != current {
+                .is_some_and(|name| {
+                    (name.starts_with("zig-cache") && path != current)
+                        || (name.starts_with("install-") && !name.starts_with(&installs))
+                });
+            if stale {
                 remove_dir_if_exists(&path);
             }
         }
@@ -614,26 +683,70 @@ fn extract_xcframework_lib(install_prefix: &Path, platform: &str) {
     }
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) {
-    std::fs::create_dir_all(dst)
-        .unwrap_or_else(|error| panic!("failed to create {}: {error}", dst.display()));
-    let entries = std::fs::read_dir(src)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", src.display()));
-    for entry in entries {
-        let entry = entry
-            .unwrap_or_else(|error| panic!("failed to read entry in {}: {error}", src.display()));
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .unwrap_or_else(|error| panic!("failed to stat {}: {error}", from.display()));
-        if file_type.is_dir() {
-            copy_dir_all(&from, &to);
-        } else {
-            std::fs::copy(&from, &to)
-                .unwrap_or_else(|error| panic!("failed to copy {}: {error}", from.display()));
+/// Copies a finished build's installed outputs back into `OUT_DIR`. An
+/// unreadable entry is ignored and the build runs instead.
+fn restore_install(cached: &Path, install_prefix: &Path) -> bool {
+    if !cached.is_dir() {
+        return false;
+    }
+    remove_dir_if_exists(install_prefix);
+    match try_copy_dir_all(cached, install_prefix) {
+        Ok(()) => true,
+        Err(error) => {
+            println!(
+                "cargo:warning=ignoring cached Ghostty build {}: {error}",
+                cached.display()
+            );
+            remove_dir_if_exists(install_prefix);
+            false
         }
     }
+}
+
+/// Keeps the installed outputs for later runs. The rename publishes only a
+/// complete copy; a failure costs the next run a rebuild, never this build.
+fn store_install(install_prefix: &Path, cached: &Path) {
+    let partial = cached.with_extension("partial");
+    let stored = (|| {
+        for stale in [&partial, cached] {
+            if stale.exists() {
+                std::fs::remove_dir_all(stale)?;
+            }
+        }
+        try_copy_dir_all(install_prefix, &partial)?;
+        std::fs::rename(&partial, cached)
+    })();
+    if let Err(error) = stored {
+        println!(
+            "cargo:warning=could not keep the Ghostty build in {}: {error}",
+            cached.display()
+        );
+    }
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) {
+    try_copy_dir_all(src, dst).unwrap_or_else(|error| {
+        panic!(
+            "failed to copy {} -> {}: {error}",
+            src.display(),
+            dst.display()
+        )
+    });
+}
+
+/// Symbolic links are followed, so linked files and directories become copies.
+fn try_copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        if std::fs::metadata(&from)?.is_dir() {
+            try_copy_dir_all(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn zig_target(target: &str) -> String {

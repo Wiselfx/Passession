@@ -198,7 +198,20 @@ jobs:
         if: contains(matrix.components, 'tailnet') || contains(matrix.components, 'update-helper')
         with:
           go-version-file: packages/tailnet/native/go.mod
-          cache-dependency-path: packages/tailnet/native/go.sum
+          cache: false
+      # setup-go keys its cache on the runner OS and go.sum alone, so Linux,
+      # Android and CI shared one entry holding only its first saver's build
+      # cache. This entry is per target and follows the Go sources, so an
+      # unchanged library is relinked from cached packages.
+      - uses: actions/cache@v6
+        if: contains(matrix.components, 'tailnet') || contains(matrix.components, 'update-helper')
+        with:
+          path: |
+            ${{ runner.temp }}/go-modules
+            ${{ runner.temp }}/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-native-release-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.format == 'aab' && '-aab' || '' }}-${{ hashFiles('packages/tailnet/native/**', 'packages/app-updater/**', 'xtask/src/tailnet.rs', 'xtask/src/app_updater.rs') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-native-release-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.format == 'aab' && '-aab' || '' }}-
       - name: Install Zig 0.15.2
         if: contains(matrix.components, 'app') || contains(matrix.components, 'daemon')
         shell: bash
@@ -240,15 +253,17 @@ jobs:
           echo "GHOSTTY_CACHE_DIR=$RUNNER_TEMP/ghostty-cache" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/$name/zig" version
       # Zig's global cache holds Ghostty's fetched packages; GHOSTTY_CACHE_DIR
-      # holds Zig's content-addressed local cache for this target
-      # (zig-cache-<GHOSTTY_COMMIT>), so a warm run skips the Zig compile.
-      # build.rs pins GHOSTTY_COMMIT, so its hash covers the commit.
+      # holds Zig's local cache for this target (zig-cache-<GHOSTTY_COMMIT>)
+      # and the finished build's installed outputs (install-<GHOSTTY_COMMIT>-*),
+      # which a warm run copies instead of running Zig. build.rs pins
+      # GHOSTTY_COMMIT, so its hash covers the commit.
       - uses: actions/cache@v6
         if: contains(matrix.components, 'app') || contains(matrix.components, 'daemon')
         with:
           path: |
             ${{ runner.temp }}/zig-global-cache
             ${{ runner.temp }}/ghostty-cache/zig-cache-*
+            ${{ runner.temp }}/ghostty-cache/install-*
           key: zig-0.15.2-${{ runner.os }}-${{ runner.arch }}-native-release-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.format == 'aab' && '-aab' || '' }}-${{ hashFiles('packages/terminal/vendor/libghostty-vt-sys/build.rs') }}
           restore-keys: |
             zig-0.15.2-${{ runner.os }}-${{ runner.arch }}-native-release-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.format == 'aab' && '-aab' || '' }}-

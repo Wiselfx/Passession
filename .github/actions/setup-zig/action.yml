@@ -3,7 +3,8 @@ description: >
   Install the official Zig 0.15.2 release for the runner (SHA-256 checked
   against https://ziglang.org/download/index.json) and restore Zig's global
   cache (Ghostty's fetched packages) plus GHOSTTY_CACHE_DIR, where
-  libghostty-vt-sys keeps Zig's local build cache and its Ghostty clone.
+  libghostty-vt-sys keeps Zig's local build cache, the installed outputs of
+  finished builds and its Ghostty clone.
   Replaces mlugg/setup-zig, whose releases still target the deprecated
   Node.js 20 runtime. Native Release inlines the same steps (it builds older
   tags); keep both in sync, including cache paths and key formats, so a
@@ -59,6 +60,7 @@ runs:
         path: |
           ${{ runner.temp }}/zig-global-cache
           ${{ runner.temp }}/ghostty-cache/zig-cache-*
+          ${{ runner.temp }}/ghostty-cache/install-*
         key: zig-0.15.2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key }}-${{ hashFiles('packages/terminal/vendor/libghostty-vt-sys/build.rs') }}
         restore-keys: |
           zig-0.15.2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-key }}-

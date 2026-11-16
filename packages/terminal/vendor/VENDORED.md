@@ -32,6 +32,15 @@ the generated bindings still target Ghostty commit
   member names; code and data sections are identical, and a Linux x86_64
   release-profile binary (debug info stripped) linked against either archive
   is byte-identical.
+- With `GHOSTTY_CACHE_DIR` set and no `GHOSTTY_SOURCE_DIR`, a finished build's
+  installed outputs are also copied to `install-<GHOSTTY_COMMIT>-<inputs>`
+  there, and a later run with a clean `OUT_DIR` copies them back instead of
+  checking the clone and running Zig. `<inputs>` hashes `build.rs`, the output
+  of `zig version`, the host and target triples, the optimize mode, the CPU
+  model and the `ANDROID_NDK_HOME` and `GHOSTTY_ZIG_SYSTEM_DIR` values; host
+  OS updates are not part of it. Entries of other commits are deleted. A copy
+  that fails is reported as a Cargo warning, and the build runs or continues
+  without the cache.
 
 The binding generator binary and its optional dependencies are removed.
 
