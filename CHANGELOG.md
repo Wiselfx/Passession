@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Remove the macOS build's compiler warnings (redundant `unsafe`, unneeded `mut`, iOS-only helpers and Linux/Windows-only session signals compiled on macOS). iOS no longer compiles Android- and desktop-only helpers either.
+
 ## 0.13.28 - 2026-11-16
 
 ### Added
@@ -19,7 +25,7 @@
 - Show the session for a clicked desktop notification even when the main window was closed to the tray, and raise the window through Linux activation tokens and Windows' focus rules.
 - Keep a sent message's long attachment name on one line ending in "…", with its file type badge beside it, instead of spilling below the attachment chip over the message text.
 - Show the desktop tray menu in the app's language instead of always in English.
-- Remove the warnings every CI and release run printed: git's default-branch hint during checkout, a Node `Buffer()` deprecation inside `actions/download-artifact`, Debian packaging notices about the build host's usrmerge loader diversion and about unused links that bundled libraries and the old-glibc Tailscale library keep on purpose, and the macOS build's compiler warnings (redundant `unsafe`, unneeded `mut`, iOS-only helpers and Linux/Windows-only session signals compiled on macOS). iOS no longer compiles Android- and desktop-only helpers either. Missing-symbol warnings from `dpkg-shlibdeps` still appear.
+- Remove the warnings every CI and release run printed: git's default-branch hint during checkout, a Node `Buffer()` deprecation inside `actions/download-artifact`, and Debian packaging notices about the build host's usrmerge loader diversion and about unused links that bundled libraries and the old-glibc Tailscale library keep on purpose. Missing-symbol warnings from `dpkg-shlibdeps` still appear.
 
 ## 0.13.27 - 2026-11-16
 
