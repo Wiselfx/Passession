@@ -2,7 +2,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 fn main() {
-    let mut argv: Vec<String> = std::env::args().collect();
+    let argv: Vec<String> = std::env::args().collect();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if let Err(error) = paseo_gui_platform::desktop::component_store::bootstrap_process(&argv) {
         if argv
@@ -19,6 +19,8 @@ fn main() {
     // directory; launchers (desktop entries, `paseo://` handlers, shortcuts, updater
     // relaunches) do not set one. Relative path arguments (`paseo-sessions ./project`) are
     // made absolute against the original directory first.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let mut argv = argv;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if option_env!("MAKEPAD_PACKAGE_DIR").is_some() {
         if let Ok(original) = std::env::current_dir() {

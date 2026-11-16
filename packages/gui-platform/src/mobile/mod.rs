@@ -34,6 +34,7 @@ pub(crate) enum MobileSignal {
     Insets(SafeInsets),
     AudioInterrupted,
     /// Push credentials changed (FCM token refresh).
+    #[cfg(target_os = "android")]
     TokenRefreshed,
 }
 
@@ -154,6 +155,7 @@ pub(crate) fn handle_event(
                 post_event(PlatformEvent::Insets(insets));
             }
             MobileSignal::AudioInterrupted => state.audio.interrupted(cx),
+            #[cfg(target_os = "android")]
             MobileSignal::TokenRefreshed => request_notifications(shared, false, None),
         }
     }
@@ -424,8 +426,9 @@ async fn sync_push(shared: &Arc<Shared>, permission: PermissionState) -> Result<
     Ok(())
 }
 
-/// Expo's FCM transport stores application data as JSON in `body`; native
-/// APNs messages expose it directly (original `mobileNotificationData`).
+/// Expo's FCM transport stores application data as JSON in `body`
+/// (original `mobileNotificationData`).
+#[cfg(target_os = "android")]
 pub(crate) fn notification_data(raw: &Map<String, Value>) -> Map<String, Value> {
     match raw.get("body") {
         Some(Value::String(body)) => match serde_json::from_str::<Value>(body) {

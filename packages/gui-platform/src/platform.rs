@@ -124,6 +124,7 @@ impl Shared {
         self.runtime.spawn_blocking(work);
     }
     /// Finishes `done` with the result of blocking `work` on a worker thread.
+    #[cfg(not(target_os = "ios"))]
     pub fn complete_blocking<F>(&self, done: Completion, work: F)
     where
         F: FnOnce() -> Result<PlatformValue, PlatformError> + Send + 'static,

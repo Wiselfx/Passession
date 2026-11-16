@@ -42,6 +42,7 @@ pub(crate) fn file_url(path: &std::path::Path) -> Id {
     unsafe { msg_send![class!(NSURL), fileURLWithPath: ns_string(&path.display().to_string())] }
 }
 
+#[cfg(target_os = "ios")]
 pub(crate) fn url(text: &str) -> Id {
     unsafe { msg_send![class!(NSURL), URLWithString: ns_string(text)] }
 }
@@ -151,7 +152,7 @@ pub(crate) unsafe fn define_class(
     if let Some(existing) = AnyClass::get(name) {
         return existing;
     }
-    let mut builder =
+    let builder =
         objc2::runtime::ClassBuilder::new(name, superclass).expect("class name collision");
     let class = builder.register();
     for (selector, imp, types) in methods {
@@ -168,10 +169,11 @@ pub(crate) unsafe fn define_class(
     class
 }
 
-/// Casts an `extern "C"` function to the runtime IMP type.
+/// Casts an `extern "C"` function to the runtime IMP type. Expands inside the
+/// caller's `unsafe` block, which registering the method needs anyway.
 macro_rules! imp {
     ($function:expr) => {
-        unsafe { std::mem::transmute::<*const (), objc2::runtime::Imp>($function as *const ()) }
+        std::mem::transmute::<*const (), objc2::runtime::Imp>($function as *const ())
     };
 }
 pub(crate) use imp;
@@ -219,6 +221,7 @@ pub(crate) fn preferred_language() -> String {
 }
 
 /// `NSData` → bytes.
+#[cfg(target_os = "ios")]
 pub(crate) fn data_bytes(data: Id) -> Vec<u8> {
     if data.is_null() {
         return Vec::new();
@@ -234,6 +237,7 @@ pub(crate) fn data_bytes(data: Id) -> Vec<u8> {
 }
 
 /// Autoreleased `NSData` copy of `bytes`.
+#[cfg(target_os = "ios")]
 pub(crate) fn ns_data(bytes: &[u8]) -> Id {
     unsafe {
         msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() as *const c_void, length: bytes.len()]
@@ -361,6 +365,7 @@ pub(crate) mod user_notifications {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn action_identifier(response: Id) -> Option<String> {
         unsafe { rust_string(msg_send![response, actionIdentifier]) }
     }

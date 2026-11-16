@@ -70,7 +70,10 @@ pub(crate) struct Activation {
 #[derive(Debug, Clone)]
 pub(crate) enum NativeSignal {
     Activation(Activation),
+    /// A cancellable end-of-session query (Linux session managers, Windows).
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     SessionEnding,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     SessionEndingCancelled,
     /// Linux session managers and macOS power-off; Windows ends at `SessionEnding`.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -527,10 +530,12 @@ fn handle_signal(
     let desktop = &shared.desktop;
     match signal {
         NativeSignal::Activation(activation) => activate(shared, state, activation),
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         NativeSignal::SessionEnding => {
             // A cancellable OS query is intent, not consent to stop ongoing sessions.
             desktop.quit.lock().unwrap().quitting = true;
         }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         NativeSignal::SessionEndingCancelled => {
             let mut quit = desktop.quit.lock().unwrap();
             if !quit.prepared {
