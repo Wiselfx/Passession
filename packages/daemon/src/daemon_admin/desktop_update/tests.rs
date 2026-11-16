@@ -25,6 +25,7 @@ fn helper(phase: &str) -> Value {
         "message":"x".repeat(4096),"nonce":"private-nonce"})
 }
 
+#[cfg(unix)]
 fn helper_request(home: &Path) -> Value {
     let targets = identities()
         .as_object()

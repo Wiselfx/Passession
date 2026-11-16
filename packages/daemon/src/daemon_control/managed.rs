@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -2024,8 +2024,7 @@ pub(crate) async fn start_owner(
                 .env_clear()
                 .envs(launch.environment.iter().map(|(key, value)| (key, value)))
                 .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
+                .stdout(Stdio::null());
             #[cfg(windows)]
             command.creation_flags(0x08000000); // CREATE_NO_WINDOW
             #[cfg(target_os = "linux")]
@@ -2040,23 +2039,49 @@ pub(crate) async fn start_owner(
             if let Some(directory) = &launch.working_directory {
                 command.current_dir(directory);
             }
-            let output = tokio::time::timeout(deadline + Duration::from_secs(10), command.output())
-                .await
-                .map_err(|_| anyhow!("Standalone launcher did not finish before its deadline"))?
-                .context("Cannot run the managed control entry")?;
-            if !output.status.success() {
-                return Err(error(
-                    "DAEMON_START_FAILED",
-                    format!(
-                        "Managed launcher failed ({}): {}",
-                        output.status,
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    ),
-                ));
-            }
-            Ok(())
+            run_standalone_launcher(
+                &mut command,
+                installation.root(),
+                deadline + Duration::from_secs(10),
+            )
+            .await
         }
     }
+}
+
+async fn run_standalone_launcher(
+    command: &mut Command,
+    directory: &Path,
+    deadline: Duration,
+) -> Result<()> {
+    // Descendants can retain stderr after the launcher exits, especially through
+    // inherited Windows handles. A pipe would make output() wait for their EOF.
+    let mut stderr = tempfile::NamedTempFile::new_in(directory)
+        .context("Cannot create managed launcher diagnostics")?;
+    // Reopen instead of cloning so reading cannot seek a descendant's write cursor.
+    // Drop requests removal; Windows defers deletion until inherited handles close.
+    command.stderr(
+        stderr
+            .reopen()
+            .context("Cannot open managed launcher diagnostics")?,
+    );
+    let status = tokio::time::timeout(deadline, command.status())
+        .await
+        .map_err(|_| anyhow!("Standalone launcher did not finish before its deadline"))?
+        .context("Cannot run the managed control entry")?;
+    if !status.success() {
+        let length = stderr.as_file().metadata()?.len();
+        let mut output = Vec::new();
+        stderr.as_file_mut().take(length).read_to_end(&mut output)?;
+        return Err(error(
+            "DAEMON_START_FAILED",
+            format!(
+                "Managed launcher failed ({status}): {}",
+                String::from_utf8_lossy(&output).trim()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Identity expected after `restore_service`: the adopted runtime's bytes at
@@ -2929,6 +2954,106 @@ mod tests {
         assert!(installation.root().join("staging/op-1").exists());
         assert!(!installation.root().join("staging/op-0").exists());
         assert_eq!(removed.len(), 2);
+    }
+
+    const LAUNCHER_FIXTURE: &str =
+        "daemon_control::managed::tests::standalone_launcher_process_fixture";
+
+    fn launcher_fixture_command() -> std::process::Command {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--ignored", "--exact", LAUNCHER_FIXTURE, "--nocapture"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null());
+        command
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture for standalone launcher completion"]
+    fn standalone_launcher_process_fixture() {
+        let address = std::env::var("PASEO_LAUNCHER_FIXTURE_ADDRESS").unwrap();
+        if std::env::var_os("PASEO_LAUNCHER_FIXTURE_DESCENDANT").is_some() {
+            let mut connection = std::net::TcpStream::connect(address).unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            connection.write_all(b"ready").unwrap();
+            let mut release = [0];
+            connection.read_exact(&mut release).unwrap();
+            // The descendant still owns a usable stderr after the launcher and
+            // its caller finish; neither success nor failure may wait for EOF.
+            std::io::stderr()
+                .write_all(b"descendant released\n")
+                .unwrap();
+            std::process::exit(0);
+        }
+        let _descendant = launcher_fixture_command()
+            .env("PASEO_LAUNCHER_FIXTURE_DESCENDANT", "1")
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        eprintln!("launcher fixture diagnostic");
+        std::process::exit(
+            std::env::var("PASEO_LAUNCHER_FIXTURE_EXIT")
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_launcher_finishes_with_inherited_stderr_and_preserves_errors() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        for exit in [0, 23] {
+            let base = tempfile::tempdir().unwrap();
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let mut launcher = launcher_fixture_command();
+            launcher
+                .env(
+                    "PASEO_LAUNCHER_FIXTURE_ADDRESS",
+                    listener.local_addr().unwrap().to_string(),
+                )
+                .env("PASEO_LAUNCHER_FIXTURE_EXIT", exit.to_string())
+                .env_remove("PASEO_LAUNCHER_FIXTURE_DESCENDANT");
+            let mut launcher = Command::from(launcher);
+            let deadline = Duration::from_secs(15);
+            let (result, connection) = tokio::join!(
+                run_standalone_launcher(&mut launcher, base.path(), deadline),
+                tokio::time::timeout(deadline, listener.accept()),
+            );
+            let (mut descendant, _) = connection.unwrap().unwrap();
+            let mut ready = [0; 5];
+            tokio::time::timeout(deadline, descendant.read_exact(&mut ready))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&ready, b"ready");
+            // Release only after the launcher has completed. A pipe-based wait
+            // times out first, even though the launcher itself already exited.
+            descendant.write_all(&[1]).await.unwrap();
+            let mut remainder = Vec::new();
+            tokio::time::timeout(deadline, descendant.read_to_end(&mut remainder))
+                .await
+                .unwrap()
+                .unwrap();
+            if exit == 0 {
+                result.unwrap();
+            } else {
+                let failure = result
+                    .unwrap_err()
+                    .downcast::<super::super::DaemonInstanceError>()
+                    .unwrap();
+                assert_eq!(failure.code, "DAEMON_START_FAILED");
+                assert!(failure.message.contains("23"), "{failure}");
+                assert!(
+                    failure.message.contains("launcher fixture diagnostic"),
+                    "{failure}"
+                );
+            }
+        }
     }
 
     #[test]

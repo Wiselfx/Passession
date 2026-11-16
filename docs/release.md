@@ -94,7 +94,7 @@ The complete target inventory has **eight targets**: Linux x64/arm64, macOS x64/
 
 `windows-com-smoke` runs the real COM/native-helper checks when a Windows app compilation is planned. Publication requires the applicable check to pass; it may be skipped when no affected Windows app is built.
 
-When a Windows daemon is built, its native job also runs the runtime-copy regression with ordinary and read-only source files before recording artifacts. Linux tests and cross-compilation alone do not verify Windows flush-handle permissions.
+When a Windows daemon is built, its native job runs two regressions before recording artifacts: runtime copies preserve ordinary and read-only source files, and standalone launchers return their own exit status and diagnostics while a descendant still holds stderr open. These cover the copy and launcher-completion boundaries used by activation and rollback, not a complete live-daemon update. Linux tests and cross-compilation alone do not verify Windows flush-handle permissions or handle inheritance.
 
 Caches contain inputs and intermediate state, not release authority. Newly compiled artifacts are recorded against the resolved source; unchanged artifacts are reused only through verified immutable origin references and preserve their original source/input identities:
 
