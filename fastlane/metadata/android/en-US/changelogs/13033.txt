@@ -1,0 +1,4 @@
+Changed
+- Show what an OMP or Pi extension posts while its slash command runs as that command's reply in the conversation, after the command itself, where it can be read, selected and copied without opening a tool row. A message posted once the agent has started keeps its tool row.
+
+Full notes: https://github.com/emotionbug/Passession/releases
