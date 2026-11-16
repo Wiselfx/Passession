@@ -29,6 +29,12 @@ lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
 
+[profile.release.package.paseo-daemon]
+codegen-units = 16
+
+[profile.release.package.paseo-gui]
+codegen-units = 16
+
 [profile.dev]
 debug = 1
 

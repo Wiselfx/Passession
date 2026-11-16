@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Use 16 code generation units for the daemon and GUI release crates while retaining Thin LTO and the existing optimization settings for other crates.
+
 ## 0.13.31 - 2026-11-16
 
 ### Changed
