@@ -29,11 +29,14 @@ lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
 
+# As single units the two largest crates dominated release compile time. With
+# four build jobs, four units halved the daemon's compile and link; 8 and 16
+# units were slower and produced larger binaries.
 [profile.release.package.paseo-daemon]
-codegen-units = 16
+codegen-units = 4
 
 [profile.release.package.paseo-gui]
-codegen-units = 16
+codegen-units = 4
 
 [profile.dev]
 debug = 1

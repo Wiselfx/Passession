@@ -35,7 +35,7 @@ For direct Rust iteration, `cargo build --locked -p paseo-daemon --bin paseo` co
 
 `cargo run -p paseo-gui --bin paseo-sessions` runs the client from the source tree: Makepad then loads fonts and icons from each crate's `resources/` directory through absolute build paths. `cargo xtask dev app` instead runs the staged bundle exactly as it is packaged (resources under `makepad/`, bundled daemon runtime), so packaging mistakes show up in development.
 
-`cargo xtask build-daemon` and `cargo xtask dev app` default to `dev-fast`: optimization level 1, incremental compilation, 256 codegen units and no LTO. Use `build-daemon --profile debug` or `dev app --profile debug` for unoptimized debugging. `build-gui` still defaults to `release`; `--profile dev-fast` selects the iterative profile explicitly. Release keeps thin LTO and one codegen unit. None of these profiles grants publication identity: `PASEO_NATIVE_RELEASE=1` remains a separate validated choice; see [release](release.md).
+`cargo xtask build-daemon` and `cargo xtask dev app` default to `dev-fast`: optimization level 1, incremental compilation, 256 codegen units and no LTO. Use `build-daemon --profile debug` or `dev app --profile debug` for unoptimized debugging. `build-gui` still defaults to `release`; `--profile dev-fast` selects the iterative profile explicitly. Release keeps thin LTO with one codegen unit per crate, except four for the daemon and GUI crates. None of these profiles grants publication identity: `PASEO_NATIVE_RELEASE=1` remains a separate validated choice; see [release](release.md).
 
 `paseo daemon status` reports daemon liveness without running external provider/model discovery.
 Its `providers` list is a cached observation (`providersCached: true`); `available` is `null`
