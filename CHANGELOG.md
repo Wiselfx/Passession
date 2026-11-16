@@ -10,6 +10,8 @@
 - Decode Makepad PNG, animated PNG and JPEG images with the `image` crate the client already uses instead of Makepad's zune forks; animated PNG frames arrive composited by the decoder. Makepad text uses the standard `rustybuzz` 0.20 and `ttf-parser` 0.25 instead of Makepad's forks, its vector crate shares the client's `resvg` 0.45, and its glyph images use `png` 0.18.
 - Update shared dependencies: `tokio-tungstenite` 0.29, `rand` 0.9, `toml` 1 (xtask), `nix` 0.31, `pulldown-cmark` 0.13 and `windows` 0.61 in Makepad's Windows backend. The Tailscale state lease uses the standard library's `File::try_lock` instead of `fs2`.
 - Trim unused dependency features: the daemon parses HTML with `html5ever` and `ego-tree` directly, dropping only scraper's CSS selector stack; native file dialogs keep the XDG portal without rfd's unused Wayland parent-window support, so Linux builds no longer need Wayland development files; `sysinfo` builds only its system/process module; ZIP keeps the zlib-rs deflate backend without the unused Zopfli encoder; and `which` 8 drops `winsafe` and `env_home`.
+- Share `nix` 0.31 and `winreg` 0.56 with portable-pty, and `png` 0.18 with tiny-skia. PTY behavior and rasterization remain unchanged; PNG encoder output may differ while preserving decoded pixels.
+- Drop unused node-semver diagnostic rendering and daemon logging dependencies, retaining Node-style version ranges, log forwarding, JSON output and credential redaction. Protocol ciphers use only detached in-place operations; key and nonce generation keep the existing OS randomness path.
 
 ## 0.13.31 - 2026-11-16
 

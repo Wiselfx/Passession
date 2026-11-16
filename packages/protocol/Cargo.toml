@@ -8,8 +8,9 @@ description = "Paseo wire contracts, shared metadata, binary frames and endpoint
 
 [dependencies]
 base64 = "0.22"
-chacha20poly1305 = "0.10"
-crypto_secretbox = { version = "0.1", features = ["salsa20"] }
+# Keys/nonces come from crypto::keys; encryption uses detached in-place APIs.
+chacha20poly1305 = { version = "0.10", default-features = false }
+crypto_secretbox = { version = "0.1", default-features = false, features = ["salsa20"] }
 curve25519-dalek = "4"
 hmac = "0.12"
 jsonschema = { version = "0.60.2", default-features = false }

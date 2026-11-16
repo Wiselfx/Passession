@@ -15,7 +15,7 @@ members = [
     "packages/gui-platform",
     "packages/gui",
 ]
-exclude = ["packages/gui-platform/vendor", "packages/gui/vendor", "packages/terminal/vendor"]
+exclude = ["packages/gui-platform/vendor", "packages/gui/vendor", "packages/terminal/vendor", "packages/daemon/vendor"]
 resolver = "3"
 
 [workspace.package]
@@ -80,5 +80,11 @@ makepad-vector = { path = "packages/gui-platform/vendor/makepad-vector" }
 zbus-secret-service-keyring-store = { path = "packages/gui-platform/vendor/zbus-secret-service-keyring-store" }
 # libghostty-vt-sys build-script patch: packages/terminal/vendor/VENDORED.md.
 libghostty-vt-sys = { path = "packages/terminal/vendor/libghostty-vt-sys" }
+# Share the workspace nix/winreg: packages/terminal/vendor/portable-pty/VENDORED.md.
+portable-pty = { path = "packages/terminal/vendor/portable-pty" }
 # Preserve authored sequence-event order when laying out Mermaid groups.
 mermaid-rs-renderer = { path = "packages/gui/vendor/mermaid-rs-renderer" }
+# Share PNG decoding with the client: packages/gui/vendor/tiny-skia/VENDORED.md.
+tiny-skia = { path = "packages/gui/vendor/tiny-skia" }
+# Drop unused diagnostic rendering: packages/daemon/vendor/node-semver/VENDORED.md.
+node-semver = { path = "packages/daemon/vendor/node-semver" }
