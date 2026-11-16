@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.13.28 - 2026-11-16
 
 ### Added
 
-- Pause, resume or stop Embedded Tailscale outside the app window. Android keeps it in a foreground service whose ongoing notification offers those actions, so the app is not frozen in the background. Linux, macOS and Windows show the state and the same actions in the tray menu. iOS keeps the in-app controls; it offers no background mode for the connection.
+- Pause, resume or stop Embedded Tailscale outside the app window. Android keeps it in a foreground service whose ongoing notification offers those actions, so the app is not frozen in the background. Linux, macOS and Windows show the state and the same actions in the tray menu. iOS keeps the in-app controls and holds the connection through the short grace iOS allows after you switch apps, so brief switches no longer disconnect hosts.
+- Ask for OS permissions where they are needed instead of at launch. Notifications are explained and requested after the first host connects (and when Embedded Tailscale is turned on Android); the QR scanner explains camera access before the system prompt. A permanently refused permission offers an "Open settings" button that opens the right system screen on Android, iOS, macOS and Windows, and the app rechecks when you come back. Settings › Notifications now works on phones, failed notifications show one toast with a fix, the Android Tailscale page points out hidden notifications or battery restrictions, and iOS connection failures name the Local Network permission.
 
 ### Changed
 
@@ -14,8 +15,11 @@
 ### Fixed
 
 - Keep Embedded Tailscale connected when the app regains focus. Returning to the window no longer restarts a running connection and drops every host using it. A short `Starting` state or one slow status check no longer disconnects those hosts, and a slow shutdown no longer blocks the next start.
-- Open a tapped Android notification in the existing app instead of a second window. The app now runs as one activity, and a stale activity can no longer shut down the live one.
+- Open a tapped Android notification in the existing app instead of a second window, and open `paseo://` links in the app's own task rather than inside the browser's. The app runs as one activity, a stale activity can no longer shut down the live one, and returning through the launcher still keeps an open file picker, share sheet or camera.
 - Show the session for a clicked desktop notification even when the main window was closed to the tray, and raise the window through Linux activation tokens and Windows' focus rules.
+- Keep a sent message's long attachment name on one line ending in "…", with its file type badge beside it, instead of spilling below the attachment chip over the message text.
+- Show the desktop tray menu in the app's language instead of always in English.
+- Remove the warnings every CI and release run printed: git's default-branch hint during checkout, a Node `Buffer()` deprecation inside `actions/download-artifact`, and Debian packaging notices about the build host's usrmerge loader diversion and about unused links that bundled libraries and the old-glibc Tailscale library keep on purpose. Missing-symbol warnings from `dpkg-shlibdeps` still appear.
 
 ## 0.13.27 - 2026-11-16
 

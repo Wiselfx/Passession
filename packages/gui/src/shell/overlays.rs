@@ -172,6 +172,8 @@ impl Modal {
 pub struct Toast {
     pub message: String,
     pub error: bool,
+    /// A button that fixes what the message reports.
+    pub action: Option<ToastAction>,
     pub timer: Timer,
     /// Seconds the toast still shows once its timer (re)started at `started`.
     remaining: f64,
@@ -180,6 +182,22 @@ pub struct Toast {
     paused: bool,
     /// Where it was last drawn (dismiss and hover target).
     rect: Rect,
+    /// Where its action button was last drawn.
+    action_rect: Rect,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToastAction {
+    pub label: String,
+    pub fix: crate::shell::permissions::Fix,
+}
+
+/// A press on the toast.
+enum ToastPress {
+    /// Not on the toast (or no press).
+    None,
+    Dismissed,
+    Action(crate::shell::permissions::Fix),
 }
 
 #[derive(Default)]
@@ -446,9 +464,10 @@ pub fn toast_duration(text: &str, error: bool) -> f64 {
     (base + 0.06 * chars).min(cap)
 }
 
-/// Whether a new toast may take the slot: an unexpired error is never replaced by an info toast.
+/// Whether a new toast may take the slot: an unexpired error, or a toast offering an action,
+/// is never replaced by an info toast.
 fn toast_replaces(current: Option<&Toast>, error: bool) -> bool {
-    error || !current.is_some_and(|t| t.error)
+    error || !current.is_some_and(|t| t.error || t.action.is_some())
 }
 
 pub fn toast(overlays: &mut Overlays, cx: &mut Cx, message: String, error: bool) {
@@ -460,24 +479,45 @@ pub fn toast(overlays: &mut Overlays, cx: &mut Cx, message: String, error: bool)
         overlays.queued_toast = Some(text);
         return;
     }
-    show_toast(overlays, cx, text, error);
+    show_toast(overlays, cx, text, error, None);
 }
 
-fn show_toast(overlays: &mut Overlays, cx: &mut Cx, text: String, error: bool) {
+/// A toast whose button fixes what it reports; it stays as long as an error toast.
+pub fn toast_with_action(
+    overlays: &mut Overlays,
+    cx: &mut Cx,
+    message: String,
+    action: Option<ToastAction>,
+) {
+    let text = message.trim().to_string();
+    if !text.is_empty() {
+        show_toast(overlays, cx, text, false, action);
+    }
+}
+
+fn show_toast(
+    overlays: &mut Overlays,
+    cx: &mut Cx,
+    text: String,
+    error: bool,
+    action: Option<ToastAction>,
+) {
     if let Some(previous) = overlays.toast.take() {
         cx.stop_timer(previous.timer);
     }
-    let remaining = toast_duration(&text, error);
+    let remaining = toast_duration(&text, error || action.is_some());
     let timer = cx.start_timeout(remaining);
     let started = cx.seconds_since_app_start();
     overlays.toast = Some(Toast {
         message: text,
         error,
+        action,
         timer,
         remaining,
         started,
         paused: false,
         rect: Rect::default(),
+        action_rect: Rect::default(),
     });
     cx.redraw_all();
 }
@@ -488,40 +528,49 @@ fn dismiss_toast(overlays: &mut Overlays, cx: &mut Cx) {
         cx.stop_timer(toast.timer);
     }
     match overlays.queued_toast.take() {
-        Some(next) => show_toast(overlays, cx, next, false),
+        Some(next) => show_toast(overlays, cx, next, false, None),
         None => cx.redraw_all(),
     }
 }
 
-/// Pointer input on the toast: hovering pauses its timer, a click or tap dismisses it. Returns
-/// true when the event was the dismissing press (it must not reach the content below).
-fn toast_input(overlays: &mut Overlays, cx: &mut Cx, event: &Event) -> bool {
+/// Pointer input on the toast: hovering pauses its timer, a click or tap dismisses it or runs
+/// its action. A press on the toast must not reach the content below.
+fn toast_input(overlays: &mut Overlays, cx: &mut Cx, event: &Event) -> ToastPress {
     let Some(toast) = overlays.toast.as_mut() else {
-        return false;
+        return ToastPress::None;
     };
-    let (inside, press) = match event {
-        Event::MouseMove(e) => (toast.rect.contains(e.abs), false),
-        Event::MouseLeave(_) => (false, false),
-        Event::MouseDown(e) => (toast.rect.contains(e.abs), true),
+    let (at, press) = match event {
+        Event::MouseMove(e) => (Some(e.abs), false),
+        Event::MouseLeave(_) => (None, false),
+        Event::MouseDown(e) => (Some(e.abs), true),
         Event::TouchUpdate(e) => {
             let started = e
                 .touches
                 .iter()
                 .find(|t| matches!(t.state, makepad_widgets::event::TouchState::Start));
             match started {
-                Some(touch) => (toast.rect.contains(touch.abs), true),
-                None => return false,
+                Some(touch) => (Some(touch.abs), true),
+                None => return ToastPress::None,
             }
         }
-        _ => return false,
+        _ => return ToastPress::None,
     };
+    let inside = at.is_some_and(|at| toast.rect.contains(at));
     if press {
         if !inside {
-            return false;
+            return ToastPress::None;
         }
+        let action = toast
+            .action
+            .as_ref()
+            .filter(|_| at.is_some_and(|at| toast.action_rect.contains(at)))
+            .map(|action| action.fix);
         dismiss_toast(overlays, cx);
         cx.sweep_lock(overlays.area);
-        return true;
+        return match action {
+            Some(fix) => ToastPress::Action(fix),
+            None => ToastPress::Dismissed,
+        };
     }
     let now = cx.seconds_since_app_start();
     if inside && !toast.paused {
@@ -535,7 +584,7 @@ fn toast_input(overlays: &mut Overlays, cx: &mut Cx, event: &Event) -> bool {
         toast.started = now;
         toast.paused = false;
     }
-    false
+    ToastPress::None
 }
 
 pub fn handle_timers(overlays: &mut Overlays, cx: &mut Cx, event: &Event) {
@@ -2291,28 +2340,35 @@ fn draw_full_screen_sheet(
 }
 
 fn draw_toast(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
-    let Some((message, error)) = shell
-        .data
-        .overlays
-        .toast
-        .as_ref()
-        .map(|t| (t.message.clone(), t.error))
-    else {
+    let Some((message, error, action)) = shell.data.overlays.toast.as_ref().map(|t| {
+        let action = t.action.as_ref().map(|a| a.label.clone());
+        (t.message.clone(), t.error, action)
+    }) else {
         return;
     };
     let insets = crate::shell::platform::safe_insets();
     let mut ui = overlay_ui(shell);
     let p = ui.p;
     let spec = ui.spec(Font::Regular, 14.0, p.foreground);
+    let action_spec = ui.spec(Font::Medium, 14.0, p.accent);
     // Original toast-host pill: 92% wide up to 480, under the header (below the status bar
-    // and notch on phones), surface0 + border, a dismiss glyph at the end.
+    // and notch on phones), surface0 + border, a dismiss glyph at the end. An action button
+    // sits before the glyph; its press target spans the toast's height (44px at least).
     let w = (window.size.x * 0.92).min(480.0);
-    let text_w = (w - 36.0 - 36.0).max(40.0);
-    let h = ui
+    let action_w = action
+        .as_ref()
+        .map_or(0.0, |label| ui.measure(cx, action_spec, label) + 24.0);
+    let action_gap = if action.is_some() {
+        action_w + 8.0
+    } else {
+        0.0
+    };
+    let text_w = (w - 36.0 - 36.0 - action_gap).max(40.0);
+    let text_h = ui
         .painter
         .paragraph_height(cx, text_w, spec, &message)
-        .max(20.0)
-        + 20.0;
+        .max(20.0);
+    let h = (text_h + 20.0).max(if action.is_some() { 44.0 } else { 0.0 });
     let top = window.pos.y + insets.top + if ui.compact { 72.0 } else { 44.0 };
     let r = rect(window.pos.x + (window.size.x - w) * 0.5, top, w, h);
     let border = if error { p.danger } else { p.border };
@@ -2327,11 +2383,22 @@ fn draw_toast(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
     );
     ui.painter.paragraph(
         cx,
-        dvec2(r.pos.x + 36.0, r.pos.y + 10.0),
+        dvec2(r.pos.x + 36.0, r.pos.y + (h - text_h) * 0.5),
         text_w,
         spec,
         &message,
     );
+    let action_rect = rect(r.pos.x + r.size.x - 36.0 - action_w, r.pos.y, action_w, h);
+    if let Some(label) = &action {
+        let pill = rect(
+            action_rect.pos.x,
+            r.pos.y + (h - 32.0) * 0.5,
+            action_w,
+            32.0,
+        );
+        ui.painter.outline(cx, pill, p.surface2, p.border, 1.0, 8.0);
+        ui.text_centered(cx, pill, action_spec, label);
+    }
     ui.icon(
         cx,
         rect(
@@ -2346,6 +2413,7 @@ fn draw_toast(shell: &mut PaseoShell, cx: &mut Cx2d, window: Rect) {
     );
     if let Some(toast) = shell.data.overlays.toast.as_mut() {
         toast.rect = r;
+        toast.action_rect = action_rect;
     }
 }
 
@@ -2408,8 +2476,13 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
     if stale != area {
         cx.sweep_unlock(stale);
     }
-    if toast_input(&mut shell.data.overlays, cx, event) {
-        return true;
+    match toast_input(&mut shell.data.overlays, cx, event) {
+        ToastPress::None => {}
+        ToastPress::Dismissed => return true,
+        ToastPress::Action(fix) => {
+            crate::shell::permissions::fix(fix);
+            return true;
+        }
     }
     let explorer_open = shell.data.compact && shell.data.chrome.explorer_position > 0.0;
     if !shell.data.overlays.is_modal() && !explorer_open {
@@ -3185,11 +3258,13 @@ mod tests {
         let toast = |error: bool| Toast {
             message: "m".into(),
             error,
+            action: None,
             timer: Timer::empty(),
             remaining: 1.0,
             started: 0.0,
             paused: false,
             rect: Rect::default(),
+            action_rect: Rect::default(),
         };
         let (error, info) = (toast(true), toast(false));
         assert!(!toast_replaces(Some(&error), false));

@@ -73,6 +73,17 @@ public final class PaseoTailnetService extends Service {
         if (deferred && desired != null && instance == null && !starting) start(context);
     }
 
+    /**
+     * Re-posts the advertised notification. Android does not show a foreground
+     * service notification posted while POST_NOTIFICATIONS was missing, even
+     * after it is granted; posting again makes it appear.
+     */
+    static void refresh() {
+        if (instance != null && desired != null && instance.foreground) {
+            instance.post(instance.build(desired, true));
+        }
+    }
+
     /** The final native shutdown: withdraw the presence for the rest of the process. */
     static void close() {
         desired = null;
@@ -189,8 +200,9 @@ public final class PaseoTailnetService extends Service {
     private Notification build(JSONObject presence, boolean actions) {
         String title = presence.optString("title");
         ensureChannel(title.isEmpty() ? CHANNEL_FALLBACK : title);
+        // No payload to navigate to: return to the app as the launcher does.
         PendingIntent open = PendingIntent.getActivity(this, REQUEST_OPEN,
-                PaseoNotifications.openApp(this, "tailnet"),
+                PaseoNotifications.resumeApp(this),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.paseo_notification_icon)

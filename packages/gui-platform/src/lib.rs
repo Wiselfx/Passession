@@ -60,9 +60,10 @@ pub(crate) mod native {
 }
 
 pub use action::{
-    ClipboardContent, ClipboardImage, CloseDecision, EditorTarget, PermissionState, PickedFile,
-    PlatformAction, PlatformError, PlatformEvent, PlatformRequestId, PlatformRoute, PlatformValue,
-    QuitReason, SafeInsets, TailnetControl, TailnetPresence, TailnetPresenceState,
+    ClipboardContent, ClipboardImage, CloseDecision, EditorTarget, PermissionSettings,
+    PermissionState, PickedFile, PlatformAction, PlatformError, PlatformEvent, PlatformRequestId,
+    PlatformRoute, PlatformValue, QuitReason, SafeInsets, TailnetControl, TailnetPresence,
+    TailnetPresenceState,
 };
 pub use notification_policy::{AttentionView, NotificationRequest};
 pub use platform::{

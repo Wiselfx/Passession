@@ -128,9 +128,9 @@ impl MobileShared {
 
 pub(crate) fn start(cx: &mut Cx, shared: &Arc<Shared>, state: &mut PlatformState) {
     crate::native::start_services(cx, shared, state);
-    // Original `_start`: links first (they do not depend on push provisioning),
-    // then the permission request.
-    request_notifications(shared, true, None);
+    // Links first (they do not depend on push provisioning), then a silent
+    // push sync. The permission is only asked from in-context GUI flows.
+    request_notifications(shared, false, None);
 }
 
 pub(crate) fn handle_event(
@@ -324,56 +324,54 @@ fn saved_token_hosts(shared: &Shared) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Original `requestNotifications`: permission, device token, Expo exchange,
-/// retirement of previous subscriptions, registration on connected hosts.
+/// Reads the notification permission (`request` shows the OS prompt when it
+/// still can) and finishes `done` with it, then syncs push: device token, Expo
+/// exchange, retirement of previous subscriptions, registration on connected
+/// hosts. Builds without push credentials keep local notifications working.
 pub(crate) fn request_notifications(
     shared: &Arc<Shared>,
     request_permission: bool,
     done: Option<Completion>,
 ) {
-    {
-        let mut push = shared.mobile.push.lock().unwrap();
-        if push.busy {
-            if let Some(done) = done {
-                done.ok(PlatformValue::None);
-            }
-            return;
-        }
-        push.busy = true;
-    }
     let task_shared = shared.clone();
     shared.spawn(async move {
-        let result = request_inner(&task_shared, request_permission).await;
-        task_shared.mobile.push.lock().unwrap().busy = false;
-        match result {
-            Ok(value) => {
-                if let Some(done) = done {
-                    done.ok(value);
-                }
-            }
+        let permission = match crate::native::notification_permission(request_permission).await {
+            Ok(permission) => permission,
             Err(error) => {
-                task_shared.mobile.report(error.message.clone());
-                if let Some(done) = done {
-                    done.fail(error);
+                match done {
+                    Some(done) => done.fail(error),
+                    None => task_shared.mobile.report(error.message),
                 }
+                return;
             }
+        };
+        if let Some(done) = done {
+            done.ok(PlatformValue::Permission(permission));
+        }
+        {
+            let mut push = task_shared.mobile.push.lock().unwrap();
+            if push.busy {
+                return;
+            }
+            push.busy = true;
+        }
+        let result = sync_push(&task_shared, permission).await;
+        task_shared.mobile.push.lock().unwrap().busy = false;
+        if let Err(error) = result {
+            task_shared.mobile.report(error.message);
         }
     });
 }
 
-async fn request_inner(
-    shared: &Arc<Shared>,
-    request_permission: bool,
-) -> Result<PlatformValue, PlatformError> {
+/// Original `requestNotifications` after the permission step.
+async fn sync_push(shared: &Arc<Shared>, permission: PermissionState) -> Result<(), PlatformError> {
     if shared.mobile.push.lock().unwrap().unavailable {
-        return Ok(PlatformValue::None);
+        return Ok(());
     }
     if !crate::native::push_provisioned().await {
-        // Local notifications, links and hosts keep working without push.
         shared.mobile.push.lock().unwrap().unavailable = true;
-        return Ok(PlatformValue::None);
+        return Ok(());
     }
-    let permission = crate::native::notification_permission(request_permission).await?;
     if !permission.allowed() {
         {
             let mut push = shared.mobile.push.lock().unwrap();
@@ -383,7 +381,7 @@ async fn request_inner(
         for (host, _) in saved_token_hosts(shared) {
             revoke(shared, &host).await;
         }
-        return Ok(PlatformValue::Permission(permission));
+        return Ok(());
     }
     let device_token = crate::native::device_push_token().await?;
     if device_token.is_empty() {
@@ -423,7 +421,7 @@ async fn request_inner(
     if let Some(error) = background.or(stored) {
         shared.mobile.report(error);
     }
-    Ok(PlatformValue::Permission(permission))
+    Ok(())
 }
 
 /// Expo's FCM transport stores application data as JSON in `body`; native

@@ -2,6 +2,8 @@ package sh.paseo.sessions;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipDescription;
@@ -28,6 +30,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.util.DisplayMetrics;
@@ -81,6 +84,8 @@ final class PaseoBridge {
     static final String AUTHORITY = "sh.paseo.sessions.files";
     static final String PREFERENCES = "paseo_platform";
     static final String EXTRA_PAYLOAD = "paseo.notification.payload";
+    /** A {@code paseo://} link forwarded by {@link PaseoLinkActivity}. */
+    static final String EXTRA_LINK = "paseo.link";
 
     static native void nativeResult(long id, String reply);
     static native void nativeEvent(String kind, String payload);
@@ -95,7 +100,7 @@ final class PaseoBridge {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Map<Integer, Long> activityRequests = new HashMap<>();
-    private final Map<Integer, Long> permissionRequests = new HashMap<>();
+    private final Map<Integer, PermissionRequest> permissionRequests = new HashMap<>();
     // Do not reuse a destroyed activity's codes: Android may still deliver its
     // outstanding result to the replacement activity.
     private static int nextRequestCode = 0x5000;
@@ -323,7 +328,10 @@ final class PaseoBridge {
     void onResume() {
         foreground = true;
         if (systemBarsConfigured) applySystemBars();
+        // A start refused in the background runs now; a notification hidden for
+        // lack of POST_NOTIFICATIONS appears once it was allowed in settings.
         PaseoTailnetService.retry(activity.getApplicationContext());
+        PaseoTailnetService.refresh();
         nativeEvent("resumed", "{}");
         publishInsets();
     }
@@ -343,16 +351,17 @@ final class PaseoBridge {
         if (audio != null) audio.release();
     }
 
-    /** OS links and notification taps that started or reached the activity. */
+    /** Links forwarded by PaseoLinkActivity and notification taps that started or reached the activity. */
     void onIntent(Intent intent) {
         if (intent == null) return;
         try {
-            Uri link = intent.getData();
-            if (Intent.ACTION_VIEW.equals(intent.getAction()) && link != null) {
-                nativeEvent("link", new JSONObject().put("url", link.toString()).toString());
-            }
             Bundle extras = intent.getExtras();
             if (extras == null) return;
+            String link = extras.getString(EXTRA_LINK);
+            if (link != null) {
+                nativeEvent("link", new JSONObject().put("url", link).toString());
+                intent.removeExtra(EXTRA_LINK);
+            }
             String payload = extras.getString(EXTRA_PAYLOAD);
             if (payload != null) {
                 JSONObject tap = new JSONObject(payload);
@@ -537,6 +546,8 @@ final class PaseoBridge {
                 case "systemFonts":
                     // Android 7–9 have no AFontMatcher (API 29); Rust reads this instead.
                     return ok(systemFonts());
+                case "backgroundRestrictions":
+                    return ok(backgroundRestrictions());
                 case "takeBackgroundError": {
                     SharedPreferences preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
                     String value = preferences.getString("backgroundError", null);
@@ -739,6 +750,10 @@ final class PaseoBridge {
                         break;
                     case "permission":
                         permission(id, args.getString("permission"), args.optBoolean("request"));
+                        break;
+                    case "openPermissionSettings":
+                        openPermissionSettings(id, args.getString("target"),
+                                args.isNull("channel") ? null : args.getString("channel"));
                         break;
                     case "pushProvisioned":
                         nativeResult(id, ok(PaseoPush.provisioned(activity)));
@@ -956,6 +971,16 @@ final class PaseoBridge {
         }
     }
 
+    /** Set once the OS prompt was requested for a runtime permission. */
+    private static String askedKey(String permission) {
+        return "permissionAsked." + permission;
+    }
+
+    /**
+     * {@code "granted"}, {@code "notDetermined"} (never asked: the OS prompt will
+     * show), {@code "denied"} (asking again still prompts) or {@code "blocked"}
+     * (only system settings can change it).
+     */
     private void permission(long id, String kind, boolean request) {
         String permission;
         if ("camera".equals(kind)) {
@@ -963,29 +988,104 @@ final class PaseoBridge {
         } else if (Build.VERSION.SDK_INT >= 33) {
             permission = Manifest.permission.POST_NOTIFICATIONS;
         } else {
-            // Below API 33 notifications need no runtime permission; the user
-            // may still have disabled them in system settings.
+            // Below API 33 notifications need no runtime permission; only system
+            // settings can turn them back on.
             boolean enabled = NotificationManagerCompat.from(activity).areNotificationsEnabled();
-            nativeResult(id, ok(enabled ? "granted" : "denied"));
+            nativeResult(id, ok(enabled ? "granted" : "blocked"));
             return;
         }
         if (activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
             nativeResult(id, ok("granted"));
             return;
         }
+        SharedPreferences preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
         if (!request) {
-            nativeResult(id, ok("denied"));
+            nativeResult(id, ok(deniedState(permission, preferences.getBoolean(askedKey(permission), false))));
             return;
         }
+        // A blocked permission is still requested: Android answers at once without
+        // a prompt, and a reset in system settings ("Ask every time") prompts again.
+        preferences.edit().putBoolean(askedKey(permission), true).apply();
         int code = requestCode();
-        permissionRequests.put(code, id);
+        permissionRequests.put(code, new PermissionRequest(id, permission));
         activity.requestPermissions(new String[]{permission}, code);
     }
 
+    /** A permission not granted: Android shows a rationale only while it still prompts. */
+    private String deniedState(String permission, boolean asked) {
+        if (!asked) return "notDetermined";
+        return activity.shouldShowRequestPermissionRationale(permission) ? "denied" : "blocked";
+    }
+
     void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        Long id = permissionRequests.remove(requestCode);
-        if (id == null) return;
-        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-        nativeResult(id, ok(granted ? "granted" : "denied"));
+        PermissionRequest request = permissionRequests.remove(requestCode);
+        if (request == null) return;
+        if (grantResults.length == 0) {
+            // Interrupted before the user chose: nothing was decided.
+            activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+                    .remove(askedKey(request.permission)).apply();
+            nativeResult(request.id, ok("notDetermined"));
+            return;
+        }
+        boolean granted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (granted) PaseoTailnetService.refresh();
+        nativeResult(request.id, ok(granted ? "granted" : deniedState(request.permission, true)));
+    }
+
+    /**
+     * Opens the system settings screen for {@code target}: {@code notifications}
+     * (one {@code channel} when given and created), {@code app} (app details,
+     * where camera access lives) or {@code batteryOptimization}.
+     */
+    private void openPermissionSettings(long id, String target, String channel) {
+        String packageName = activity.getPackageName();
+        Intent details = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null));
+        Intent intent = details;
+        if ("notifications".equals(target) && Build.VERSION.SDK_INT >= 26) {
+            NotificationManager notifications = activity.getSystemService(NotificationManager.class);
+            if (channel != null && notifications.getNotificationChannel(channel) != null) {
+                intent = new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                        .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, channel);
+            } else {
+                intent = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName);
+            }
+        } else if ("batteryOptimization".equals(target)) {
+            intent = new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        }
+        try {
+            activity.startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            // Some vendor builds omit the precise screen; app details link to all of them.
+            try {
+                activity.startActivity(details);
+            } catch (ActivityNotFoundException missing) {
+                nativeResult(id, error("native", "System settings are not available."));
+                return;
+            }
+        }
+        nativeResult(id, ok(true));
+    }
+
+    /** Power management that may stop the app (and Embedded Tailscale) in the background. */
+    private JSONObject backgroundRestrictions() throws JSONException {
+        PowerManager power = activity.getSystemService(PowerManager.class);
+        boolean restricted = Build.VERSION.SDK_INT >= 28
+                && activity.getSystemService(ActivityManager.class).isBackgroundRestricted();
+        return new JSONObject()
+                .put("batteryOptimized", !power.isIgnoringBatteryOptimizations(activity.getPackageName()))
+                .put("backgroundRestricted", restricted);
+    }
+
+    private static final class PermissionRequest {
+        final long id;
+        final String permission;
+
+        PermissionRequest(long id, String permission) {
+            this.id = id;
+            this.permission = permission;
+        }
     }
 }

@@ -385,6 +385,9 @@ impl PlatformHandle {
         id
     }
 
+    /// Shows the OS notification prompt when it still can and completes with
+    /// the resulting [`PermissionState`]. On mobile a grant also registers
+    /// push on builds provisioned for it.
     pub fn request_notification_permission(&self) -> PlatformRequestId {
         let done = self.0.completion();
         let id = done.id();
@@ -397,6 +400,27 @@ impl PlatformHandle {
         let done = self.0.completion();
         let id = done.id();
         native::notification_permission_status(self.shared(), done);
+        id
+    }
+
+    /// Opens the system settings screen for `target`; completes with
+    /// `Bool(true)` once it opened, or fails `unsupported` where the OS has no
+    /// such screen. Recheck the permission when the app returns to the
+    /// foreground.
+    pub fn open_permission_settings(&self, target: PermissionSettings) -> PlatformRequestId {
+        let done = self.0.completion();
+        let id = done.id();
+        native::open_permission_settings(self.shared(), target, done);
+        id
+    }
+
+    /// Android power management that may stop the app in the background:
+    /// `Json({"batteryOptimized": bool, "backgroundRestricted": bool})`.
+    /// Fails `unsupported` on other platforms. Never prompts.
+    pub fn background_restrictions(&self) -> PlatformRequestId {
+        let done = self.0.completion();
+        let id = done.id();
+        native::background_restrictions(self.shared(), done);
         id
     }
 
@@ -426,6 +450,8 @@ impl PlatformHandle {
         self.0.on_main(|cx, state| state.audio.cancel(cx));
     }
 
+    /// `request` shows the OS prompt when it still can; `false` only reads the
+    /// current state.
     pub fn camera_permission(&self, request: bool) -> PlatformRequestId {
         let done = self.0.completion();
         let id = done.id();
@@ -519,6 +545,17 @@ impl PlatformHandle {
         self.0.on_main(|_, state| state.desktop.show_windows());
     }
 
+    /// Localized labels for the desktop tray's Open and Quit items, kept for a
+    /// tray that appears later; English until the first call. Android and iOS
+    /// have no tray.
+    pub fn set_tray_labels(&self, open: String, quit: String) {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        self.0
+            .on_main(move |_, state| state.desktop.set_tray_labels(open, quit));
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let _ = (open, quit);
+    }
+
     /// Hides one window without destroying it (the dormant first window kept
     /// for the next New Window). GUI thread. The op runs on Makepad's own
     /// top-level frame for `window` when the platform ops are processed
@@ -580,21 +617,6 @@ impl PlatformHandle {
     }
 
     // ----- Mobile -----
-
-    pub fn request_push_registration(&self, request_permission: bool) -> PlatformRequestId {
-        let done = self.0.completion();
-        let id = done.id();
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        crate::mobile::request_notifications(self.shared(), request_permission, Some(done));
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            let _ = request_permission;
-            done.fail(PlatformError::unsupported(
-                "Push registration is a mobile feature.",
-            ));
-        }
-        id
-    }
 
     pub fn revoke_push_host(&self, host_id: &str) -> PlatformRequestId {
         let done = self.0.completion();

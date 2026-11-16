@@ -307,6 +307,30 @@ pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Comple
     });
 }
 
+/// System Settings › Notifications (macOS 13+), on this app's page when the
+/// process runs from its bundle.
+pub(crate) fn open_permission_settings(target: &PermissionSettings) -> Result<(), PlatformError> {
+    match target {
+        PermissionSettings::Notifications | PermissionSettings::NotificationChannel(_) => {}
+        PermissionSettings::Camera
+        | PermissionSettings::App
+        | PermissionSettings::BatteryOptimization => {
+            return Err(PlatformError::unsupported(
+                "macOS has no settings screen for this permission.",
+            ));
+        }
+    }
+    let bundle = unsafe {
+        let bundle: Id = msg_send![class!(NSBundle), mainBundle];
+        rust_string(msg_send![bundle, bundleIdentifier])
+    };
+    let pane = "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
+    match bundle {
+        Some(bundle) => open_uri(&format!("{pane}?id={bundle}")),
+        None => open_uri(pane),
+    }
+}
+
 pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completion) {
     apple::on_main_queue(move || unsafe {
         let app: Id = msg_send![class!(NSApplication), sharedApplication];

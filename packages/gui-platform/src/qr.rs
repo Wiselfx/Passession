@@ -4,10 +4,13 @@
 //! first pairing link (`#offer=`, `#connect=`, `relay://`), then pauses until
 //! `resume_scanning`. The scan screen chrome (back header, scan frame,
 //! "Pairing...", permission card) belongs to the shell, driven by `state()`.
-//! Camera frames come from Makepad's video input (Android NDK camera, iOS
-//! AVCapture); desktop clients pair by link and report `Unavailable`.
+//! `start` only reads the camera permission; the OS prompt runs from
+//! `request_permission` after the shell explained it, and returning to the app
+//! rechecks a missing permission so access granted in system settings opens
+//! the camera. Camera frames come from Makepad's video input (Android NDK
+//! camera, iOS AVCapture); desktop clients pair by link and report `Unavailable`.
 
-use crate::action::{PlatformAction, PlatformRequestId};
+use crate::action::{PermissionState, PlatformAction, PlatformRequestId};
 use makepad_widgets::*;
 use std::sync::{
     Arc, Mutex,
@@ -44,8 +47,12 @@ pub enum QrScanState {
     Scanning,
     /// A link was posted; scanning resumes on `resume_scanning`.
     Paused,
-    /// The permission card: camera access was denied.
+    /// Camera access was never asked: the shell explains it before the OS prompt.
+    PermissionPrompt,
+    /// Camera access was denied; asking again may still show the OS prompt.
     PermissionDenied,
+    /// Camera access can only be turned on in system settings.
+    PermissionBlocked,
     Failed(String),
     /// This platform has no pairing camera (desktop).
     Unavailable,
@@ -138,6 +145,8 @@ impl Widget for QrScanView {
             }
             Event::VideoInputs(inputs) => self.choose_input(cx, inputs),
             Event::Signal => self.poll(cx),
+            // Access may have been granted in system settings meanwhile.
+            Event::Resume | Event::Foreground | Event::AppGotFocus => self.recheck(cx),
             _ => {}
         }
     }
@@ -165,22 +174,49 @@ impl QrScanView {
         }
     }
 
-    /// Requests camera permission and opens the camera.
+    /// Reads the camera permission without prompting and opens the camera when
+    /// it is granted; otherwise the state names the permission card to show.
     pub fn start(&mut self, cx: &mut Cx) {
         if !cfg!(any(target_os = "android", target_os = "ios")) {
             self.set_state(cx, QrScanState::Unavailable);
             return;
         }
-        let Some(platform) = crate::platform() else {
-            self.set_state(
-                cx,
-                QrScanState::Failed("The platform layer has not started.".into()),
-            );
-            return;
-        };
         *self.shared.found.lock().unwrap() = None;
         self.set_state(cx, QrScanState::Starting);
-        self.permission_request = Some(platform.camera_permission(true));
+        self.ask_camera(cx, false);
+    }
+
+    /// Shows the OS camera prompt (the permission card's action). A blocked
+    /// permission returns without a prompt and keeps its card.
+    pub fn request_permission(&mut self, cx: &mut Cx) {
+        if self.permission_request.is_none() {
+            self.ask_camera(cx, true);
+        }
+    }
+
+    fn ask_camera(&mut self, cx: &mut Cx, prompt: bool) {
+        match crate::platform() {
+            Some(platform) => self.permission_request = Some(platform.camera_permission(prompt)),
+            None => self.set_state(
+                cx,
+                QrScanState::Failed("The platform layer has not started.".into()),
+            ),
+        }
+    }
+
+    /// Returning to the app while a permission card shows: reads the permission
+    /// again and opens the camera once it is granted.
+    fn recheck(&mut self, cx: &mut Cx) {
+        if self.permission_request.is_none()
+            && matches!(
+                self.state.0,
+                QrScanState::PermissionPrompt
+                    | QrScanState::PermissionDenied
+                    | QrScanState::PermissionBlocked
+            )
+        {
+            self.ask_camera(cx, false);
+        }
     }
 
     /// Closes the camera (leaving the scan screen or app pause).
@@ -189,6 +225,7 @@ impl QrScanView {
             cx.use_video_input(&[]);
             self.camera_open = false;
         }
+        self.permission_request = None;
         *self.shared.frame.lock().unwrap() = None;
         self.texture = None;
         self.set_state(cx, QrScanState::Idle);
@@ -199,10 +236,7 @@ impl QrScanView {
         *self.shared.found.lock().unwrap() = None;
         if self.state.0 == QrScanState::Paused {
             self.set_state(cx, QrScanState::Scanning);
-        } else if matches!(
-            self.state.0,
-            QrScanState::Idle | QrScanState::PermissionDenied | QrScanState::Failed(_)
-        ) {
+        } else if matches!(self.state.0, QrScanState::Idle | QrScanState::Failed(_)) {
             self.start(cx);
         }
     }
@@ -213,7 +247,18 @@ impl QrScanView {
         result: Result<crate::PlatformValue, crate::PlatformError>,
     ) {
         match result {
-            Ok(crate::PlatformValue::Permission(state)) if state.allowed() => self.open_camera(cx),
+            Ok(crate::PlatformValue::Permission(state)) if state.allowed() => {
+                if !self.camera_open {
+                    self.set_state(cx, QrScanState::Starting);
+                    self.open_camera(cx);
+                }
+            }
+            Ok(crate::PlatformValue::Permission(PermissionState::NotDetermined)) => {
+                self.set_state(cx, QrScanState::PermissionPrompt)
+            }
+            Ok(crate::PlatformValue::Permission(PermissionState::Blocked)) => {
+                self.set_state(cx, QrScanState::PermissionBlocked)
+            }
             Ok(_) => self.set_state(cx, QrScanState::PermissionDenied),
             Err(error) => self.set_state(cx, QrScanState::Failed(error.message)),
         }
@@ -569,6 +614,11 @@ impl QrScanViewRef {
     pub fn start(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.start(cx);
+        }
+    }
+    pub fn request_permission(&self, cx: &mut Cx) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.request_permission(cx);
         }
     }
     pub fn stop(&self, cx: &mut Cx) {

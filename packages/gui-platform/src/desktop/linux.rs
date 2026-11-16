@@ -2,7 +2,9 @@
 //! paseo_desktop_integrations plugin, flutter_local_notifications Linux and
 //! tray_manager). D-Bus runs on a dedicated runtime that lives for the process.
 
-use super::{Activation, DesktopNotification, NativeSignal, deliver, notification_clicked};
+use super::{
+    Activation, DesktopNotification, NativeSignal, TrayMenu, deliver, notification_clicked,
+};
 use crate::{
     Bootstrap,
     action::*,
@@ -607,13 +609,48 @@ pub(crate) async fn show_notification(
     .map_err(|e| PlatformError::native(e.to_string()))?
 }
 
-/// Linux manages notification permission in system settings.
-pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    done.ok(PlatformValue::Permission(PermissionState::Granted));
+/// Linux has no notification prompt; notifications need a running
+/// notification server, which only the desktop session can provide.
+pub(crate) fn request_notification_permission(shared: &Arc<Shared>, done: Completion) {
+    notification_permission_status(shared, done);
 }
 
-pub(crate) fn notification_permission_status(shared: &Arc<Shared>, done: Completion) {
-    request_notification_permission(shared, done);
+pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Completion) {
+    BUS.spawn(async move {
+        let answered = tokio::time::timeout(Duration::from_secs(2), notification_server())
+            .await
+            .is_ok_and(|server| server.is_ok());
+        done.ok(PlatformValue::Permission(if answered {
+            PermissionState::Granted
+        } else {
+            PermissionState::Blocked
+        }));
+    });
+}
+
+/// `GetServerInformation` answers only when a server owns (or can be
+/// activated for) `org.freedesktop.Notifications`.
+async fn notification_server() -> Result<(), PlatformError> {
+    let connection = session().await?;
+    let proxy = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.Notifications",
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+    )
+    .await
+    .map_err(dbus_error)?;
+    let _: (String, String, String, String) = proxy
+        .call("GetServerInformation", &())
+        .await
+        .map_err(dbus_error)?;
+    Ok(())
+}
+
+pub(crate) fn open_permission_settings(_target: &PermissionSettings) -> Result<(), PlatformError> {
+    Err(PlatformError::unsupported(
+        "Linux desktops manage notifications in their own settings.",
+    ))
 }
 
 /// com.canonical.Unity.LauncherEntry (Unity, KDE and several GNOME docks).
@@ -1169,7 +1206,7 @@ mod activation_tests {
 
 #[derive(Default)]
 struct TrayModel {
-    tailnet: Option<TailnetPresence>,
+    menu: TrayMenu,
 }
 
 /// Localized labels are literal text: `_` would otherwise mark an access key.
@@ -1211,7 +1248,7 @@ impl ksni::Tray for TrayModel {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
         let mut items = Vec::new();
-        if let Some(presence) = &self.tailnet {
+        if let Some(presence) = &self.menu.tailnet {
             items.push(
                 StandardItem {
                     label: literal(&format!("{}: {}", presence.title, presence.status)),
@@ -1246,13 +1283,9 @@ impl ksni::Tray for TrayModel {
             );
             items.push(ksni::MenuItem::Separator);
         }
-        let open = self
-            .tailnet
-            .as_ref()
-            .map_or("Open Passession", |p| p.open.as_str());
         items.push(
             StandardItem {
-                label: literal(open),
+                label: literal(&self.menu.open),
                 activate: Box::new(|_: &mut Self| deliver(NativeSignal::TrayOpen)),
                 ..Default::default()
             }
@@ -1261,7 +1294,7 @@ impl ksni::Tray for TrayModel {
         items.push(ksni::MenuItem::Separator);
         items.push(
             StandardItem {
-                label: "Quit Passession".into(),
+                label: literal(&self.menu.quit),
                 activate: Box::new(|_: &mut Self| deliver(NativeSignal::TrayQuit)),
                 ..Default::default()
             }
@@ -1277,9 +1310,9 @@ impl ksni::Tray for TrayModel {
 
 pub(crate) struct Tray {
     handle: Option<ksni::Handle<TrayModel>>,
-    /// The newest presence: each update task applies it whatever order the
-    /// D-Bus runtime runs them in.
-    tailnet: Arc<Mutex<Option<TailnetPresence>>>,
+    /// The newest menu: each update task applies it whatever order the D-Bus
+    /// runtime runs them in.
+    menu: Arc<Mutex<TrayMenu>>,
 }
 
 /// Registers the StatusNotifierItem on the D-Bus runtime; the handle is stored
@@ -1297,7 +1330,7 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
                     if state.desktop.tray.is_none() && !owner.desktop.quitting() {
                         state.desktop.install_tray(Tray {
                             handle: Some(handle),
-                            tailnet: Arc::default(),
+                            menu: Arc::default(),
                         });
                         owner
                             .desktop
@@ -1320,15 +1353,15 @@ impl Tray {
     pub fn poll(&mut self) {}
 
     /// Live menu change through the StatusNotifierItem's `LayoutUpdated`.
-    pub fn set_tailnet(&mut self, presence: Option<&TailnetPresence>) {
-        *self.tailnet.lock().unwrap() = presence.cloned();
+    pub fn set_menu(&mut self, menu: &TrayMenu) {
+        *self.menu.lock().unwrap() = menu.clone();
         let Some(handle) = self.handle.clone() else {
             return;
         };
-        let latest = self.tailnet.clone();
+        let latest = self.menu.clone();
         BUS.spawn(async move {
             handle
-                .update(move |model| model.tailnet = latest.lock().unwrap().clone())
+                .update(move |model| model.menu = latest.lock().unwrap().clone())
                 .await;
         });
     }

@@ -261,7 +261,8 @@ pub(crate) mod user_notifications {
         unsafe { msg_send![class!(UNUserNotificationCenter), currentNotificationCenter] }
     }
 
-    /// `requestAuthorizationWithOptions:` (alert | badge | sound).
+    /// `requestAuthorizationWithOptions:` (alert | badge | sound). Apple asks
+    /// once: a refusal, now or earlier, is final until system settings.
     pub(crate) fn request_authorization(
         reply: impl FnOnce(Result<PermissionState, PlatformError>) + Send + 'static,
     ) {
@@ -274,7 +275,7 @@ pub(crate) mod user_notifications {
                     reply(Ok(if granted.as_bool() {
                         PermissionState::Granted
                     } else {
-                        PermissionState::Denied
+                        PermissionState::Blocked
                     }));
                 }
             }
@@ -294,7 +295,7 @@ pub(crate) mod user_notifications {
             let state = match status {
                 2 | 4 => PermissionState::Granted, // authorized, ephemeral
                 3 => PermissionState::Provisional,
-                1 => PermissionState::Denied,
+                1 => PermissionState::Blocked, // denied
                 _ => PermissionState::NotDetermined,
             };
             if let Some(reply) = reply.lock().unwrap().take() {

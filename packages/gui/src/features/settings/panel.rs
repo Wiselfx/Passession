@@ -88,7 +88,7 @@ const APP_SECTIONS: &[(&str, &str, Icon, bool)] = &[
         "notifications",
         "settings.sections.notifications",
         Icon::Bell,
-        true,
+        false,
     ),
     ("tailscale", "tailnet.title", Icon::Network, false),
     (
@@ -606,6 +606,7 @@ impl Widget for SettingsPanel {
             Event::Foreground | Event::Resume | Event::AppGotFocus
         ) {
             self.with_env(cx, ui, pages::system::refresh_notification_permission);
+            self.with_env(cx, ui, pages::tailnet::refresh_background);
             dirty |= self.st.notifications.checking;
         }
         if self.with_env(cx, ui, |s, env| s.on_timer(env, event)) {

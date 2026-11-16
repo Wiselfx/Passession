@@ -8,7 +8,7 @@ use std::sync::Arc;
 use makepad_widgets::*;
 use paseo_gui_core::{CoreError, HostConfigInfo, inspect_host_config};
 use paseo_gui_platform::qr::{QrScanState, QrScanViewWidgetRefExt};
-use paseo_gui_platform::{PlatformAction, PlatformEvent};
+use paseo_gui_platform::{PermissionSettings, PlatformAction, PlatformEvent};
 use serde_json::{Map, Value, json};
 
 use crate::common::paint::{Font, rect};
@@ -660,6 +660,8 @@ pub struct ConnectionSheet {
     busy: bool,
     saved: bool,
     error: Option<String>,
+    /// iOS: the last direct failure looks like a missing Local Network permission.
+    local_network_hint: bool,
     approved_pairing: Option<String>,
     needs_password: bool,
     password_link: String,
@@ -754,6 +756,7 @@ impl ConnectionSheet {
             busy: false,
             saved: false,
             error: None,
+            local_network_hint: false,
             approved_pairing: (pre_approved && link.is_some())
                 .then(|| format!("{}\n", link.as_deref().unwrap_or("").trim())),
             needs_password,
@@ -921,6 +924,43 @@ impl ConnectionSheet {
             uri.query_pairs_mut().clear().extend_pairs(rest);
         }
         uri.to_string()
+    }
+
+    /// iOS asks for Local Network access on the first connection to a host on the LAN; once
+    /// it is off, such a host just times out or is unreachable. A public IP address never
+    /// needs it, and embedded Tailscale does not use the local network.
+    fn local_network_failure(&self, endpoint: &str, raw: &str, relay: bool) -> bool {
+        if !cfg!(target_os = "ios")
+            || relay
+            || self.embedded_tailnet
+            || matches!(self.method.as_str(), "ssh" | "link")
+        {
+            return false;
+        }
+        let lower = raw.to_lowercase();
+        let unreachable = [
+            "timed out",
+            "ehostunreach",
+            "host is unreachable",
+            "no route to host",
+            "network is unreachable",
+        ]
+        .iter()
+        .any(|w| lower.contains(w));
+        let public = match url::Url::parse(endpoint)
+            .ok()
+            .as_ref()
+            .and_then(url::Url::host)
+        {
+            Some(url::Host::Ipv4(ip)) => {
+                !(ip.is_private() || ip.is_link_local() || ip.is_loopback())
+            }
+            Some(url::Host::Ipv6(ip)) => {
+                !(ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local())
+            }
+            _ => false,
+        };
+        unreachable && !public
     }
 
     /// Original `buildConnectionFailureCopy` detail.
@@ -1352,6 +1392,35 @@ impl ConnectionSheet {
                 }
                 if let Some(error) = self.error.clone() {
                     y += 8.0 + error_text(ui, cx, x, y + 8.0, w, &error, 14.0, error_color);
+                    if self.local_network_hint {
+                        y += 12.0;
+                        y += alert(
+                            ui,
+                            cx,
+                            x,
+                            y,
+                            w,
+                            AlertKind::Warning,
+                            &tr("systemPermissions.localNetwork.hint"),
+                            None,
+                            interactive,
+                        );
+                        y += 8.0;
+                        let label = tr("systemPermissions.openSettings");
+                        let bw = ui.button_width(cx, &label, None, ControlSize::Md);
+                        // A phone-sized touch target (iOS only).
+                        ui.button(
+                            cx,
+                            rect(x, y, bw, 44.0),
+                            "localNetwork.settings",
+                            &label,
+                            None,
+                            Variant::Outline,
+                            ControlSize::Md,
+                            interactive,
+                        );
+                        y += 44.0;
+                    }
                 }
             }
         }
@@ -1495,6 +1564,9 @@ impl Sheet for ConnectionSheet {
             "eye" => self.show_password = !self.show_password,
             "advanced" => self.toggle_advanced(cx),
             "details" => self.details = !self.details,
+            "localNetwork.settings" => {
+                platform::open_permission_settings(PermissionSettings::App);
+            }
             _ => {}
         }
         SheetFlow::Stay
@@ -1601,6 +1673,7 @@ impl Sheet for ConnectionSheet {
             Err(error) => {
                 let raw = error_message(error);
                 self.error = Some(self.failure_message(&endpoint, &raw, relay));
+                self.local_network_hint = self.local_network_failure(&endpoint, &raw, relay);
                 if self.method == "link" && is_auth_failure(&raw) {
                     self.needs_password = true;
                     self.password_link = self.endpoint.text().trim().to_string();
@@ -2403,7 +2476,22 @@ impl Sheet for ScanSheet {
                     interactive,
                 );
             }
-            QrScanState::PermissionDenied => {
+            QrScanState::PermissionPrompt
+            | QrScanState::PermissionDenied
+            | QrScanState::PermissionBlocked => {
+                let (body, action) = match state {
+                    QrScanState::PermissionPrompt => (
+                        "pairing.scan.cameraPermissionBody",
+                        "pairing.scan.allowCamera",
+                    ),
+                    QrScanState::PermissionDenied => {
+                        ("pairing.scan.cameraDeniedBody", "pairing.scan.allowCamera")
+                    }
+                    _ => (
+                        "pairing.scan.cameraBlockedBody",
+                        "systemPermissions.openSettings",
+                    ),
+                };
                 return Self::card(
                     ui,
                     cx,
@@ -2412,8 +2500,8 @@ impl Sheet for ScanSheet {
                     w,
                     self.body_height,
                     &tr("pairing.scan.cameraPermissionTitle"),
-                    &tr("pairing.scan.cameraPermissionBody"),
-                    &tr("pairing.scan.grantPermission"),
+                    &tr(body),
+                    &tr(action),
                     interactive,
                 );
             }
@@ -2539,9 +2627,17 @@ impl Sheet for ScanSheet {
                 let Some(view) = view else {
                     return SheetFlow::Stay;
                 };
-                match view.as_qr_scan_view().state() {
+                let scanner = view.as_qr_scan_view();
+                match scanner.state() {
                     QrScanState::Unavailable => return SheetFlow::Close,
-                    _ => view.as_qr_scan_view().resume_scanning(cx),
+                    QrScanState::PermissionPrompt | QrScanState::PermissionDenied => {
+                        scanner.request_permission(cx)
+                    }
+                    // Returning to the app rechecks access and opens the camera.
+                    QrScanState::PermissionBlocked => {
+                        platform::open_permission_settings(PermissionSettings::Camera);
+                    }
+                    _ => scanner.resume_scanning(cx),
                 }
             }
             "again" if self.status == ScanStatus::Stopped => {

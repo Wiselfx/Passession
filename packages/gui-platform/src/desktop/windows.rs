@@ -530,13 +530,40 @@ pub(crate) async fn show_notification(
     .map_err(|e| PlatformError::native(e.to_string()))?
 }
 
-/// Windows manages notification permission in system settings.
-pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    done.ok(PlatformValue::Permission(PermissionState::Granted));
+/// Windows has no prompt; the toast setting is changed in system settings
+/// (per app, all notifications, or group policy).
+pub(crate) fn request_notification_permission(shared: &Arc<Shared>, done: Completion) {
+    notification_permission_status(shared, done);
 }
 
 pub(crate) fn notification_permission_status(shared: &Arc<Shared>, done: Completion) {
-    request_notification_permission(shared, done);
+    use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
+    shared.complete_blocking(done, || {
+        let setting = ToastNotificationManager::CreateToastNotifierWithId(&hstring(AUMID))
+            .and_then(|notifier| notifier.Setting())
+            .map_err(|e| native_error("Could not read the notification setting", e))?;
+        Ok(PlatformValue::Permission(
+            if setting == NotificationSetting::Enabled {
+                PermissionState::Granted
+            } else {
+                PermissionState::Blocked
+            },
+        ))
+    });
+}
+
+/// Settings › System › Notifications; Windows has no per-permission page.
+pub(crate) fn open_permission_settings(target: &PermissionSettings) -> Result<(), PlatformError> {
+    match target {
+        PermissionSettings::Notifications | PermissionSettings::NotificationChannel(_) => {
+            open_uri("ms-settings:notifications")
+        }
+        PermissionSettings::Camera
+        | PermissionSettings::App
+        | PermissionSettings::BatteryOptimization => Err(PlatformError::unsupported(
+            "Windows has no settings screen for this permission.",
+        )),
+    }
 }
 
 /// Small opaque red badge icon (the taskbar copies it before it is freed).

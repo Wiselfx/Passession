@@ -9,6 +9,7 @@ pub mod hosts;
 pub mod layout;
 pub mod overlays;
 pub mod panels;
+pub mod permissions;
 pub mod platform;
 pub mod sheets;
 pub mod shortcuts;
@@ -290,6 +291,7 @@ pub struct Data {
     pub sidebar: sidebar::SidebarState,
     pub chrome: chrome::ChromeState,
     pub activity: activity::Activity,
+    pub notification_permission: permissions::NotificationPermission,
     pub os_window: Option<WindowId>,
     pub geometry_applied: bool,
     pub closing: Option<commands::Closing>,
@@ -431,7 +433,13 @@ impl PaseoShell {
                         commands::on_response(self, cx, ui, request_id, pending, result);
                     }
                 }
-                CoreEvent::Connected { .. } | CoreEvent::Disconnected { .. } => self.redraw(cx),
+                CoreEvent::Connected { .. } => {
+                    if self.is_main() {
+                        permissions::host_connected(self, ui);
+                    }
+                    self.redraw(cx);
+                }
+                CoreEvent::Disconnected { .. } => self.redraw(cx),
                 CoreEvent::Error { error, .. } => {
                     if error.code != "INVALID_STATE_KEY" {
                         overlays::toast(
@@ -671,6 +679,9 @@ impl Widget for PaseoShell {
         self.restore(ui);
         if self.is_main() {
             self.data.activity.handle_event(cx, event, ui);
+            if self.data.activity.take_notify_failure() {
+                permissions::notify_failed(self);
+            }
         }
         if !ui.events.is_empty() {
             self.handle_core_batch(cx, ui);

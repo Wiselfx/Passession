@@ -5,8 +5,8 @@
 
 use makepad_widgets::*;
 use paseo_gui_platform::{
-    NotificationRequest, PermissionState, PlatformAction, PlatformError, PlatformRequestId,
-    PlatformValue, platform,
+    NotificationRequest, PermissionSettings, PermissionState, PlatformAction, PlatformError,
+    PlatformRequestId, PlatformValue, platform,
 };
 use serde_json::{Map, Value};
 
@@ -16,6 +16,7 @@ pub const DESKTOP: bool = cfg!(any(
     target_os = "windows"
 ));
 pub const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+pub const ANDROID: bool = cfg!(target_os = "android");
 pub const APPLE: bool = cfg!(any(target_os = "macos", target_os = "ios"));
 
 /// Build-time client version (Flutter `--dart-define=PASEO_VERSION`), falling
@@ -59,6 +60,7 @@ fn to_value(value: &PlatformValue) -> Value {
             match state {
                 PermissionState::Granted | PermissionState::Provisional => "granted",
                 PermissionState::Denied => "denied",
+                PermissionState::Blocked => "blocked",
                 PermissionState::NotDetermined => "notDetermined",
             }
             .into(),
@@ -109,11 +111,44 @@ impl Bridge {
         }
     }
 
-    /// Current notification permission without prompting (`granted` /
-    /// `denied` / `notDetermined`).
+    /// Current notification permission without prompting (`granted` / `denied` /
+    /// `blocked` / `notDetermined`).
     pub fn notification_permission_status(&mut self) -> PlatformRequestId {
         match platform() {
             Some(handle) => handle.notification_permission_status(),
+            None => self.local_failure(unavailable()),
+        }
+    }
+
+    /// The app's notification settings; `channel` opens one Android channel's settings.
+    pub fn open_notification_settings(&mut self, channel: Option<&str>) -> PlatformRequestId {
+        self.open_permission_settings(match channel {
+            Some(channel) => PermissionSettings::NotificationChannel(channel.to_string()),
+            None => PermissionSettings::Notifications,
+        })
+    }
+
+    /// Android: the battery optimization list, or the app's details when the system
+    /// restricts its background work (only that screen lifts it).
+    pub fn open_background_settings(&mut self, restricted: bool) -> PlatformRequestId {
+        self.open_permission_settings(if restricted {
+            PermissionSettings::App
+        } else {
+            PermissionSettings::BatteryOptimization
+        })
+    }
+
+    fn open_permission_settings(&mut self, target: PermissionSettings) -> PlatformRequestId {
+        match platform() {
+            Some(handle) => handle.open_permission_settings(target),
+            None => self.local_failure(unavailable()),
+        }
+    }
+
+    /// Android: `{batteryOptimized, backgroundRestricted}`, never prompting.
+    pub fn background_restrictions(&mut self) -> PlatformRequestId {
+        match platform() {
+            Some(handle) => handle.background_restrictions(),
             None => self.local_failure(unavailable()),
         }
     }

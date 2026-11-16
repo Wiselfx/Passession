@@ -80,8 +80,18 @@
       "unavailable": "Embedded Tailscale isn't available right now. Refresh status and try again."
     },
     "presence": {
-      "attention": "Needs attention in the app",
-      "open": "Open Passession"
+      "attention": "Needs attention in the app"
+    },
+    "notification": {
+      "title": "Notifications are off",
+      "hint": "Tailscale's status and its Pause and Stop buttons appear in a notification. Allow notifications to see them.",
+      "askTitle": "Show Tailscale in a notification?",
+      "askBody": "While Tailscale is on, a notification shows its status and Pause and Stop buttons. Allow notifications so you can see and control it from outside the app."
+    },
+    "background": {
+      "title": "Battery limits",
+      "batteryHint": "Battery optimization can stop Tailscale when the app is in the background. Let Passession run without battery limits to stay connected.",
+      "restrictedHint": "Android limits Passession in the background, which can stop Tailscale. Turn off the background limit in the app's settings."
     },
     "states": {
       "running": "Connected",
@@ -94,6 +104,20 @@
       "error": "Unavailable — see error below",
       "noState": "Not initialized",
       "unknown": "Unknown state ({{state}})"
+    }
+  },
+  "systemPermissions": {
+    "allow": "Allow",
+    "openSettings": "Open settings",
+    "notifications": {
+      "askTitle": "Turn on notifications?",
+      "askBody": "Passession can let you know when an agent needs your approval or finishes, even when the app is in the background. You can change this later in Settings.",
+      "allow": "Allow notifications",
+      "failed": "Passession couldn't show a notification because notifications are turned off.",
+      "noServer": "Passession couldn't show a notification because no notification service is running on this desktop."
+    },
+    "localNetwork": {
+      "hint": "Passession may not have Local Network access. Turn on Local Network for Passession in Settings, then try again."
     }
   },
   "addProject": {
@@ -199,6 +223,7 @@
       "toggleSidebar": "Toggle sidebar",
       "open": "Open menu",
       "close": "Close menu",
+      "openApp": "Open Passession",
       "quitApp": "Quit Passession",
       "file": "File",
       "newWindow": "New Window"
@@ -2061,48 +2086,6 @@
       "highCpu": "This causes high CPU usage. Download the Apple Silicon build to fix it.",
       "download": "Download"
     },
-    "permissions": {
-      "notifications": {
-        "allowed": "Notifications are allowed by the OS.",
-        "denied": "Notifications are denied in system settings.",
-        "notGranted": "Notifications have not been granted yet.",
-        "webOnly": "Desktop notification status is only available on web runtime.",
-        "supported": "Desktop notifications are supported.",
-        "unsupported": "Desktop notifications are not supported on this platform.",
-        "apiUnavailable": "Web Notification API is unavailable in this environment.",
-        "requestsWebOnly": "Desktop notification requests are only available on web runtime.",
-        "requestUnavailable": "Web Notification API requestPermission() is unavailable.",
-        "requestFailed": "Failed to request notification permission: {{message}}",
-        "unexpectedState": "Unexpected notification permission state: {{state}}"
-      },
-      "microphone": {
-        "webOnly": "Desktop microphone status is only available on web runtime.",
-        "navigatorUnavailable": "Navigator is unavailable in this environment.",
-        "granted": "Microphone access is granted.",
-        "denied": "Microphone access is denied in system settings.",
-        "notGranted": "Microphone permission has not been granted yet.",
-        "unexpectedState": "Unexpected microphone permission state: {{state}}",
-        "statusApiUnavailable": "Microphone status API is unavailable in this runtime. Use Request to check access.",
-        "queryFailed": "Failed to query microphone status: {{message}}",
-        "captureUnavailable": "Microphone capture is unavailable in this environment.",
-        "permissionApiUnavailable": "Permission status API is unavailable. Use Request to check access.",
-        "requestsWebOnly": "Desktop microphone requests are only available on web runtime.",
-        "captureApiUnavailable": "Microphone capture API is unavailable in this environment.",
-        "requestDenied": "Microphone permission was denied by the user or system.",
-        "noDevice": "No microphone device was found.",
-        "requestFailed": "Failed to request microphone permission: {{message}}"
-      },
-      "empty": {
-        "notifications": "Notification status has not been checked yet.",
-        "microphone": "Microphone status has not been checked yet."
-      },
-      "testNotification": {
-        "title": "Passession notification test",
-        "body": "If you can see this, desktop notifications work.",
-        "notDelivered": "Notification was not delivered. Check System Settings > Notifications.",
-        "failed": "Failed to send notification."
-      }
-    },
     "integrations": {
       "cli": {
         "statusFailed": "Unable to check CLI install status.",
@@ -2179,8 +2162,6 @@
   },
   "loadOlderHistory": { "failed": "Couldn't load older history" },
   "imageAttachmentPicker": {
-    "permissionTitle": "Permission required",
-    "permissionMessage": "Please allow access to your photo library to attach images.",
     "errorTitle": "Error",
     "failedToSelect": "Failed to select image",
     "dialogTitle": "Attach images",
@@ -2379,8 +2360,10 @@
       "webUnavailableBody": "QR scanning is not supported in the web build. Use \"Paste link\" instead.",
       "backToSettings": "Back to Settings",
       "cameraPermissionTitle": "Camera permission",
-      "cameraPermissionBody": "Allow camera access to scan the pairing QR code from your daemon.",
-      "grantPermission": "Grant permission",
+      "cameraPermissionBody": "Passession uses the camera only to scan the pairing QR code shown by your daemon.",
+      "cameraDeniedBody": "Camera access is off. Allow it to scan the pairing QR code.",
+      "cameraBlockedBody": "Camera access is off for Passession. Turn it on in Settings, then come back here to scan.",
+      "allowCamera": "Allow camera",
       "pairing": "Pairing...",
       "unableToPair": "Unable to pair host",
       "errorTitle": "Error"
@@ -2719,6 +2702,14 @@
     "notifications": {
       "title": "Notifications",
       "permission": "Notification permission",
+      "status": {
+        "allowed": "Notifications are on.",
+        "notDetermined": "Allow notifications to hear when an agent needs you or finishes.",
+        "denied": "Notifications are off. Allow them to hear when an agent needs you or finishes.",
+        "blocked": "Notifications are off in system settings. Open settings to turn them on.",
+        "noServer": "No notification service is running on this desktop. Start your desktop's notification service to get notifications."
+      },
+      "unavailable": "Unavailable",
       "refreshAccessibility": "Refresh notification permission",
       "playSound": "Play sound",
       "playSoundHint": "Play a sound when a desktop notification arrives",
@@ -3076,11 +3067,10 @@
     },
     "permissions": {
       "title": "Permissions",
-      "microphone": "Microphone",
       "refresh": "Refresh",
       "refreshing": "Refreshing...",
       "refreshAccessibility": "Refresh desktop permissions",
-      "actions": { "granted": "Granted", "request": "Request", "requesting": "Requesting..." }
+      "actions": { "granted": "Granted", "requesting": "Requesting..." }
     },
     "host": {
       "password": {

@@ -95,7 +95,7 @@ struct Runtime {
     system_dark: bool,
     theme_key: String,
     window_ready: bool,
-    /// The language the native application menu was last built in.
+    /// The language the native application and tray menus were last built in.
     menu_locale: &'static str,
     /// The embedded Tailscale background presence last handed to the platform.
     tailnet_presence: Option<TailnetPresence>,
@@ -236,6 +236,7 @@ impl App {
         if runtime.menu_locale != i18n::locale_tag() {
             runtime.menu_locale = i18n::locale_tag();
             update_native_menu(cx);
+            update_tray_labels();
         }
         if themed || localized {
             cx.redraw_all();
@@ -371,6 +372,16 @@ fn update_native_menu(cx: &mut Cx) {
     let _ = cx;
 }
 
+/// Relabels the desktop tray's Open and Quit items in the active language.
+fn update_tray_labels() {
+    if let Some(platform) = paseo_gui_platform::platform() {
+        platform.set_tray_labels(
+            common::tr("shell.menu.openApp"),
+            common::tr("shell.menu.quitApp"),
+        );
+    }
+}
+
 /// The OS background presence of embedded Tailscale, labelled in the active language. None
 /// while it is off, or when no platform secret store lets a node run.
 fn tailnet_presence(tailnet: &Value) -> Option<TailnetPresence> {
@@ -396,7 +407,6 @@ fn tailnet_presence(tailnet: &Value) -> Option<TailnetPresence> {
         pause: common::tr("tailnet.pause"),
         resume: common::tr("tailnet.resume"),
         stop: common::tr("tailnet.stop"),
-        open: common::tr("tailnet.presence.open"),
     })
 }
 

@@ -329,6 +329,22 @@ pub(crate) fn notification_permission_status(shared: &Arc<Shared>, done: Complet
     os::notification_permission_status(shared, done);
 }
 
+pub(crate) fn open_permission_settings(
+    shared: &Arc<Shared>,
+    target: PermissionSettings,
+    done: Completion,
+) {
+    shared.complete_blocking(done, move || {
+        os::open_permission_settings(&target).map(|()| PlatformValue::Bool(true))
+    });
+}
+
+pub(crate) fn background_restrictions(_shared: &Arc<Shared>, done: Completion) {
+    done.fail(PlatformError::unsupported(
+        "Background restrictions are an Android setting.",
+    ));
+}
+
 pub(crate) fn set_badge_count(shared: &Arc<Shared>, count: u32, done: Completion) {
     os::set_badge_count(shared, count, done);
 }

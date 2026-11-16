@@ -1,7 +1,8 @@
 //! Port of `lib/ui/client_activity.dart`: `client_heartbeat` to every connected host every
 //! 15s and on focus/visibility changes (input at most every 5s), desktop OS idle sampling
 //! every 5s (not on Wayland: no fabricated idle value), the attention badge count and
-//! attention notifications through the platform policy.
+//! attention notifications through the platform policy. A notification the platform failed
+//! to show is reported to the shell, which checks whether permission was the cause.
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -28,6 +29,10 @@ pub struct Activity {
     idle_request: Option<PlatformRequestId>,
     idle_supported: bool,
     badge: Option<u32>,
+    /// Attention notifications the platform has not answered yet.
+    notify_requests: Vec<PlatformRequestId>,
+    /// A notification failed since the shell last asked.
+    notify_failed: bool,
     started: bool,
 }
 
@@ -45,6 +50,8 @@ impl Default for Activity {
             idle_supported: !cfg!(any(target_os = "android", target_os = "ios"))
                 && std::env::var("XDG_SESSION_TYPE").map_or(true, |v| v != "wayland"),
             badge: None,
+            notify_requests: Vec::new(),
+            notify_failed: false,
             started: false,
         }
     }
@@ -160,22 +167,28 @@ impl Activity {
             | Event::KeyDown(_) => self.record_input(ui),
             Event::Actions(actions) => {
                 for action in crate::shell::platform::actions(actions) {
-                    if let PlatformAction::Completed { request, result } = action {
-                        if Some(request) != self.idle_request {
-                            continue;
+                    let PlatformAction::Completed { request, result } = action else {
+                        continue;
+                    };
+                    if let Some(index) = self.notify_requests.iter().position(|r| *r == request) {
+                        self.notify_requests.swap_remove(index);
+                        self.notify_failed |= result.is_err();
+                        continue;
+                    }
+                    if Some(request) != self.idle_request {
+                        continue;
+                    }
+                    self.idle_request = None;
+                    match result {
+                        Ok(PlatformValue::IdleMilliseconds(ms)) => {
+                            let system = SystemTime::now() - Duration::from_millis(ms);
+                            if system > self.last_activity {
+                                self.last_activity = system;
+                            }
                         }
-                        self.idle_request = None;
-                        match result {
-                            Ok(PlatformValue::IdleMilliseconds(ms)) => {
-                                let system = SystemTime::now() - Duration::from_millis(ms);
-                                if system > self.last_activity {
-                                    self.last_activity = system;
-                                }
-                            }
-                            _ => {
-                                cx.stop_timer(self.idle_poll);
-                                self.idle_supported = false;
-                            }
+                        _ => {
+                            cx.stop_timer(self.idle_poll);
+                            self.idle_supported = false;
                         }
                     }
                 }
@@ -200,7 +213,12 @@ impl Activity {
         }
     }
 
-    fn notify(&self, server_id: &str, event: &Value) {
+    /// Whether a notification failed since the last call.
+    pub fn take_notify_failure(&mut self) -> bool {
+        std::mem::take(&mut self.notify_failed)
+    }
+
+    fn notify(&mut self, server_id: &str, event: &Value) {
         let view = AttentionView {
             visible: self.visible,
             server_id: self.target.as_ref().map(|t| t.server_id.clone()),
@@ -216,7 +234,7 @@ impl Activity {
             server_id, event, &view, &labels,
         ) && let Some(platform) = paseo_gui_platform::platform()
         {
-            platform.notify(request);
+            self.notify_requests.push(platform.notify(request));
         }
     }
 }

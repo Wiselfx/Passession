@@ -17,6 +17,7 @@ use objc2::{
 };
 use serde_json::Value;
 use std::{
+    cell::Cell,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -25,6 +26,8 @@ use std::{
 #[link(name = "UIKit", kind = "framework")]
 unsafe extern "C" {
     fn UIImagePNGRepresentation(image: Id) -> Id;
+    static UIBackgroundTaskInvalid: usize;
+    static UIApplicationOpenSettingsURLString: Id;
 }
 
 #[repr(C)]
@@ -37,8 +40,15 @@ struct EdgeInsets {
 }
 
 unsafe impl objc2::encode::Encode for EdgeInsets {
-    const ENCODING: objc2::encode::Encoding =
-        objc2::encode::Encoding::Struct("UIEdgeInsets", &[objc2::encode::Encoding::Double; 4]);
+    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
+        "UIEdgeInsets",
+        &[
+            objc2::encode::Encoding::Double,
+            objc2::encode::Encoding::Double,
+            objc2::encode::Encoding::Double,
+            objc2::encode::Encoding::Double,
+        ],
+    );
 }
 
 #[repr(C)]
@@ -125,8 +135,13 @@ pub(crate) fn start_services(_cx: &mut Cx, _shared: &Arc<Shared>, _state: &mut P
     unsafe {
         let center: Id = msg_send![class!(NSNotificationCenter), defaultCenter];
         let queue: Id = msg_send![class!(NSOperationQueue), mainQueue];
-        let active = RcBlock::new(|_note: Id| deliver(MobileSignal::Resumed));
+        let active = RcBlock::new(|_note: Id| {
+            end_background_grace();
+            deliver(MobileSignal::Resumed);
+        });
         let token: Id = msg_send![center, addObserverForName: ns_string("UIApplicationDidBecomeActiveNotification"), object: std::ptr::null_mut::<AnyObject>(), queue: queue, usingBlock: &*active];
+        let background = RcBlock::new(|_note: Id| begin_background_grace());
+        let token3: Id = msg_send![center, addObserverForName: ns_string("UIApplicationDidEnterBackgroundNotification"), object: std::ptr::null_mut::<AnyObject>(), queue: queue, usingBlock: &*background];
         // AVAudioSessionInterruptionTypeBegan (1): nothing queued may resume.
         let interrupted = RcBlock::new(|note: Id| {
             let info: Id = msg_send![note, userInfo];
@@ -140,12 +155,60 @@ pub(crate) fn start_services(_cx: &mut Cx, _shared: &Arc<Shared>, _state: &mut P
         let token2: Id = msg_send![center, addObserverForName: ns_string("AVAudioSessionInterruptionNotification"), object: std::ptr::null_mut::<AnyObject>(), queue: queue, usingBlock: &*interrupted];
         let _: Id = msg_send![token, retain];
         let _: Id = msg_send![token2, retain];
+        let _: Id = msg_send![token3, retain];
         OBSERVERS
             .lock()
             .unwrap()
-            .extend([token as usize, token2 as usize]);
+            .extend([token as usize, token2 as usize, token3 as usize]);
     }
     publish_insets(None);
+}
+
+thread_local! {
+    /// The background task holding the post-background grace. Main thread only:
+    /// the observers run on the main queue and UIKit calls the expiration
+    /// handler on the main thread. `UIBackgroundTaskInvalid` marks a begin in
+    /// progress, so a handler run during it is not lost.
+    static BACKGROUND_TASK: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// Asks UIKit for the short grace (about 30 s) before suspension, so the
+/// in-process tailnet node and its host links survive a quick app switch.
+/// A task still held from an earlier background is replaced, never leaked.
+fn begin_background_grace() {
+    let invalid = unsafe { UIBackgroundTaskInvalid };
+    let previous = BACKGROUND_TASK.replace(Some(invalid));
+    let expired = RcBlock::new(end_background_grace);
+    let task: usize = unsafe {
+        let app: Id = msg_send![class!(UIApplication), sharedApplication];
+        msg_send![app, beginBackgroundTaskWithName: ns_string("Embedded Tailscale"), expirationHandler: &*expired]
+    };
+    if BACKGROUND_TASK.get() == Some(invalid) {
+        BACKGROUND_TASK.set((task != invalid).then_some(task));
+    } else {
+        // The handler already ran during the begin.
+        end_background_task(task);
+    }
+    if let Some(previous) = previous {
+        end_background_task(previous);
+    }
+}
+
+/// Ends the held grace task, on reactivation or from its expiration handler.
+fn end_background_grace() {
+    if let Some(task) = BACKGROUND_TASK.take() {
+        end_background_task(task);
+    }
+}
+
+fn end_background_task(task: usize) {
+    if task == unsafe { UIBackgroundTaskInvalid } {
+        return;
+    }
+    unsafe {
+        let app: Id = msg_send![class!(UIApplication), sharedApplication];
+        let _: () = msg_send![app, endBackgroundTask: task];
+    }
 }
 
 fn key_window() -> Id {
@@ -234,9 +297,10 @@ pub(crate) fn report_error(_shared: &Arc<Shared>, message: &str) {
     });
 }
 
-/// iOS suspends the app soon after it leaves the screen and offers no
-/// background mode for an in-process tailnet node, so there is no background
-/// presence; the in-app Settings controls remain.
+/// iOS offers no background mode for an in-process tailnet node, so there is
+/// no background presence: the node and host links last only for the
+/// background-task grace before suspension (see `begin_background_grace`).
+/// The in-app Settings controls remain.
 pub(crate) fn set_tailnet_presence(_shared: &Arc<Shared>, _presence: Option<TailnetPresence>) {}
 
 /// iOS has no system Back; navigation stays inside the app.
@@ -746,16 +810,72 @@ pub(crate) fn notify(_shared: &Arc<Shared>, request: NotificationRequest, done: 
     );
 }
 
-pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    user_notifications::request_authorization(move |result| {
-        done.finish(result.map(PlatformValue::Permission))
-    });
+/// The OS prompt (iOS asks once), then push registration on builds signed
+/// for APNs.
+pub(crate) fn request_notification_permission(shared: &Arc<Shared>, done: Completion) {
+    crate::mobile::request_notifications(shared, true, Some(done));
 }
 
 pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Completion) {
     user_notifications::authorization_status(move |state| {
         done.ok(PlatformValue::Permission(state))
     });
+}
+
+/// The app's page in Settings, or its notification settings (iOS 16+
+/// `UIApplicationOpenNotificationSettingsURLString`, looked up at run time
+/// because iOS 15 lacks it).
+pub(crate) fn open_permission_settings(
+    _shared: &Arc<Shared>,
+    target: PermissionSettings,
+    done: Completion,
+) {
+    let notifications = matches!(
+        target,
+        PermissionSettings::Notifications | PermissionSettings::NotificationChannel(_)
+    );
+    if target == PermissionSettings::BatteryOptimization {
+        done.fail(PlatformError::unsupported(
+            "iOS has no battery optimization settings.",
+        ));
+        return;
+    }
+    apple::on_main_queue(move || unsafe {
+        let mut setting = UIApplicationOpenSettingsURLString;
+        if notifications {
+            let symbol = libc::dlsym(
+                libc::RTLD_DEFAULT,
+                c"UIApplicationOpenNotificationSettingsURLString".as_ptr(),
+            ) as *const Id;
+            if !symbol.is_null() {
+                setting = *symbol;
+            }
+        }
+        let target: Id = msg_send![class!(NSURL), URLWithString: setting];
+        if target.is_null() {
+            done.fail(PlatformError::native("Settings are not available."));
+            return;
+        }
+        let app: Id = msg_send![class!(UIApplication), sharedApplication];
+        let done = Mutex::new(Some(done));
+        let block = RcBlock::new(move |success: Bool| {
+            if let Some(done) = done.lock().unwrap().take() {
+                if success.as_bool() {
+                    done.ok(PlatformValue::Bool(true));
+                } else {
+                    done.fail(PlatformError::native("Settings could not be opened."));
+                }
+            }
+        });
+        let options: Id = msg_send![class!(NSDictionary), dictionary];
+        let _: () = msg_send![app, openURL: target, options: options, completionHandler: &*block];
+    });
+}
+
+pub(crate) fn background_restrictions(_shared: &Arc<Shared>, done: Completion) {
+    done.fail(PlatformError::unsupported(
+        "Background restrictions are an Android setting.",
+    ));
 }
 
 pub(crate) fn set_badge_count(_shared: &Arc<Shared>, count: u32, done: Completion) {
@@ -796,9 +916,10 @@ pub(crate) fn camera_permission(_shared: &Arc<Shared>, request: bool, done: Comp
         let media = ns_string("vide"); // AVMediaTypeVideo
         let status: isize =
             msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: media];
+        // Restricted (1) and denied (2) never prompt again.
         let state = match status {
             3 => PermissionState::Granted,
-            1 | 2 => PermissionState::Denied,
+            1 | 2 => PermissionState::Blocked,
             _ => PermissionState::NotDetermined,
         };
         if state != PermissionState::NotDetermined || !request {
@@ -811,7 +932,7 @@ pub(crate) fn camera_permission(_shared: &Arc<Shared>, request: bool, done: Comp
                 done.ok(PlatformValue::Permission(if granted.as_bool() {
                     PermissionState::Granted
                 } else {
-                    PermissionState::Denied
+                    PermissionState::Blocked
                 }));
             }
         });

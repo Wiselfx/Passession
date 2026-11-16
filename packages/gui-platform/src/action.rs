@@ -132,15 +132,40 @@ pub struct EditorTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionState {
     Granted,
+    /// Denied, but asking again may still show the OS prompt (Android while
+    /// it would show a rationale).
     Denied,
     Provisional,
+    /// Asking shows the OS prompt.
     NotDetermined,
+    /// The OS will not prompt again; only system settings can change it.
+    Blocked,
 }
 
 impl PermissionState {
     pub fn allowed(self) -> bool {
         matches!(self, Self::Granted | Self::Provisional)
     }
+}
+
+/// The system settings screen [`PlatformHandle::open_permission_settings`]
+/// opens. A platform without the precise screen opens the closest one it has
+/// and fails with `unsupported` when it has none.
+///
+/// [`PlatformHandle::open_permission_settings`]: crate::PlatformHandle::open_permission_settings
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionSettings {
+    /// The app's notification settings.
+    Notifications,
+    /// One notification channel (Android, e.g. `"tailnet"`); elsewhere the
+    /// app's notification settings.
+    NotificationChannel(String),
+    /// Where camera access is granted (mobile).
+    Camera,
+    /// The app's own settings screen (mobile).
+    App,
+    /// Battery optimization exemptions (Android).
+    BatteryOptimization,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,8 +322,6 @@ pub struct TailnetPresence {
     pub pause: String,
     pub resume: String,
     pub stop: String,
-    /// "Open Passession"
-    pub open: String,
 }
 
 /// A background-presence control the user chose outside the app window.

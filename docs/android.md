@@ -44,7 +44,7 @@ The earlier ARM64 Rust APK was signature/alignment-checked and installed as an i
 
 - `packaging/android/` — Gradle project (`settings.gradle.kts`, `app/build.gradle.kts`), launcher and notification icons (`res/`), `app/debug.keystore`, `version.properties`.
 - `packaging/android/makepad/` — Makepad's Android Java (`dev.makepad.android.*`) vendored from makepad commit `a1868e19d3bb955200957efb3c880791a43424eb`, the revision makepad-platform 1.0.0 was published from. Local changes include API 24–29 guards and the shared Editable-backed `MakepadInputConnection`: UTF-16 text/selection/composition snapshots, session/revision fencing, batch ownership, modifier-preserving composition and hardware insertion. The activity also keeps long-press coordinates within the current gesture and cancels long presses after scrolling starts. `PATCHES.diff` records the changes; `UPSTREAM.json` records upstream/current digests. The crate's JNI symbols require these exact classes; crates.io has no `cargo-makepad` for 1.0.0.
-- `packages/gui-platform/android/` — `AndroidManifest.xml` (launcher `sh.paseo.sessions.MainActivity`, which extends `MakepadActivity`; `paseo` VIEW filter; Firebase messaging service; `PaseoTailnetService`; FileProvider `sh.paseo.sessions.files`), the Java glue in `java/sh/paseo/sessions/`, `res/` (theme and FileProvider paths) and `platform.gradle.kts` (androidx.core and the Firebase BOM/messaging). The Gradle project compiles these directly; there is no second Gradle app or Makepad Java copy there.
+- `packages/gui-platform/android/` — `AndroidManifest.xml` (launcher `sh.paseo.sessions.MainActivity`, which extends `MakepadActivity`; the `paseo` VIEW filter on the `PaseoLinkActivity` trampoline; Firebase messaging service; `PaseoTailnetService`; FileProvider `sh.paseo.sessions.files`), the Java glue in `java/sh/paseo/sessions/`, `res/` (theme and FileProvider paths) and `platform.gradle.kts` (androidx.core and the Firebase BOM/messaging). The Gradle project compiles these directly; there is no second Gradle app or Makepad Java copy there.
 
 Native code reaches the Java glue by class and method name over JNI, so the release build never minifies.
 
@@ -60,14 +60,30 @@ still update the model; pending redraws remain queued. See the vendored
 
 ## One activity per process
 
-The native app serves exactly one activity. `MainActivity` is `singleTask` with
-the package's default task affinity, so `paseo://` links, notification taps and
-the launcher bring the existing task forward and deliver through `onNewIntent`
-instead of opening a second window or task. Notification PendingIntents add only
-`FLAG_ACTIVITY_NEW_TASK` (no `CLEAR_TOP`) and carry a per-notification identity
-(API 29+) besides their request code. The `singleTask` launch itself still
-finishes activities above `MainActivity`, so a notification or launcher tap
-during a document picker or camera intent cancels that result.
+The native app serves exactly one activity. `MainActivity` is `singleTop` with
+the package's default task affinity, and every start of it uses the launcher's
+own intent (MAIN + LAUNCHER, payloads in extras). The task's root intent
+therefore always equals the launcher's, and each entry point reaches the
+existing instance without a second window or task:
+
+- The launcher brings the existing task forward unchanged. A document picker,
+  share chooser, camera or permission dialog left open on top is still there,
+  and its result still arrives. The Embedded Tailscale notification returns to
+  the app the same way.
+- `paseo://` links go through `PaseoLinkActivity`, an exported trampoline with
+  no UI (`Theme.NoDisplay`, `noHistory`, `excludeFromRecents`, empty
+  affinity). It accepts only a VIEW of scheme `paseo`, forwards the link in an
+  extra with `NEW_TASK | SINGLE_TOP | CLEAR_TOP` and finishes. A link opened
+  from a browser therefore never creates `MainActivity` inside the browser's
+  task.
+- Notification taps (local notifications and FCM messages presented by the app)
+  use the same three flags and distinct request codes. FCM tray notifications
+  use the launch intent plus `CLEAR_TOP`. The existing instance receives the tap
+  through `onNewIntent`.
+
+Links and notification taps navigate, so unlike the launcher they close a
+picker, chooser or camera that is open above `MainActivity` and cancel its
+result.
 
 Only the most recently created activity drives the native loop; a stale
 instance's lifecycle and surface callbacks are ignored. A configuration or
@@ -93,8 +109,40 @@ app restarts; Stop turns Embedded Tailscale off.
   keeps running in the meantime.
 - Without notification permission (Android 13+), the service still runs and
   Android hides its notification.
+  `open_permission_settings(PermissionSettings::NotificationChannel("tailnet"))`
+  opens that channel's settings.
+- Battery optimization and background restriction can still stop the process.
+  `PlatformHandle::background_restrictions` reports both
+  (`isIgnoringBatteryOptimizations`, `isBackgroundRestricted`), and
+  `PermissionSettings::BatteryOptimization` opens the exemption list. The app
+  needs no `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission.
 - The service is never restarted by itself. It stops when the app withdraws its
   presence, and when the native app shuts down.
+
+## Runtime permissions
+
+The app asks for runtime permissions only from in-context flows: camera when
+the QR scanner opens, notifications when a feature needs them. Nothing is
+requested at launch.
+
+`PaseoBridge.permission()` reports `notDetermined` until the app has requested
+a permission once. It stores that fact as `permissionAsked.<permission>` in the
+`paseo_platform` shared preferences. After that, a refusal is `denied` while
+`shouldShowRequestPermissionRationale` is true, because asking again still
+prompts. Otherwise it is `blocked`, and only system settings can change it. A
+request is still sent when the permission is blocked: Android answers at once,
+and a reset in system settings prompts again. A request interrupted before the
+user chose clears the flag.
+
+`open_permission_settings` uses these screens:
+
+- `ACTION_APP_NOTIFICATION_SETTINGS` for notifications.
+- `ACTION_CHANNEL_NOTIFICATION_SETTINGS` for a channel that already exists.
+- `ACTION_APPLICATION_DETAILS_SETTINGS` for camera and the app.
+- `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` for battery optimization.
+
+If a vendor build lacks the precise screen, the app details screen opens
+instead.
 
 ## Text interaction and system font size
 

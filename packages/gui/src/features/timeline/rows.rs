@@ -551,7 +551,9 @@ fn user_message(
     if !images.is_empty() {
         inner_w = inner_w.max(images_w.min(max_inner));
     }
-    let pill_widths: Vec<f64> = pills
+    // (pill width, secondary width incl. its gap). A long name is clipped to one
+    // line with an ellipsis; the pill never grows taller than `pill_h`.
+    let pill_widths: Vec<(f64, f64)> = pills
         .iter()
         .map(|(label, secondary)| {
             let l = d
@@ -567,10 +569,10 @@ fn user_message(
                         + 6.0
                 })
                 .unwrap_or(0.0);
-            (28.0 + l + s + 10.0).min(max_inner)
+            ((28.0 + l + s + 10.0).min(max_inner), s)
         })
         .collect();
-    for pw in &pill_widths {
+    for (pw, _) in &pill_widths {
         inner_w = inner_w.max(*pw);
     }
     // Wrapped layout heights.
@@ -591,7 +593,10 @@ fn user_message(
     } else {
         wrap_rows(&vec![image_size; images.len()], inner_w.max(image_size))
     };
-    let pill_rows = wrap_rows(&pill_widths, inner_w.max(1.0));
+    let pill_rows = wrap_rows(
+        &pill_widths.iter().map(|(pw, _)| *pw).collect::<Vec<_>>(),
+        inner_w.max(1.0),
+    );
     let mut bubble_h = 32.0;
     if image_rows > 0 {
         bubble_h += image_rows as f64 * (image_size + 8.0) - 8.0
@@ -644,7 +649,7 @@ fn user_message(
     }
     if pill_rows > 0 {
         let mut px = bx + 16.0;
-        for ((label, secondary), pw) in pills.iter().zip(&pill_widths) {
+        for ((label, secondary), (pw, sw)) in pills.iter().zip(&pill_widths) {
             if px > bx + 16.0 && px + pw > bx + 16.0 + inner_w {
                 px = bx + 16.0;
                 cy += pill_h + 8.0;
@@ -658,7 +663,7 @@ fn user_message(
                 14.0,
                 p.muted,
             );
-            let lsize = d.kit.label(
+            let lsize = d.kit.label_line(
                 cx,
                 Font::Regular,
                 look.ui(13.0),
@@ -666,7 +671,7 @@ fn user_message(
                 p.foreground,
                 dvec2(px + 28.0, cy + 8.0),
                 label,
-                Some((pw - 38.0).max(1.0)),
+                (pw - 38.0 - sw).max(1.0),
             );
             if let Some(secondary) = secondary {
                 d.kit.label(

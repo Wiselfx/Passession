@@ -1,5 +1,5 @@
-//! Desktop-host pages from `settings_screen.dart`: Local daemon
-//! (`LocalDaemonSection`), Notifications and Diagnostics.
+//! App pages from `settings_screen.dart`: Local daemon (`LocalDaemonSection`, desktop host),
+//! Notifications (every OS) and Diagnostics.
 
 use serde_json::{Value, json};
 
@@ -25,8 +25,10 @@ pub struct LocalDaemonState {
 #[derive(Default)]
 pub struct NotificationsState {
     pub settings: Value,
-    /// `granted` / `denied` / `notDetermined`; `None` until known.
+    /// `granted` / `denied` / `blocked` / `notDetermined`; `None` until known.
     pub permission: Option<String>,
+    /// A shown page reads the permission: returning to the app reads it again.
+    pub watched: bool,
     /// The non-prompting status query is in flight.
     pub checking: bool,
     pub test_sent: bool,
@@ -364,17 +366,22 @@ pub fn disable_builtin_then(
 // ------------------------------------------------------------ notifications
 
 pub fn ensure_notifications(s: &mut Settings, env: &mut Env) {
-    if s.notifications.loaded || !DESKTOP {
+    if s.notifications.loaded {
         return;
     }
     s.notifications.loaded = true;
-    load_notifications(s, env);
-    refresh_notification_permission(s, env);
+    // Play sound is a desktop host setting; mobile plays the platform's own sound.
+    if DESKTOP {
+        load_notifications(s, env);
+    }
+    check_notification_permission(s, env);
 }
 
-/// OS settings can change permission while this retained page is in the background.
-pub fn refresh_notification_permission(s: &mut Settings, env: &mut Env) {
-    if !DESKTOP || !s.notifications.loaded || s.notifications.checking || s.notifications.busy {
+/// Reads the notification permission without prompting. Pages that show it call this once;
+/// [`refresh_notification_permission`] then follows changes made in system settings.
+pub fn check_notification_permission(s: &mut Settings, env: &mut Env) {
+    s.notifications.watched = true;
+    if s.notifications.checking || s.notifications.busy {
         return;
     }
     s.notifications.checking = true;
@@ -388,7 +395,44 @@ pub fn refresh_notification_permission(s: &mut Settings, env: &mut Env) {
     });
 }
 
-/// A bridge permission result (`granted`/`denied`/`notDetermined`, or a bare bool).
+/// OS settings can change permission while a page showing it is in the background.
+pub fn refresh_notification_permission(s: &mut Settings, env: &mut Env) {
+    if s.notifications.watched {
+        check_notification_permission(s, env);
+    }
+}
+
+/// The Allow actions: the OS prompt where it can still show, else the current state.
+pub fn request_notification_permission(s: &mut Settings, env: &mut Env) {
+    if s.notifications.busy {
+        return;
+    }
+    s.notifications.busy = true;
+    let token = env.bridge.request_notification_permission();
+    s.bridge_job(token, |s, _, result| {
+        s.notifications.busy = false;
+        match result {
+            Ok(state) => {
+                s.notifications.permission = permission_of(&state);
+                s.notifications.error = None;
+            }
+            Err(error) => s.notifications.error = Some(error.text()),
+        }
+    });
+}
+
+/// The Open settings actions: the system screen where notifications are turned back on
+/// (`channel`: one Android channel's screen). Returning to the app reads the permission again.
+pub fn open_notification_settings(s: &mut Settings, env: &mut Env, channel: Option<&str>) {
+    let token = env.bridge.open_notification_settings(channel);
+    s.bridge_job(token, |_, env, result| {
+        if let Err(error) = result {
+            env.toast(error.text(), true);
+        }
+    });
+}
+
+/// A bridge permission result (`granted`/`denied`/`blocked`/`notDetermined`, or a bare bool).
 fn permission_of(value: &Value) -> Option<String> {
     match value {
         Value::String(state) => Some(state.clone()),
@@ -413,38 +457,24 @@ fn load_notifications(s: &mut Settings, env: &mut Env) {
 pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
     let state = &s.notifications;
     let busy = state.busy;
-    let available = platform::desktop_available();
     let permission = state.permission.as_deref();
     let granted = permission == Some("granted");
-    let denied = permission == Some("denied");
+    let blocked = permission == Some("blocked");
+    // Linux reports Blocked when no notification server answers: nothing to open.
+    let no_server = blocked && cfg!(target_os = "linux");
     ui.section_title(&t("settings.notifications.title"), None, None);
     ui.card_begin();
-    let request = (!busy && available && !state.checking).then(|| {
-        handler(|s, env| {
-            s.notifications.busy = true;
-            let token = env.bridge.request_notification_permission();
-            s.bridge_job(token, |s, _, result| {
-                s.notifications.busy = false;
-                match result {
-                    Ok(state) => {
-                        s.notifications.permission = permission_of(&state);
-                        s.notifications.error = None;
-                    }
-                    Err(error) => s.notifications.error = Some(error.text()),
-                }
-            });
-        })
-    });
-    let status_hint = if state.checking {
+    let status_hint = if state.checking && permission.is_none() {
         t("common.states.loading")
     } else {
         match permission {
-            Some("granted") => t("desktop.permissions.notifications.allowed"),
-            Some("denied") => t("desktop.permissions.notifications.denied"),
-            _ => t("desktop.permissions.notifications.notGranted"),
+            Some("granted") => t("settings.notifications.status.allowed"),
+            Some("denied") => t("settings.notifications.status.denied"),
+            Some("blocked") if no_server => t("settings.notifications.status.noServer"),
+            Some("blocked") => t("settings.notifications.status.blocked"),
+            _ => t("settings.notifications.status.notDetermined"),
         }
     };
-    // Granted needs nothing; denied can only change in the OS settings.
     let control = if granted {
         Ctl::Badge {
             label: t("settings.permissions.actions.granted"),
@@ -453,20 +483,30 @@ pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
             dot: None,
             icon: None,
         }
-    } else if denied {
+    } else if no_server {
         Ctl::Badge {
-            label: t("settingsNative.permissionDenied"),
+            label: t("settings.notifications.unavailable"),
             tone: Some(ui.pal.danger),
             xs: false,
             dot: None,
             icon: None,
         }
+    } else if blocked {
+        let open = handler(|s, env| open_notification_settings(s, env, None));
+        button(
+            "notifications.settings",
+            t("systemPermissions.openSettings"),
+            Some(open),
+        )
+        .icon(Icon::Settings)
+        .ctl()
     } else {
         let label = if busy {
             t("settings.permissions.actions.requesting")
         } else {
-            t("settings.permissions.actions.request")
+            t("systemPermissions.allow")
         };
+        let request = (!busy && !state.checking).then(|| handler(request_notification_permission));
         button("notifications.request", label, request)
             .icon(Icon::Bell)
             .ctl()
@@ -476,36 +516,38 @@ pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
             .hint(status_hint)
             .control(control),
     );
-    let play_sound = get(&state.settings, "notifications")
-        .get("playSound")
-        .and_then(Value::as_bool)
-        != Some(false);
-    let toggle = (!busy && state.settings.is_object()).then(|| {
-        handler(move |s, env| {
-            s.notifications.busy = true;
-            s.desktop(
-                env,
-                "desktop_settings_update",
-                json!({"patch": {"notifications": {"playSound": !play_sound}}}),
-                |s, env, result| {
-                    s.notifications.busy = false;
-                    match result {
-                        Ok(_) => {
-                            s.notifications.error = None;
-                            load_notifications(s, env);
+    if DESKTOP {
+        let play_sound = get(&state.settings, "notifications")
+            .get("playSound")
+            .and_then(Value::as_bool)
+            != Some(false);
+        let toggle = (!busy && state.settings.is_object()).then(|| {
+            handler(move |s, env| {
+                s.notifications.busy = true;
+                s.desktop(
+                    env,
+                    "desktop_settings_update",
+                    json!({"patch": {"notifications": {"playSound": !play_sound}}}),
+                    |s, env, result| {
+                        s.notifications.busy = false;
+                        match result {
+                            Ok(_) => {
+                                s.notifications.error = None;
+                                load_notifications(s, env);
+                            }
+                            Err(error) => s.notifications.error = Some(error.text()),
                         }
-                        Err(error) => s.notifications.error = Some(error.text()),
-                    }
-                },
-            );
-        })
-    });
-    ui.row(
-        row(t("settings.notifications.playSound"))
-            .hint(t("settings.notifications.playSoundHint"))
-            .control(switch("notifications.sound", play_sound, toggle)),
-    );
-    let send = (!busy && available && !denied).then(|| {
+                    },
+                );
+            })
+        });
+        ui.row(
+            row(t("settings.notifications.playSound"))
+                .hint(t("settings.notifications.playSoundHint"))
+                .control(switch("notifications.sound", play_sound, toggle)),
+        );
+    }
+    let send = (!busy && granted).then(|| {
         handler(|s, env| {
             s.notifications.busy = true;
             s.notifications.test_sent = false;
@@ -529,10 +571,10 @@ pub fn draw_notifications(ui: &mut Ui, s: &Settings) {
             });
         })
     });
-    let hint = if denied {
-        t("settings.notifications.permissionRequired")
-    } else {
+    let hint = if granted {
         t("settings.notifications.testHint")
+    } else {
+        t("settings.notifications.permissionRequired")
     };
     let label = if busy {
         t("settings.notifications.sending")

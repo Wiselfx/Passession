@@ -98,15 +98,13 @@ pub(crate) fn start_services(_cx: &mut Cx, _shared: &Arc<Shared>, state: &mut Pl
     let _ = call("startServices", json!({}));
 }
 
+/// Foreground returns arrive from `PaseoBridge.onResume` ("resumed").
 pub(crate) fn handle_event(
     _cx: &mut Cx,
     _shared: &Arc<Shared>,
     _state: &mut PlatformState,
-    event: &Event,
+    _event: &Event,
 ) {
-    if let Event::Resume = event {
-        crate::mobile::deliver(crate::mobile::MobileSignal::Resumed);
-    }
 }
 
 pub(crate) fn report_error(_shared: &Arc<Shared>, message: &str) {
@@ -365,17 +363,15 @@ fn parse_permission(value: &Value) -> PermissionState {
     match value.as_str() {
         Some("granted") => PermissionState::Granted,
         Some("denied") => PermissionState::Denied,
+        Some("blocked") => PermissionState::Blocked,
         _ => PermissionState::NotDetermined,
     }
 }
 
-pub(crate) fn request_notification_permission(_shared: &Arc<Shared>, done: Completion) {
-    call_async(
-        "permission",
-        json!({"permission": "notifications", "request": true}),
-        done,
-        permission,
-    );
+/// The OS prompt (when Android still shows one), then push registration on
+/// Firebase builds.
+pub(crate) fn request_notification_permission(shared: &Arc<Shared>, done: Completion) {
+    crate::mobile::request_notifications(shared, true, Some(done));
 }
 
 pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Completion) {
@@ -385,6 +381,31 @@ pub(crate) fn notification_permission_status(_shared: &Arc<Shared>, done: Comple
         done,
         permission,
     );
+}
+
+pub(crate) fn open_permission_settings(
+    _shared: &Arc<Shared>,
+    target: PermissionSettings,
+    done: Completion,
+) {
+    let (target, channel) = match target {
+        PermissionSettings::Notifications => ("notifications", None),
+        PermissionSettings::NotificationChannel(channel) => ("notifications", Some(channel)),
+        PermissionSettings::Camera | PermissionSettings::App => ("app", None),
+        PermissionSettings::BatteryOptimization => ("batteryOptimization", None),
+    };
+    call_async(
+        "openPermissionSettings",
+        json!({"target": target, "channel": channel}),
+        done,
+        |_| Ok(PlatformValue::Bool(true)),
+    );
+}
+
+pub(crate) fn background_restrictions(shared: &Arc<Shared>, done: Completion) {
+    shared.complete_blocking(done, || {
+        call("backgroundRestrictions", json!({})).map(PlatformValue::Json)
+    });
 }
 
 pub(crate) fn camera_permission(_shared: &Arc<Shared>, request: bool, done: Completion) {

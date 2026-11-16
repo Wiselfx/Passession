@@ -1910,7 +1910,7 @@ const SETTINGS_PAGES: &[(&str, &str, &str, &[&str])] = &[
 
 /// One query-only row per settings page; host pages need a host and open on `host_id`.
 fn settings_pages(host_id: Option<&str>) -> Vec<Contribution> {
-    const DESKTOP_ONLY: [&str; 2] = ["shortcuts", "notifications"];
+    const DESKTOP_ONLY: [&str; 1] = ["shortcuts"];
     let section = t("sidebar.actions.settings");
     let mut out = Vec::new();
     for (index, &(page, label, icon, keywords)) in SETTINGS_PAGES.iter().enumerate() {

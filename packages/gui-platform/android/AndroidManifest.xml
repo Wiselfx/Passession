@@ -47,27 +47,44 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:largeHeap="true">
-        <!-- singleTask with the package's default affinity: one activity
-             instance per process (the native app serves exactly one). Links,
-             notification taps and the launcher reuse it through onNewIntent. -->
+        <!-- singleTop with the package's default affinity: the native app serves
+             exactly one activity per process. The launcher brings the existing
+             task forward unchanged, so a document picker, chooser, camera or
+             permission dialog on top survives. Notification taps add
+             NEW_TASK|SINGLE_TOP|CLEAR_TOP and reach this instance through
+             onNewIntent; links arrive through PaseoLinkActivity. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:theme="@style/PaseoTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:enableOnBackInvokedCallback="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- paseo:// trampoline: forwards a link into MainActivity's task with
+             NEW_TASK|SINGLE_TOP|CLEAR_TOP, so a link from another app never
+             creates MainActivity in that app's task. The empty affinity keeps a
+             NEW_TASK start in its own throwaway task: as the root of the package
+             task, excludeFromRecents would hide the app from Recents. -->
+        <activity
+            android:name=".PaseoLinkActivity"
+            android:exported="true"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="paseo"/>
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
 

@@ -152,7 +152,6 @@ const LOCAL: &[(&str, &str, &str)] = &[
         "Require",
         "필수로 설정",
     ),
-    ("settingsNative.permissionDenied", "Denied", "거부됨"),
     ("settingsNative.useConnection", "Use", "사용"),
     (
         "settingsNative.editConnection",

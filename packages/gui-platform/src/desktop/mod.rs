@@ -150,13 +150,32 @@ pub(crate) struct DesktopShared {
     app_version: String,
 }
 
+/// What the tray menu shows: the app's localized labels (English until the app
+/// hands over its first ones) and the embedded Tailscale presence while enabled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrayMenu {
+    pub open: String,
+    pub quit: String,
+    pub tailnet: Option<TailnetPresence>,
+}
+
+impl Default for TrayMenu {
+    fn default() -> Self {
+        Self {
+            open: "Open Passession".into(),
+            quit: "Quit Passession".into(),
+            tailnet: None,
+        }
+    }
+}
+
 /// GUI-thread-only desktop state (tray objects, native window handles).
 #[derive(Default)]
 pub(crate) struct DesktopMain {
     tray: Option<os::Tray>,
     windows: os::NativeWindows,
     /// Kept for a tray that appears later (it waits for the lifecycle bridge).
-    tailnet: Option<TailnetPresence>,
+    tray_menu: TrayMenu,
 }
 
 impl DesktopMain {
@@ -167,21 +186,35 @@ impl DesktopMain {
         self.windows.show_all();
     }
 
+    /// A new tray starts with the default menu.
     fn install_tray(&mut self, mut tray: os::Tray) {
-        if self.tailnet.is_some() {
-            tray.set_tailnet(self.tailnet.as_ref());
+        if self.tray_menu != TrayMenu::default() {
+            tray.set_menu(&self.tray_menu);
         }
         self.tray = Some(tray);
     }
 
-    pub fn set_tailnet_presence(&mut self, presence: Option<TailnetPresence>) {
-        if self.tailnet == presence {
+    fn update_tray_menu(&mut self, update: impl FnOnce(&mut TrayMenu)) {
+        let mut menu = self.tray_menu.clone();
+        update(&mut menu);
+        if menu == self.tray_menu {
             return;
         }
         if let Some(tray) = self.tray.as_mut() {
-            tray.set_tailnet(presence.as_ref());
+            tray.set_menu(&menu);
         }
-        self.tailnet = presence;
+        self.tray_menu = menu;
+    }
+
+    pub fn set_tailnet_presence(&mut self, presence: Option<TailnetPresence>) {
+        self.update_tray_menu(|menu| menu.tailnet = presence);
+    }
+
+    pub fn set_tray_labels(&mut self, open: String, quit: String) {
+        self.update_tray_menu(|menu| {
+            menu.open = open;
+            menu.quit = quit;
+        });
     }
 }
 

@@ -329,6 +329,36 @@ account login or physical device was involved.
   following launch cold-started cleanly and restored the service from the
   saved setting.
 
+That run used the earlier `singleTask` build. The service behaviour above is
+unchanged by the `singleTop` launch-mode change below.
+
+### Launch modes and permission flows (2026-11-16)
+
+The same emulator setup ran the `singleTop` + launcher-shaped-intent build
+(SHA-256 `d08d568d1b732f0aff824d16ff7e021c4157b14ebf8f50c6531511820dca51f4`)
+from a cleared app state.
+
+- No permission prompt appeared at launch.
+- Settings › Notifications on the phone: Allow → system prompt. With the system
+  prompt open, Home and then the launcher icon returned to that same prompt,
+  with one `MainActivity`.
+- Refusing once showed "Notifications are off" with Allow. Refusing again
+  showed "Open settings", which opened the app's notification settings.
+  Allowing there and returning showed Granted without restarting the app.
+- A test notification tap and the Embedded Tailscale notification tap returned
+  to the one `MainActivity` in its task. A `paseo://` VIEW sent while Settings
+  was in front went through `PaseoLinkActivity` (nothing left behind), reached
+  the same instance and opened the pairing sheet with the link.
+- Turning on Embedded Tailscale showed the in-app explanation before the
+  system prompt. Cancelling left the service running with its notification
+  hidden, and the Tailscale page showed "Notifications are off" and "Battery
+  limits". Allowing from that row made the service notification appear at
+  once; Open settings opened the battery screen.
+- Scan QR showed the camera explanation, then the prompt. A first refusal
+  offered Allow camera again, a second offered Open settings. Allowing in the
+  app details and returning started the camera preview.
+
 Not covered: a logged-in tailnet and real host traffic, Android 12–14 and
-API 24–28, refused background starts, and desktop tray menus (unit-tested
-only; macOS and Windows were not compiled here).
+API 24–28, refused background starts, a picker opened by the app itself, and
+desktop tray menus (unit-tested only). macOS, iOS and the Windows
+`gui-platform` crate were type-checked on Linux; nothing ran on those systems.

@@ -1,19 +1,25 @@
 //! Application-owned embedded Tailscale controls. Authentication URLs are consumed only
 //! by the originating explicit login request, never retained in UI state or preferences.
+//! On Android the node's status and its Pause/Stop controls live in a notification, and
+//! battery limits can stop it in the background: the page explains both while they apply.
 
 use std::rc::Rc;
 
 use serde_json::{Value, json};
 
-use super::View;
+use super::{View, system};
 use crate::features::settings::i18n::{t, ta, with_detail};
 use crate::features::settings::model::forms::{FormSheet, SettingField};
+use crate::features::settings::platform::ANDROID;
 use crate::features::settings::rpc::{Env, ReqError, handler};
 use crate::features::settings::state::{Settings, SheetKind};
 use crate::features::settings::ui::draw::Icon;
 use crate::features::settings::ui::kit::{Ctl, Ui, Variant, button, icon_button, row, switch};
+use crate::shell::permissions::ASKED_PREFERENCE;
 
 const DEFAULT_CONTROL: &str = "https://controlplane.tailscale.com";
+/// Android notification channel of the node's foreground-service notification.
+const NOTIFICATION_CHANNEL: &str = "tailnet";
 
 #[derive(Default)]
 pub struct TailnetState {
@@ -22,6 +28,12 @@ pub struct TailnetState {
     answered: bool,
     pending: bool,
     error: Option<String>,
+    /// Android: notification permission and background limits were read for this page.
+    checked_background: bool,
+    /// Android: the system may stop the node in the background — battery optimization
+    /// applies (`false`) or background work is restricted (`true`); `None` when neither.
+    background_limit: Option<bool>,
+    background_checking: bool,
 }
 
 fn text(value: &Value, key: &str) -> String {
@@ -198,6 +210,132 @@ pub fn ensure(s: &mut Settings, env: &mut Env) {
         s.tailnet.loaded = true;
         request(s, env, json!({"action": "status"}));
     }
+    if ANDROID && !s.tailnet.checked_background {
+        s.tailnet.checked_background = true;
+        system::check_notification_permission(s, env);
+        check_background(s, env);
+    }
+}
+
+/// Android: whether battery optimization or a background restriction can stop the node.
+fn check_background(s: &mut Settings, env: &mut Env) {
+    if s.tailnet.background_checking {
+        return;
+    }
+    s.tailnet.background_checking = true;
+    let token = env.bridge.background_restrictions();
+    s.bridge_job(token, |s, _, result| {
+        s.tailnet.background_checking = false;
+        s.tailnet.background_limit = result.ok().and_then(|value| {
+            let flag = |key: &str| value.get(key).and_then(Value::as_bool) == Some(true);
+            if flag("backgroundRestricted") {
+                Some(true)
+            } else if flag("batteryOptimized") {
+                Some(false)
+            } else {
+                None
+            }
+        });
+    });
+}
+
+/// Returning to the app: battery settings may have changed (the notification permission
+/// refreshes with the Notifications page's).
+pub fn refresh_background(s: &mut Settings, env: &mut Env) {
+    if s.tailnet.checked_background {
+        check_background(s, env);
+    }
+}
+
+/// Android: turning the node on explains, once per install, that its status and Pause/Stop
+/// controls live in a notification, then shows the OS prompt. A dismissal is remembered like
+/// the shell's own explanation; the row on this page stays.
+fn explain_notification(s: &mut Settings, env: &mut Env) {
+    if !ANDROID || env.preferences().get(ASKED_PREFERENCE) == Some(&Value::Bool(true)) {
+        return;
+    }
+    let token = env.bridge.notification_permission_status();
+    s.bridge_job(token, |s, _, result| {
+        let Ok(Value::String(state)) = result else {
+            return;
+        };
+        let prompt = matches!(state.as_str(), "notDetermined" | "denied");
+        s.notifications.permission = Some(state);
+        if !prompt {
+            return;
+        }
+        s.confirm_or(
+            t("tailnet.notification.askTitle"),
+            t("tailnet.notification.askBody"),
+            t("systemPermissions.notifications.allow"),
+            false,
+            handler(|s, env| {
+                remember_asked(s, env);
+                system::request_notification_permission(s, env);
+            }),
+            handler(remember_asked),
+        );
+    });
+}
+
+fn remember_asked(s: &mut Settings, env: &mut Env) {
+    s.save_pref(env, ASKED_PREFERENCE, Some(Value::Bool(true)));
+}
+
+/// Android rows of the Enable card while the node runs: hidden notification controls and
+/// battery limits, each with the action that lifts it.
+fn draw_background_rows(ui: &mut Ui, s: &Settings) {
+    let permission = s.notifications.permission.as_deref();
+    if permission.is_some_and(|p| p != "granted") {
+        let control = if permission == Some("blocked") {
+            let open = handler(|s, env| {
+                system::open_notification_settings(s, env, Some(NOTIFICATION_CHANNEL))
+            });
+            button(
+                "tailnet.notificationSettings",
+                t("systemPermissions.openSettings"),
+                Some(open),
+            )
+        } else {
+            let allow =
+                (!s.notifications.busy).then(|| handler(system::request_notification_permission));
+            button(
+                "tailnet.allowNotifications",
+                t("systemPermissions.allow"),
+                allow,
+            )
+        };
+        ui.row(
+            row(t("tailnet.notification.title"))
+                .hint(t("tailnet.notification.hint"))
+                .control(control.variant(Variant::Primary).ctl()),
+        );
+    }
+    if let Some(restricted) = s.tailnet.background_limit {
+        let open = handler(move |s, env| {
+            let token = env.bridge.open_background_settings(restricted);
+            s.bridge_job(token, |_, env, result| {
+                if let Err(error) = result {
+                    env.toast(error.text(), true);
+                }
+            });
+        });
+        let hint = if restricted {
+            "tailnet.background.restrictedHint"
+        } else {
+            "tailnet.background.batteryHint"
+        };
+        ui.row(
+            row(t("tailnet.background.title")).hint(t(hint)).control(
+                button(
+                    "tailnet.backgroundSettings",
+                    t("systemPermissions.openSettings"),
+                    Some(open),
+                )
+                .ctl(),
+            ),
+        );
+    }
 }
 
 fn confirm_action(
@@ -303,6 +441,7 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
             } else {
                 let message = configuration(&env.ctx.state["tailnet"], true);
                 request(s, env, message);
+                explain_notification(s, env);
             }
         })
     });
@@ -311,6 +450,9 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
             .hint(t("tailnet.scope"))
             .control(switch("tailnet.enable", enabled, toggle)),
     );
+    if ANDROID && enabled {
+        draw_background_rows(ui, s);
+    }
     ui.card_end();
     ui.gap(24.0);
 

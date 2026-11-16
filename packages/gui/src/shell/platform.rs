@@ -2,8 +2,8 @@
 //! non-blocking; results arrive as `PlatformAction`s in `Event::Actions`.
 
 use paseo_gui_platform::{
-    CloseDecision, PlatformAction, PlatformEvent, PlatformHandle, PlatformRequestId, PlatformValue,
-    QuitReason,
+    CloseDecision, PermissionSettings, PlatformAction, PlatformEvent, PlatformHandle,
+    PlatformRequestId, PlatformValue, QuitReason,
 };
 
 fn handle() -> Option<PlatformHandle> {
@@ -21,6 +21,22 @@ pub fn open_external(url: &str) -> Option<PlatformRequestId> {
 
 pub fn copy_text(text: String) -> Option<PlatformRequestId> {
     handle().map(|h| h.copy_text(text))
+}
+
+/// Opens the system settings screen where `target` is turned on (completes `Err` where the
+/// OS has none).
+pub fn open_permission_settings(target: PermissionSettings) -> Option<PlatformRequestId> {
+    handle().map(|h| h.open_permission_settings(target))
+}
+
+/// The OS notification permission, without prompting.
+pub fn notification_permission_status() -> Option<PlatformRequestId> {
+    handle().map(|h| h.notification_permission_status())
+}
+
+/// Shows the OS notification prompt where one can still show; completes with the state.
+pub fn request_notification_permission() -> Option<PlatformRequestId> {
+    handle().map(|h| h.request_notification_permission())
 }
 
 pub fn desktop_host() -> bool {

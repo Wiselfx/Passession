@@ -29,18 +29,35 @@ final class PaseoNotifications {
     }
 
     /**
-     * Intent that reopens the one MainActivity. The activity is singleTask, so
-     * the launch brings its existing task forward and delivers through
-     * onNewIntent; no second window or task is created. No CLEAR_TOP: only the
-     * singleTask launch itself finishes activities above MainActivity. The
-     * identity keeps PendingIntents for different notifications apart (API 29+;
-     * earlier releases rely on the distinct request codes).
+     * The launcher's own intent for MainActivity (MAIN + LAUNCHER, no data or
+     * identifier). Every start uses this shape, so the task's root intent always
+     * equals the launcher's: a later launcher tap then brings the task forward
+     * unchanged instead of stacking a second MainActivity on top of a picker.
+     * Payloads travel in extras, which intent matching ignores; PendingIntents
+     * stay apart through their distinct request codes.
      */
-    static Intent openApp(Context context, String identity) {
-        Intent intent = new Intent(context, MainActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (Build.VERSION.SDK_INT >= 29) intent.setIdentifier(identity);
-        return intent;
+    static Intent launcher(Context context) {
+        return new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .setClass(context, MainActivity.class);
+    }
+
+    /**
+     * Reopens the one MainActivity to navigate. NEW_TASK brings the package task
+     * forward; CLEAR_TOP with SINGLE_TOP finishes whatever sits above MainActivity
+     * and delivers to the existing instance through onNewIntent. Unlike the
+     * launcher, it therefore closes an open picker, chooser or camera.
+     */
+    static Intent openApp(Context context) {
+        return launcher(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    }
+
+    /** Shows the app as the launcher does: the task returns unchanged, an open picker included. */
+    static Intent resumeApp(Context context) {
+        return launcher(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
     }
 
     /**
@@ -54,7 +71,7 @@ final class PaseoNotifications {
             throw new IllegalStateException("Notification permission is not granted.");
         }
         ensureChannel(context);
-        Intent intent = openApp(context, "notification:" + id);
+        Intent intent = openApp(context);
         intent.putExtra(PaseoBridge.EXTRA_PAYLOAD, payload);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
         PendingIntent tap = PendingIntent.getActivity(context, id, intent, flags);

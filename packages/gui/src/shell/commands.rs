@@ -25,8 +25,8 @@ use crate::shell::layout::{Axis, CompactDestination, Direction};
 use crate::shell::sheets::{self, history, host_connections, host_dialog, labels, shortcut_help};
 use crate::shell::ui::Press;
 use crate::shell::{
-    Page, PaseoShell, Pending, WindowRequest, WindowState, chrome, overlays, panels, platform,
-    response_message, sidebar,
+    Page, PaseoShell, Pending, WindowRequest, WindowState, chrome, overlays, panels, permissions,
+    platform, response_message, sidebar,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -138,6 +138,8 @@ pub enum ShellOverlay {
     },
     /// History page "Filter by host" select.
     HistoryHost,
+    /// The one-time explanation before the OS notification prompt.
+    NotificationAsk,
 }
 
 /// Results posted back from worker threads.
@@ -254,7 +256,7 @@ fn menu(
     )
 }
 
-fn confirm(
+pub(crate) fn confirm(
     shell: &mut PaseoShell,
     cx: &mut Cx,
     title: &str,
@@ -3976,6 +3978,7 @@ pub fn shell_overlay_result(
                 abort_closing(shell);
             }
             ShellOverlay::CloseTerminal { .. } => abort_closing(shell),
+            ShellOverlay::NotificationAsk => permissions::answered(shell, ui, false),
             _ => {}
         },
         ShellOverlay::TabMenu {
@@ -3993,6 +3996,7 @@ pub fn shell_overlay_result(
                 }
             }
         }
+        ShellOverlay::NotificationAsk => permissions::answered(shell, ui, confirmed),
         ShellOverlay::HostMenu { host_id, order } => {
             host_action(shell, cx, ui, &host_id, &value, &order)
         }
@@ -4172,6 +4176,9 @@ pub fn handle_platform_actions(
     for action in platform::actions(actions) {
         match action {
             PlatformAction::Completed { request, result } => {
+                if permissions::on_completed(shell, cx, ui, request, &result) {
+                    continue;
+                }
                 if let Some(index) = shell
                     .data
                     .revoking
