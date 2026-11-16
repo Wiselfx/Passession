@@ -11,6 +11,7 @@
 
 - Finish standalone daemon activation and rollback when a descendant inherits the launcher's stderr handle. Launcher completion now follows its process exit instead of pipe EOF, with failure diagnostics captured through a temporary file. The Windows release gate also exercises a long-lived stderr-owning descendant for successful and failed launches.
 - Compile the desktop-update request fixture only on Unix, where its filesystem-permission test runs, removing the unused-function warning in native Windows daemon tests.
+- Close the launcher regression fixture's TCP connection normally on Windows, avoiding a connection-reset failure in the release gate.
 
 ## 0.13.30 - 2026-11-16
 

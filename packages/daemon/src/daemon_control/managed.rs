@@ -2985,7 +2985,9 @@ mod tests {
             std::io::stderr()
                 .write_all(b"descendant released\n")
                 .unwrap();
-            std::process::exit(0);
+            // Drop the socket normally: ExitProcess skips Rust destructors and
+            // resets the Windows peer's pending EOF read.
+            return;
         }
         let _descendant = launcher_fixture_command()
             .env("PASEO_LAUNCHER_FIXTURE_DESCENDANT", "1")
