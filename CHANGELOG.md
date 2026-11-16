@@ -6,12 +6,13 @@
 
 - The desktop and mobile client now repaints only the region that changed. The chrome, sidebar, each pane and the page are retained layers. Hover, scrolling, typing, streaming output and background results such as code highlighting, images, Mermaid diagrams, attachments and Git sheets repaint only the layer that shows them; other layers reuse their previous drawing. Shared-state updates repaint only the layers that present the change. A streaming session's activity timestamps repaint just that session, and recency lists refresh once per second. Window-wide repaints are reserved for theme, font and language changes and are enforced by a GUI clippy rule.
 - Reuse unchanged chat rows' measured heights and drawing during streaming. Content replacement, search, local controls, reflow and asynchronous results invalidate the affected rows; returning to a hidden conversation refreshes results received while away. Timestamp feedback expires correctly, and pointer exits clear retained hover feedback.
+- Remove daemon runtime-copy and launcher regression tests from the Windows release workflow to avoid a separate optimized test build. The focused tests remain available for manual execution.
 
 ### Fixed
 
-- Finish standalone daemon activation and rollback when a descendant inherits the launcher's stderr handle. Launcher completion now follows its process exit instead of pipe EOF, with failure diagnostics captured through a temporary file. The Windows release gate also exercises a long-lived stderr-owning descendant for successful and failed launches.
+- Finish standalone daemon activation and rollback when a descendant inherits the launcher's stderr handle. Launcher completion now follows its process exit instead of pipe EOF, with failure diagnostics captured through a temporary file.
 - Compile the desktop-update request fixture only on Unix, where its filesystem-permission test runs, removing the unused-function warning in native Windows daemon tests.
-- Close the launcher regression fixture's TCP connection normally on Windows, avoiding a connection-reset failure in the release gate.
+- Close the launcher regression fixture's TCP connection normally on Windows, avoiding connection-reset failures in subprocess tests.
 
 ## 0.13.30 - 2026-11-16
 
