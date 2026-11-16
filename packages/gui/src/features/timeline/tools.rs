@@ -1521,6 +1521,67 @@ pub fn detail_is_full_bleed(detail: &Value) -> bool {
     matches!(str_of(get(detail, "type")), "edit" | "shell" | "write")
 }
 
+/// The detail blocks as the text they show, for the sheet's copy action.
+pub fn detail_copy_text(blocks: &[DetailBlock]) -> Option<String> {
+    let mut parts = Vec::new();
+    for block in blocks {
+        let text = match block {
+            DetailBlock::Shell { command, output } if output.is_empty() => format!("$ {command}"),
+            DetailBlock::Shell { command, output } => format!("$ {command}\n\n{output}"),
+            DetailBlock::SubAgentLog {
+                session,
+                actions,
+                log,
+                fallback,
+            } => {
+                let mut lines = Vec::new();
+                if let Some(session) = session {
+                    lines.push(format!("session {session}"));
+                }
+                for (tool, summary) in actions {
+                    lines.push(match summary {
+                        Some(summary) => format!("{tool}  {summary}"),
+                        None => tool.clone(),
+                    });
+                }
+                if !log.is_empty() {
+                    lines.push(log.clone());
+                } else if actions.is_empty() {
+                    lines.push(fallback.clone());
+                }
+                lines.join("\n")
+            }
+            DetailBlock::Diff(lines) => lines
+                .iter()
+                .map(|(_, line)| line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            DetailBlock::Source { content, .. } => content.clone(),
+            DetailBlock::Code(text)
+            | DetailBlock::BareCode(text)
+            | DetailBlock::PlainText(text)
+            | DetailBlock::GroupHeader(text)
+            | DetailBlock::JsonBox(text)
+            | DetailBlock::Error(text) => text.clone(),
+            DetailBlock::Paseo(section) => {
+                let mut lines = vec![section.title.clone()];
+                lines.extend(section.text.clone());
+                lines.extend(
+                    section
+                        .fields
+                        .iter()
+                        .map(|(label, value)| format!("{label}: {value}")),
+                );
+                lines.join("\n")
+            }
+        };
+        if !text.trim().is_empty() {
+            parts.push(text);
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
 #[cfg(test)]
 mod eval_tests {
     use super::*;
@@ -1594,6 +1655,41 @@ mod eval_tests {
             assert_eq!(presentation.display_name, "Eval");
             assert_eq!(presentation.summary, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    #[test]
+    fn copied_detail_is_the_text_the_sheet_shows() {
+        let copy = |detail: Value, error: Option<&str>| {
+            detail_copy_text(&detail_blocks(&detail, Some("tool"), error, &|key| {
+                key.to_owned()
+            }))
+        };
+        assert_eq!(
+            copy(
+                json!({"type":"shell","command":"ls\n","output":"\na\nb"}),
+                None
+            )
+            .as_deref(),
+            Some("$ ls\n\na\nb")
+        );
+        assert_eq!(
+            copy(
+                json!({"type":"plain_text","text":"Kiro profiles\n\nWork — arn:profile/a"}),
+                Some("denied")
+            )
+            .as_deref(),
+            Some("Kiro profiles\n\nWork — arn:profile/a\n\ndenied")
+        );
+        assert_eq!(
+            copy(json!({"type":"unknown","input":"in","output":"out"}), None).as_deref(),
+            Some("toolCallDetails.input\n\nin\n\ntoolCallDetails.output\n\nout")
+        );
+        assert_eq!(copy(json!({"type":"plain_text","text":" "}), None), None);
     }
 }
 

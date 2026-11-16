@@ -2028,6 +2028,8 @@ pub struct SheetHeader {
     pub title: String,
     pub max_lines: usize,
     pub semibold: bool,
+    /// What the header's copy button puts on the clipboard; None hides it.
+    pub copy: Option<String>,
 }
 
 /// Draws a badge glyph (Paseo logo or Lucide icon).
@@ -2043,12 +2045,16 @@ pub fn sheet_header(ctx: &RowContext, item: &RowItem, kind: &str) -> Option<Shee
     let row = rows.get(*index)?;
     let entry_item = get(&row.entry, "item");
     match kind {
-        "thinking" => Some(SheetHeader {
-            glyph: ToolGlyph::Brain,
-            title: t("agentStream.thinking"),
-            max_lines: 1,
-            semibold: true,
-        }),
+        "thinking" => {
+            let text = str_of(get(entry_item, "text"));
+            Some(SheetHeader {
+                glyph: ToolGlyph::Brain,
+                title: t("agentStream.thinking"),
+                max_lines: 1,
+                semibold: true,
+                copy: (!text.trim().is_empty()).then(|| text.to_owned()),
+            })
+        }
         "group" => {
             let calls = row.group.as_deref()?;
             let (summary, _) = tools::build_overview_summary(calls);
@@ -2057,6 +2063,7 @@ pub fn sheet_header(ctx: &RowContext, item: &RowItem, kind: &str) -> Option<Shee
                 title: format::overview_summary(&summary),
                 max_lines: 2,
                 semibold: false,
+                copy: None,
             })
         }
         _ => {
@@ -2070,11 +2077,18 @@ pub fn sheet_header(ctx: &RowContext, item: &RowItem, kind: &str) -> Option<Shee
                 ctx.cwd.as_deref(),
                 target_title.as_deref(),
             );
+            let copy = tools::detail_copy_text(&detail_blocks(
+                &presentation.detail,
+                Some(&presentation.tool_name),
+                presentation.error_text.as_deref(),
+                &|k| t(k),
+            ));
             Some(SheetHeader {
                 glyph: presentation.icon,
                 title: presentation.display_name,
                 max_lines: 1,
                 semibold: true,
+                copy,
             })
         }
     }

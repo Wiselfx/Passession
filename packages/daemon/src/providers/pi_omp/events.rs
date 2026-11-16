@@ -109,7 +109,10 @@ pub struct Mapper {
     clients: VecDeque<(String, Option<String>)>,
     child_mappers: HashMap<String, Box<Mapper>>,
     bridged: HashMap<String, Value>,
-    no_turn_output: Vec<String>,
+    /// Output of a prompt that has not started the agent, held until that is
+    /// certain: the text shown as the command's reply, and for an extension
+    /// message the row it keeps when the agent starts after all.
+    no_turn_output: Vec<(String, Option<Value>)>,
     stream_text: String,
     stream_thinking: String,
     omp_streams: stream::Streams,
@@ -338,6 +341,15 @@ impl Mapper {
         v["item"] = item;
         v
     }
+    /// The agent started: command text is dropped, extension messages keep
+    /// their own rows.
+    fn take_no_turn_rows(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.no_turn_output)
+            .into_iter()
+            .filter_map(|(_, row)| row)
+            .map(|row| self.timeline(row))
+            .collect()
+    }
     fn stream_events(&self, items: Vec<Value>) -> Vec<Value> {
         items
             .into_iter()
@@ -441,16 +453,16 @@ impl Mapper {
             "command_output" if self.turn.is_some()=>{
                 let ansi=cached_regex!(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))");
                 let text=ansi.replace_all(string(&frame["text"]),"").trim().to_owned();
-                if !text.is_empty(){if self.started{out.push(self.timeline(json!({"type":"assistant_message","text":text})));}else{self.no_turn_output.push(text);}}
+                if !text.is_empty(){if self.started{out.push(self.timeline(json!({"type":"assistant_message","text":text})));}else{self.no_turn_output.push((text,None));}}
             }
             "prompt_result" if frame["agentInvoked"]==false && self.turn.is_some() && !self.started=>{
                 if let Some((text,client))=self.clients.pop_front(){let mut item=json!({"type":"user_message","text":text});put(&mut item,"clientMessageId",client.as_deref());out.push(self.timeline(item));}
-                for text in std::mem::take(&mut self.no_turn_output){out.push(self.timeline(json!({"type":"assistant_message","text":text})));}
+                for (text,_) in std::mem::take(&mut self.no_turn_output){out.push(self.timeline(json!({"type":"assistant_message","text":text})));}
                 let mut event=self.event("turn_completed");if let Some(error)=first(&[&frame["error"]]){event["type"]=json!("turn_failed");event["error"]=json!(error);out.extend(self.cancel_work());}
                 self.end_turn();out.push(event);
             }
-            "agent_start"=>{self.started=true;self.no_turn_output.clear();if let Some(id)=frame["sessionId"].as_str(){out.push(json!({"type":"thread_started","provider":self.provider,"sessionId":id}));}},
-            "turn_start"=>{if self.suppress_next_start{self.suppress_next_start=false;}else if self.family=="omp"||!self.turn_started{out.push(self.event("turn_started"));}self.started=true;self.turn_started=true;self.no_turn_output.clear();},
+            "agent_start"=>{self.started=true;out.extend(self.take_no_turn_rows());if let Some(id)=frame["sessionId"].as_str(){out.push(json!({"type":"thread_started","provider":self.provider,"sessionId":id}));}},
+            "turn_start"=>{if self.suppress_next_start{self.suppress_next_start=false;}else if self.family=="omp"||!self.turn_started{out.push(self.event("turn_started"));}self.started=true;self.turn_started=true;out.extend(self.take_no_turn_rows());},
             "thinking_level_changed"=>{if let Some(level)=frame["level"].as_str().filter(|s|matches!(*s,"off"|"minimal"|"low"|"medium"|"high"|"xhigh")){out.push(json!({"type":"thinking_option_changed","provider":self.provider,"thinkingOptionId":level}));}},
             "message_start"=>{if frame["message"]["role"]=="assistant"{if self.family=="omp"{self.omp_streams.start(frame);}else{self.assistant=first(&[&frame["message"]["responseId"]]).map(str::to_owned);self.stream_text.clear();self.stream_thinking.clear();}}},
             "message_update"=>{
@@ -473,7 +485,9 @@ impl Mapper {
             "message_end"=>{
                 let message=&frame["message"];match string(&message["role"]){
                     "assistant"=>{if self.family=="omp"{let items=self.omp_streams.finish(frame);out.extend(self.stream_events(items));}else{out.extend(self.cumulative(message));self.assistant=None;self.stream_text.clear();self.stream_thinking.clear();}self.terminal=Some(message.clone());if self.family=="omp"{for block in array(&message["content"]){if block["type"]=="toolCall"&&block["name"]=="ask"{self.permissions.start(&self.family,&self.provider,string(&block["id"]),"ask",&block["arguments"]);}}}},
-                    "custom"=>{let changes=if self.family=="omp"{self.extensions.omp_custom(message)}else{self.extensions.custom(message)};out.extend(self.subagents(changes));let id=format!("{}-custom-{}",self.provider,Uuid::new_v4());if let Some(mut item)=custom_item(&self.family,message,&id){if self.family=="omp"&&item["type"]=="user_message"{if let Some((text,client))=self.clients.pop_front(){item["text"]=json!(text);put(&mut item,"clientMessageId",client.as_deref());}else{return out;}}out.push(self.timeline(item));}},
+                    "custom"=>{let changes=if self.family=="omp"{self.extensions.omp_custom(message)}else{self.extensions.custom(message)};out.extend(self.subagents(changes));let id=format!("{}-custom-{}",self.provider,Uuid::new_v4());if let Some(mut item)=custom_item(&self.family,message,&id){if self.family=="omp"&&item["type"]=="user_message"{if let Some((text,client))=self.clients.pop_front(){item["text"]=json!(text);put(&mut item,"clientMessageId",client.as_deref());}else{return out;}}
+                        // What an extension posts while its command runs is that command's reply.
+                        if self.turn.is_some()&&!self.started&&item["metadata"]["customType"].is_string(){let text=string(&item["detail"]["text"]).to_owned();self.no_turn_output.push((text,Some(item)));}else{out.push(self.timeline(item));}}},
                     "toolResult" if self.family=="omp"=>{let changes=self.extensions.omp_custom(message);out.extend(self.subagents(changes));},
                     "user" if self.family=="omp"=>{let id=first(&[&message["id"],&message["entryId"]]);if id.is_some_and(|id|!self.users.insert(id.into())){return out;}let text=tools::content_text(&message["content"]);if !text.is_empty(){let mut item=json!({"type":"user_message","text":text});put(&mut item,"messageId",id);if let Some((_,client))=self.clients.pop_front(){put(&mut item,"clientMessageId",client.as_deref());}out.push(self.timeline(item));}},_=>{}
                 }
@@ -802,6 +816,35 @@ mod tests {
                     if active { json!("turn") } else { Value::Null }
                 );
                 assert!(mapper.turn.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn extension_command_output_is_the_reply_unless_the_agent_starts() {
+        let text = "Kiro profiles\n\nWork — arn:profile/a";
+        let posted = json!({"type":"message_end","message":{"role":"custom",
+            "customType":"kiro-command","display":true,"content":text}});
+        for family in ["pi", "omp"] {
+            let mut mapper = Mapper::new(family, family);
+            mapper.begin_turn("command");
+            assert!(mapper.map(&posted).is_empty(), "{family}");
+            let events = mapper.map(&json!({"type":"prompt_result","agentInvoked":false}));
+            assert_eq!(
+                events[0]["item"],
+                json!({"type":"assistant_message","text":text}),
+                "{family}"
+            );
+            assert_eq!(events[1]["type"], "turn_completed", "{family}");
+
+            mapper.begin_turn("prompt");
+            assert!(mapper.map(&posted).is_empty(), "{family}");
+            let started = mapper.map(&json!({"type":"agent_start"}));
+            let running = mapper.map(&posted);
+            for events in [started, running] {
+                assert_eq!(events[0]["item"]["type"], "tool_call", "{family}");
+                assert_eq!(events[0]["item"]["name"], "kiro-command", "{family}");
+                assert_eq!(events[0]["item"]["detail"]["text"], text, "{family}");
             }
         }
     }

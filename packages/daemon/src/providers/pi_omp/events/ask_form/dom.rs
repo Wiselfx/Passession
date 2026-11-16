@@ -102,7 +102,7 @@ impl<'a> Element<'a> {
 
     pub(super) fn children(self) -> impl Iterator<Item = Child<'a>> {
         self.node.children().filter_map(|child| match child.value() {
-            Node::Text(text) => Some(Child::Text(&**text)),
+            Node::Text(text) => Some(Child::Text(text)),
             Node::Element { .. } => Element::wrap(child).map(Child::Element),
             Node::Other => None,
         })

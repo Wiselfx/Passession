@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Show what an OMP or Pi extension posts while its slash command runs as that command's reply in the conversation, after the command itself, where it can be read, selected and copied without opening a tool row. A message posted once the agent has started keeps its tool row.
+- Add a copy button to the header of the tool detail sheet on compact layouts. It copies the text the sheet shows: the command and its output, file content, diff lines, or the tool's input and output.
+
 ## 0.13.32 - 2026-11-16
 
 ### Changed

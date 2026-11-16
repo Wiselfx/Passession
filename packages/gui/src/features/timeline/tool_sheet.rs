@@ -25,14 +25,18 @@ use std::collections::HashMap;
 /// showModalBottomSheet's enter transition.
 pub const OPEN_SECS: f64 = 0.25;
 
+/// The header copy button's key in the sheet's `copied` state.
+const COPY_KEY: &str = "sheet:copy";
+
 /// The sheet body painter: (cx, draw, x, y, width, fill height) → height.
 pub type SheetBody<'a> = &'a dyn Fn(&mut Cx2d, &mut Draw, f64, f64, f64, f64) -> f64;
 
 /// Paints the sheet over `rect`; `progress` is the open animation (0..1).
 /// `bottom_inset` is the system navigation inset inside `rect`'s bottom edge:
 /// the sheet's background covers it, the body ends above it.
-/// Registers `Chrome("scrim")`, `Chrome("sheet:body")`, `Chrome("sheet:close")`
-/// and the body's `ScrollY("sheet:y")`. Returns the sheet rect.
+/// Registers `Chrome("scrim")`, `Chrome("sheet:body")`, `Chrome("sheet:close")`,
+/// the header's `Copy` when it has text, and the body's `ScrollY("sheet:y")`.
+/// Returns the sheet rect.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_detail_sheet(
     cx: &mut Cx2d,
@@ -76,8 +80,10 @@ pub fn paint_detail_sheet(
         2.0,
     );
     let header_y = sheet.pos.y + 24.0;
-    let measurement =
-        crate::common::widgets::RowMetrics::new(0.0, 0.0, 0.0).layout(sheet, 16.0, 20.0, 36.0, 8.0);
+    // Trailing actions are 36px each: copy (when there is text) and close.
+    let actions = if header.copy.is_some() { 72.0 } else { 36.0 };
+    let measurement = crate::common::widgets::RowMetrics::new(0.0, 0.0, 0.0)
+        .layout(sheet, 16.0, 20.0, actions, 8.0);
     let size = d.look.ui(14.0);
     let font = if header.semibold {
         Font::Semibold
@@ -99,7 +105,7 @@ pub fn paint_detail_sheet(
         rect_xywh(sheet.pos.x, header_y, sheet.size.x, header_height),
         16.0,
         20.0,
-        36.0,
+        actions,
         8.0,
     );
     paint_glyph(
@@ -117,8 +123,34 @@ pub fn paint_detail_sheet(
     );
     d.kit
         .draw_laidout(cx, font, p.foreground, slots.title.pos, &laid);
+    if let Some(text) = &header.copy {
+        let copy = rect_xywh(
+            slots.trailing.pos.x,
+            header_y + (header_height - 36.0) * 0.5,
+            36.0,
+            36.0,
+        );
+        let copied = d.state.copied_now(COPY_KEY, d.now);
+        if copied {
+            d.animating = true;
+        }
+        d.kit.icon(
+            cx,
+            if copied { "check" } else { "copy" },
+            copy,
+            18.0,
+            p.muted,
+        );
+        d.canvas.add_hit(
+            copy,
+            HitTarget::Copy {
+                key: COPY_KEY.into(),
+                text: text.clone().into(),
+            },
+        );
+    }
     let close = rect_xywh(
-        slots.trailing.pos.x,
+        slots.trailing.pos.x + actions - 36.0,
         header_y + (header_height - 36.0) * 0.5,
         36.0,
         36.0,
@@ -552,14 +584,20 @@ pub fn draw_tool_call_sheets(cx: &mut Cx2d, window_id: &str, window: Rect) {
             layer.canvas.begin(window.pos);
             let progress = ((now - sheet.opened) / OPEN_SECS).clamp(0.0, 1.0);
             let glyph = tools::resolve_tool_call_icon(&sheet.title, Some(&sheet.detail), false);
+            let detail = sheet.detail.clone();
+            let tool_name = sheet.title.clone();
             let header = SheetHeader {
                 glyph,
                 title: sheet.title.clone(),
                 max_lines: 1,
                 semibold: true,
+                copy: tools::detail_copy_text(&detail_blocks(
+                    &detail,
+                    Some(&tool_name),
+                    None,
+                    &|k| t(k),
+                )),
             };
-            let detail = sheet.detail.clone();
-            let tool_name = sheet.title.clone();
             let mut d = Draw {
                 kit: &mut *kit,
                 canvas: &mut layer.canvas,
