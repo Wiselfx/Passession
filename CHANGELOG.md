@@ -13,6 +13,10 @@
 - Share `nix` 0.31 and `winreg` 0.56 with portable-pty, and `png` 0.18 with tiny-skia. PTY behavior and rasterization remain unchanged; PNG encoder output may differ while preserving decoded pixels.
 - Drop unused node-semver diagnostic rendering and daemon logging dependencies, retaining Node-style version ranges, log forwarding, JSON output and credential redaction. Protocol ciphers use only detached in-place operations; key and nonce generation keep the existing OS randomness path.
 
+### Fixed
+
+- Verify Windows update signatures, private-directory ACLs and the registered installation through native Windows APIs rather than Windows PowerShell. A daemon launched from PowerShell 7 no longer makes update checks load incompatible modules through an inherited `PSModulePath`. Signed updates retain publisher continuity using the verified certificate Subject DER; catalog and embedded verification failures cannot be downgraded to unsigned images.
+
 ## 0.13.31 - 2026-11-16
 
 ### Changed

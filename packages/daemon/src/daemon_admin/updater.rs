@@ -921,15 +921,13 @@ pub(crate) async fn validate_binary(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 async fn native_command(program: &Path, args: &[String]) -> Result<String> {
     let mut command = tokio::process::Command::new(program);
     command
         .args(args)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
         .await
         .context("Native signature verification timed out")??;
@@ -945,29 +943,15 @@ async fn native_command(program: &Path, args: &[String]) -> Result<String> {
         String::from_utf8_lossy(&output.stderr)
     ))
 }
+/// WinVerifyTrust may fetch revocation and timestamp data, so it runs on a
+/// blocking thread under the same deadline the native tools get.
 #[cfg(windows)]
-fn powershell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
-}
-#[cfg(windows)]
-async fn powershell(script: &str) -> Result<String> {
-    let bytes = script
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<_>>();
-    let root = std::env::var_os("SystemRoot")
-        .context("SystemRoot is unavailable for Authenticode validation")?;
-    native_command(
-        &PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-        &[
-            "-NoLogo".into(),
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-EncodedCommand".into(),
-            STANDARD.encode(bytes),
-        ],
-    )
-    .await
+async fn windows_signature_check(
+    check: impl FnOnce() -> Result<()> + Send + 'static,
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(30), tokio::task::spawn_blocking(check))
+        .await
+        .context("Native signature verification timed out")??
 }
 /// Official releases must keep the installed publisher identity.
 pub(crate) async fn validate_signature(old: &Path, new: &Path) -> Result<()> {
@@ -1008,12 +992,17 @@ pub(crate) async fn validate_signature(old: &Path, new: &Path) -> Result<()> {
         }
     }
     #[cfg(windows)]
-    powershell(&format!(
-        "$ErrorActionPreference='Stop';$old=Get-AuthenticodeSignature -LiteralPath {};$new=Get-AuthenticodeSignature -LiteralPath {};if($new.Status -ne 'Valid' -and $new.Status -ne 'NotSigned'){{throw 'Invalid update Authenticode signature'}};if($old.Status -eq 'Valid'){{if($new.Status -ne 'Valid' -or $old.SignerCertificate.Subject -ne $new.SignerCertificate.Subject){{throw 'Update publisher mismatch'}}}}elseif($old.Status -ne 'NotSigned'){{throw 'Installed Authenticode signature is invalid'}}",
-        powershell_quote(old),
-        powershell_quote(new)
-    ))
-    .await?;
+    {
+        let (old, new) = (old.to_owned(), new.to_owned());
+        windows_signature_check(move || {
+            paseo_client::windows_security::verify_update_signature(
+                &old,
+                &new,
+                paseo_client::windows_security::UnsignedPolicy::AllowSignedUpgrade,
+            )
+        })
+        .await?;
+    }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (old, new);
@@ -1036,11 +1025,13 @@ async fn validate_local_signature(executable: &Path) -> Result<()> {
     )
     .await?;
     #[cfg(windows)]
-    powershell(&format!(
-        "$ErrorActionPreference='Stop';$s=Get-AuthenticodeSignature -LiteralPath {};if($s.Status -ne 'Valid' -and $s.Status -ne 'NotSigned'){{throw 'Invalid local runtime Authenticode signature'}}",
-        powershell_quote(executable)
-    ))
-    .await?;
+    {
+        let executable = executable.to_owned();
+        windows_signature_check(move || {
+            paseo_client::windows_security::verify_local_signature(&executable)
+        })
+        .await?;
+    }
     #[cfg(not(any(target_os = "macos", windows)))]
     let _ = executable;
     Ok(())

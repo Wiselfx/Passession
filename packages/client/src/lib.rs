@@ -8,6 +8,8 @@ mod operations;
 pub mod process;
 mod subscriptions;
 pub mod transport;
+#[cfg(windows)]
+pub mod windows_security;
 use crate::{
     crypto::SecurityMode,
     transport::{

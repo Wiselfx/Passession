@@ -709,26 +709,25 @@ async fn command_output(
     }
     String::from_utf8(output.stdout).map_err(convert)
 }
-pub(super) async fn powershell(script: &str) -> Result<String, PlatformError> {
-    command_output(
-        Path::new("powershell.exe"),
-        &[
-            "-NoProfile".as_ref(),
-            "-NonInteractive".as_ref(),
-            "-Command".as_ref(),
-            script.as_ref(),
-        ],
-    )
-    .await
-}
 async fn validate_publisher(
     current: &Path,
     image: &Path,
     id: ComponentId,
 ) -> Result<(), PlatformError> {
-    if cfg!(windows) {
-        let quote = |p: &Path| p.to_string_lossy().replace('\'', "''");
-        powershell(&format!("$ErrorActionPreference='Stop';$a=Get-AuthenticodeSignature -LiteralPath '{}';$b=Get-AuthenticodeSignature -LiteralPath '{}';if($a.Status -eq 'Valid'){{if($b.Status -ne 'Valid' -or $a.SignerCertificate.Subject -ne $b.SignerCertificate.Subject){{throw 'Component publisher mismatch'}}}}elseif($a.Status -ne 'NotSigned' -or $b.Status -ne 'NotSigned'){{throw 'Invalid component signature'}}",quote(current),quote(image))).await?;
+    #[cfg(windows)]
+    {
+        use paseo_client::windows_security::{UnsignedPolicy, verify_update_signature};
+        let (current, image) = (current.to_path_buf(), image.to_path_buf());
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || {
+                verify_update_signature(&current, &image, UnsignedPolicy::PreserveUnsigned)
+            }),
+        )
+        .await
+        .map_err(convert)?
+        .map_err(convert)?
+        .map_err(|e| error(format!("{e:#}")))?;
     }
     if cfg!(target_os = "macos") {
         let candidate = if matches!(id, ComponentId::App | ComponentId::Tailnet) {

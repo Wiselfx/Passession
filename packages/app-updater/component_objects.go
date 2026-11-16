@@ -686,15 +686,7 @@ func validateComponentSignature(r componentRequest, id, stagedRoot string) error
 	newImage := filepath.Join(stagedRoot, filepath.FromSlash(c.Component.Executable))
 	oldImage := componentImage(r, r.Current[id])
 	if runtime.GOOS == "windows" {
-		system := os.Getenv("SystemRoot")
-		if system == "" {
-			return errors.New("Windows system root missing")
-		}
-		script := `$ErrorActionPreference='Stop'; $old=Get-AuthenticodeSignature -LiteralPath $env:PASEO_HELPER_OLD; $new=Get-AuthenticodeSignature -LiteralPath $env:PASEO_HELPER_ARTIFACT; if($new.Status -ne 'Valid' -and $new.Status -ne 'NotSigned'){throw 'Invalid component signature'}; if($old.Status -eq 'Valid'){if($new.Status -ne 'Valid' -or $new.SignerCertificate.Subject -ne $old.SignerCertificate.Subject){throw 'Component publisher changed'}}elseif($old.Status -ne 'NotSigned'){throw 'Invalid installed component signature'}`
-		cmd := exec.Command(filepath.Join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", script)
-		cmd.Env = append(os.Environ(), "PASEO_HELPER_OLD="+oldImage, "PASEO_HELPER_ARTIFACT="+newImage)
-		hideWindow(cmd)
-		return cmd.Run()
+		return verifyPublisherContinuity(oldImage, newImage, "component", "installed component")
 	}
 	if id == "app" {
 		bundle := func(p string) string {

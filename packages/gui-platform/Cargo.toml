@@ -73,6 +73,7 @@ apple-native-keyring-store = { version = "1.0.2", features = ["protected"] }
 tray-icon = { version = "0.26", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
+paseo-client = { path = "../client" }
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
 windows-collections = "0.2"
 # COM implementation macros expand absolute windows_core paths.

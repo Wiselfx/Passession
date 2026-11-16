@@ -819,8 +819,13 @@ pub(super) async fn private_dir(path: &Path) -> Result<(), PlatformError> {
     }
     #[cfg(windows)]
     {
-        let path = path.to_string_lossy().replace('\'', "''");
-        super::updater::powershell(&format!("$ErrorActionPreference='Stop'; $p='{path}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl")).await?;
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            paseo_client::windows_security::restrict_directory_to_current_user(&path)
+        })
+        .await
+        .map_err(|e| error(e.to_string()))?
+        .map_err(|e| error(format!("{e:#}")))?;
     }
     Ok(())
 }

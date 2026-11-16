@@ -127,17 +127,9 @@ pub(super) fn private(path: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        let quoted = path.to_string_lossy().replace('\'', "''");
-        let script = format!(
-            "$ErrorActionPreference='Stop';$a=Get-Acl -LiteralPath '{quoted}';$s=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($a.Owner -ne [Security.Principal.WindowsIdentity]::GetCurrent().Name -and $a.Owner -ne $s){{throw 'Wrong component store owner'}};foreach($r in $a.Access){{$id=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and $id -ne $s -and $id -ne 'S-1-5-18'){{throw 'Component store ACL permits another user'}}}}"
-        );
-        ensure!(
-            Command::new("powershell.exe")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-                .status()?
-                .success(),
-            "Unsafe component store ACL"
-        );
+        use paseo_client::windows_security::{AllowedDirectoryUsers, verify_private_directory};
+        verify_private_directory(path, AllowedDirectoryUsers::CurrentUserAndSystem)
+            .context("Unsafe component store ACL")?;
     }
     Ok(())
 }
@@ -1105,17 +1097,8 @@ fn create_private(path: &Path) -> Result<()> {
         #[cfg(windows)]
         {
             std::fs::create_dir(path)?;
-            let quoted = path.to_string_lossy().replace('\'', "''");
-            let script = format!(
-                "$ErrorActionPreference='Stop';$s=[Security.Principal.WindowsIdentity]::GetCurrent().User;$a=New-Object Security.AccessControl.DirectorySecurity;$a.SetOwner($s);$a.SetAccessRuleProtection($true,$false);$a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'FullControl','ContainerInherit,ObjectInherit','None','Allow')));Set-Acl -LiteralPath '{quoted}' -AclObject $a"
-            );
-            ensure!(
-                Command::new("powershell.exe")
-                    .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-                    .status()?
-                    .success(),
-                "Cannot protect component directory"
-            );
+            paseo_client::windows_security::restrict_directory_to_current_user(path)
+                .context("Cannot protect component directory")?;
         }
     }
     private(path)

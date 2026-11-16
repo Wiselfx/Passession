@@ -795,23 +795,19 @@ fn reconcile_pause(app: &Arc<AppState>, id: String, lease: update_operation::Adm
 
 #[cfg(windows)]
 async fn windows_private_acl(path: &Path) -> Result<()> {
-    // Fixed script; the path is never interpolated into executable source.
-    let script = "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=Get-Acl -LiteralPath $env:PASEO_UPDATE_ACL_PATH; if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){exit 2}; foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value){exit 3}}";
-    let mut command = tokio::process::Command::new("powershell.exe");
-    command
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("PASEO_UPDATE_ACL_PATH", path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(0x08000000)
-        .kill_on_drop(true);
-    let result = tokio::time::timeout(Duration::from_secs(5), command.status()).await??;
-    ensure!(
-        result.success(),
-        "Desktop update path ACL is not current-user-only"
-    );
-    Ok(())
+    let path = path.to_owned();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(move || {
+            paseo_client::windows_security::verify_private_directory(
+                &path,
+                paseo_client::windows_security::AllowedDirectoryUsers::CurrentUser,
+            )
+        }),
+    )
+    .await
+    .context("Desktop update path ACL verification timed out")??
+    .context("Desktop update path ACL is not current-user-only")
 }
 
 #[cfg(test)]

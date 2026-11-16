@@ -3804,6 +3804,7 @@ dependencies = [
  "makepad-android-state",
  "makepad-widgets",
  "objc2",
+ "paseo-client",
  "paseo-gui-core",
  "paseo-protocol",
  "paseo-tailnet",

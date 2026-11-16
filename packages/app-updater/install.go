@@ -36,15 +36,10 @@ func validateNative(r request) error {
 		if strings.ContainsAny(r.StagedArtifact+r.Destination, "\"") {
 			return errors.New("quotes are not valid installer paths")
 		}
-		script := `$ErrorActionPreference='Stop'; $old=Get-AuthenticodeSignature -LiteralPath $env:PASEO_HELPER_OLD; $new=Get-AuthenticodeSignature -LiteralPath $env:PASEO_HELPER_ARTIFACT; if($new.Status -ne 'Valid' -and $new.Status -ne 'NotSigned'){throw 'Invalid installer signature'}; if($old.Status -eq 'Valid'){if($new.Status -ne 'Valid' -or $new.SignerCertificate.Subject -ne $old.SignerCertificate.Subject){throw 'Publisher changed'}}elseif($old.Status -ne 'NotSigned'){throw 'Invalid installed signature'}; $root=(Get-ItemProperty -LiteralPath 'HKCU:\Software\Paseo Sessions' -Name InstallDir).InstallDir; if([IO.Path]::GetFullPath($root).TrimEnd('\') -ine $env:PASEO_HELPER_ROOT.TrimEnd('\')){throw 'Registered installation changed'}`
-		system := os.Getenv("SystemRoot")
-		if system == "" {
-			return errors.New("Windows system root missing")
+		if err := verifyPublisherContinuity(r.CurrentExecutable, r.StagedArtifact, "installer", "installed app"); err != nil {
+			return err
 		}
-		cmd := exec.Command(filepath.Join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", script)
-		cmd.Env = append(os.Environ(), "PASEO_HELPER_OLD="+r.CurrentExecutable, "PASEO_HELPER_ARTIFACT="+r.StagedArtifact, "PASEO_HELPER_ROOT="+r.Destination)
-		hideWindow(cmd)
-		return cmd.Run()
+		return checkRegisteredInstallation(r.Destination)
 	case "deb", "rpm":
 		if _, err := os.Stat("/usr/bin/pkexec"); err != nil {
 			return errors.New("package updates require polkit pkexec")
