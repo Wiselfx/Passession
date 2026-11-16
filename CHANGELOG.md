@@ -2,10 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Pause, resume or stop Embedded Tailscale outside the app window. Android keeps it in a foreground service whose ongoing notification offers those actions, so the app is not frozen in the background. Linux, macOS and Windows show the state and the same actions in the tray menu. iOS keeps the in-app controls; it offers no background mode for the connection.
+
 ### Changed
 
 - Stop keeping the previous app, daemon and component versions after an update succeeds. The old copy now lives only until the new version passes its health check, so failed or interrupted updates still roll back; existing leftover copies are removed by the next cleanup.
 - The managed daemon's fixed launcher (`bin/paseo` in its installation store) now runs the active runtime's CLI for every user command, so a `paseo` command linked to it keeps following updates instead of breaking when the replaced runtime is removed.
+
+### Fixed
+
+- Keep Embedded Tailscale connected when the app regains focus. Returning to the window no longer restarts a running connection and drops every host using it. A short `Starting` state or one slow status check no longer disconnects those hosts, and a slow shutdown no longer blocks the next start.
+- Open a tapped Android notification in the existing app instead of a second window. The app now runs as one activity, and a stale activity can no longer shut down the live one.
+- Show the session for a clicked desktop notification even when the main window was closed to the tray, and raise the window through Linux activation tokens and Windows' focus rules.
 
 ## 0.13.27 - 2026-11-16
 

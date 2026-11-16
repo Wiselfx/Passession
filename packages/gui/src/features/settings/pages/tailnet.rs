@@ -11,7 +11,7 @@ use crate::features::settings::model::forms::{FormSheet, SettingField};
 use crate::features::settings::rpc::{Env, ReqError, handler};
 use crate::features::settings::state::{Settings, SheetKind};
 use crate::features::settings::ui::draw::Icon;
-use crate::features::settings::ui::kit::{Ctl, Ui, button, icon_button, row, switch};
+use crate::features::settings::ui::kit::{Ctl, Ui, Variant, button, icon_button, row, switch};
 
 const DEFAULT_CONTROL: &str = "https://controlplane.tailscale.com";
 
@@ -157,17 +157,20 @@ fn backend_label(backend: &str) -> String {
         "Stopped" => t("tailnet.states.stopped"),
         "Disabled" => t("tailnet.states.disabled"),
         "Error" => t("tailnet.states.error"),
+        "Paused" => t("tailnet.states.paused"),
         "NoState" | "" => t("tailnet.states.noState"),
         other => ta("tailnet.states.unknown", &[("state", other)]),
     }
 }
 
-/// The one action the Status row offers for a backend state.
+/// The actions the Status row offers for a backend state.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Primary {
     Login,
     Reconnect,
-    Disconnect,
+    /// Running or connecting: Pause, and Stop (turns Embedded Tailscale off).
+    PauseStop,
+    Resume,
 }
 
 /// `actionable`: enabled and no operation in flight. A state whose action
@@ -179,14 +182,15 @@ fn primary_action(actionable: bool, backend: &str) -> Option<Primary> {
     match backend {
         "NeedsLogin" | "NeedsMachineAuth" => Some(Primary::Login),
         "Stopped" | "Error" => Some(Primary::Reconnect),
-        "Running" | "Starting" => Some(Primary::Disconnect),
+        "Running" | "Starting" => Some(Primary::PauseStop),
+        "Paused" => Some(Primary::Resume),
         _ => None,
     }
 }
 
 /// Log out applies only to a node that holds a login.
 fn logged_in(account: &str, backend: &str) -> bool {
-    !account.is_empty() || matches!(backend, "Running" | "Starting")
+    !account.is_empty() || matches!(backend, "Running" | "Starting" | "Paused")
 }
 
 pub fn ensure(s: &mut Settings, env: &mut Env) {
@@ -310,7 +314,7 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
     ui.card_end();
     ui.gap(24.0);
 
-    // Status: the state, the one action it calls for, and a refresh glyph.
+    // Status: the state, the actions it calls for, and a refresh glyph.
     ui.section_title(&t("tailnet.status"), None, None);
     ui.card_begin();
     let checking = !s.tailnet.answered && (pending || !s.tailnet.loaded);
@@ -336,22 +340,21 @@ pub fn draw(ui: &mut Ui, s: &Settings, v: &View) {
             controls
                 .push(button("tailnet.reconnect", t("tailnet.reconnect"), Some(reconnect)).ctl());
         }
-        Some(Primary::Disconnect) => {
-            let disconnect = handler(|s, _| {
-                confirm_action(
-                    s,
-                    "disconnect",
-                    "tailnet.disconnect",
-                    "tailnet.disconnectConfirm",
-                )
+        Some(Primary::PauseStop) => {
+            let pause = handler(|s, env| request(s, env, json!({"action": "pause"})));
+            controls.push(button("tailnet.pause", t("tailnet.pause"), Some(pause)).ctl());
+            let stop = handler(|s, _| {
+                confirm_action(s, "disconnect", "tailnet.stop", "tailnet.stopConfirm")
             });
+            controls.push(button("tailnet.stop", t("tailnet.stop"), Some(stop)).ctl());
+        }
+        Some(Primary::Resume) => {
+            status = format!("{status}\n{}", t("tailnet.pausedHint"));
+            let resume = handler(|s, env| request(s, env, json!({"action": "resume"})));
             controls.push(
-                button(
-                    "tailnet.disconnect",
-                    t("tailnet.disconnect"),
-                    Some(disconnect),
-                )
-                .ctl(),
+                button("tailnet.resume", t("tailnet.resume"), Some(resume))
+                    .variant(Variant::Primary)
+                    .ctl(),
             );
         }
         None => {}
@@ -475,10 +478,11 @@ mod tests {
         for state in ["Running", "Starting"] {
             assert_eq!(
                 primary_action(true, state),
-                Some(Primary::Disconnect),
+                Some(Primary::PauseStop),
                 "{state}"
             );
         }
+        assert_eq!(primary_action(true, "Paused"), Some(Primary::Resume));
         for state in ["Disabled", "NoState", "", "InUseOtherUser"] {
             assert_eq!(primary_action(true, state), None, "{state}");
         }
@@ -488,6 +492,7 @@ mod tests {
 
         assert!(logged_in("me@example.com", "Stopped"));
         assert!(logged_in("", "Running"));
+        assert!(logged_in("", "Paused"));
         assert!(!logged_in("", "NeedsLogin"));
         assert!(!logged_in("", "Disabled"));
     }

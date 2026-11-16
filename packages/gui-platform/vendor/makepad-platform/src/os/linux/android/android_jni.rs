@@ -198,6 +198,8 @@ static mut CHOREOGRAPHER: *mut ndk_sys::AChoreographer = std::ptr::null_mut();
 #[cfg(not(no_android_choreographer))]
 static mut CHOREOGRAPHER_POST_CALLBACK_FN: Option<unsafe extern "C" fn(*mut ndk_sys::AChoreographer, Option<unsafe extern "C" fn(*mut ndk_sys::AChoreographerFrameCallbackData, *mut std::ffi::c_void)>, *mut std::ffi::c_void) -> i32> = None;
 
+static RENDER_LOOP_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Initializes the render loop which used the Android Choreographer when available to ensure proper vsync.
 /// If `no_android_choreographer` is present (e.g. OHOS with non-compatiblity), we fallback to a simple loop with frame pacing.
 /// This will be replaced by proper a vsync mechanism once we firgure it out for that OHOS.
@@ -209,6 +211,11 @@ pub unsafe extern "C" fn Java_dev_makepad_android_MakepadNative_initChoreographe
     device_refresh_rate: jni_sys::jfloat,
     sdk_version: jni_sys::jint,
 ) {
+    // Paseo: a later activity instance attaching to the running app calls this
+    // again; one frame source already drives the loop, a second would double it.
+    if RENDER_LOOP_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     // If the Choreographer is not available (e.g. OHOS), use a manual render loop
     #[cfg(no_android_choreographer)]
     {

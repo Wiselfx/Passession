@@ -85,6 +85,8 @@ pub(crate) enum NativeSignal {
     NotificationClick(Map<String, Value>),
     TrayOpen,
     TrayQuit,
+    /// A tailnet control from the tray menu.
+    TrayTailnet(TailnetControl),
     /// Linux SIGTERM and the macOS application quit event.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     QuitRequestedByOs,
@@ -140,6 +142,8 @@ pub(crate) struct DesktopShared {
     notifications: tokio::sync::Mutex<VecDeque<String>>,
     pub lifecycle_ready: AtomicBool,
     pub tray_created: AtomicBool,
+    /// The shell hid its first window itself (dormant): it still owns routes.
+    dormant: AtomicBool,
     local_daemon_listening: AtomicBool,
     log: Mutex<Option<std::fs::File>>,
     log_path: PathBuf,
@@ -151,6 +155,8 @@ pub(crate) struct DesktopShared {
 pub(crate) struct DesktopMain {
     tray: Option<os::Tray>,
     windows: os::NativeWindows,
+    /// Kept for a tray that appears later (it waits for the lifecycle bridge).
+    tailnet: Option<TailnetPresence>,
 }
 
 impl DesktopMain {
@@ -159,6 +165,23 @@ impl DesktopMain {
     }
     pub fn show_windows(&mut self) {
         self.windows.show_all();
+    }
+
+    fn install_tray(&mut self, mut tray: os::Tray) {
+        if self.tailnet.is_some() {
+            tray.set_tailnet(self.tailnet.as_ref());
+        }
+        self.tray = Some(tray);
+    }
+
+    pub fn set_tailnet_presence(&mut self, presence: Option<TailnetPresence>) {
+        if self.tailnet == presence {
+            return;
+        }
+        if let Some(tray) = self.tray.as_mut() {
+            tray.set_tailnet(presence.as_ref());
+        }
+        self.tailnet = presence;
     }
 }
 
@@ -182,6 +205,7 @@ impl DesktopShared {
             notifications: tokio::sync::Mutex::new(VecDeque::new()),
             lifecycle_ready: AtomicBool::new(false),
             tray_created: AtomicBool::new(false),
+            dormant: AtomicBool::new(false),
             local_daemon_listening: AtomicBool::new(false),
             log: Mutex::new(None),
             log_path,
@@ -204,6 +228,10 @@ impl DesktopShared {
 
     pub fn quitting(&self) -> bool {
         self.quit.lock().unwrap().quitting
+    }
+
+    pub fn set_dormant(&self, dormant: bool) {
+        self.dormant.store(dormant, Ordering::SeqCst);
     }
 
     /// The first window has been built and accepts routes.
@@ -505,18 +533,18 @@ fn handle_signal(
                 show_preferred(state);
             }
         }
-        NativeSignal::NotificationClick(data) => {
-            show_preferred(state);
-            if let Some(route) = PlatformRoute::from_notification_data(&data) {
-                desktop.route(PlatformEvent::Route(route));
-            }
-        }
+        NativeSignal::NotificationClick(data) => match PlatformRoute::from_notification_data(&data)
+        {
+            Some(route) => show_route(shared, state, route),
+            None => show_preferred(state),
+        },
         NativeSignal::TrayOpen => {
             if !desktop.quitting() {
                 show_preferred(state);
             }
         }
         NativeSignal::TrayQuit => request_quit(shared, QuitReason::Quit, false),
+        NativeSignal::TrayTailnet(control) => post_event(PlatformEvent::TailnetControl(control)),
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         NativeSignal::QuitRequestedByOs => request_quit(shared, QuitReason::Quit, false),
     }
@@ -527,6 +555,19 @@ fn show_preferred(state: &mut PlatformState) {
     post_event(PlatformEvent::ShowWindow);
 }
 
+/// Brings the app forward for a route. Only the first window processes routes; while
+/// it is dormant (hidden by the shell, skipped by `show_all`) it is reopened with the
+/// route like New Window, never routed while invisible.
+fn show_route(shared: &Arc<Shared>, state: &mut PlatformState, route: PlatformRoute) {
+    show_preferred(state);
+    let event = if shared.desktop.dormant.swap(false, Ordering::SeqCst) {
+        PlatformEvent::OpenWindow { route: Some(route) }
+    } else {
+        PlatformEvent::Route(route)
+    };
+    shared.desktop.route(event);
+}
+
 /// Original `_activate`.
 fn activate(shared: &Arc<Shared>, state: &mut PlatformState, activation: Activation) {
     let desktop = &shared.desktop;
@@ -535,11 +576,14 @@ fn activate(shared: &Arc<Shared>, state: &mut PlatformState, activation: Activat
     }
     if let Some(url) = activation.url {
         if let Some((server_id, agent_id)) = deep_link::parse_agent_deep_link(&url) {
-            show_preferred(state);
-            desktop.route(PlatformEvent::Route(PlatformRoute::Agent {
-                server_id,
-                agent_id,
-            }));
+            show_route(
+                shared,
+                state,
+                PlatformRoute::Agent {
+                    server_id,
+                    agent_id,
+                },
+            );
         }
     } else if let Some(path) = activation.project_path {
         let route = PlatformRoute::Project {

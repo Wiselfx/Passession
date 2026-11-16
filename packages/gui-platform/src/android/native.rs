@@ -115,6 +115,37 @@ pub(crate) fn report_error(_shared: &Arc<Shared>, message: &str) {
     });
 }
 
+/// `Some` starts or updates `PaseoTailnetService` (a foreground service whose
+/// ongoing notification carries Pause/Resume and Stop); `None` stops it. Java
+/// defers a start Android refuses in the background until the next resume.
+pub(crate) fn set_tailnet_presence(shared: &Arc<Shared>, presence: Option<TailnetPresence>) {
+    let advertised = presence.is_some();
+    let presence = presence.map(|presence| {
+        json!({
+            "state": match presence.state {
+                TailnetPresenceState::Connected => "connected",
+                TailnetPresenceState::Connecting => "connecting",
+                TailnetPresenceState::Paused => "paused",
+                TailnetPresenceState::NeedsAttention => "needsAttention",
+            },
+            "title": presence.title,
+            "status": presence.status,
+            "pause": presence.pause,
+            "resume": presence.resume,
+            "stop": presence.stop,
+        })
+    });
+    // Withdrawal during shutdown may find no activity; the service then ends with the process.
+    if let Err(error) = call("tailnetPresence", json!({ "presence": presence }))
+        && advertised
+    {
+        report_error(
+            shared,
+            &format!("Embedded Tailscale notification: {}", error.message),
+        );
+    }
+}
+
 /// Back past the shell's own navigation: leave the app without finishing the
 /// activity, so remote sessions are not stopped.
 pub(crate) fn background_app(_cx: &mut Cx) {

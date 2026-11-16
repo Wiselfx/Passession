@@ -29,6 +29,21 @@ final class PaseoNotifications {
     }
 
     /**
+     * Intent that reopens the one MainActivity. The activity is singleTask, so
+     * the launch brings its existing task forward and delivers through
+     * onNewIntent; no second window or task is created. No CLEAR_TOP: only the
+     * singleTask launch itself finishes activities above MainActivity. The
+     * identity keeps PendingIntents for different notifications apart (API 29+;
+     * earlier releases rely on the distinct request codes).
+     */
+    static Intent openApp(Context context, String identity) {
+        Intent intent = new Intent(context, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (Build.VERSION.SDK_INT >= 29) intent.setIdentifier(identity);
+        return intent;
+    }
+
+    /**
      * Shows one notification. A tap opens MainActivity with {@code payload}
      * (JSON {@code {id, data}}) in {@link PaseoBridge#EXTRA_PAYLOAD}.
      * {@code number} below zero leaves the badge number unset.
@@ -39,8 +54,7 @@ final class PaseoNotifications {
             throw new IllegalStateException("Notification permission is not granted.");
         }
         ensureChannel(context);
-        Intent intent = new Intent(context, MainActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        Intent intent = openApp(context, "notification:" + id);
         intent.putExtra(PaseoBridge.EXTRA_PAYLOAD, payload);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
         PendingIntent tap = PendingIntent.getActivity(context, id, intent, flags);

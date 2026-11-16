@@ -44,7 +44,7 @@ The earlier ARM64 Rust APK was signature/alignment-checked and installed as an i
 
 - `packaging/android/` — Gradle project (`settings.gradle.kts`, `app/build.gradle.kts`), launcher and notification icons (`res/`), `app/debug.keystore`, `version.properties`.
 - `packaging/android/makepad/` — Makepad's Android Java (`dev.makepad.android.*`) vendored from makepad commit `a1868e19d3bb955200957efb3c880791a43424eb`, the revision makepad-platform 1.0.0 was published from. Local changes include API 24–29 guards and the shared Editable-backed `MakepadInputConnection`: UTF-16 text/selection/composition snapshots, session/revision fencing, batch ownership, modifier-preserving composition and hardware insertion. The activity also keeps long-press coordinates within the current gesture and cancels long presses after scrolling starts. `PATCHES.diff` records the changes; `UPSTREAM.json` records upstream/current digests. The crate's JNI symbols require these exact classes; crates.io has no `cargo-makepad` for 1.0.0.
-- `packages/gui-platform/android/` — `AndroidManifest.xml` (launcher `sh.paseo.sessions.MainActivity`, which extends `MakepadActivity`; `paseo` VIEW filter; Firebase messaging service; FileProvider `sh.paseo.sessions.files`), the Java glue in `java/sh/paseo/sessions/`, `res/` (theme and FileProvider paths) and `platform.gradle.kts` (androidx.core and the Firebase BOM/messaging). The Gradle project compiles these directly; there is no second Gradle app or Makepad Java copy there.
+- `packages/gui-platform/android/` — `AndroidManifest.xml` (launcher `sh.paseo.sessions.MainActivity`, which extends `MakepadActivity`; `paseo` VIEW filter; Firebase messaging service; `PaseoTailnetService`; FileProvider `sh.paseo.sessions.files`), the Java glue in `java/sh/paseo/sessions/`, `res/` (theme and FileProvider paths) and `platform.gradle.kts` (androidx.core and the Firebase BOM/messaging). The Gradle project compiles these directly; there is no second Gradle app or Makepad Java copy there.
 
 Native code reaches the Java glue by class and method name over JNI, so the release build never minifies.
 
@@ -57,6 +57,44 @@ When Android destroys the window Surface, rendering and video texture updates
 wait for a replacement Surface and current EGL context. Background events may
 still update the model; pending redraws remain queued. See the vendored
 [Surface lifetime constraint](../packages/gui-platform/vendor/makepad-platform/VENDORED.md#android-surface-lifetime).
+
+## One activity per process
+
+The native app serves exactly one activity. `MainActivity` is `singleTask` with
+the package's default task affinity, so `paseo://` links, notification taps and
+the launcher bring the existing task forward and deliver through `onNewIntent`
+instead of opening a second window or task. Notification PendingIntents add only
+`FLAG_ACTIVITY_NEW_TASK` (no `CLEAR_TOP`) and carry a per-notification identity
+(API 29+) besides their request code. The `singleTask` launch itself still
+finishes activities above `MainActivity`, so a notification or launcher tap
+during a document picker or camera intent cancels that result.
+
+Only the most recently created activity drives the native loop; a stale
+instance's lifecycle and surface callbacks are ignored. A configuration or
+system destroy keeps the native app running for the next instance. When the
+live activity finishes (for example, the task is removed from Recents), the app
+shuts down and the process exits, so the next launch starts a fresh process
+rather than a second native app in the old one. See the vendored
+[activity lifecycle constraint](../packages/gui-platform/vendor/makepad-platform/VENDORED.md#android-activity-lifecycle-one-native-app-per-process).
+
+## Embedded Tailscale in the background
+
+While Embedded Tailscale is enabled, `PaseoTailnetService` runs as a
+`specialUse` foreground service. It keeps the process out of the cached and
+frozen states while the app is in the background; it holds no wake lock and
+owns no networking. Its silent, ongoing notification on the low-importance
+`tailnet` channel shows the connection state, opens the app when tapped and
+offers Pause or Resume and Stop. Those actions reach the app as
+`PlatformEvent::TailnetControl`. Pause disconnects until Resume, or until the
+app restarts; Stop turns Embedded Tailscale off.
+
+- Android 12+ refuses a foreground-service start from the background. The
+  service then starts the next time the activity resumes, and the connection
+  keeps running in the meantime.
+- Without notification permission (Android 13+), the service still runs and
+  Android hides its notification.
+- The service is never restarted by itself. It stops when the app withdraws its
+  presence, and when the native app shuts down.
 
 ## Text interaction and system font size
 

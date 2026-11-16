@@ -274,6 +274,43 @@ impl PlatformRoute {
     }
 }
 
+/// What the embedded Tailscale connection is doing, for the OS background
+/// presence (Android foreground-service notification, desktop tray menu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TailnetPresenceState {
+    Connected,
+    Connecting,
+    Paused,
+    /// Sign-in, approval or an error needs the app.
+    NeedsAttention,
+}
+
+/// The background presence of an enabled embedded Tailscale connection. The
+/// app localizes every label; platforms only lay them out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TailnetPresence {
+    pub state: TailnetPresenceState,
+    /// "Embedded Tailscale"
+    pub title: String,
+    /// One-line status, e.g. "Connected" or "Paused".
+    pub status: String,
+    pub pause: String,
+    pub resume: String,
+    pub stop: String,
+    /// "Open Passession"
+    pub open: String,
+}
+
+/// A background-presence control the user chose outside the app window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TailnetControl {
+    /// Disconnect until resumed; keeps Embedded Tailscale enabled.
+    Pause,
+    Resume,
+    /// Turn Embedded Tailscale off (the Settings disconnect).
+    Stop,
+}
+
 #[derive(Debug, Clone)]
 pub enum PlatformEvent {
     Route(PlatformRoute),
@@ -309,6 +346,8 @@ pub enum PlatformEvent {
     QrScanned {
         link: String,
     },
+    /// The user chose a tailnet control in the OS background presence.
+    TailnetControl(TailnetControl),
 }
 
 pub(crate) fn post_event(event: PlatformEvent) {

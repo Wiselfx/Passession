@@ -2,7 +2,8 @@
 // packaging/android/app/build.gradle.kts (string configuration names: this is
 // an applied script, not a plugin-typed build file).
 dependencies {
-    // FileProvider and NotificationCompat (per-notification silent flag on API 24+).
+    // FileProvider, NotificationCompat (per-notification silent flag on API 24+)
+    // and ServiceCompat (typed foreground-service start on API 29+).
     "implementation"("androidx.core:core:1.13.1")
     // Firebase Messaging 24 issues the FCM registration token Expo exchanges.
     // Provisioning stays optional: without google-services.json FirebaseApp

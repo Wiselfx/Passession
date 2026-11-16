@@ -40,9 +40,9 @@ use windows::{
             DataExchange::COPYDATASTRUCT,
             LibraryLoader::GetModuleHandleW,
             Threading::{
-                CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateEventW, CreateMutexW,
-                CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW, SetEvent,
-                WaitForSingleObject,
+                AttachThreadInput, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT,
+                CreateEventW, CreateMutexW, CreateProcessW, DETACHED_PROCESS, GetCurrentThreadId,
+                PROCESS_INFORMATION, STARTUPINFOW, SetEvent, WaitForSingleObject,
             },
         },
         UI::{
@@ -52,13 +52,14 @@ use windows::{
                 SetCurrentProcessExplicitAppUserModelID, ShellExecuteW, TaskbarList,
             },
             WindowsAndMessaging::{
-                AllowSetForegroundWindow, CreateIconIndirect, CreateWindowExW, DefWindowProcW,
-                DestroyIcon, DispatchMessageW, EnumWindows, FindWindowW, GA_ROOT, GetAncestor,
-                GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-                ICONINFO, IsIconic, IsWindowVisible, MSG, RegisterClassExW, SMTO_ABORTIFHUNG,
-                SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, SendMessageTimeoutW,
-                SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_ACTIVATEAPP,
-                WM_COPYDATA, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSEXW, WS_OVERLAPPED,
+                AllowSetForegroundWindow, BringWindowToTop, CreateIconIndirect, CreateWindowExW,
+                DefWindowProcW, DestroyIcon, DispatchMessageW, EnumWindows, FindWindowW, GA_ROOT,
+                GetAncestor, GetClassNameW, GetForegroundWindow, GetMessageW,
+                GetWindowThreadProcessId, ICONINFO, IsIconic, IsWindowVisible, MSG,
+                RegisterClassExW, SMTO_ABORTIFHUNG, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL,
+                SendMessageTimeoutW, SetForegroundWindow, ShowWindow, TranslateMessage,
+                WINDOW_EX_STYLE, WM_ACTIVATEAPP, WM_COPYDATA, WM_ENDSESSION, WM_QUERYENDSESSION,
+                WNDCLASSEXW, WS_OVERLAPPED,
             },
         },
     },
@@ -745,10 +746,28 @@ impl NativeWindows {
         }
         if let Some(first) = shown.first() {
             unsafe {
-                if GetForegroundWindow() != *first {
-                    let _ = SetForegroundWindow(*first);
+                if GetForegroundWindow() != *first && !SetForegroundWindow(*first).as_bool() {
+                    take_foreground(*first);
                 }
             }
+        }
+    }
+}
+
+/// A toast click grants this process foreground rights, but the grant can lapse
+/// before the GUI thread runs (Windows then only flashes the taskbar button).
+/// Briefly sharing the foreground thread's input state lets the activation through.
+fn take_foreground(window: HWND) {
+    unsafe {
+        let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let current = GetCurrentThreadId();
+        if foreground == 0 || foreground == current {
+            return;
+        }
+        if AttachThreadInput(current, foreground, true).as_bool() {
+            let _ = BringWindowToTop(window);
+            let _ = SetForegroundWindow(window);
+            let _ = AttachThreadInput(current, foreground, false);
         }
     }
 }

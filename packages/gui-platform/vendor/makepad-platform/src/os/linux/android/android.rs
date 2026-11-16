@@ -715,6 +715,13 @@ impl Cx {
                 (display.libegl.eglDestroyContext.unwrap())(display.egl_display, display.egl_context);
                 (display.libegl.eglTerminate.unwrap())(display.egl_display);
             }
+            // Paseo: the loop only quits on the live activity's final destroy.
+            // Process-wide state (the platform handle, JNI registrations, the
+            // render loop) is single-start, so instead of restarting a Cx in
+            // this process, release the app and end the process; the next
+            // launch gets a fresh one.
+            drop(cx);
+            std::process::exit(0);
         });
     }
 

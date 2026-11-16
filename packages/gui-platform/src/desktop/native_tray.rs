@@ -1,26 +1,48 @@
 //! macOS and Windows status-bar / notification-area icon (original tray_manager):
-//! tooltip "Paseo", menu Open Paseo / separator / Quit Paseo, a left click or
-//! double click opens the preferred window. Created on the GUI (main) thread,
-//! whose run loop / message loop services it.
+//! tooltip "Passession", menu Open Passession / separator / Quit Passession,
+//! headed by the embedded Tailscale status, Pause or Resume and Stop while it is
+//! enabled. A left click or double click opens the preferred window. Created on
+//! the GUI (main) thread, whose run loop / message loop services it.
 
 use super::{NativeSignal, deliver};
-use crate::platform::Shared;
+use crate::{
+    action::{TailnetControl, TailnetPresence, TailnetPresenceState},
+    platform::Shared,
+};
 use std::sync::{Arc, atomic::Ordering};
+use tray_icon::menu::{IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+
+/// Fixed item ids: the menu is rebuilt on every presence change, while the
+/// process-wide event handler is installed once.
+const OPEN: &str = "sh.paseo.tray.open";
+const QUIT: &str = "sh.paseo.tray.quit";
+const PAUSE: &str = "sh.paseo.tray.tailnet.pause";
+const RESUME: &str = "sh.paseo.tray.tailnet.resume";
+const STOP: &str = "sh.paseo.tray.tailnet.stop";
 
 pub(crate) struct Tray {
-    _icon: tray_icon::TrayIcon,
+    icon: tray_icon::TrayIcon,
+    shared: Arc<Shared>,
 }
 
 impl Tray {
     pub fn poll(&mut self) {}
+
+    /// muda items cannot be hidden, so the whole menu is replaced.
+    pub fn set_tailnet(&mut self, presence: Option<&TailnetPresence>) {
+        match build_menu(presence) {
+            Ok(menu) => self.icon.set_menu(Some(Box::new(menu))),
+            Err(message) => self.shared.desktop.report(&message),
+        }
+    }
 }
 
 pub(crate) fn create_tray(shared: &Arc<Shared>) {
     let owner = shared.clone();
-    shared.on_main(move |_, state| match build_tray() {
+    shared.on_main(move |_, state| match build_tray(&owner) {
         Ok(tray) => {
             if !owner.desktop.quitting() {
-                state.desktop.tray = Some(tray);
+                state.desktop.install_tray(tray);
                 owner.desktop.tray_created.store(true, Ordering::SeqCst);
             }
         }
@@ -28,11 +50,39 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
     });
 }
 
-fn build_tray() -> Result<Tray, String> {
-    use tray_icon::{
-        MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    };
+/// Localized labels are literal text: `&` would otherwise mark a mnemonic.
+fn literal(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
+fn build_menu(presence: Option<&TailnetPresence>) -> Result<Menu, String> {
+    let menu = Menu::new();
+    let append = |item: &dyn IsMenuItem| menu.append(item).map_err(|e| e.to_string());
+    if let Some(presence) = presence {
+        let status = format!("{}: {}", presence.title, presence.status);
+        append(&MenuItem::new(literal(&status), false, None))?;
+        let (id, label) = match presence.state {
+            TailnetPresenceState::Paused => (RESUME, &presence.resume),
+            _ => (PAUSE, &presence.pause),
+        };
+        append(&MenuItem::with_id(id, literal(label), true, None))?;
+        append(&MenuItem::with_id(
+            STOP,
+            literal(&presence.stop),
+            true,
+            None,
+        ))?;
+        append(&PredefinedMenuItem::separator())?;
+    }
+    let open = presence.map_or("Open Passession", |p| p.open.as_str());
+    append(&MenuItem::with_id(OPEN, literal(open), true, None))?;
+    append(&PredefinedMenuItem::separator())?;
+    append(&MenuItem::with_id(QUIT, "Quit Passession", true, None))?;
+    Ok(menu)
+}
+
+fn build_tray(shared: &Arc<Shared>) -> Result<Tray, String> {
+    use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     // macOS draws the menu-bar icon as a template (alpha only, recoloured).
     #[cfg(target_os = "macos")]
     let bytes = &include_bytes!("../../assets/trayTemplate.png")[..];
@@ -42,20 +92,17 @@ fn build_tray() -> Result<Tray, String> {
         .map_err(|e| format!("Unable to load tray icon: {e}"))?;
     let icon = tray_icon::Icon::from_rgba(rgba, width, height)
         .map_err(|e| format!("Unable to load tray icon: {e}"))?;
-    let menu = Menu::new();
-    let open = MenuItem::new("Open Passession", true, None);
-    let quit = MenuItem::new("Quit Passession", true, None);
-    menu.append(&open).map_err(|e| e.to_string())?;
-    menu.append(&PredefinedMenuItem::separator())
-        .map_err(|e| e.to_string())?;
-    menu.append(&quit).map_err(|e| e.to_string())?;
-    let (open_id, quit_id) = (open.id().clone(), quit.id().clone());
-    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        if event.id == open_id {
-            deliver(NativeSignal::TrayOpen);
-        } else if event.id == quit_id {
-            deliver(NativeSignal::TrayQuit);
-        }
+    let menu = build_menu(None)?;
+    MenuEvent::set_event_handler(Some(|event: MenuEvent| {
+        let signal = match event.id.0.as_str() {
+            OPEN => NativeSignal::TrayOpen,
+            QUIT => NativeSignal::TrayQuit,
+            PAUSE => NativeSignal::TrayTailnet(TailnetControl::Pause),
+            RESUME => NativeSignal::TrayTailnet(TailnetControl::Resume),
+            STOP => NativeSignal::TrayTailnet(TailnetControl::Stop),
+            _ => return,
+        };
+        deliver(signal);
     }));
     TrayIconEvent::set_event_handler(Some(|event: TrayIconEvent| match event {
         TrayIconEvent::Click {
@@ -78,7 +125,10 @@ fn build_tray() -> Result<Tray, String> {
         .with_menu_on_left_click(false)
         .build()
         .map_err(|e| format!("Unable to create the system tray icon: {e}"))?;
-    Ok(Tray { _icon: icon })
+    Ok(Tray {
+        icon,
+        shared: shared.clone(),
+    })
 }
 
 /// macOS and Windows always host status/notification-area icons.

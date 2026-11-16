@@ -141,6 +141,19 @@ and cleared upload state; the gated path deferred work and uploaded after
 restoration. This establishes the lifecycle defect, not the device's missing
 pre-crash event sequence or an on-device confirmation of the fix.
 
+## Android activity lifecycle (one native app per process)
+
+Upstream quit the native loop on any activity `onDestroy`, including a stale
+instance destroyed after its replacement attached through `SwitchedActivity`,
+and a later activity in the same process then started a second `Cx`, which
+process-wide state (the platform handle, JNI registrations) cannot accept.
+The packaged Java (`packaging/android/makepad`) forwards lifecycle and surface
+callbacks only from the most recently created activity and sends `Destroy` only
+when that activity is finishing. Here, `android_jni.rs` starts the frame source
+once per process (a reattaching activity would otherwise add a second vsync
+chain), and `android.rs` drops the `Cx` and ends the process with exit status 0
+once the loop has quit, so the next launch starts in a fresh process.
+
 ## Android composing input
 
 `event/keyboard.rs`, `event/event.rs`, `event/finger.rs`, `cx_api.rs`, and

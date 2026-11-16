@@ -70,6 +70,9 @@ public class MainActivity extends MakepadActivity {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
             backCallback = null;
         }
+        // The live activity finishing ends the native app (MakepadActivity), so
+        // its tailnet node closes and the foreground service must go with it.
+        if (isFinishing() && isLiveActivity()) PaseoTailnetService.close();
         bridge.onDestroy();
         super.onDestroy();
     }

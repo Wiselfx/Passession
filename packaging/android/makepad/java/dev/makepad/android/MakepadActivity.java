@@ -481,6 +481,8 @@ class MakepadSurface
         Log.i("SAPP", "surfaceCreated");
         textActionsSurfaceReady = true;
         cancelTextActions();
+        // Paseo: a stale activity's surface must not replace or destroy the live one.
+        if (!MakepadActivity.isLive(getContext())) return;
         Surface surface = holder.getSurface();
         //surface.setFrameRate(120f,0);
         MakepadNative.surfaceOnSurfaceCreated(surface);
@@ -491,6 +493,7 @@ class MakepadSurface
         Log.i("SAPP", "surfaceDestroyed");
         textActionsSurfaceReady = false;
         cancelTextActions();
+        if (!MakepadActivity.isLive(getContext())) return;
         Surface surface = holder.getSurface();
         MakepadNative.surfaceOnSurfaceDestroyed(surface);
     }
@@ -501,6 +504,7 @@ class MakepadSurface
                                int width,
                                int height) {
         Log.i("SAPP", "surfaceChanged");
+        if (!MakepadActivity.isLive(getContext())) return;
         Surface surface = holder.getSurface();
         //surface.setFrameRate(120f,0);
         MakepadNative.surfaceOnSurfaceChanged(surface, width, height);
@@ -712,6 +716,16 @@ public class MakepadActivity
     private MakepadSurface view;
     Handler mHandler;
 
+    // Paseo: one native app serves every activity instance of the process and
+    // only the most recently created instance drives it. A stale instance
+    // (destroyed or stopped after its replacement was created) must not pause,
+    // stop, resize or quit it. Main-thread owned.
+    private static MakepadActivity sLive;
+
+    static boolean isLive(Context context) { return context != null && context == sLive; }
+
+    protected final boolean isLiveActivity() { return sLive == this; }
+
     // Paseo: platform insets are relative to the actual resized render surface.
     public View getRenderView() { return view; }
 
@@ -739,6 +753,7 @@ public class MakepadActivity
         
         this.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
+        sLive = this;
         view = new MakepadSurface(this);
         // Put it inside a parent layout which can resize it using padding
         ResizingLayout layout = new ResizingLayout(this);
@@ -792,14 +807,14 @@ public class MakepadActivity
             }
         }
 */      
-        MakepadNative.activityOnStart();
+        if (sLive == this) MakepadNative.activityOnStart();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         view.setTextActionsResumed(true);
-        MakepadNative.activityOnResume();
+        if (sLive == this) MakepadNative.activityOnResume();
 
         //% MAIN_ACTIVITY_ON_RESUME
     }
@@ -807,7 +822,7 @@ public class MakepadActivity
     protected void onPause() {
         view.setTextActionsResumed(false);
         super.onPause();
-        MakepadNative.activityOnPause();
+        if (sLive == this) MakepadNative.activityOnPause();
 
         //% MAIN_ACTIVITY_ON_PAUSE
     }
@@ -815,14 +830,20 @@ public class MakepadActivity
     @Override
     protected void onStop() {
         super.onStop();
-        MakepadNative.activityOnStop();
+        if (sLive == this) MakepadNative.activityOnStop();
     }
 
     @Override
     protected void onDestroy() {
         view.cancelTextActions();
         super.onDestroy();
-        MakepadNative.activityOnDestroy();
+        // Paseo: only the live instance finishing quits the native app; the
+        // native side then ends the process (android.rs), so a later launch
+        // starts fresh. A configuration or system destroy keeps the app running
+        // for the next instance, which attaches through SwitchedActivity.
+        if (sLive != this) return;
+        sLive = null;
+        if (isFinishing()) MakepadNative.activityOnDestroy();
     }
 
     @Override
@@ -830,13 +851,13 @@ public class MakepadActivity
     public void onBackPressed() {
         if (dismissTextActionsOnBack()) return;
         super.onBackPressed();
-        MakepadNative.onBackPressed();
+        if (sLive == this) MakepadNative.onBackPressed();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        MakepadNative.activityOnWindowFocusChanged(hasFocus);
+        if (sLive == this) MakepadNative.activityOnWindowFocusChanged(hasFocus);
     }
 
     @Override

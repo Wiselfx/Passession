@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Lets embedders construct an unconnected `Proxy` in their tests.
+test-support = []
+
 [dependencies]
 anyhow = "1"
 fs2 = "0.4"

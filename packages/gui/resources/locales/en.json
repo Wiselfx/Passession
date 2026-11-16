@@ -56,9 +56,11 @@
     "invalidResponse": "The Tailscale service returned an invalid response. Refresh status and retry.",
     "requestFailed": "Tailscale operation failed",
     "refresh": "Refresh status",
-    "disconnect": "Disconnect",
-    "disconnectHint": "Pause this app’s tailnet traffic without forgetting its login.",
-    "disconnectConfirm": "Disconnect every Embedded Tailscale host in all app windows? Running daemon sessions are not stopped. Your login is retained; reconnect to resume traffic.",
+    "pause": "Pause",
+    "resume": "Resume",
+    "pausedHint": "Embedded Tailscale hosts stay disconnected until you resume. Your login is kept.",
+    "stop": "Stop",
+    "stopConfirm": "Turn off Embedded Tailscale? Every Embedded Tailscale host in all app windows disconnects and stays off until you turn it on again. Running daemon sessions are not stopped, and your login is kept.",
     "reconnect": "Reconnect",
     "logout": "Log out",
     "logoutHint": "Revoke this app node’s login before removing its local state. If the control server cannot be reached, logout reports the failure instead of pretending to revoke access.",
@@ -77,12 +79,17 @@
       "superseded": "A newer Tailscale setting replaced this operation.",
       "unavailable": "Embedded Tailscale isn't available right now. Refresh status and try again."
     },
+    "presence": {
+      "attention": "Needs attention in the app",
+      "open": "Open Passession"
+    },
     "states": {
       "running": "Connected",
       "needsLogin": "Browser login required",
       "needsApproval": "Device approval required in the tailnet admin console",
       "starting": "Connecting",
       "stopped": "Disconnected",
+      "paused": "Paused",
       "disabled": "Disabled",
       "error": "Unavailable — see error below",
       "noState": "Not initialized",

@@ -820,7 +820,7 @@ pub(crate) fn set_app_visible(core: &Rc<Core>, visible: bool) {
     if !visible {
         return;
     }
-    super::tailnet::resume(core);
+    super::tailnet::ensure(core);
     let hosts: Vec<Rc<Host>> = core.hosts.borrow().clone();
     for host in hosts {
         ensure_connected(core, &host, true);

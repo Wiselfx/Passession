@@ -10,7 +10,7 @@ use makepad_widgets::*;
 use paseo_gui_core::CoreError;
 use paseo_gui_platform::{
     CloseDecision, PlatformAction, PlatformEvent, PlatformRoute, PlatformValue, QuitReason,
-    WindowGeometry,
+    TailnetControl, WindowGeometry,
 };
 use serde_json::{Map, Value, json};
 
@@ -4259,6 +4259,15 @@ pub fn handle_platform_actions(
                 }
                 PlatformEvent::HostError { message } if main => toast(shell, cx, message, true),
                 PlatformEvent::Insets(_) => shell.redraw(cx),
+                // The OS background presence's controls are Settings' Pause, Resume and Stop.
+                PlatformEvent::TailnetControl(control) if main => {
+                    let action = match control {
+                        TailnetControl::Pause => "pause",
+                        TailnetControl::Resume => "resume",
+                        TailnetControl::Stop => "disconnect",
+                    };
+                    ui.core.tailnet_request(json!({ "action": action }));
+                }
                 _ => {}
             },
         }

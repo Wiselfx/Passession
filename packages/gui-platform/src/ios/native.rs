@@ -234,6 +234,11 @@ pub(crate) fn report_error(_shared: &Arc<Shared>, message: &str) {
     });
 }
 
+/// iOS suspends the app soon after it leaves the screen and offers no
+/// background mode for an in-process tailnet node, so there is no background
+/// presence; the in-app Settings controls remain.
+pub(crate) fn set_tailnet_presence(_shared: &Arc<Shared>, _presence: Option<TailnetPresence>) {}
+
 /// iOS has no system Back; navigation stays inside the app.
 pub(crate) fn background_app(_cx: &mut Cx) {}
 

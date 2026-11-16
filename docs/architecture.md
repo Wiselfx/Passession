@@ -48,6 +48,8 @@ A client disconnect does not end a provider turn or archive a session. Daemon-ow
 
 Embedded Tailscale is a client transport, not an OS VPN or a replacement daemon. One app-owned node is shared across windows; `gui-platform` supplies its OS-backed encryption key, `paseo-tailnet` owns encrypted state and the pinned native engine, and `gui-core` owns host admission and lifecycle. Explicitly selected tailnet hosts cannot fall back to saved Normal/relay alternatives. Normal hosts and unrelated public HTTP remain usable at the same time. Host HTTP uses the same network boundary; daemon credentials are restricted to the admitted origin and never follow externally initiated redirect/icon chains.
 
+The node outlives focus changes: regaining focus keeps a responsive node and starts one only when none is running, and the 5 s status poll drops tailnet routes only after three consecutive transient failures (`Starting` during a network rebind, a stalled native call) or at once for a terminal state (sign-in, approval, stopped). A slow native close is waited out, and the next start waits for any drain still holding the state lease, so it never fails as "in use" or creates a second Go node. Pause disconnects the node until Resume without changing the saved setting, so a restarted app is not paused; Stop is Settings' disconnect and persists Embedded Tailscale off. While it is enabled, the app hands the platform a localized background presence with Pause/Resume and Stop: the Android foreground-service notification and the desktop tray menu. iOS has no background presence; its controls are in Settings.
+
 ## Client state and navigation
 
 `packages/gui-core` owns client protocol behavior and shared application state behind `GuiCore`/`CoreHandle`; network and disk IO never run on the GUI thread. `packages/gui/src/shell` composes the native shell and routes; feature widgets under `packages/gui/src/features` own their paged data.
@@ -63,6 +65,8 @@ The client talks to the Rust `desktop-host` process through structured IPC (`pas
 All desktop windows live in one process and share one set of host connections; each window or pane keeps its own route and selection. A second launch forwards its arguments to the running primary process and exits. Closing a window or tab neither archives sessions nor stops a pre-existing daemon; owned-daemon cleanup runs only at application quit, after every document close guard has resolved.
 
 Platform tray/menu/window behavior is native integration, not an Electron renderer feature. Runtime verification is platform-specific; Linux lifecycle evidence does not establish Windows or macOS execution.
+
+While Embedded Tailscale is enabled, the desktop tray menu (ksni on Linux, tray-icon on macOS/Windows) starts with its status and Pause/Resume and Stop controls; they reach the app as `PlatformEvent::TailnetControl`. A presence set before the tray exists is applied when the tray appears, and a Linux session without a StatusNotifier host simply has no tray. Hiding windows to the tray keeps the process, and with it the node, running. A notification click or agent link raises the app and routes into the first window; while that window is dormant it is reopened with the route instead of routing invisibly. On Linux the notification's `ActivationToken` becomes the window's `_NET_STARTUP_ID` and activation timestamp so focus-stealing prevention grants the raise; on Windows a refused `SetForegroundWindow` briefly attaches to the foreground thread's input.
 
 ## Terminals and excluded surfaces
 

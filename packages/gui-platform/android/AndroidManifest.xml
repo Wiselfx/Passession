@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- PaseoTailnetService: keeps the process out of the cached state while
+         Embedded Tailscale is enabled. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <uses-feature android:glEsVersion="0x00020000" android:required="true"/>
@@ -43,11 +47,13 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:largeHeap="true">
+        <!-- singleTask with the package's default affinity: one activity
+             instance per process (the native app serves exactly one). Links,
+             notification taps and the launcher reuse it through onNewIntent. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:taskAffinity=""
+            android:launchMode="singleTask"
             android:theme="@style/PaseoTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -73,6 +79,17 @@
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
             </intent-filter>
+        </service>
+
+        <!-- Advertises the embedded Tailscale connection while it is enabled; the
+             app starts and stops it (never exported, never restarted alone). -->
+        <service
+            android:name=".PaseoTailnetService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the app's private, app-only Tailscale connection to the user's own Paseo hosts alive while the app is in the background, so remote sessions on those hosts stay reachable. Shown with Pause and Stop controls; no VPN is created."/>
         </service>
 
         <!-- Shares, opens and copies private cache files without exposing paths. -->

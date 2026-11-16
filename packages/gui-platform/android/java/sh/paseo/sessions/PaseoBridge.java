@@ -323,6 +323,7 @@ final class PaseoBridge {
     void onResume() {
         foreground = true;
         if (systemBarsConfigured) applySystemBars();
+        PaseoTailnetService.retry(activity.getApplicationContext());
         nativeEvent("resumed", "{}");
         publishInsets();
     }
@@ -447,6 +448,13 @@ final class PaseoBridge {
                 case "tailnetNetworkMonitor":
                     TailnetNetworkMonitor.setEnabled(activity.getApplicationContext(), args.getBoolean("enabled"));
                     return ok(null);
+                case "tailnetPresence": {
+                    // Service starts and notification updates belong to the main thread.
+                    JSONObject presence = args.isNull("presence") ? null : args.getJSONObject("presence");
+                    Context context = activity.getApplicationContext();
+                    main.post(() -> PaseoTailnetService.present(context, presence));
+                    return ok(null);
+                }
                 case "paths":
                     return ok(new JSONObject()
                             .put("files", activity.getFilesDir().getAbsolutePath())

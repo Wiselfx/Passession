@@ -8,7 +8,8 @@ pub(crate) mod native;
 
 use crate::{
     action::{
-        PlatformError, PlatformEvent, PlatformRequestId, PlatformValue, post_event, post_result,
+        PlatformError, PlatformEvent, PlatformRequestId, PlatformValue, TailnetControl, post_event,
+        post_result,
     },
     mobile::{MobileSignal, deliver},
     platform::Completion,
@@ -253,6 +254,16 @@ pub extern "system" fn Java_sh_paseo_sessions_PaseoBridge_nativeEvent(
         "insets" => deliver(MobileSignal::Insets(native::insets_from_json(&payload))),
         "audioInterrupted" => deliver(MobileSignal::AudioInterrupted),
         "tokenRefreshed" => deliver(MobileSignal::TokenRefreshed),
+        // PaseoTailnetService notification actions.
+        "tailnetControl" => {
+            let control = match text("action").as_str() {
+                "pause" => TailnetControl::Pause,
+                "resume" => TailnetControl::Resume,
+                "stop" => TailnetControl::Stop,
+                _ => return,
+            };
+            post_event(PlatformEvent::TailnetControl(control));
+        }
         _ => {}
     }
 }

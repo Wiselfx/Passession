@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use makepad_widgets::*;
 use paseo_gui_core::{CoreConfig, CoreEvent, GuiCore};
+use paseo_gui_platform::{TailnetPresence, TailnetPresenceState};
 use serde_json::Value;
 
 use crate::common::{self, UiContext, i18n};
@@ -96,6 +97,8 @@ struct Runtime {
     window_ready: bool,
     /// The language the native application menu was last built in.
     menu_locale: &'static str,
+    /// The embedded Tailscale background presence last handed to the platform.
+    tailnet_presence: Option<TailnetPresence>,
     core_batch_timer: Timer,
 }
 
@@ -172,6 +175,7 @@ impl App {
             theme_key: String::new(),
             window_ready: false,
             menu_locale: "",
+            tailnet_presence: None,
             core_batch_timer: Timer::default(),
         });
         self.ui
@@ -367,6 +371,47 @@ fn update_native_menu(cx: &mut Cx) {
     let _ = cx;
 }
 
+/// The OS background presence of embedded Tailscale, labelled in the active language. None
+/// while it is off, or when no platform secret store lets a node run.
+fn tailnet_presence(tailnet: &Value) -> Option<TailnetPresence> {
+    if tailnet["enabled"] != true || tailnet["available"] != true {
+        return None;
+    }
+    let (state, status) = match tailnet["backendState"].as_str().unwrap_or("") {
+        "Running" => (TailnetPresenceState::Connected, "tailnet.states.running"),
+        "Paused" => (TailnetPresenceState::Paused, "tailnet.states.paused"),
+        "Starting" | "NoState" | "" => {
+            (TailnetPresenceState::Connecting, "tailnet.states.starting")
+        }
+        // Sign-in, device approval, a stopped node or an error.
+        _ => (
+            TailnetPresenceState::NeedsAttention,
+            "tailnet.presence.attention",
+        ),
+    };
+    Some(TailnetPresence {
+        state,
+        title: common::tr("tailnet.embedded"),
+        status: common::tr(status),
+        pause: common::tr("tailnet.pause"),
+        resume: common::tr("tailnet.resume"),
+        stop: common::tr("tailnet.stop"),
+        open: common::tr("tailnet.presence.open"),
+    })
+}
+
+/// Hands the platform a presence only when it changed.
+fn sync_tailnet_presence(runtime: &mut Runtime) {
+    let presence = tailnet_presence(runtime.ui.state.get("tailnet").unwrap_or(&Value::Null));
+    if presence == runtime.tailnet_presence {
+        return;
+    }
+    if let Some(platform) = paseo_gui_platform::platform() {
+        platform.set_tailnet_presence(presence.clone());
+    }
+    runtime.tailnet_presence = presence;
+}
+
 impl AppMain for App {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
         if let Event::Startup = event {
@@ -424,6 +469,8 @@ impl AppMain for App {
         }
         if appearance {
             Self::appearance(runtime, cx);
+            // After `appearance`: a language change relabels the presence.
+            sync_tailnet_presence(runtime);
             // `uiFontFamily`/`monoFontFamily` or the OS fonts may have changed;
             // an unchanged request is a no-op.
             let preferences = runtime.ui.state.get("preferences").unwrap_or(&Value::Null);

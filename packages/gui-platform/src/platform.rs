@@ -441,6 +441,13 @@ impl PlatformHandle {
         native::report_error(self.shared(), message);
     }
 
+    /// Shows (`Some`) or removes (`None`) the OS background presence of the
+    /// embedded Tailscale connection; its controls arrive as
+    /// [`PlatformEvent::TailnetControl`](crate::PlatformEvent::TailnetControl).
+    pub fn set_tailnet_presence(&self, presence: Option<crate::action::TailnetPresence>) {
+        native::set_tailnet_presence(self.shared(), presence);
+    }
+
     // ----- Desktop host -----
 
     pub fn desktop_invoke(&self, command: &str, args: Value) -> PlatformRequestId {
@@ -516,11 +523,15 @@ impl PlatformHandle {
     /// for the next New Window). GUI thread. The op runs on Makepad's own
     /// top-level frame for `window` when the platform ops are processed
     /// (Windows: the `CreateWindowExW` frame HWND, resolved then, never a
-    /// cached child handle). Tray restore (`show_windows`) leaves it hidden.
+    /// cached child handle). Tray restore (`show_windows`) leaves it hidden;
+    /// routes from notification clicks and links reopen it instead.
     /// Android and iOS have one OS-owned window; there this does nothing.
     pub fn hide_window(&self, cx: &mut Cx, window: makepad_widgets::WindowId) {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        cx.push_unique_platform_op(makepad_widgets::CxOsOp::HideWindow(window));
+        {
+            cx.push_unique_platform_op(makepad_widgets::CxOsOp::HideWindow(window));
+            self.0.desktop.set_dormant(true);
+        }
         #[cfg(any(target_os = "android", target_os = "ios"))]
         let _ = (cx, window);
     }
@@ -529,7 +540,10 @@ impl PlatformHandle {
     /// minimized) and activates it. GUI thread; same frame resolution.
     pub fn show_window(&self, cx: &mut Cx, window: makepad_widgets::WindowId) {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        cx.push_unique_platform_op(makepad_widgets::CxOsOp::Deminiaturize(window));
+        {
+            cx.push_unique_platform_op(makepad_widgets::CxOsOp::Deminiaturize(window));
+            self.0.desktop.set_dormant(false);
+        }
         #[cfg(any(target_os = "android", target_os = "ios"))]
         let _ = (cx, window);
     }

@@ -95,37 +95,102 @@ impl Settings {
     }
 }
 
+/// Consecutive transient poll or focus-check failures a held route survives. A network rebind
+/// briefly reports `Starting` and a stalled Go call times out after 15 s; neither ends the node.
+const TOLERATED_FAILURES: u8 = 3;
+
+/// Backend states that end the node's usable route at once.
+fn terminal(backend_state: &str) -> bool {
+    matches!(backend_state, "NeedsLogin" | "NeedsMachineAuth" | "Stopped")
+}
+
+/// The embedded node's blocking operations: `paseo_tailnet::Manager`, or a fake in tests.
+trait Backend: Send + Sync {
+    fn start(&self, config: Config) -> anyhow::Result<Status>;
+    fn status(&self) -> anyhow::Result<Status>;
+    fn login(&self) -> anyhow::Result<String>;
+    fn proxy(&self) -> anyhow::Result<Proxy>;
+    fn disconnect(&self) -> anyhow::Result<()>;
+    fn logout(&self) -> anyhow::Result<()>;
+}
+impl Backend for Manager {
+    fn start(&self, config: Config) -> anyhow::Result<Status> {
+        Manager::start(self, config)
+    }
+    fn status(&self) -> anyhow::Result<Status> {
+        Manager::status(self)
+    }
+    fn login(&self) -> anyhow::Result<String> {
+        Manager::login(self)
+    }
+    fn proxy(&self) -> anyhow::Result<Proxy> {
+        Manager::proxy(self)
+    }
+    fn disconnect(&self) -> anyhow::Result<()> {
+        Manager::disconnect(self)
+    }
+    fn logout(&self) -> anyhow::Result<()> {
+        Manager::logout(self)
+    }
+}
+
 #[derive(Default)]
 struct OperationResult {
     status: Option<Status>,
     proxy: Option<Proxy>,
     auth_url: Option<String>,
+    /// A new node replaced whatever ran before; routes through the old one are dead.
+    restarted: bool,
+}
+
+/// A Running node's route; other states have none.
+fn routed(manager: &dyn Backend, status: Status) -> anyhow::Result<OperationResult> {
+    let proxy = if status.backend_state == "Running" {
+        Some(manager.proxy()?)
+    } else {
+        None
+    };
+    Ok(OperationResult {
+        status: Some(status),
+        proxy,
+        ..OperationResult::default()
+    })
 }
 
 pub(super) struct Tailnet {
-    manager: Option<Manager>,
+    manager: Option<Arc<dyn Backend>>,
     operation: Mutex<()>,
     settings: RefCell<Settings>,
     status: RefCell<Option<Status>>,
     proxy: RefCell<Option<Proxy>>,
     error: RefCell<Option<String>>,
     busy: Cell<bool>,
+    /// The user paused an enabled node. Runtime-only: an app restart is never paused.
+    paused: Cell<bool>,
+    /// Consecutive transient failures while a route is held.
+    failures: Cell<u8>,
     generation: Cell<u64>,
     sockets: RefCell<CancellationToken>,
 }
 impl Tailnet {
     pub fn new(key_store: Option<Arc<dyn KeyStore>>) -> Self {
         Self {
-            manager: key_store.map(Manager::new),
+            manager: key_store.map(|keys| Arc::new(Manager::new(keys)) as Arc<dyn Backend>),
             operation: Mutex::new(()),
             settings: RefCell::new(Settings::default()),
             status: RefCell::new(None),
             proxy: RefCell::new(None),
             error: RefCell::new(None),
             busy: Cell::new(false),
+            paused: Cell::new(false),
+            failures: Cell::new(0),
             generation: Cell::new(0),
             sockets: RefCell::new(CancellationToken::new()),
         }
+    }
+    /// Enabled and not paused: the node should be running.
+    fn wanted(&self) -> bool {
+        self.settings.borrow().enabled && !self.paused.get()
     }
     pub fn state(&self) -> Value {
         let mut state = self.settings.borrow().json();
@@ -134,12 +199,17 @@ impl Tailnet {
             "Error"
         } else if !self.settings.borrow().enabled {
             "Disabled"
+        } else if self.paused.get() {
+            "Paused"
         } else {
             status
                 .as_ref()
                 .map(|s| s.backend_state.as_str())
                 .unwrap_or("Starting")
         });
+        state["paused"] = json!(self.paused.get());
+        // Without a platform secret store no node can ever run.
+        state["available"] = json!(self.manager.is_some());
         state["account"] = json!(status.as_ref().and_then(|s| s.account.as_ref()));
         state["tailnet"] = json!(status.as_ref().and_then(|s| s.tailnet.as_ref()));
         state["nodeName"] = json!(status.as_ref().and_then(|s| s.node_name.as_ref()));
@@ -179,6 +249,11 @@ pub(super) fn route(
     if !core.tailnet.settings.borrow().enabled {
         return Err(unavailable(
             "Embedded Tailscale is disabled or changing. This host will not use the normal network.",
+        ));
+    }
+    if core.tailnet.paused.get() {
+        return Err(unavailable(
+            "Embedded Tailscale is paused. Resume it to reach this host; this host will not use the normal network.",
         ));
     }
     let proxy = core.tailnet.proxy.borrow().clone().filter(Proxy::is_valid)
@@ -235,7 +310,7 @@ pub(super) fn initialize(core: &Rc<Core>) {
             Err(error) => *core.tailnet.error.borrow_mut() = Some(error.message),
         }
     }
-    resume(core);
+    ensure(core);
     let weak = Rc::downgrade(core);
     tokio::task::spawn_local(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -248,16 +323,23 @@ pub(super) fn initialize(core: &Rc<Core>) {
             if core.closing.get() {
                 break;
             }
-            if core.tailnet.settings.borrow().enabled && !core.tailnet.busy.get() {
-                launch(&core, None, "status".into(), None);
-            }
+            poll(&core);
         }
     });
 }
 
-pub(super) fn resume(core: &Rc<Core>) {
-    if core.tailnet.settings.borrow().enabled && !core.tailnet.busy.get() {
-        launch(core, None, "resume".into(), None);
+/// The periodic status check; never starts, restarts or wakes a paused node.
+fn poll(core: &Rc<Core>) {
+    if core.tailnet.wanted() && !core.tailnet.busy.get() {
+        launch(core, None, "status".into(), None);
+    }
+}
+
+/// Startup and focus regain: keeps a responsive node and its routes, and starts one only when
+/// none is running. A paused node stays paused.
+pub(super) fn ensure(core: &Rc<Core>) {
+    if core.tailnet.wanted() && !core.tailnet.busy.get() {
+        launch(core, None, "ensure".into(), None);
     }
 }
 
@@ -271,7 +353,18 @@ pub(super) fn request(core: &Rc<Core>, id: RequestId, message: Value) {
                 return;
             }
         },
-        "status" | "login" | "disconnect" | "logout" => None,
+        "status" | "login" | "disconnect" | "logout" | "resume" => None,
+        "pause" if !core.tailnet.settings.borrow().enabled => {
+            respond(
+                core,
+                &id,
+                action,
+                Err(invalid("Embedded Tailscale is off")),
+                None,
+            );
+            return;
+        }
+        "pause" => None,
         _ => {
             respond(
                 core,
@@ -314,20 +407,27 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
         }
         return;
     }
-    let mutation = action != "status";
-    let generation = if mutation {
-        invalidate(core)
-    } else {
+    // Status, ensure and resume keep a healthy node's routes; every other action fences older
+    // operations and closes the routes of the node it replaces or stops.
+    let generation = if matches!(action.as_str(), "status" | "ensure" | "resume") {
         core.tailnet.generation.get()
+    } else {
+        invalidate(core)
     };
     if let Some(settings) = settings {
         *core.tailnet.settings.borrow_mut() = settings;
     }
-    if matches!(action.as_str(), "disconnect" | "logout") {
-        core.tailnet.settings.borrow_mut().enabled = false;
+    match action.as_str() {
+        "disconnect" | "logout" => {
+            core.tailnet.settings.borrow_mut().enabled = false;
+            core.tailnet.paused.set(false);
+        }
+        "configure" | "login" | "resume" => core.tailnet.paused.set(false),
+        "pause" => core.tailnet.paused.set(true),
+        _ => {}
     }
     core.tailnet.busy.set(true);
-    if mutation {
+    if action != "status" {
         *core.tailnet.error.borrow_mut() = None;
     }
     core.touch();
@@ -348,6 +448,7 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
         }
         let settings = core.tailnet.settings.borrow().clone();
         let enabled = settings.enabled;
+        let wanted = core.tailnet.wanted();
         let config = settings.runtime(&core);
         let result: Result<OperationResult, CoreError> = async {
             let mut persistence_error =
@@ -357,7 +458,7 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
                 } else {
                     None
                 };
-            if action == "status" && !enabled {
+            if matches!(action.as_str(), "status" | "ensure" | "resume") && !wanted {
                 return Ok(OperationResult::default());
             }
             let manager = core.tailnet.manager.clone().ok_or_else(|| {
@@ -374,20 +475,29 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
             }
             let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
                 match operation.as_str() {
-                    "configure" | "resume" => {
+                    "ensure" | "resume" => {
+                        // A responsive node keeps its routes; only a missing, stopped or
+                        // failing node is replaced.
+                        match manager.status() {
+                            Ok(status) if status.backend_state != "Stopped" => {
+                                routed(&*manager, status)
+                            }
+                            _ => {
+                                manager.disconnect()?;
+                                let status = manager.start(config)?;
+                                Ok(OperationResult { restarted: true, ..routed(&*manager, status)? })
+                            }
+                        }
+                    }
+                    "configure" => {
                         manager.disconnect()?;
                         if !enabled {
                             return Ok(OperationResult::default());
                         }
                         let status = manager.start(config)?;
-                        let proxy = if status.backend_state == "Running" {
-                            Some(manager.proxy()?)
-                        } else {
-                            None
-                        };
-                        Ok(OperationResult { status: Some(status), proxy, auth_url: None })
+                        Ok(OperationResult { restarted: true, ..routed(&*manager, status)? })
                     }
-                    "disconnect" => {
+                    "disconnect" | "pause" => {
                         manager.disconnect()?;
                         Ok(OperationResult::default())
                     }
@@ -401,22 +511,9 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
                         manager.start(config)?;
                         let auth_url = manager.login()?;
                         let status = manager.status()?;
-                        let proxy = if status.backend_state == "Running" {
-                            Some(manager.proxy()?)
-                        } else {
-                            None
-                        };
-                        Ok(OperationResult { status: Some(status), proxy, auth_url: Some(auth_url) })
+                        Ok(OperationResult { auth_url: Some(auth_url), ..routed(&*manager, status)? })
                     }
-                    "status" => {
-                        let status = manager.status()?;
-                        let proxy = if status.backend_state == "Running" {
-                            Some(manager.proxy()?)
-                        } else {
-                            None
-                        };
-                        Ok(OperationResult { status: Some(status), proxy, auth_url: None })
-                    }
+                    "status" => routed(&*manager, manager.status()?),
                     _ => unreachable!(),
                 }
             })
@@ -441,15 +538,49 @@ fn launch(core: &Rc<Core>, id: Option<RequestId>, action: String, settings: Opti
             return;
         }
         core.tailnet.busy.set(false);
+        // One stalled or rebinding check does not drop a held route; a terminal state, a
+        // failure that persists or any other action applies at once.
+        let held = core
+            .tailnet
+            .proxy
+            .borrow()
+            .as_ref()
+            .is_some_and(Proxy::is_valid);
+        let transient = match (action.as_str(), &result) {
+            ("status", Err(_)) => true,
+            ("status" | "ensure", Ok(outcome)) => {
+                outcome.proxy.is_none()
+                    && !outcome.restarted
+                    && outcome
+                        .status
+                        .as_ref()
+                        .is_some_and(|status| !terminal(&status.backend_state))
+            }
+            _ => false,
+        };
+        let failures = core.tailnet.failures.get() + 1;
+        if held && transient && failures < TOLERATED_FAILURES {
+            core.tailnet.failures.set(failures);
+            core.touch();
+            if let Some(id) = id {
+                respond(&core, &id, &action, Ok(()), None);
+            }
+            return;
+        }
+        core.tailnet.failures.set(0);
         let mut auth_url = None;
         let result = match result {
             Ok(OperationResult {
                 status,
                 proxy,
                 auth_url: auth,
+                restarted,
             }) => {
-                if mutation || enabled {
+                if action != "status" || enabled {
                     *core.tailnet.error.borrow_mut() = None;
+                }
+                if restarted && core.tailnet.proxy.borrow().is_some() {
+                    invalidate(&core);
                 }
                 let reconnect = proxy.is_some() && core.tailnet.proxy.borrow().is_none();
                 // A failed backend cannot retain a previously usable route.
@@ -667,6 +798,249 @@ mod tests {
                         .unwrap()
                         .contains("secret store")
                 );
+            })
+            .await;
+    }
+
+    /// A scripted node. `state` is what status reports (`None`: no node; `"Stalled"`: the
+    /// status call fails); `node` is the running node's lifetime, cancelled by a disconnect.
+    #[derive(Default)]
+    struct Fake {
+        state: std::sync::Mutex<Option<&'static str>>,
+        node: std::sync::Mutex<CancellationToken>,
+        calls: std::sync::Mutex<Vec<&'static str>>,
+    }
+    impl Fake {
+        fn count(&self, call: &str) -> usize {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| **c == call)
+                .count()
+        }
+        fn set(&self, state: Option<&'static str>) {
+            if state.is_none() {
+                self.node.lock().unwrap().cancel();
+            }
+            *self.state.lock().unwrap() = state;
+        }
+        fn report(&self, state: &str) -> anyhow::Result<Status> {
+            anyhow::ensure!(state != "Stalled", "status request timed out");
+            Ok(Status {
+                backend_state: state.into(),
+                ..Status::default()
+            })
+        }
+    }
+    impl Backend for Fake {
+        fn start(&self, _: Config) -> anyhow::Result<Status> {
+            self.calls.lock().unwrap().push("start");
+            let mut state = self.state.lock().unwrap();
+            if state.is_none() {
+                *state = Some("Running");
+                *self.node.lock().unwrap() = CancellationToken::new();
+            }
+            self.report(state.unwrap())
+        }
+        fn status(&self) -> anyhow::Result<Status> {
+            self.calls.lock().unwrap().push("status");
+            let state = *self.state.lock().unwrap();
+            self.report(state.ok_or_else(|| anyhow::anyhow!("embedded Tailscale is disconnected"))?)
+        }
+        fn login(&self) -> anyhow::Result<String> {
+            Ok("https://login.example.com/a/once".into())
+        }
+        fn proxy(&self) -> anyhow::Result<Proxy> {
+            Ok(Proxy::unconnected(self.node.lock().unwrap().clone()))
+        }
+        fn disconnect(&self) -> anyhow::Result<()> {
+            self.calls.lock().unwrap().push("disconnect");
+            self.set(None);
+            Ok(())
+        }
+        fn logout(&self) -> anyhow::Result<()> {
+            self.set(None);
+            Ok(())
+        }
+    }
+
+    /// An enabled core whose node is `Fake`, with an empty writable preference store.
+    fn faked(path: &std::path::Path) -> (Rc<Core>, Arc<Fake>) {
+        let mut core = core(path);
+        let fake = Arc::new(Fake::default());
+        Rc::get_mut(&mut core).unwrap().tailnet.manager = Some(fake.clone() as Arc<dyn Backend>);
+        core.tailnet.settings.borrow_mut().enabled = true;
+        core.store.borrow_mut().prefs.writable = true;
+        (core, fake)
+    }
+
+    async fn settle(core: &Rc<Core>) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while core.tailnet.busy.get() {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    fn selected() -> Value {
+        json!({"id":"tail","endpoint":"ws://peer:6767/ws","networkMode":"tailnet"})
+    }
+
+    #[tokio::test]
+    async fn tailnet_focus_ensure_keeps_a_running_node_and_restarts_only_a_missing_one() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (core, fake) = faked(dir.path());
+                ensure(&core);
+                settle(&core).await;
+                assert_eq!((fake.count("start"), fake.count("disconnect")), (1, 1));
+                assert!(route(&core, &selected()).unwrap().0.is_some());
+
+                let tail =
+                    hosts::Host::new(1, selected(), "tail".into(), None, vec![selected()], None);
+                core.hosts.borrow_mut().push(tail.clone());
+                let links = tail.resource_cancellation();
+                let sockets = core.tailnet.sockets.borrow().clone();
+                let generation = core.tailnet.generation.get();
+                for _ in 0..3 {
+                    ensure(&core);
+                    settle(&core).await;
+                }
+                assert_eq!(
+                    (fake.count("start"), fake.count("disconnect")),
+                    (1, 1),
+                    "focus regain never restarts a Running node"
+                );
+                assert_eq!(core.tailnet.generation.get(), generation);
+                assert!(!sockets.is_cancelled() && !links.is_cancelled());
+                assert!(route(&core, &selected()).unwrap().0.unwrap().is_valid());
+
+                // A node that went away is started again, and the dead routes are closed.
+                fake.set(None);
+                ensure(&core);
+                settle(&core).await;
+                assert_eq!(fake.count("start"), 2);
+                assert!(links.is_cancelled());
+                assert!(route(&core, &selected()).unwrap().0.unwrap().is_valid());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn tailnet_pause_is_runtime_only_resume_restarts_and_stop_persists_off() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (core, fake) = faked(dir.path());
+                ensure(&core);
+                settle(&core).await;
+
+                request(&core, "pause".into(), json!({"action":"pause"}));
+                settle(&core).await;
+                let state = core.tailnet.state();
+                assert_eq!(state["paused"], true);
+                assert_eq!(state["enabled"], true);
+                assert_eq!(state["backendState"], "Paused");
+                assert!(
+                    fake.state.lock().unwrap().is_none(),
+                    "pause disconnects the node"
+                );
+                assert!(
+                    route(&core, &selected())
+                        .unwrap_err()
+                        .message
+                        .contains("paused")
+                );
+                assert!(
+                    !core.store.borrow().prefs.values.contains_key(SETTINGS),
+                    "pause is never persisted"
+                );
+
+                // Neither the poll nor focus regain wakes a paused node.
+                poll(&core);
+                ensure(&core);
+                assert!(!core.tailnet.busy.get());
+                assert_eq!(fake.count("start"), 1);
+
+                request(&core, "resume".into(), json!({"action":"resume"}));
+                settle(&core).await;
+                assert_eq!(core.tailnet.state()["paused"], false);
+                assert_eq!(fake.count("start"), 2);
+                assert!(route(&core, &selected()).unwrap().0.unwrap().is_valid());
+
+                request(&core, "pause".into(), json!({"action":"pause"}));
+                settle(&core).await;
+                request(&core, "stop".into(), json!({"action":"disconnect"}));
+                settle(&core).await;
+                let state = core.tailnet.state();
+                assert_eq!(state["paused"], false, "stop clears a pause");
+                assert_eq!(state["backendState"], "Disabled", "{state}");
+                assert_eq!(
+                    core.store.borrow().prefs.values[SETTINGS]["enabled"],
+                    false,
+                    "stop persists Embedded Tailscale off"
+                );
+                assert!(route(&core, &selected()).is_err());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn tailnet_poll_keeps_routes_through_transient_failures_but_not_terminal_states() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (core, fake) = faked(dir.path());
+                ensure(&core);
+                settle(&core).await;
+                for transient in ["Starting", "Stalled"] {
+                    let generation = core.tailnet.generation.get();
+                    fake.set(Some(transient));
+                    for _ in 1..TOLERATED_FAILURES {
+                        poll(&core);
+                        settle(&core).await;
+                        assert!(
+                            route(&core, &selected()).unwrap().0.is_some(),
+                            "{transient}"
+                        );
+                        assert_eq!(core.tailnet.generation.get(), generation);
+                    }
+                    poll(&core);
+                    settle(&core).await;
+                    assert!(route(&core, &selected()).is_err(), "{transient} persisted");
+                    assert_eq!(core.tailnet.generation.get(), generation + 1);
+
+                    // Running again restores the route.
+                    fake.set(Some("Running"));
+                    poll(&core);
+                    settle(&core).await;
+                    assert!(
+                        route(&core, &selected()).unwrap().0.is_some(),
+                        "{transient}"
+                    );
+                    assert!(core.tailnet.error.borrow().is_none());
+                }
+
+                // One success resets the count; a terminal state applies at once.
+                fake.set(Some("Starting"));
+                poll(&core);
+                settle(&core).await;
+                fake.set(Some("Running"));
+                poll(&core);
+                settle(&core).await;
+                fake.set(Some("Starting"));
+                poll(&core);
+                settle(&core).await;
+                assert!(route(&core, &selected()).unwrap().0.is_some());
+                fake.set(Some("NeedsLogin"));
+                poll(&core);
+                settle(&core).await;
+                assert!(route(&core, &selected()).is_err());
+                assert_eq!(core.tailnet.state()["backendState"], "NeedsLogin");
             })
             .await;
     }

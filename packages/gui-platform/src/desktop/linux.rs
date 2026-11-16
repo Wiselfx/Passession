@@ -479,6 +479,9 @@ pub(crate) fn termination_decided(_allowed: bool) {}
 
 /// Server notification ids → (our id, click payload).
 static SHOWN: Mutex<Vec<(u32, i32, String)>> = Mutex::new(Vec::new());
+/// The clicked notification's activation token, consumed by the next raise
+/// (`NativeWindows::show_all`) that its click signal triggers.
+static ACTIVATION_TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
 pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformError> {
     // flutter_local_notifications delivers Linux actions through its live D-Bus
@@ -497,31 +500,47 @@ pub(crate) fn init_notifications(_shared: &Arc<Shared>) -> Result<(), PlatformEr
         else {
             return;
         };
-        let Ok(mut actions) = proxy.receive_signal("ActionInvoked").await else {
+        // One ordered stream: servers emit `ActivationToken` right before the
+        // `ActionInvoked` of the same notification.
+        let Ok(mut signals) = proxy.receive_all_signals().await else {
             return;
         };
-        let Ok(mut closed) = proxy.receive_signal("NotificationClosed").await else {
-            return;
-        };
-        tokio::spawn(async move {
-            while let Some(message) = closed.next().await {
-                if let Ok((server_id, _reason)) = message.body().deserialize::<(u32, u32)>() {
-                    SHOWN.lock().unwrap().retain(|(id, _, _)| *id != server_id);
-                }
-            }
-        });
-        while let Some(message) = actions.next().await {
-            let Ok((server_id, action)) = message.body().deserialize::<(u32, String)>() else {
+        let mut token: Option<(u32, String)> = None;
+        while let Some(message) = signals.next().await {
+            let header = message.header();
+            let Some(member) = header.member() else {
                 continue;
             };
-            let found = SHOWN
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(id, _, _)| *id == server_id)
-                .cloned();
-            if let Some((_, id, payload)) = found {
-                notification_clicked(&payload, Some(id.into()), Some(action));
+            match member.as_str() {
+                "ActivationToken" => {
+                    token = message.body().deserialize::<(u32, String)>().ok();
+                }
+                "ActionInvoked" => {
+                    let Ok((server_id, action)) = message.body().deserialize::<(u32, String)>()
+                    else {
+                        continue;
+                    };
+                    let activation_token = token
+                        .take()
+                        .filter(|(id, _)| *id == server_id)
+                        .map(|(_, token)| token);
+                    let found = SHOWN
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|(id, _, _)| *id == server_id)
+                        .cloned();
+                    if let Some((_, id, payload)) = found {
+                        *ACTIVATION_TOKEN.lock().unwrap() = activation_token;
+                        notification_clicked(&payload, Some(id.into()), Some(action));
+                    }
+                }
+                "NotificationClosed" => {
+                    if let Ok((server_id, _reason)) = message.body().deserialize::<(u32, u32)>() {
+                        SHOWN.lock().unwrap().retain(|(id, _, _)| *id != server_id);
+                    }
+                }
+                _ => {}
             }
         }
     });
@@ -660,6 +679,24 @@ struct X11 {
         *mut *mut u8,
     ) -> c_int,
     free: unsafe extern "C" fn(*mut c_void) -> c_int,
+    change_property: unsafe extern "C" fn(
+        *mut c_void,
+        c_ulong,
+        c_ulong,
+        c_ulong,
+        c_int,
+        c_int,
+        *const u8,
+        c_int,
+    ) -> c_int,
+    query_tree: unsafe extern "C" fn(
+        *mut c_void,
+        c_ulong,
+        *mut c_ulong,
+        *mut c_ulong,
+        *mut *mut c_ulong,
+        *mut c_uint,
+    ) -> c_int,
     withdraw: unsafe extern "C" fn(*mut c_void, c_ulong, c_int) -> c_int,
     map_raised: unsafe extern "C" fn(*mut c_void, c_ulong) -> c_int,
     move_window: unsafe extern "C" fn(*mut c_void, c_ulong, c_int, c_int) -> c_int,
@@ -744,6 +781,8 @@ impl X11 {
                 intern_atom: symbol!(b"XInternAtom\0"),
                 get_window_property: symbol!(b"XGetWindowProperty\0"),
                 free: symbol!(b"XFree\0"),
+                change_property: symbol!(b"XChangeProperty\0"),
+                query_tree: symbol!(b"XQueryTree\0"),
                 withdraw: symbol!(b"XWithdrawWindow\0"),
                 map_raised: symbol!(b"XMapRaised\0"),
                 move_window: symbol!(b"XMoveWindow\0"),
@@ -921,7 +960,6 @@ impl NativeWindows {
     fn own_windows(display: &Display) -> Vec<c_ulong> {
         let root = unsafe { (display.x.default_root)(display.raw) };
         const XA_WINDOW: c_ulong = 33;
-        const XA_STRING: c_ulong = 31;
         let Some((bytes, 32, items)) = Self::property(display, root, "_NET_CLIENT_LIST", XA_WINDOW)
         else {
             return Vec::new();
@@ -937,17 +975,43 @@ impl NativeWindows {
         let class = wm_class();
         windows
             .into_iter()
-            .filter(|window| {
-                Self::property(display, *window, "WM_CLASS", XA_STRING).is_some_and(
-                    |(bytes, _, _)| {
-                        bytes
-                            .split(|b| *b == 0)
-                            .nth(1)
-                            .is_some_and(|c| c == class.as_bytes())
-                    },
-                )
-            })
+            .filter(|window| Self::has_class(display, *window, &class))
             .collect()
+    }
+
+    fn has_class(display: &Display, window: c_ulong, class: &str) -> bool {
+        const XA_STRING: c_ulong = 31;
+        Self::property(display, window, "WM_CLASS", XA_STRING).is_some_and(|(bytes, _, _)| {
+            bytes
+                .split(|b| *b == 0)
+                .nth(1)
+                .is_some_and(|c| c == class.as_bytes())
+        })
+    }
+
+    /// Withdrawn top-level windows are direct root children again, so this also
+    /// finds the window the shell hid itself (dormant), absent from `_NET_CLIENT_LIST`.
+    fn root_children(display: &Display) -> Vec<c_ulong> {
+        let root = unsafe { (display.x.default_root)(display.raw) };
+        let (mut root_return, mut parent) = (0, 0);
+        let mut children: *mut c_ulong = std::ptr::null_mut();
+        let mut count: c_uint = 0;
+        let status = unsafe {
+            (display.x.query_tree)(
+                display.raw,
+                root,
+                &mut root_return,
+                &mut parent,
+                &mut children,
+                &mut count,
+            )
+        };
+        if status == 0 || children.is_null() {
+            return Vec::new();
+        }
+        let list = unsafe { std::slice::from_raw_parts(children, count as usize) }.to_vec();
+        unsafe { (display.x.free)(children.cast()) };
+        list
     }
 
     fn preserve_position(display: &Display, window: c_ulong) {
@@ -1006,11 +1070,17 @@ impl NativeWindows {
         unsafe { (display.x.flush)(display.raw) };
     }
 
+    /// Maps and activates the tray-hidden and visible windows. A notification's
+    /// activation token is handed to the WM as `_NET_STARTUP_ID` (mutter and KWin
+    /// grant focus to a mapped window when it is set, and to a withdrawn one when
+    /// it maps later, e.g. the dormant first window) and its `_TIME` stamps the
+    /// activation request, so focus-stealing prevention does not just flash it.
     pub fn show_all(&mut self) {
+        let token = ACTIVATION_TOKEN.lock().unwrap().take();
         let Ok(display) = Display::open() else { return };
         let root = unsafe { (display.x.default_root)(display.raw) };
-        let active_name = CString::new("_NET_ACTIVE_WINDOW").unwrap();
-        let active = unsafe { (display.x.intern_atom)(display.raw, active_name.as_ptr(), 0) };
+        let active =
+            unsafe { (display.x.intern_atom)(display.raw, c"_NET_ACTIVE_WINDOW".as_ptr(), 0) };
         let mut targets = std::mem::take(&mut self.hidden);
         let hidden_count = targets.len();
         for window in Self::own_windows(&display) {
@@ -1018,6 +1088,17 @@ impl NativeWindows {
                 targets.push(window);
             }
         }
+        if let Some(token) = token.as_deref() {
+            let class = wm_class();
+            let withdrawn: Vec<c_ulong> = Self::root_children(&display)
+                .into_iter()
+                .filter(|w| !targets.contains(w) && Self::has_class(&display, *w, &class))
+                .collect();
+            for window in targets.iter().chain(&withdrawn) {
+                Self::set_startup_id(&display, *window, token);
+            }
+        }
+        let time = token.as_deref().map_or(0, startup_time);
         for (index, window) in targets.into_iter().enumerate() {
             if index < hidden_count {
                 Self::restore_position(&display, window);
@@ -1032,7 +1113,7 @@ impl NativeWindows {
                 window,
                 message_type: active,
                 format: 32,
-                data: [2, 0, 0, 0, 0],
+                data: [2, time, 0, 0, 0],
             };
             // SubstructureRedirectMask | SubstructureNotifyMask
             let mask: c_long = (1 << 20) | (1 << 19);
@@ -1040,11 +1121,61 @@ impl NativeWindows {
         }
         unsafe { (display.x.flush)(display.raw) };
     }
+
+    fn set_startup_id(display: &Display, window: c_ulong, token: &str) {
+        const PROP_MODE_REPLACE: c_int = 0;
+        unsafe {
+            let property = (display.x.intern_atom)(display.raw, c"_NET_STARTUP_ID".as_ptr(), 0);
+            let utf8 = (display.x.intern_atom)(display.raw, c"UTF8_STRING".as_ptr(), 0);
+            (display.x.change_property)(
+                display.raw,
+                window,
+                property,
+                utf8,
+                8,
+                PROP_MODE_REPLACE,
+                token.as_ptr(),
+                token.len() as c_int,
+            );
+        }
+    }
+}
+
+/// X11 startup ids end in `_TIME<server time>`; xdg-activation tokens carry
+/// none, leaving the request's timestamp at 0 as before.
+fn startup_time(token: &str) -> c_long {
+    token
+        .rfind("_TIME")
+        .and_then(|at| token[at + 5..].parse::<c_ulong>().ok())
+        .map_or(0, |time| time as c_long)
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::startup_time;
+
+    #[test]
+    fn startup_ids_carry_their_x_server_time() {
+        assert_eq!(
+            startup_time("gnome-shell/Passession/2-31-host_TIME5141"),
+            5141
+        );
+        assert_eq!(startup_time("5a1e9e0c-6f0b-4bde-a2c6-9f0a3b1d7e21"), 0);
+        assert_eq!(startup_time("x_TIMEnot-a-number"), 0);
+    }
 }
 
 // ----- tray -----
 
-struct TrayModel;
+#[derive(Default)]
+struct TrayModel {
+    tailnet: Option<TailnetPresence>,
+}
+
+/// Localized labels are literal text: `_` would otherwise mark an access key.
+fn literal(text: &str) -> String {
+    text.replace('_', "__")
+}
 
 impl ksni::Tray for TrayModel {
     fn id(&self) -> String {
@@ -1076,22 +1207,67 @@ impl ksni::Tray for TrayModel {
     fn activate(&mut self, _x: i32, _y: i32) {
         deliver(NativeSignal::TrayOpen);
     }
+    /// The embedded Tailscale status and controls head the menu while it is enabled.
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        vec![
-            ksni::menu::StandardItem {
-                label: "Open Passession".into(),
+        use ksni::menu::StandardItem;
+        let mut items = Vec::new();
+        if let Some(presence) = &self.tailnet {
+            items.push(
+                StandardItem {
+                    label: literal(&format!("{}: {}", presence.title, presence.status)),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+            let (label, control) = match presence.state {
+                TailnetPresenceState::Paused => (&presence.resume, TailnetControl::Resume),
+                _ => (&presence.pause, TailnetControl::Pause),
+            };
+            items.push(
+                StandardItem {
+                    label: literal(label),
+                    activate: Box::new(move |_: &mut Self| {
+                        deliver(NativeSignal::TrayTailnet(control))
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            items.push(
+                StandardItem {
+                    label: literal(&presence.stop),
+                    activate: Box::new(|_: &mut Self| {
+                        deliver(NativeSignal::TrayTailnet(TailnetControl::Stop))
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            items.push(ksni::MenuItem::Separator);
+        }
+        let open = self
+            .tailnet
+            .as_ref()
+            .map_or("Open Passession", |p| p.open.as_str());
+        items.push(
+            StandardItem {
+                label: literal(open),
                 activate: Box::new(|_: &mut Self| deliver(NativeSignal::TrayOpen)),
                 ..Default::default()
             }
             .into(),
-            ksni::MenuItem::Separator,
-            ksni::menu::StandardItem {
+        );
+        items.push(ksni::MenuItem::Separator);
+        items.push(
+            StandardItem {
                 label: "Quit Passession".into(),
                 activate: Box::new(|_: &mut Self| deliver(NativeSignal::TrayQuit)),
                 ..Default::default()
             }
             .into(),
-        ]
+        );
+        items
     }
     fn watcher_offline(&self, _reason: ksni::OfflineReason) -> bool {
         // Keep the service: a restarted panel re-registers the item.
@@ -1101,6 +1277,9 @@ impl ksni::Tray for TrayModel {
 
 pub(crate) struct Tray {
     handle: Option<ksni::Handle<TrayModel>>,
+    /// The newest presence: each update task applies it whatever order the
+    /// D-Bus runtime runs them in.
+    tailnet: Arc<Mutex<Option<TailnetPresence>>>,
 }
 
 /// Registers the StatusNotifierItem on the D-Bus runtime; the handle is stored
@@ -1109,14 +1288,16 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
     use ksni::TrayMethods as _;
     let shared = shared.clone();
     BUS.spawn(async move {
-        let spawned = tokio::time::timeout(Duration::from_secs(3), TrayModel.spawn()).await;
+        let spawned =
+            tokio::time::timeout(Duration::from_secs(3), TrayModel::default().spawn()).await;
         match spawned {
             Ok(Ok(handle)) => {
                 let owner = shared.clone();
                 shared.on_main(move |_, state| {
                     if state.desktop.tray.is_none() && !owner.desktop.quitting() {
-                        state.desktop.tray = Some(Tray {
+                        state.desktop.install_tray(Tray {
                             handle: Some(handle),
+                            tailnet: Arc::default(),
                         });
                         owner
                             .desktop
@@ -1137,6 +1318,20 @@ pub(crate) fn create_tray(shared: &Arc<Shared>) {
 
 impl Tray {
     pub fn poll(&mut self) {}
+
+    /// Live menu change through the StatusNotifierItem's `LayoutUpdated`.
+    pub fn set_tailnet(&mut self, presence: Option<&TailnetPresence>) {
+        *self.tailnet.lock().unwrap() = presence.cloned();
+        let Some(handle) = self.handle.clone() else {
+            return;
+        };
+        let latest = self.tailnet.clone();
+        BUS.spawn(async move {
+            handle
+                .update(move |model| model.tailnet = latest.lock().unwrap().clone())
+                .await;
+        });
+    }
 }
 
 impl Drop for Tray {
@@ -1318,9 +1513,6 @@ pub(crate) fn locale() -> String {
         .find_map(|key| std::env::var(key).ok().filter(|v| !v.is_empty()))
         .unwrap_or_else(|| "en_US".into())
 }
-
-#[allow(dead_code)]
-fn _assert_types(_: c_uint) {}
 
 // ----- fonts and text scale -----
 

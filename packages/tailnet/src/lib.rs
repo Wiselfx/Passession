@@ -46,7 +46,8 @@ use std::fs::{File, OpenOptions};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, Weak};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -149,6 +150,17 @@ impl Proxy {
     pub async fn invalidated(&self) {
         self.0.cancelled.cancelled().await
     }
+    /// An unreachable loopback route for embedders' tests; cancelling `node` closes it.
+    #[cfg(feature = "test-support")]
+    pub fn unconnected(node: CancellationToken) -> Self {
+        Self(Arc::new(ProxyInner {
+            endpoint: SocketAddr::from(([127, 0, 0, 1], 9)),
+            username: String::new(),
+            password: Zeroizing::new(String::new()),
+            generation: 0,
+            cancelled: node,
+        }))
+    }
 }
 
 struct Node {
@@ -162,13 +174,62 @@ struct Node {
     // when the caller timed out. A replacement cannot race old state writes.
     lease: Mutex<Option<File>>,
 }
+
+/// Go reports this while a slow shutdown continues; calling Close again waits on the same drain.
+const STILL_DRAINING: &str = "still draining";
+/// How long a disconnect waits for a slow native shutdown before handing it to a drop thread.
+const CLOSE_WAIT: Duration = Duration::from_secs(30);
+/// How long a start waits for a drop-thread drain; below `start`'s own 20 s deadline.
+const DRAIN_WAIT: Duration = Duration::from_secs(15);
+
+/// Nodes still closing on a drop thread, which holds their lease until Go really closed them.
+/// Go admits one node per process, so a start must wait for these before creating another.
+struct Drains {
+    count: Mutex<usize>,
+    done: Condvar,
+}
+impl Drains {
+    fn begin(&self) {
+        *self.count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    }
+    fn end(&self) {
+        *self.count.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        self.done.notify_all();
+    }
+    fn wait(&self, timeout: Duration) -> Result<()> {
+        let count = self.count.lock().unwrap_or_else(|e| e.into_inner());
+        let (count, _) = self
+            .done
+            .wait_timeout_while(count, timeout, |count| *count > 0)
+            .unwrap_or_else(|e| e.into_inner());
+        ensure!(
+            *count == 0,
+            "the previous Tailscale node is still shutting down; try again shortly"
+        );
+        Ok(())
+    }
+}
+static DRAINS: Drains = Drains {
+    count: Mutex::new(0),
+    done: Condvar::new(),
+};
+
 impl Node {
     fn close(&self) -> Result<()> {
         self.cancelled.cancel();
-        if !self.closed.load(Ordering::Acquire) {
-            self.api.close(self.handle)?;
-            self.closed.store(true, Ordering::Release);
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(());
         }
+        let deadline = Instant::now() + CLOSE_WAIT;
+        loop {
+            match self.api.close(self.handle) {
+                Ok(()) => break,
+                Err(error)
+                    if Instant::now() < deadline && error.to_string().contains(STILL_DRAINING) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.closed.store(true, Ordering::Release);
         Ok(())
     }
 }
@@ -185,12 +246,14 @@ impl Drop for Node {
             .take();
         let api = self.api;
         let handle = self.handle;
+        DRAINS.begin();
         // Never block a UI drop or unlock a directory still owned by Go.
         std::thread::spawn(move || {
-            let _lease = lease;
             while api.close(handle).is_err() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(100));
             }
+            drop(lease);
+            DRAINS.end();
         });
     }
 }
@@ -233,7 +296,7 @@ impl Manager {
         std::thread::spawn(move || {
             let _ = send.send(manager.start_inner(config, generation));
         });
-        match receive.recv_timeout(std::time::Duration::from_secs(20)) {
+        match receive.recv_timeout(Duration::from_secs(20)) {
             Ok(result) => result,
             Err(_) => {
                 let _ = self.disconnect();
@@ -278,6 +341,11 @@ impl Manager {
             );
             return self.read_status(&node);
         }
+        DRAINS.wait(DRAIN_WAIT)?;
+        ensure!(
+            generation == self.0.generation.load(Ordering::Acquire),
+            "Tailscale start was cancelled"
+        );
         let lease = OpenOptions::new()
             .read(true)
             .write(true)
@@ -408,6 +476,8 @@ impl Manager {
             cancelled: node.cancelled.clone(),
         })))
     }
+    /// Waits out a slow native shutdown for a bounded time. An unfinished drain keeps its
+    /// lease on a drop thread, and the next `start` waits for it instead of failing.
     pub fn disconnect(&self) -> Result<()> {
         self.0.generation.fetch_add(1, Ordering::AcqRel);
         let node = self.0.node.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -423,7 +493,7 @@ impl Manager {
         std::thread::spawn(move || {
             let _ = send.send(manager.logout_inner(generation));
         });
-        match receive.recv_timeout(std::time::Duration::from_secs(30)) {
+        match receive.recv_timeout(Duration::from_secs(30)) {
             Ok(result) => result,
             Err(_) => {
                 let _ = self.disconnect();
@@ -559,5 +629,22 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), clone.invalidated())
             .await
             .unwrap();
+    }
+    #[test]
+    fn start_waits_for_a_background_drain_instead_of_failing() {
+        let drains = Drains {
+            count: Mutex::new(0),
+            done: Condvar::new(),
+        };
+        drains.wait(Duration::ZERO).unwrap();
+        drains.begin();
+        assert!(drains.wait(Duration::from_millis(20)).is_err());
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                drains.end();
+            });
+            drains.wait(Duration::from_secs(5)).unwrap();
+        });
     }
 }

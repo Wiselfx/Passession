@@ -306,3 +306,29 @@ provider enabled. Evidence is at `/tmp/passession-git-cjk-proof-d6e5dzjp/`.
 The test daemon/emulator and their private fixture data are removed after the
 run. Production installations and physical Android devices are unchanged.
 This does not establish Windows UI or Apple runtime behavior.
+
+## Embedded Tailscale service and single activity (2026-11-16)
+
+A disposable Android 15/API 35 x86_64 emulator (1080×2400, 420 dpi) ran the
+`dev-fast` x86_64 APK (SHA-256
+`4e1f5cc724daffe68c4a58a422ba1727bf4c5fd14a1fbb64cb990b5a22daaebd`). No daemon,
+account login or physical device was involved.
+
+- Launcher, explicit `FLAG_ACTIVITY_NEW_TASK`, a `paseo://` VIEW sent while
+  Settings was in front, and a second launcher start all kept exactly one
+  `MainActivity` in one task with the package affinity.
+- Enabling Embedded Tailscale (the node reached `NeedsLogin`) started
+  `PaseoTailnetService` in the foreground (`specialUse`, channel `tailnet`)
+  with Pause and Stop actions. Pause showed Paused with Resume, and the app's
+  Tailscale page showed the same state. Tapping the notification body returned
+  to that same activity and process.
+- With the app in the background, the process stayed `fg-service`
+  (oom adj 200), and Resume from the notification was applied there. Stop
+  removed the service and notification and disabled Embedded Tailscale.
+- Removing the task ended the process together with the service. The
+  following launch cold-started cleanly and restored the service from the
+  saved setting.
+
+Not covered: a logged-in tailnet and real host traffic, Android 12–14 and
+API 24–28, refused background starts, and desktop tray menus (unit-tested
+only; macOS and Windows were not compiled here).

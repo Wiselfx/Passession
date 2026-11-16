@@ -419,25 +419,36 @@
          getHolder().addCallback(this);
  
          setFocusable(true);
-@@ -95,6 +479,8 @@
+@@ -95,6 +479,10 @@
      @Override
      public void surfaceCreated(SurfaceHolder holder) {
          Log.i("SAPP", "surfaceCreated");
 +        textActionsSurfaceReady = true;
 +        cancelTextActions();
++        // Paseo: a stale activity's surface must not replace or destroy the live one.
++        if (!MakepadActivity.isLive(getContext())) return;
          Surface surface = holder.getSurface();
          //surface.setFrameRate(120f,0);
          MakepadNative.surfaceOnSurfaceCreated(surface);
-@@ -103,6 +489,8 @@
+@@ -103,6 +491,9 @@
      @Override
      public void surfaceDestroyed(SurfaceHolder holder) {
          Log.i("SAPP", "surfaceDestroyed");
 +        textActionsSurfaceReady = false;
 +        cancelTextActions();
++        if (!MakepadActivity.isLive(getContext())) return;
          Surface surface = holder.getSurface();
          MakepadNative.surfaceOnSurfaceDestroyed(surface);
      }
-@@ -131,10 +519,15 @@
+@@ -113,6 +504,7 @@
+                                int width,
+                                int height) {
+         Log.i("SAPP", "surfaceChanged");
++        if (!MakepadActivity.isLive(getContext())) return;
+         Surface surface = holder.getSurface();
+         //surface.setFrameRate(120f,0);
+         MakepadNative.surfaceOnSurfaceChanged(surface, width, height);
+@@ -131,10 +523,15 @@
          // Save the details of the latest touch-down event,
          // such that we can use them in the `onLongClick` method.
          if (actionMasked == MotionEvent.ACTION_DOWN) {
@@ -454,7 +465,7 @@
          }
          else if (actionMasked == MotionEvent.ACTION_MOVE) {
              latestTouchX = event.getX(index);
-@@ -142,6 +535,7 @@
+@@ -142,6 +539,7 @@
              latestTouchPointerId = pointerId;
              if (pointerId == latestDownTouchPointerId) {
                  if (isTouchBeyondSlopDistance(view)) {
@@ -462,7 +473,7 @@
                      retval = true;
                  }
              }
-@@ -204,7 +598,13 @@
+@@ -204,7 +602,13 @@
          int visibleHeight = r.height();
          int keyboardHeight = screenHeight - visibleHeight;
  
@@ -477,7 +488,7 @@
      }
  
      // docs says getCharacters are deprecated
-@@ -213,6 +613,21 @@
+@@ -213,6 +617,21 @@
      @SuppressWarnings("deprecation")
      @Override
      public boolean onKey(View v, int keyCode, KeyEvent event) {
@@ -499,7 +510,7 @@
          if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode != 0) {
              int metaState = event.getMetaState();
              MakepadNative.surfaceOnKeyDown(keyCode, metaState);
-@@ -223,17 +638,15 @@
+@@ -223,17 +642,15 @@
              MakepadNative.surfaceOnKeyUp(keyCode, metaState);
          }
  
@@ -526,7 +537,7 @@
              }
          }
  
-@@ -248,16 +661,14 @@
+@@ -248,16 +665,14 @@
          return true;
      }
  
@@ -549,7 +560,7 @@
      }
  
      public Surface getNativeSurface() {
-@@ -280,9 +691,14 @@
+@@ -280,9 +695,14 @@
      }
  
      @Override
@@ -566,22 +577,48 @@
          return insets;
      }
  }
-@@ -295,6 +711,9 @@
- 
+@@ -296,6 +716,19 @@
      private MakepadSurface view;
      Handler mHandler;
+ 
++    // Paseo: one native app serves every activity instance of the process and
++    // only the most recently created instance drives it. A stale instance
++    // (destroyed or stopped after its replacement was created) must not pause,
++    // stop, resize or quit it. Main-thread owned.
++    private static MakepadActivity sLive;
++
++    static boolean isLive(Context context) { return context != null && context == sLive; }
++
++    protected final boolean isLiveActivity() { return sLive == this; }
 +
 +    // Paseo: platform insets are relative to the actual resized render surface.
 +    public View getRenderView() { return view; }
- 
++
      // video playback
      Handler mVideoPlaybackHandler;
-@@ -379,12 +798,14 @@
+     HashMap<Long, VideoPlayerRunnable> mVideoPlayerRunnables;
+@@ -320,6 +753,7 @@
+         
+         this.requestWindowFeature(Window.FEATURE_NO_TITLE);
+ 
++        sLive = this;
+         view = new MakepadSurface(this);
+         // Put it inside a parent layout which can resize it using padding
+         ResizingLayout layout = new ResizingLayout(this);
+@@ -373,20 +807,22 @@
+             }
+         }
+ */      
+-        MakepadNative.activityOnStart();
++        if (sLive == this) MakepadNative.activityOnStart();
+     }
+ 
      @Override
      protected void onResume() {
          super.onResume();
+-        MakepadNative.activityOnResume();
 +        view.setTextActionsResumed(true);
-         MakepadNative.activityOnResume();
++        if (sLive == this) MakepadNative.activityOnResume();
  
          //% MAIN_ACTIVITY_ON_RESUME
      }
@@ -589,25 +626,51 @@
      protected void onPause() {
 +        view.setTextActionsResumed(false);
          super.onPause();
-         MakepadNative.activityOnPause();
+-        MakepadNative.activityOnPause();
++        if (sLive == this) MakepadNative.activityOnPause();
  
-@@ -399,6 +820,7 @@
+         //% MAIN_ACTIVITY_ON_PAUSE
+     }
+@@ -394,26 +830,34 @@
+     @Override
+     protected void onStop() {
+         super.onStop();
+-        MakepadNative.activityOnStop();
++        if (sLive == this) MakepadNative.activityOnStop();
+     }
  
      @Override
      protected void onDestroy() {
 +        view.cancelTextActions();
          super.onDestroy();
-         MakepadNative.activityOnDestroy();
+-        MakepadNative.activityOnDestroy();
++        // Paseo: only the live instance finishing quits the native app; the
++        // native side then ends the process (android.rs), so a later launch
++        // starts fresh. A configuration or system destroy keeps the app running
++        // for the next instance, which attaches through SwitchedActivity.
++        if (sLive != this) return;
++        sLive = null;
++        if (isFinishing()) MakepadNative.activityOnDestroy();
      }
-@@ -406,6 +828,7 @@
+ 
      @Override
      @SuppressWarnings("deprecation")
      public void onBackPressed() {
 +        if (dismissTextActionsOnBack()) return;
          super.onBackPressed();
-         MakepadNative.onBackPressed();
+-        MakepadNative.onBackPressed();
++        if (sLive == this) MakepadNative.onBackPressed();
      }
-@@ -430,7 +853,10 @@
+ 
+     @Override
+     public void onWindowFocusChanged(boolean hasFocus) {
+         super.onWindowFocusChanged(hasFocus);
+-        MakepadNative.activityOnWindowFocusChanged(hasFocus);
++        if (sLive == this) MakepadNative.activityOnWindowFocusChanged(hasFocus);
+     }
+ 
+     @Override
+@@ -430,7 +874,10 @@
  
                      if (fullscreen) {
                          getWindow().setFlags(LayoutParams.FLAG_LAYOUT_NO_LIMITS, LayoutParams.FLAG_LAYOUT_NO_LIMITS);
@@ -619,7 +682,7 @@
                          if (Build.VERSION.SDK_INT >= 30) {
                              getWindow().setDecorFitsSystemWindows(false);
                          } else {
-@@ -456,6 +882,31 @@
+@@ -456,6 +903,31 @@
          finish();
      }
      
