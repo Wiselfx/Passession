@@ -1,0 +1,4 @@
+Changed
+- Use 4 code generation units for the daemon and GUI release crates while retaining Thin LTO and the existing optimization settings for other crates. With four build jobs the daemon crate and its link took 310 seconds instead of 610, and the Linux daemon binary grew from 67 MB to 88 MB; 8 and 16 units were slower (344 and 374 seconds) and larger (100 and 106 MB).
+
+Full notes: https://github.com/emotionbug/Passession/releases
