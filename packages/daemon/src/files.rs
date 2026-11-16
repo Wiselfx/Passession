@@ -1,4 +1,5 @@
 mod fs;
+pub(crate) use fs::filesystem_space;
 mod icons;
 pub use icons::{extract_ico_png_frame, image_dimensions, project_icon};
 mod observer;

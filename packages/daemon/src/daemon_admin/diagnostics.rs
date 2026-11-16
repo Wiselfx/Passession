@@ -119,34 +119,15 @@ pub async fn collect(app: &AppState, started: Instant) -> Result<String> {
                 ),
             ]),
         );
-        let disks = sysinfo::Disks::new_with_refreshed_list();
-        let canonical = home.canonicalize()?;
-        let disk = disks
-            .iter()
-            .filter(|disk| canonical.starts_with(disk.mount_point()))
-            .max_by_key(|disk| disk.mount_point().components().count());
-        let disk_section = match disk {
-            Some(disk) => section(
+        let disk_section = match crate::files::filesystem_space(&home) {
+            Ok((available, total)) => section(
                 "Disk",
                 entries([
                     ("Path", home.display().to_string()),
-                    (
-                        "Free",
-                        format!(
-                            "{} / {}",
-                            bytes(disk.available_space()),
-                            bytes(disk.total_space())
-                        ),
-                    ),
+                    ("Free", format!("{} / {}", bytes(available), bytes(total))),
                 ]),
             ),
-            None => section(
-                "Disk",
-                entries([(
-                    "Error",
-                    "No matching filesystem metrics were returned".into(),
-                )]),
-            ),
+            Err(error) => section("Disk", entries([("Error", error.to_string())])),
         };
         Ok::<_, anyhow::Error>(vec![process_section, system_section, disk_section])
     })

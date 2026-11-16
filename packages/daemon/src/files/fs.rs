@@ -118,6 +118,41 @@ pub fn missing(error: &std::io::Error) -> bool {
             }
         }
 }
+/// Available and total bytes of the filesystem holding `path` (an existing
+/// file or directory), asked of the OS for that path. Matching against the
+/// mount list instead misses Windows `\\?\` paths and mounts it omits.
+pub fn filesystem_space(path: &Path) -> std::io::Result<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        // Block counts and sizes are u32 on some targets (macOS) and u64 on Linux.
+        fn scaled(count: impl Into<u64>, unit: impl Into<u64>) -> u64 {
+            count.into().saturating_mul(unit.into())
+        }
+        let stat = nix::sys::statvfs::statvfs(path)?;
+        Ok((
+            scaled(stat.blocks_available(), stat.fragment_size()),
+            scaled(stat.blocks(), stat.fragment_size()),
+        ))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let (mut available, mut total) = (0u64, 0u64);
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut available,
+                &mut total,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok((available, total))
+    }
+}
 pub fn open_no_follow(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);

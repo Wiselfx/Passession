@@ -1556,14 +1556,8 @@ fn ensure_capacity(destination: &Path, required: u64) -> Result<()> {
     let target = destination
         .ancestors()
         .find(|path| path.exists())
-        .context("Destination has no existing ancestor")?
-        .canonicalize()?;
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    let available = disks
-        .iter()
-        .filter(|disk| target.starts_with(disk.mount_point()))
-        .max_by_key(|disk| disk.mount_point().as_os_str().len())
-        .map(|disk| disk.available_space())
+        .context("Destination has no existing ancestor")?;
+    let (available, _) = crate::files::filesystem_space(target)
         .context("Cannot determine free space for the installation store")?;
     let margin = 64 * 1024 * 1024;
     if available < required.saturating_add(margin) {

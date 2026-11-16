@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Update a daemon whose runtime was installed outside the update store instead of failing with "Cannot determine free space for the installation store". The free-space check now asks the OS about the store's own folder; it used to look the folder up in the list of mounted drives, which never matched on Windows and missed drives the list leaves out. Diagnostics report free disk space the same way.
 - Remove the macOS build's compiler warnings (redundant `unsafe`, unneeded `mut`, iOS-only helpers and Linux/Windows-only session signals compiled on macOS). iOS no longer compiles Android- and desktop-only helpers either.
 
 ## 0.13.28 - 2026-11-16
