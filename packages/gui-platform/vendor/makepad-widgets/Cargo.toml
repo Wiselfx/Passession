@@ -57,14 +57,13 @@ version = "1.0.0"
 [dependencies.makepad-html]
 version = "1.0.0"
 
-[dependencies.makepad-zune-jpeg]
-version = "0.3.17 "
-
-[dependencies.makepad-zune-png]
-version = "0.4.10"
+[dependencies.image]
+version = "0.25"
+features = ["png", "jpeg"]
+default-features = false
 
 [dependencies.pulldown-cmark]
-version = "0.12.2"
+version = "0.13"
 features = ["simd"]
 default-features = false
 

@@ -45,14 +45,14 @@ version = "1.0.0"
 [dependencies.makepad-platform]
 version = "1.0.0"
 
-[dependencies.makepad-rustybuzz]
-version = "0.8.0"
+[dependencies.rustybuzz]
+version = "0.20"
 
 [dependencies.makepad-vector]
 version = "1.0.0"
 
 [dependencies.png]
-version = "0.17.13"
+version = "0.18"
 
 [dependencies.sdfer]
 version = "0.2.1"

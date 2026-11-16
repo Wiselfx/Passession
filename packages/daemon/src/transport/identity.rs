@@ -2,7 +2,7 @@ use super::storage;
 use anyhow::{Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use paseo_protocol::crypto::KeyPair;
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
@@ -29,7 +29,7 @@ pub(super) async fn load(
         id
     } else {
         let mut bytes = [0u8; 9];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::rngs::OsRng.unwrap_err().fill_bytes(&mut bytes);
         let id = format!("srv_{}", URL_SAFE_NO_PAD.encode(bytes));
         storage::write_private(&server_path, format!("{id}\n").as_bytes()).await?;
         id

@@ -5,8 +5,7 @@ use {
     std::cell::RefCell,
     crate::{
         windows::{
-            core,
-            core::implement,
+            core::{implement, BOOL, Ref},
             Win32::{
                 System::{
                     Ole::{
@@ -27,7 +26,6 @@ use {
                     },
                 },
                 Foundation::{
-                    BOOL,
                     S_OK,
                     E_NOTIMPL,
                     OLE_E_ADVISENOTSUPPORTED,
@@ -248,9 +246,9 @@ pub struct DragItemWindows(pub DragItem);
 // IDataObject implementation for DragItem
 
 #[allow(non_snake_case)]
-impl IDataObject_Impl for DragItemWindows {
+impl IDataObject_Impl for DragItemWindows_Impl {
 
-    fn GetData(&self, pformatetc: *const FORMATETC) -> core::Result<STGMEDIUM> {
+    fn GetData(&self, pformatetc: *const FORMATETC) -> windows_core::Result<STGMEDIUM> {
 
         // if no format was supplied, return DV_E_FORMATETC
         if pformatetc == std::ptr::null_mut() {
@@ -296,11 +294,11 @@ impl IDataObject_Impl for DragItemWindows {
         }
     }
 
-    fn GetDataHere(&self, _: *const FORMATETC, _: *mut STGMEDIUM) -> core::Result<()> {
+    fn GetDataHere(&self, _: *const FORMATETC, _: *mut STGMEDIUM) -> windows_core::Result<()> {
         Err(E_NOTIMPL.into())
     }
 
-    fn QueryGetData(&self, pformatetc: *const FORMATETC) -> core::HRESULT {
+    fn QueryGetData(&self, pformatetc: *const FORMATETC) -> windows_core::HRESULT {
 
         // if no format was supplied, return DV_E_FORMATETC
         if pformatetc == std::ptr::null_mut() {
@@ -335,7 +333,7 @@ impl IDataObject_Impl for DragItemWindows {
         }
     }
 
-    fn GetCanonicalFormatEtc(&self, pformatetcin: *const FORMATETC, pformatetcout: *mut FORMATETC) -> core::HRESULT {
+    fn GetCanonicalFormatEtc(&self, pformatetcin: *const FORMATETC, pformatetcout: *mut FORMATETC) -> windows_core::HRESULT {
 
         // if no format was supplied, return DV_E_FORMATETC
         if pformatetcin == std::ptr::null_mut() {
@@ -351,11 +349,11 @@ impl IDataObject_Impl for DragItemWindows {
         DATA_S_SAMEFORMATETC
     }
 
-    fn SetData(&self, _: *const FORMATETC, _: *const STGMEDIUM, _: BOOL) -> core::Result<()> {
+    fn SetData(&self, _: *const FORMATETC, _: *const STGMEDIUM, _: BOOL) -> windows_core::Result<()> {
         Err(E_NOTIMPL.into())
     }
 
-    fn EnumFormatEtc(&self, dwdirection: u32) -> core::Result<IEnumFORMATETC> {
+    fn EnumFormatEtc(&self, dwdirection: u32) -> windows_core::Result<IEnumFORMATETC> {
         if dwdirection != DATADIR_GET.0 as u32 {
             Err(E_NOTIMPL.into())
         }
@@ -374,15 +372,15 @@ impl IDataObject_Impl for DragItemWindows {
         }
     }
 
-    fn DAdvise(&self, _: *const FORMATETC, _: u32, _: ::core::option::Option<&IAdviseSink>) -> core::Result<u32> {
+    fn DAdvise(&self, _: *const FORMATETC, _: u32, _: Ref<'_, IAdviseSink>) -> windows_core::Result<u32> {
         Err(OLE_E_ADVISENOTSUPPORTED.into())
     }
 
-    fn DUnadvise(&self, _: u32) -> core::Result<()> {
+    fn DUnadvise(&self, _: u32) -> windows_core::Result<()> {
         Err(OLE_E_ADVISENOTSUPPORTED.into())
     }
 
-    fn EnumDAdvise(&self) -> core::Result<IEnumSTATDATA> {
+    fn EnumDAdvise(&self) -> windows_core::Result<IEnumSTATDATA> {
         Err(OLE_E_ADVISENOTSUPPORTED.into())
     }
 }

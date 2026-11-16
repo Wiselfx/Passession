@@ -236,3 +236,25 @@ within the original app's 32px of the newest edge instead. One
 `src/dock.rs` and `src/widget.rs` spell existing elided iterator lifetimes as
 `'_`. Vendoring removes crates.io's dependency warning cap; these annotations
 avoid exposing upstream lifetime-syntax warnings without changing the API.
+
+## Image decoding
+
+`Cargo.toml` and `Cargo.toml.orig` replace Makepad's `makepad-zune-jpeg` and
+`makepad-zune-png` forks with `image` 0.25 (`png` and `jpeg` only, no default
+features), the decoder the GUI already uses. `src/lib.rs` no longer reexports
+`makepad_zune_jpeg` or `makepad_zune_png`, and `ImageError::PngDecode`/`JpgDecode`
+carry `image::ImageError`; the `From<PngDecodeErrors>` conversion is gone.
+
+`src/image_cache.rs` keeps `ImageBuffer`'s 0xAARRGGBB layout. Eight-bit gray,
+gray-alpha, RGB and RGBA pass to `ImageBuffer::new` unchanged; other bit depths
+are converted to RGBA8 first. Animated PNG frames come from the decoder already
+composited (blend and dispose ops applied) and are packed left to right, top to
+bottom, into one texture as before; the frame count is the number of decoded
+frames. `image_size_by_data` returns a decode error for a corrupt JPEG header
+instead of panicking. `image_cache::tests` cover alpha/ARGB packing, APNG
+composition and disposal, and JPEG decoding with a corrupt header.
+
+## Markdown parser
+
+`pulldown-cmark` moves from 0.12.2 to 0.13 (still `simd`, no default features),
+the version the GUI uses, so the lockfile carries one parser.

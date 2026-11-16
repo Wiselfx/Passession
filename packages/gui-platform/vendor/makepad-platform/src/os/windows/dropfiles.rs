@@ -54,7 +54,7 @@ pub fn convert_medium_to_dragitems(medium: STGMEDIUM) -> Vec<DragItem> {
             let _ = unsafe { GlobalUnlock(hglobal) };
         }
 
-        let hdrop = HDROP(hglobal.0 as isize);
+        let hdrop = HDROP(hglobal.0);
         let count = unsafe { DragQueryFileW(hdrop,0xFFFF_FFFF,None) };
         for index in 0..count {
             let length = unsafe { DragQueryFileW(hdrop,index,None) } as usize;

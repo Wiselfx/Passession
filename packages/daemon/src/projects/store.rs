@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{SecondsFormat, Utc};
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use serde_json::{Map, Value, json};
 use std::{
     collections::VecDeque,
@@ -689,7 +689,7 @@ pub fn generate_workspace_id() -> String {
 }
 fn random_id(prefix: &str) -> String {
     let mut bytes = [0u8; 8];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::OsRng.unwrap_err().fill_bytes(&mut bytes);
     format!("{prefix}{}", hex::encode(bytes))
 }
 

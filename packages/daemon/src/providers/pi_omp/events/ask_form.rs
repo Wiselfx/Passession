@@ -4,6 +4,7 @@
 //! those dialogs itself, checking each one against the dialog OMP's own rules predict. A dialog
 //! that does not match stops the replay and is shown to the user, with every later one.
 
+mod dom;
 mod parse;
 #[cfg(test)]
 mod tests;

@@ -12,7 +12,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use reqwest::{Client, Method, Response};
 use serde_json::Value;
 use tokio::{
@@ -388,7 +388,7 @@ impl Runtime {
         bridge.decorate_env(&mut process_env, generation)?;
         let password = if generation == Generation::V2 {
             let mut secret = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut secret);
+            rand::rngs::OsRng.unwrap_err().fill_bytes(&mut secret);
             let password = URL_SAFE_NO_PAD.encode(secret);
             process_env.insert("OPENCODE_PASSWORD".into(), password.clone());
             Some(password)

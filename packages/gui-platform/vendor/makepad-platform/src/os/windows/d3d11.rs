@@ -26,7 +26,7 @@ use crate::{
         },
         Win32::{
             Foundation::{
-                HINSTANCE,
+                HMODULE,
                 HANDLE,
                 S_FALSE,
             },
@@ -104,6 +104,9 @@ use crate::{
                     IDXGIResource,
                     IDXGISwapChain1,
                     CreateDXGIFactory2,
+                    DXGI_CREATE_FACTORY_FLAGS,
+                    DXGI_PRESENT,
+                    DXGI_SWAP_CHAIN_FLAG,
                     DXGI_SWAP_CHAIN_DESC1,
                     DXGI_USAGE_RENDER_TARGET_OUTPUT,
                     DXGI_SCALING_NONE,
@@ -606,7 +609,7 @@ impl D3d11Window {
                 (wg.inner_size.x * wg.dpi_factor) as u32,
                 (wg.inner_size.y * wg.dpi_factor) as u32,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
-                0
+                DXGI_SWAP_CHAIN_FLAG(0)
             ).unwrap();
             
             let swap_texture = self.swap_chain.GetBuffer(0).unwrap();
@@ -619,7 +622,7 @@ impl D3d11Window {
     }
     
     pub fn present(&mut self, vsync: bool) {
-        unsafe {self.swap_chain.Present(if vsync {1}else {0}, 0).unwrap()};
+        unsafe {self.swap_chain.Present(if vsync {1}else {0}, DXGI_PRESENT(0)).unwrap()};
     }
     
 }
@@ -636,7 +639,7 @@ impl D3d11Cx {
     
     pub fn new() -> D3d11Cx {
         unsafe {
-            let factory: IDXGIFactory2 = CreateDXGIFactory2(0).unwrap();
+            let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).unwrap();
             let adapter = factory.EnumAdapters(0).unwrap();
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
@@ -644,7 +647,7 @@ impl D3d11Cx {
             D3D11CreateDevice(
                 &adapter,
                 D3D_DRIVER_TYPE_UNKNOWN,
-                HINSTANCE(0),
+                HMODULE::default(),
                 D3D11_CREATE_DEVICE_FLAG(0),
                 Some(&[D3D_FEATURE_LEVEL_11_0]),
                 D3D11_SDK_VERSION,

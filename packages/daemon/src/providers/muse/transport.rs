@@ -110,7 +110,7 @@ pub fn actionable(error: &anyhow::Error, env: &BTreeMap<String, String>) -> anyh
 
 pub fn command_id() -> String {
     let mut bytes = [0_u8; 16];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

@@ -12,7 +12,7 @@ use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use executions::Executions;
 use futures_util::{SinkExt, StreamExt};
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use record::{Credential, Enrollment, Identity, Record, Relationship, Transport};
 use serde_json::{Value, json};
 use std::{
@@ -184,7 +184,7 @@ impl HubService {
             let identity = app.transport.identity();
             drop(app);
             let mut secret = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut secret);
+            rand::rngs::OsRng.unwrap_err().fill_bytes(&mut secret);
             Record {
                 version: 2,
                 state: "pending".into(),

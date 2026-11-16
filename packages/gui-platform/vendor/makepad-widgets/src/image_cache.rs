@@ -1,17 +1,16 @@
 use crate::makepad_draw::*;
+use ::image::codecs::jpeg::JpegDecoder;
+use ::image::codecs::png::PngDecoder;
+use ::image::{AnimationDecoder, DynamicImage, ImageDecoder};
 use std::collections::HashMap;
 use std::error::Error;
-use makepad_zune_jpeg::JpegDecoder;
-use makepad_zune_png::{post_process_image, PngDecoder};
 use std::fmt;
 use std::io::prelude::*;
+use std::io::Cursor;
 use std::fs::File;
 use std::path::{Path,PathBuf};
 use std::cell::RefCell;
 use std::sync::Arc;
-
-pub use makepad_zune_png::error::PngDecodeErrors;
-pub use makepad_zune_jpeg::errors::DecodeErrors as JpgDecodeErrors;
 
 #[derive(Live, LiveHook, Clone, Copy)]
 #[live_ignore]
@@ -91,136 +90,72 @@ impl ImageBuffer {
     }
     
     pub fn from_png(data: &[u8]) -> Result<Self, ImageError> {
-        let mut decoder = PngDecoder::new(data);
-        decoder.decode_headers()?;
-        
-        if decoder.is_animated() {
-            return Ok(Self::decode_animated_png(&mut decoder)?);
+        let decoder = PngDecoder::new(Cursor::new(data)).map_err(ImageError::PngDecode)?;
+        if decoder.is_apng().map_err(ImageError::PngDecode)? {
+            return Self::decode_animated_png(decoder);
         }
-
-        let image = decoder.decode()?;
-        let decoded_data = image.u8().ok_or(
-            ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                "Failed to decode PNG image data as a slice of u8 bytes"
-            )),
-        )?;
-        let (width, height) = decoder.get_dimensions().ok_or(
-            ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                "Failed to get PNG image dimensions"
-            ))
-        )?;
-        Self::new(&decoded_data, width, height)
+        let image = DynamicImage::from_decoder(decoder).map_err(ImageError::PngDecode)?;
+        Self::from_decoded(image)
     }
 
-    fn decode_animated_png(decoder: &mut PngDecoder<&[u8]>) -> Result<ImageBuffer, ImageError> {
-        let colorspace = decoder.get_colorspace().ok_or(
-            ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                "Failed to get animated PNG colorspace"
-            ))
-        )?;
-        let (width, height) = decoder.get_dimensions().ok_or(
-            ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                "Failed to get animated PNG image dimensions"
-            ))
-        )?;
-        let actl_info = decoder.actl_info().ok_or(
-            ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                "Failed to get animated PNG actl info"
-            ))
-        )?;
-
-        let num_components = colorspace.num_components();
-        let mut output = vec![0; width * height * num_components];
+    /// Packs every composited APNG frame left to right, then top to bottom, into one
+    /// texture as wide as `Cx::max_texture_width` allows, with one spare frame row.
+    fn decode_animated_png(decoder: PngDecoder<Cursor<&[u8]>>) -> Result<ImageBuffer, ImageError> {
+        let (width, height) = decoder.dimensions();
+        let (width, height) = (width as usize, height as usize);
         let fits_horizontal = Cx::max_texture_width() / width;
         let total_width = fits_horizontal * width;
-        let total_height = ((actl_info.num_frames as usize / fits_horizontal) + 1) * height;
-        let mut final_buffer = ImageBuffer::default();
-        final_buffer.data.resize(total_width * total_height, 0);
-        final_buffer.width = total_width;
-        final_buffer.height = total_height;
-        let mut cx = 0;
-        let mut cy = 0;
-        final_buffer.animation = Some(TextureAnimation {
-            width,
-            height,
-            num_frames: actl_info.num_frames as usize
-        });
-        let mut previous_frame = None;
-        while decoder.more_frames() {
-            // decoding a video
-            // decode the header, in case we haven't processed a frame header
-            decoder.decode_headers()?;
-            // then decode the current frame information,
-            // NB: Frame information is for current frame hence should be accessed before decoding the frame
-            // as it will change on subsequent frames
-            let frame = decoder.frame_info().expect("to have already been decoded");
-            // decode the raw pixels, even on smaller frames, we only allocate frame_info.width*frame_info.height
-            let pix = decoder.decode_raw()?;
-            // Get the PNG image info here instead of outside the loop, which prevents borrow checker errors.
-            // It is way more efficient to do this here instead of to clone the PngInfo outside of this loop.
-            let info = decoder.get_info().ok_or(
-                ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                    "Failed to get animated PNG image info"
-                ))
-            )?;
-            // call post process
-            post_process_image(
-                &info,
-                colorspace,
-                &frame,
-                &pix,
-                previous_frame.as_deref(),
-                &mut output,
-                None
-            )?;
-            previous_frame = Some(pix);
-            match num_components {
-                4 => {
-                    for y in 0..height {
-                        for x in 0..width {
-                            let r = output[y * width * 4 + x * 4 + 0];
-                            let g = output[y * width * 4 + x * 4 + 1];
-                            let b = output[y * width * 4 + x * 4 + 2];
-                            let a = output[y * width * 4 + x * 4 + 3];
-                            final_buffer.data[(y+cy) * total_width + (x+cx)] = ((a as u32)<<24) | ((r as u32)<<16) | ((g as u32)<<8) | ((b as u32)<<0);
-                        }
-                    }
+        let mut data = Vec::new();
+        let mut num_frames = 0;
+        let (mut x0, mut y0) = (0, 0);
+        let frames = decoder.apng().map_err(ImageError::PngDecode)?.into_frames();
+        for frame in frames {
+            let frame = frame.map_err(ImageError::PngDecode)?;
+            let rgba = frame.buffer().as_raw();
+            data.resize(data.len().max((y0 + height) * total_width), 0);
+            for y in 0..height {
+                let row = &rgba[y * width * 4..(y + 1) * width * 4];
+                let out = &mut data[(y0 + y) * total_width + x0..][..width];
+                for (out, p) in out.iter_mut().zip(row.chunks_exact(4)) {
+                    *out = ((p[3] as u32)<<24) | ((p[0] as u32)<<16) | ((p[1] as u32)<<8) | (p[2] as u32);
                 }
-                3 => {
-                    for y in 0..height {
-                        for x in 0..width {
-                            let r = output[y * width * 3 + x * 3 + 0];
-                            let g = output[y * width * 3 + x * 3 + 1];
-                            let b = output[y * width * 3 + x * 3 + 2];
-                            final_buffer.data[(y+cy) * total_width + (x+cx)] = 0xff000000 | ((r as u32)<<16) | ((g as u32)<<8) | ((b as u32)<<0);
-                        }
-                    }
-                }
-                _ => {
-                    return Err(ImageError::InvalidPixelAlignment(num_components));
-                }     
             }
-            cx += width;
-            if cx >= total_width {
-                cy += height;
-                cx = 0
-            } 
+            num_frames += 1;
+            x0 += width;
+            if x0 >= total_width {
+                y0 += height;
+                x0 = 0
+            }
         }
-        Ok(final_buffer)
+        let total_height = (num_frames / fits_horizontal + 1) * height;
+        data.resize(total_width * total_height, 0);
+        Ok(ImageBuffer {
+            width: total_width,
+            height: total_height,
+            data,
+            animation: Some(TextureAnimation {
+                width,
+                height,
+                num_frames,
+            }),
+        })
     }
 
     pub fn from_jpg(data: &[u8]) -> Result<Self, ImageError> {
-        let mut decoder = JpegDecoder::new(&*data);
-        match decoder.decode() {
-            Ok(data) => {
-                let info = decoder.info().ok_or(
-                    ImageError::JpgDecode(JpgDecodeErrors::FormatStatic(
-                        "Failed to decode JPG image info"
-                    )),
-                )?;
-                ImageBuffer::new(&data, info.width as usize, info.height as usize)
-            },
-            Err(err) => Err(ImageError::JpgDecode(err)),
+        let decoder = JpegDecoder::new(Cursor::new(data)).map_err(ImageError::JpgDecode)?;
+        let image = DynamicImage::from_decoder(decoder).map_err(ImageError::JpgDecode)?;
+        Self::from_decoded(image)
+    }
+
+    /// Packs 8-bit gray, gray-alpha, RGB and RGBA directly; other depths go through RGBA8.
+    fn from_decoded(image: DynamicImage) -> Result<Self, ImageError> {
+        let (width, height) = (image.width() as usize, image.height() as usize);
+        match image {
+            DynamicImage::ImageLuma8(_)
+            | DynamicImage::ImageLumaA8(_)
+            | DynamicImage::ImageRgb8(_)
+            | DynamicImage::ImageRgba8(_) => Self::new(image.as_bytes(), width, height),
+            image => Self::new(image.into_rgba8().as_raw(), width, height),
         }
     }
 }
@@ -260,11 +195,11 @@ pub enum ImageError {
     /// The unsupported alignment value (in bytes) is included.
     InvalidPixelAlignment(usize),
     /// The image data could not be decoded as a JPEG.
-    JpgDecode(JpgDecodeErrors),
+    JpgDecode(::image::ImageError),
     /// The image file at the given resource path could not be found.
     PathNotFound(PathBuf),
     /// The image data could not be decoded as a PNG.
-    PngDecode(PngDecodeErrors),
+    PngDecode(::image::ImageError),
     /// The image data was in an unsupported format.
     /// Currently, only JPEG and PNG are supported.
     UnsupportedFormat,
@@ -276,12 +211,6 @@ pub enum AsyncLoadResult{
 }
 
 impl Error for ImageError {}
-
-impl From<PngDecodeErrors> for ImageError {
-    fn from(value: PngDecodeErrors) -> Self {
-        Self::PngDecode(value)
-    }
-}
 
 impl std::fmt::Display for ImageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -324,25 +253,15 @@ pub trait ImageCacheImpl {
     }
     
     fn image_size_by_data(data:&[u8], image_path:&Path)-> Result<(usize,usize), ImageError> {
-        if image_path.extension().map(|s| s == "jpg").unwrap_or(false) {
-            let mut decoder = JpegDecoder::new(&*data);
-            decoder.decode_headers().unwrap();
-            let image_info = decoder.info().unwrap();
-            return Ok((image_info.width as usize,image_info.height as usize))
-        } 
+        let (width, height) = if image_path.extension().map(|s| s == "jpg").unwrap_or(false) {
+            JpegDecoder::new(Cursor::new(data)).map_err(ImageError::JpgDecode)?.dimensions()
+        }
         else if image_path.extension().map(|s| s == "png").unwrap_or(false) {
-            let mut decoder = PngDecoder::new(data);
-            decoder.decode_headers()?;
-            let (width,height) = decoder.get_dimensions().ok_or(
-                ImageError::PngDecode(PngDecodeErrors::GenericStatic(
-                    "Failed to get animated PNG image dimensions"
-                ))
-            )?;
-            return Ok((width,height))
-                                                            
+            PngDecoder::new(Cursor::new(data)).map_err(ImageError::PngDecode)?.dimensions()
         } else {
             return Err(ImageError::UnsupportedFormat)
-        }
+        };
+        Ok((width as usize, height as usize))
     }
     
     fn image_size_by_path(image_path:&Path)-> Result<(usize,usize), ImageError> {
@@ -631,5 +550,75 @@ pub trait ImageCacheImpl {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageBuffer, ImageError};
+
+    #[test]
+    fn png_preserves_alpha_and_argb_packing() {
+        let png = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0xf4, 0x22, 0x7f,
+            0x8a, 0x00, 0x00, 0x00, 0x0f, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+            0x1f, 0x08, 0x1b, 0x00, 0x10, 0x79, 0x03, 0x7e, 0x7d, 0x63, 0xce, 0xd7, 0x00, 0x00, 0x00, 0x00,
+            0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let image = ImageBuffer::from_png(&png).unwrap();
+        assert_eq!((image.width, image.height), (2, 1));
+        assert_eq!(image.data, [0xffff0000, 0x8000ff00]);
+        assert!(image.animation.is_none());
+    }
+
+    #[test]
+    fn apng_composes_subframes_and_disposes_background() {
+        // Red/blue canvas; half-alpha green over blue; then clear that subframe
+        // and replace red with opaque green. The decoder must return full frames.
+        let png = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0xf4, 0x22,
+            0x7f, 0x8a, 0x00, 0x00, 0x00, 0x08, 0x61, 0x63, 0x54, 0x4c, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+            0x00, 0x00, 0xce, 0xed, 0xba, 0xc0, 0x00, 0x00, 0x00, 0x1a, 0x66, 0x63, 0x54, 0x4c, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0xf9, 0x29, 0xb6, 0x79, 0x00, 0x00, 0x00, 0x0e,
+            0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x42, 0xff, 0x01, 0x0f, 0xf9,
+            0x03, 0xfd, 0x85, 0x11, 0x99, 0x76, 0x00, 0x00, 0x00, 0x1a, 0x66, 0x63, 0x54, 0x4c, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x0a, 0x01, 0x01, 0x6e, 0x9e, 0x04, 0x13, 0x00, 0x00, 0x00, 0x11,
+            0x66, 0x64, 0x41, 0x54, 0x00, 0x00, 0x00, 0x02, 0x78, 0x9c, 0x63, 0x60, 0xf8, 0xcf, 0xd0, 0x00,
+            0x00, 0x03, 0x82, 0x01, 0x80, 0xe1, 0xc4, 0x91, 0x83, 0x00, 0x00, 0x00, 0x1a, 0x66, 0x63, 0x54,
+            0x4c, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0x2c, 0x9a, 0x09, 0xed, 0x00,
+            0x00, 0x00, 0x11, 0x66, 0x64, 0x41, 0x54, 0x00, 0x00, 0x00, 0x04, 0x78, 0x9c, 0x63, 0x60, 0xf8,
+            0xcf, 0xf0, 0x1f, 0x00, 0x04, 0x01, 0x01, 0xff, 0x9a, 0x25, 0xa2, 0x2a, 0x00, 0x00, 0x00, 0x00,
+            0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let image = ImageBuffer::from_png(&png).unwrap();
+        let animation = image.animation.unwrap();
+        assert_eq!((animation.width, animation.height, animation.num_frames), (2, 1, 3));
+        assert_eq!(&image.data[..3], &[0xffff0000, 0xff0000ff, 0xffff0000]);
+        let blended = image.data[3];
+        // The decoder composites in floating point before quantizing each channel to u8.
+        for (shift, expected) in [(24, 255), (16, 0), (8, 128), (0, 127)] {
+            assert!(((blended >> shift) & 255).abs_diff(expected) <= 1);
+        }
+        assert_eq!(&image.data[4..6], &[0xff00ff00, 0]);
+    }
+
+    #[test]
+    fn jpeg_decodes_rgb_and_reports_corrupt_headers() {
+        let mut jpeg = Vec::new();
+        ::image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&[255, 255, 255], 1, 1, ::image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let image = ImageBuffer::from_jpg(&jpeg).unwrap();
+        assert_eq!((image.width, image.height), (1, 1));
+        assert_eq!(image.data, [0xffffffff]);
+        assert!(matches!(
+            ImageBuffer::from_jpg(b"\xff\xd8invalid"),
+            Err(ImageError::JpgDecode(_))
+        ));
     }
 }

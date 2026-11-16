@@ -5,6 +5,11 @@
 ### Changed
 
 - Use 16 code generation units for the daemon and GUI release crates while retaining Thin LTO and the existing optimization settings for other crates.
+- Sort canonical JSON keys for receipts and fingerprints with ICU4X 2.4, whose collation data moves from CLDR 46 to CLDR 49. Keys containing unusual Unicode whose relative order changed between those releases can sort differently and produce a different fingerprint. Locale `-u-kn`/`-u-kf` keywords still do not override the default numeric and case-first options, and numeric base-sensitivity comparison still forces numeric ordering.
+- Store embedded Tailscale encryption keys through `keyring-core` 1 with one native store per OS: Secret Service over zbus on Linux, the login Keychain on macOS, the protected keychain on iOS and Windows Credential Manager. Each store addresses the same OS item as before, so existing keys stay readable. Linux keeps its DH-encrypted Secret Service session; zbus no longer builds its async-io executor.
+- Decode Makepad PNG, animated PNG and JPEG images with the `image` crate the client already uses instead of Makepad's zune forks; animated PNG frames arrive composited by the decoder. Makepad text uses the standard `rustybuzz` 0.20 and `ttf-parser` 0.25 instead of Makepad's forks, its vector crate shares the client's `resvg` 0.45, and its glyph images use `png` 0.18.
+- Update shared dependencies: `tokio-tungstenite` 0.29, `rand` 0.9, `toml` 1 (xtask), `nix` 0.31, `pulldown-cmark` 0.13 and `windows` 0.61 in Makepad's Windows backend. The Tailscale state lease uses the standard library's `File::try_lock` instead of `fs2`.
+- Trim unused dependency features: the daemon parses HTML with `html5ever` and `ego-tree` directly, dropping only scraper's CSS selector stack; native file dialogs keep the XDG portal without rfd's unused Wayland parent-window support, so Linux builds no longer need Wayland development files; `sysinfo` builds only its system/process module; ZIP keeps the zlib-rs deflate backend without the unused Zopfli encoder; and `which` 8 drops `winsafe` and `env_home`.
 
 ## 0.13.31 - 2026-11-16
 

@@ -4,7 +4,7 @@
 use crate::{
     windows::core::implement,
     windows::{
-        core,
+        core::BOOL,
         Win32::{
             System::{
                 Ole::{
@@ -18,7 +18,6 @@ use crate::{
                 },
             },
             Foundation::{
-                BOOL,
                 S_OK,
                 DRAGDROP_S_DROP,
                 DRAGDROP_S_USEDEFAULTCURSORS,
@@ -42,9 +41,9 @@ implement_com!{
 
 // IDropSource implementation for DropSource, which validates a drop on left mouse button up
 
-impl IDropSource_Impl for DropSource {
+impl IDropSource_Impl for DropSource_Impl {
 
-    fn QueryContinueDrag(&self, _: BOOL, grfkeystate: MODIFIERKEYS_FLAGS) -> core::HRESULT {
+    fn QueryContinueDrag(&self, _: BOOL, grfkeystate: MODIFIERKEYS_FLAGS) -> windows_core::HRESULT {
 
         // if the left mousebutton is not pressed anymore, drop that item
         if (grfkeystate & MK_LBUTTON) == MODIFIERKEYS_FLAGS(0) {
@@ -56,7 +55,7 @@ impl IDropSource_Impl for DropSource {
         }
     }
 
-    fn GiveFeedback(&self, _: DROPEFFECT) -> core::HRESULT {
+    fn GiveFeedback(&self, _: DROPEFFECT) -> windows_core::HRESULT {
 
         DRAGDROP_S_USEDEFAULTCURSORS
     }

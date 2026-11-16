@@ -6,8 +6,7 @@ use {
     crate::{
         event::DragItem,
         windows::{
-            core::implement,
-            core,
+            core::{implement, Ref},
             Win32::{
                 System::{
                     Ole::{
@@ -92,8 +91,8 @@ impl DropTarget {
         let result = unsafe { SendMessageW(
             self.hwnd,
             WM_DROPTARGET,
-            WPARAM(0),
-            LPARAM(Box::into_raw(param) as isize)
+            Some(WPARAM(0)),
+            Some(LPARAM(Box::into_raw(param) as isize))
         ) };
         result.0
     }
@@ -113,11 +112,11 @@ impl DropTarget {
 
 // IDropTarget implementation for DropTarget, which sends WM_DROPTARGET messages to the window as they appear
 
-impl IDropTarget_Impl for DropTarget {
+impl IDropTarget_Impl for DropTarget_Impl {
 
-    fn DragEnter(&self,_p_data_obj: Option<&IDataObject>,_grf_key_state: MODIFIERKEYS_FLAGS,_pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> core::Result<()> {
+    fn DragEnter(&self,_p_data_obj: Ref<'_, IDataObject>,_grf_key_state: MODIFIERKEYS_FLAGS,_pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> windows_core::Result<()> {
 
-        let items = _p_data_obj.map(drag_items_from_data_object).unwrap_or_default();
+        let items = _p_data_obj.as_ref().map(drag_items_from_data_object).unwrap_or_default();
 
         // store locally for Over messages
         self.drag_items.replace(items.clone());
@@ -128,13 +127,13 @@ impl IDropTarget_Impl for DropTarget {
             return Ok(());
         }
 
-        let effect = self.send(DropTargetMessage::Enter(_grf_key_state,*_pt,Self::allowed(_pdweffect),items));
+        let effect = self.send(DropTargetMessage::Enter(_grf_key_state,*_pt,DropTarget::allowed(_pdweffect),items));
         self.answer(_pdweffect, DROPEFFECT(effect as u32));
 
         Ok(())
     }
 
-    fn DragLeave(&self) -> core::Result<()> {
+    fn DragLeave(&self) -> windows_core::Result<()> {
 
         // forget the locally stored data
         self.drag_items.replace(Vec::new());
@@ -144,7 +143,7 @@ impl IDropTarget_Impl for DropTarget {
         Ok(())
     }
 
-    fn DragOver(&self,_grf_key_state: MODIFIERKEYS_FLAGS,_pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> core::Result<()> {
+    fn DragOver(&self,_grf_key_state: MODIFIERKEYS_FLAGS,_pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> windows_core::Result<()> {
 
         let items = self.drag_items.borrow().clone();
         if items.is_empty() {
@@ -152,15 +151,15 @@ impl IDropTarget_Impl for DropTarget {
             return Ok(());
         }
 
-        let effect = self.send(DropTargetMessage::Over(_grf_key_state,*_pt,Self::allowed(_pdweffect),items));
+        let effect = self.send(DropTargetMessage::Over(_grf_key_state,*_pt,DropTarget::allowed(_pdweffect),items));
         self.answer(_pdweffect, DROPEFFECT(effect as u32));
 
         Ok(())
     }
 
-    fn Drop(&self,_p_data_obj: Option<&IDataObject>, _grf_key_state: MODIFIERKEYS_FLAGS, _pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> core::Result<()> {
+    fn Drop(&self,_p_data_obj: Ref<'_, IDataObject>, _grf_key_state: MODIFIERKEYS_FLAGS, _pt: &POINTL,_pdweffect: *mut DROPEFFECT) -> windows_core::Result<()> {
 
-        let items = _p_data_obj.map(drag_items_from_data_object).unwrap_or_default();
+        let items = _p_data_obj.as_ref().map(drag_items_from_data_object).unwrap_or_default();
 
         // forget the locally stored data, after Drop we don't need it anymore
         self.drag_items.replace(Vec::new());
@@ -172,7 +171,7 @@ impl IDropTarget_Impl for DropTarget {
         }
 
         let effect = self.effect.get();
-        let taken = self.send(DropTargetMessage::Drop(_grf_key_state,*_pt,Self::allowed(_pdweffect),items)) != 0;
+        let taken = self.send(DropTargetMessage::Drop(_grf_key_state,*_pt,DropTarget::allowed(_pdweffect),items)) != 0;
         self.answer(_pdweffect, if taken { effect } else { DROPEFFECT_NONE });
 
         Ok(())

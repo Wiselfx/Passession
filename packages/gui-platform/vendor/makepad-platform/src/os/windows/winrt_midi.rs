@@ -7,10 +7,7 @@ use {
         makepad_live_id::{LiveId},
         midi::*,
         windows::{
-            Foundation::{
-                EventRegistrationToken,
-                TypedEventHandler,
-            },
+            Foundation::TypedEventHandler,
             Storage::Streams::{
                 DataWriter,
                 DataReader
@@ -59,7 +56,7 @@ pub struct WinRTMidiPort {
 #[derive(Clone)]
 pub struct WinRTMidiInput {
     port_id: MidiPortId,
-    event_token: EventRegistrationToken,
+    event_token: i64,
     midi_input: MidiInPort,
 }
 

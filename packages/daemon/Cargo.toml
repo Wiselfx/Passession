@@ -41,9 +41,9 @@ hyper-util = { version = "0.1", features = [
   "tokio",
   "service",
 ] }
-icu_collator = "1.5"
-icu_casemap = "1.5"
-icu_locid = "1.5"
+icu_collator = "2.4"
+icu_casemap = "2.4"
+icu_locale_core = "2.4"
 mime_guess = "2"
 notify = "8"
 node-semver = "2.2"
@@ -54,7 +54,7 @@ percent-encoding = "2"
 portable-pty = "0.9"
 pulldown-cmark = "0.13"
 qrcode = { version = "0.14", default-features = false }
-rand = "0.8"
+rand = "0.9"
 ryu-js = "1"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -64,10 +64,13 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
   "gzip",
 ] }
-sysinfo = "0.37"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+# System facts and per-process cmd/cwd/environ/exe/user only; no disks,
+# networks, components or user/group enumeration.
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
-scraper = { version = "0.29", default-features = false }
+ego-tree = "0.11"
+html5ever = "0.40"
 semver = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -80,7 +83,7 @@ tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
@@ -92,7 +95,7 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 vte = "0.15"
 walkdir = "2"
-which = "7"
+which = "8"
 zeroize = "1"
 
 [dev-dependencies]
@@ -103,7 +106,7 @@ jiff = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-nix = { version = "0.30", features = ["fs", "process", "signal", "term", "user"] }
+nix = { version = "0.31", features = ["fs", "signal", "user"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

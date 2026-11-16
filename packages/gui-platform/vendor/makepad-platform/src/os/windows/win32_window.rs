@@ -280,7 +280,6 @@ use {
             win32_app::{
                 Win32App,
                 encode_wide,
-                FALSE,
                 with_win32_app,
             },
             win32_event::*,
@@ -298,7 +297,7 @@ struct Clipboard;
 
 impl Clipboard {
     fn open(hwnd: HWND) -> WinResult<Self> {
-        unsafe { OpenClipboard(hwnd)?; }
+        unsafe { OpenClipboard(Some(hwnd))?; }
         Ok(Self)
     }
 
@@ -336,11 +335,11 @@ impl Clipboard {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
                 let _ = GlobalUnlock(memory);
                 EmptyClipboard()?;
-                SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(memory.0 as isize))?;
+                SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0)))?;
                 Ok(())
             })();
             if result.is_err() {
-                let _ = GlobalFree(memory);
+                let _ = GlobalFree(Some(memory));
             }
             result
         }
@@ -435,9 +434,9 @@ impl Win32Window {
             CW_USEDEFAULT,
             None,
             None,
-            GetModuleHandleW(None).unwrap(),
+            Some(GetModuleHandleW(None).unwrap().into()),
             None,
-        ) };
+        ) }.unwrap_or_default();
         // The caption takes the app's light/dark theme before the window is first shown.
         super::win32_app::apply_dark_caption(hwnd);
         // create DropTarget object that accesses the same data object, convert to COM and give to Microsoft
@@ -571,7 +570,7 @@ impl Win32Window {
                 let modifiers = Self::get_key_modifiers();
                 let key_code = Self::virtual_key_to_key_code(wparam);
                 if modifiers.alt && key_code == KeyCode::F4 {
-                    PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)).unwrap();
+                    PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).unwrap();
                 }
                 if modifiers.control || modifiers.logo {
                     match key_code {
@@ -668,7 +667,7 @@ impl Win32Window {
                 let suggested = *(lparam.0 as *const RECT);
                 let _ = SetWindowPos(
                     hwnd,
-                    HWND(0),
+                    None,
                     suggested.left,
                     suggested.top,
                     suggested.right - suggested.left,
@@ -865,14 +864,14 @@ impl Win32Window {
     pub fn restore(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_RESTORE);
-            PostMessageW(self.hwnd, WM_SIZE, WPARAM(0), LPARAM(0)).unwrap();
+            PostMessageW(Some(self.hwnd), WM_SIZE, WPARAM(0), LPARAM(0)).unwrap();
         }
     }
     
     pub fn maximize(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
-            PostMessageW(self.hwnd, WM_SIZE, WPARAM(0), LPARAM(0)).unwrap();
+            PostMessageW(Some(self.hwnd), WM_SIZE, WPARAM(0), LPARAM(0)).unwrap();
         }
     }
     
@@ -918,7 +917,7 @@ impl Win32Window {
             if topmost {
                 SetWindowPos(
                     self.hwnd,
-                    HWND_TOPMOST,
+                    Some(HWND_TOPMOST),
                     0,
                     0,
                     0,
@@ -929,7 +928,7 @@ impl Win32Window {
             else {
                 SetWindowPos(
                     self.hwnd,
-                    HWND_NOTOPMOST,
+                    Some(HWND_NOTOPMOST),
                     0,
                     0,
                     0,
@@ -1125,7 +1124,7 @@ impl Win32Window {
                 pos.y as i32,
                 window_rect.right - window_rect.left,
                 window_rect.bottom - window_rect.top,
-                FALSE
+                false
             ).unwrap();
         }
     }
@@ -1141,7 +1140,7 @@ impl Win32Window {
                 window_rect.top,
                 (size.x * dpi) as i32,
                 (size.y * dpi) as i32,
-                FALSE
+                false
             ).unwrap();
         }
     }
@@ -1161,7 +1160,7 @@ impl Win32Window {
                     + ((window_rect.right - window_rect.left) - (client_rect.right - client_rect.left)),
                 (size.y * dpi) as i32
                     + ((window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top)),
-                FALSE
+                false
             ).unwrap();
         }
     }

@@ -90,36 +90,60 @@ fn decode_key(bytes: Vec<u8>) -> Result<[u8; 32]> {
 ))]
 mod backend {
     use super::*;
-    use keyring::credential::CredentialApi;
+    use keyring_core::{Entry, Error};
 
-    // Construct the concrete backend, never keyring's process-global default
-    // builder (which can be replaced with an in-memory/mock credential store).
-    fn credential(identity: &str) -> Result<impl CredentialApi> {
-        #[cfg(target_os = "ios")]
-        use keyring::ios::IosCredential as Credential;
-        #[cfg(target_os = "macos")]
-        use keyring::macos::MacCredential as Credential;
+    // Construct the concrete platform store, never keyring-core's process-global
+    // default store (which can be replaced with an in-memory/mock store). Each
+    // store addresses the same OS item keyring 3.6's
+    // `new_with_target(None, SERVICE, identity)` did, so existing keys stay readable.
+    fn credential(identity: &str) -> Result<Entry> {
+        // Secret Service items whose service/username/target attributes are
+        // SERVICE/identity/"default", created in the default collection; the
+        // store always opens a DH-encrypted session.
         #[cfg(target_os = "linux")]
-        use keyring::secret_service::SsCredential as Credential;
+        let entry = {
+            use keyring_core::api::CredentialStoreApi;
+            let modifiers = std::collections::HashMap::from([("target", "default")]);
+            zbus_secret_service_keyring_store::Store::new()
+                .and_then(|store| store.build(SERVICE, identity, Some(&modifiers)))
+        };
+        // Generic password service/account in the user's legacy login keychain.
+        #[cfg(target_os = "macos")]
+        let entry = {
+            use apple_native_keyring_store::keychain::{Cred, MacKeychainDomain};
+            Cred::build(MacKeychainDomain::User, SERVICE, identity)
+        };
+        // Generic password service/account in the app's default access group,
+        // device-local and accessible when unlocked (the iOS item defaults).
+        #[cfg(target_os = "ios")]
+        let entry = {
+            use apple_native_keyring_store::protected::{AccessPolicy, Cred};
+            Cred::build(SERVICE, identity, AccessPolicy::WhenUnlocked, None, false)
+        };
+        // Generic credential `{identity}.{SERVICE}` with enterprise persistence.
         #[cfg(target_os = "windows")]
-        use keyring::windows::WinCredential as Credential;
-        Credential::new_with_target(None, SERVICE, identity).map_err(storage_error)
+        let entry = {
+            use keyring_core::api::CredentialStoreApi;
+            windows_native_keyring_store::Store::new()
+                .and_then(|store| store.build(SERVICE, identity, None))
+        };
+        entry.map_err(storage_error)
     }
 
     pub(super) fn load_or_create(identity: &str, has_state: bool) -> Result<[u8; 32]> {
         load_credential(&credential(identity)?, has_state)
     }
 
-    fn load_credential(entry: &impl CredentialApi, has_state: bool) -> Result<[u8; 32]> {
+    fn load_credential(entry: &Entry, has_state: bool) -> Result<[u8; 32]> {
         match entry.get_secret() {
             Ok(bytes) => decode_key(bytes),
-            Err(keyring::Error::NoEntry) => {
+            Err(Error::NoEntry) => {
                 ensure!(
                     !has_state,
                     "The secure key for existing tailnet state is missing; restore the original OS key store or explicitly reset the node"
                 );
                 let mut key = Zeroizing::new([0; 32]);
-                getrandom::getrandom(&mut key[..]).map_err(|_| {
+                getrandom::fill(&mut key[..]).map_err(|_| {
                     anyhow::anyhow!("OS randomness is unavailable for the tailnet encryption key")
                 })?;
                 entry.set_secret(&key[..]).map_err(storage_error)?;
@@ -141,16 +165,16 @@ mod backend {
         delete_credential(&credential(identity)?)
     }
 
-    fn delete_credential(entry: &impl CredentialApi) -> Result<()> {
+    fn delete_credential(entry: &Entry) -> Result<()> {
         match entry.delete_credential() {
             Ok(()) => {}
-            Err(keyring::Error::NoEntry) => return Ok(()),
+            Err(Error::NoEntry) => return Ok(()),
             Err(error) => return Err(storage_error(error)),
         }
-        // The macOS legacy Keychain item delete API's wrapper discards its
-        // OSStatus; do not report logout cleanup success without readback.
+        // Read back so logout cleanup never reports success while the key
+        // survives a delete call the platform acknowledged.
         match entry.get_secret() {
-            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(Error::NoEntry) => Ok(()),
             Ok(bytes) => {
                 let _bytes = Zeroizing::new(bytes);
                 anyhow::bail!("The OS key store did not delete the tailnet encryption key")
@@ -159,18 +183,18 @@ mod backend {
         }
     }
 
-    fn storage_error(error: keyring::Error) -> anyhow::Error {
+    fn storage_error(error: Error) -> anyhow::Error {
         // Do not chain or Debug-format backend errors: some error variants can
         // contain raw credential bytes or arbitrary third-party metadata.
         let message = match error {
-            keyring::Error::NoEntry => "Tailnet encryption key was not found in the OS key store",
-            keyring::Error::NoStorageAccess(_) => {
+            Error::NoEntry => "Tailnet encryption key was not found in the OS key store",
+            Error::NoStorageAccess(_) => {
                 "OS secure storage is locked or access was denied; unlock it and allow Passession access, then retry"
             }
-            keyring::Error::Ambiguous(_) => {
+            Error::Ambiguous(_) => {
                 "Multiple OS credentials match this tailnet state; resolve duplicate credentials before retrying"
             }
-            keyring::Error::BadEncoding(_) => {
+            Error::BadEncoding(_) => {
                 "The OS tailnet credential is malformed; it was not replaced"
             }
             _ => {
@@ -183,46 +207,59 @@ mod backend {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use keyring::mock::MockCredential;
+        use keyring_core::api::CredentialStoreApi;
+        use keyring_core::mock;
+
+        fn mock_entry() -> Entry {
+            mock::Store::new()
+                .unwrap()
+                .build(SERVICE, "identity", None)
+                .unwrap()
+        }
+
+        fn fail_next(entry: &Entry, error: Error) {
+            let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+            cred.set_error(error);
+        }
 
         #[test]
         fn missing_key_is_created_once_and_deleted_idempotently() {
-            let entry = MockCredential::default();
+            let entry = mock_entry();
             let first = load_credential(&entry, false).unwrap();
             let second = load_credential(&entry, true).unwrap();
             assert!(first == second);
             delete_credential(&entry).unwrap();
             delete_credential(&entry).unwrap();
-            assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
+            assert!(matches!(entry.get_secret(), Err(Error::NoEntry)));
         }
 
         #[test]
         fn missing_key_for_existing_state_is_not_replaced() {
-            let entry = MockCredential::default();
+            let entry = mock_entry();
             assert!(load_credential(&entry, true).is_err());
-            assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
+            assert!(matches!(entry.get_secret(), Err(Error::NoEntry)));
         }
 
         #[test]
         fn denied_or_unavailable_store_never_creates_a_key() {
             for error in [
-                keyring::Error::NoStorageAccess(Box::new(std::io::Error::from(
+                Error::NoStorageAccess(Box::new(std::io::Error::from(
                     std::io::ErrorKind::PermissionDenied,
                 ))),
-                keyring::Error::PlatformFailure(Box::new(std::io::Error::from(
+                Error::PlatformFailure(Box::new(std::io::Error::from(
                     std::io::ErrorKind::NotConnected,
                 ))),
             ] {
-                let entry = MockCredential::default();
-                entry.set_error(error);
+                let entry = mock_entry();
+                fail_next(&entry, error);
                 assert!(load_credential(&entry, false).is_err());
-                assert!(matches!(entry.get_secret(), Err(keyring::Error::NoEntry)));
+                assert!(matches!(entry.get_secret(), Err(Error::NoEntry)));
             }
         }
 
         #[test]
         fn malformed_key_is_not_replaced() {
-            let entry = MockCredential::default();
+            let entry = mock_entry();
             entry.set_secret(&[7; 31]).unwrap();
             assert!(load_credential(&entry, false).is_err());
             assert!(entry.get_secret().unwrap() == [7; 31]);
@@ -230,24 +267,25 @@ mod backend {
 
         #[test]
         fn delete_denied_preserves_the_key_and_reports_failure() {
-            let entry = MockCredential::default();
+            let entry = mock_entry();
             entry.set_secret(&[7; 32]).unwrap();
-            entry.set_error(keyring::Error::NoStorageAccess(Box::new(
-                std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-            )));
+            fail_next(
+                &entry,
+                Error::NoStorageAccess(Box::new(std::io::Error::from(
+                    std::io::ErrorKind::PermissionDenied,
+                ))),
+            );
             assert!(delete_credential(&entry).is_err());
             assert!(entry.get_secret().unwrap() == [7; 32]);
         }
 
         #[test]
         fn errors_do_not_disclose_credential_bytes_or_backend_messages() {
-            let error = storage_error(keyring::Error::BadEncoding(
-                b"private-key-material".to_vec(),
-            ));
+            let error = storage_error(Error::BadEncoding(b"private-key-material".to_vec()));
             assert!(!format!("{error:?}").contains("private-key-material"));
-            let error = storage_error(keyring::Error::PlatformFailure(Box::new(
-                std::io::Error::other("private-key-material"),
-            )));
+            let error = storage_error(Error::PlatformFailure(Box::new(std::io::Error::other(
+                "private-key-material",
+            ))));
             assert!(!format!("{error:?}").contains("private-key-material"));
         }
     }

@@ -193,7 +193,7 @@ impl Cx {
                 }
                 HostToStdin::Swapchain(new_swapchain) => {
                     let new_swapchain = new_swapchain.images_map(|pi| {
-                        let handle = HANDLE(pi.image as isize);
+                        let handle = HANDLE(pi.image as usize as *mut _);
                         
                         let format = TextureFormat::SharedBGRAu8 {
                             id: pi.id,

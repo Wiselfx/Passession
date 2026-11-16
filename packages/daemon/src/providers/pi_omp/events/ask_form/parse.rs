@@ -5,10 +5,10 @@
 //! dialogs Paseo answers. The replay checks every dialog against them: a divergence falls back
 //! to answering step by step, never to a wrong answer.
 
-use scraper::{ElementRef, Html, Node, Selector};
+use super::dom::{Child, Dom, Element};
 use std::collections::{HashMap, HashSet};
 
-const CONTROLS: &str = "input, select, textarea";
+const CONTROLS: [&str; 3] = ["input", "select", "textarea"];
 const SKIPPED: [&str; 10] = [
     "button", "head", "iframe", "link", "meta", "noscript", "script", "style", "template", "title",
 ];
@@ -125,18 +125,14 @@ impl Form {
 }
 
 pub(super) fn parse(html: &str) -> Form {
-    let doc = Html::parse_fragment(html);
-    let root = doc
-        .select(&selector("form"))
-        .next()
-        .unwrap_or_else(|| doc.root_element());
-    let controls = selector(CONTROLS);
+    let doc = Dom::parse_fragment(html);
+    let root = doc.first("form").unwrap_or_else(|| doc.root_element());
     let ids: HashSet<&str> = root
-        .select(&controls)
-        .filter_map(|control| control.value().id())
+        .descendants(&CONTROLS)
+        .filter_map(|control| control.id())
         .collect();
     let mut label_for = HashMap::new();
-    for label in root.select(&selector("label")) {
+    for label in root.descendants(&["label"]) {
         if let Some(target) = label.attr("for")
             && ids.contains(target)
         {
@@ -144,7 +140,6 @@ pub(super) fn parse(html: &str) -> Form {
         }
     }
     let mut builder = Builder {
-        controls,
         label_for,
         groups: HashMap::new(),
         form: Form {
@@ -173,8 +168,7 @@ pub(super) fn parse(html: &str) -> Form {
 }
 
 struct Builder<'a> {
-    controls: Selector,
-    label_for: HashMap<&'a str, ElementRef<'a>>,
+    label_for: HashMap<&'a str, Element<'a>>,
     /// Radio/checkbox group (`type\0name`) to its field.
     groups: HashMap<String, usize>,
     form: Form,
@@ -183,18 +177,17 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn children(&mut self, el: ElementRef<'a>) {
+    fn children(&mut self, el: Element<'a>) {
         for child in el.children() {
-            match child.value() {
-                Node::Text(text) => self.pending.push_str(text),
-                Node::Element(_) => self.visit(ElementRef::wrap(child).expect("element node")),
-                _ => {}
+            match child {
+                Child::Text(text) => self.pending.push_str(text),
+                Child::Element(child) => self.visit(child),
             }
         }
     }
 
-    fn visit(&mut self, el: ElementRef<'a>) {
-        let tag = el.value().name();
+    fn visit(&mut self, el: Element<'a>) {
+        let tag = el.name();
         if SKIPPED.contains(&tag) {
             return;
         }
@@ -232,7 +225,7 @@ impl<'a> Builder<'a> {
                     .filter(|label| !label.is_empty())
                     .or_else(|| {
                         el.child_elements()
-                            .find(|c| c.value().name() == "title")
+                            .find(|c| c.name() == "title")
                             .map(|title| collapse(&title.text().collect::<String>()))
                     })
                     .unwrap_or_default();
@@ -275,13 +268,13 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn label(&mut self, el: ElementRef<'a>) {
+    fn label(&mut self, el: Element<'a>) {
         if let Some(target) = el.attr("for")
             && self.label_for.get(target) == Some(&el)
         {
             return;
         }
-        let controls: Vec<_> = el.select(&self.controls).collect();
+        let controls: Vec<_> = el.descendants(&CONTROLS).collect();
         if controls.is_empty() {
             self.children(el);
             return;
@@ -293,9 +286,9 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn fieldset(&mut self, el: ElementRef<'a>) {
+    fn fieldset(&mut self, el: Element<'a>) {
         self.flush();
-        let legend = el.child_elements().find(|c| c.value().name() == "legend");
+        let legend = el.child_elements().find(|c| c.name() == "legend");
         if self.depth > 0 {
             if let Some(legend) = legend {
                 self.visit(legend);
@@ -306,13 +299,10 @@ impl<'a> Builder<'a> {
         }
         self.depth += 1;
         for child in el.children() {
-            if legend.is_some_and(|l| l.id() == child.id()) {
-                continue;
-            }
-            match child.value() {
-                Node::Text(text) => self.pending.push_str(text),
-                Node::Element(_) => self.visit(ElementRef::wrap(child).expect("element node")),
-                _ => {}
+            match child {
+                Child::Text(text) => self.pending.push_str(text),
+                Child::Element(child) if legend == Some(child) => {}
+                Child::Element(child) => self.visit(child),
             }
         }
         self.flush();
@@ -322,16 +312,16 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn list(&mut self, el: ElementRef<'a>, ordered: bool) {
+    fn list(&mut self, el: Element<'a>, ordered: bool) {
         self.flush();
-        if el.select(&self.controls).next().is_some() {
+        if el.descendants(&CONTROLS).next().is_some() {
             self.children(el);
             self.flush();
             return;
         }
         let items: Vec<String> = el
             .child_elements()
-            .filter(|c| c.value().name() == "li")
+            .filter(|c| c.name() == "li")
             .map(text_of)
             .filter(|t| !t.is_empty())
             .collect();
@@ -352,18 +342,18 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn table(&mut self, table: ElementRef<'a>) {
+    fn table(&mut self, table: Element<'a>) {
         self.flush();
-        let cells = |row: ElementRef<'a>| -> Vec<ElementRef<'a>> {
+        let cells = |row: Element<'a>| -> Vec<Element<'a>> {
             row.child_elements()
-                .filter(|c| matches!(c.value().name(), "td" | "th"))
+                .filter(|c| matches!(c.name(), "td" | "th"))
                 .collect()
         };
-        let rows: Vec<ElementRef<'a>> = table
-            .select(&selector("tr"))
+        let rows: Vec<Element<'a>> = table
+            .descendants(&["tr"])
             .filter(|row| closest(*row, "table") == Some(table))
             .collect();
-        if table.select(&self.controls).next().is_none() {
+        if table.descendants(&CONTROLS).next().is_none() {
             let lines: Vec<Vec<String>> = rows
                 .iter()
                 .map(|row| cells(*row).into_iter().map(text_of).collect())
@@ -381,15 +371,15 @@ impl<'a> Builder<'a> {
         let mut headers: Vec<String> = Vec::new();
         for row in rows {
             let row_cells = cells(row);
-            if row_cells.iter().all(|c| c.value().name() == "th")
-                && row.select(&self.controls).next().is_none()
+            if row_cells.iter().all(|c| c.name() == "th")
+                && row.descendants(&CONTROLS).next().is_none()
             {
                 headers = row_cells.into_iter().map(text_of).collect();
                 continue;
             }
             let prose: Vec<String> = row_cells
                 .iter()
-                .filter(|cell| cell.select(&self.controls).next().is_none())
+                .filter(|cell| cell.descendants(&CONTROLS).next().is_none())
                 .map(|cell| text_of(*cell))
                 .filter(|t| !t.is_empty())
                 .collect();
@@ -397,7 +387,7 @@ impl<'a> Builder<'a> {
                 self.push_block(Block::Text(prose.join(" · ")));
             }
             for (column, cell) in row_cells.iter().enumerate() {
-                let controls: Vec<_> = cell.select(&self.controls).collect();
+                let controls: Vec<_> = cell.descendants(&CONTROLS).collect();
                 for control in controls {
                     let label = closest(control, "label")
                         .filter(|label| contains(*cell, *label))
@@ -413,7 +403,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn field(&mut self, el: ElementRef<'a>, label: Option<&str>) {
+    fn field(&mut self, el: Element<'a>, label: Option<&str>) {
         self.flush();
         let label = label
             .map(collapse)
@@ -422,11 +412,11 @@ impl<'a> Builder<'a> {
         let name = el.attr("name").unwrap_or("").to_owned();
         let required = el.attr("required").is_some();
         let placeholder = el.attr("placeholder").unwrap_or("").to_owned();
-        match el.value().name() {
+        match el.name() {
             "select" => {
                 let multi = el.attr("multiple").is_some();
                 let mut options: Vec<Choice> = el
-                    .select(&selector("option"))
+                    .descendants(&["option"])
                     .map(|option| {
                         let text = collapse(&option.text().collect::<String>());
                         Choice {
@@ -533,8 +523,8 @@ impl<'a> Builder<'a> {
     }
 
     /// `label[for]`, then `aria-label`, then `title`.
-    fn own_label(&self, el: ElementRef<'a>) -> String {
-        if let Some(id) = el.value().id()
+    fn own_label(&self, el: Element<'a>) -> String {
+        if let Some(id) = el.id()
             && let Some(label) = self.label_for.get(id)
         {
             return collapse(&text_of(*label));
@@ -552,28 +542,22 @@ impl<'a> Builder<'a> {
     }
 }
 
-fn selector(css: &str) -> Selector {
-    Selector::parse(css).expect("static selector")
+fn closest<'a>(el: Element<'a>, tag: &str) -> Option<Element<'a>> {
+    el.ancestors().find(|ancestor| ancestor.name() == tag)
 }
 
-fn closest<'a>(el: ElementRef<'a>, tag: &str) -> Option<ElementRef<'a>> {
-    el.ancestors()
-        .filter_map(ElementRef::wrap)
-        .find(|ancestor| ancestor.value().name() == tag)
-}
-
-fn contains(outer: ElementRef<'_>, inner: ElementRef<'_>) -> bool {
-    outer == inner || inner.ancestors().any(|a| a.id() == outer.id())
+fn contains(outer: Element<'_>, inner: Element<'_>) -> bool {
+    outer == inner || inner.ancestors().any(|a| a == outer)
 }
 
 /// A label's text: controls and hidden elements excluded, `<br>` as a line break, images by
 /// their alt text, block elements separated by a space.
-fn text_of(el: ElementRef<'_>) -> String {
-    fn gather(el: ElementRef<'_>, out: &mut String) {
+fn text_of(el: Element<'_>) -> String {
+    fn gather(el: Element<'_>, out: &mut String) {
         for child in el.children() {
-            match child.value() {
-                Node::Text(text) => out.push_str(text),
-                Node::Element(element) => {
+            match child {
+                Child::Text(text) => out.push_str(text),
+                Child::Element(element) => {
                     let tag = element.name();
                     if SKIPPED.contains(&tag)
                         || matches!(tag, "input" | "select" | "textarea" | "svg")
@@ -587,11 +571,10 @@ fn text_of(el: ElementRef<'_>) -> String {
                             if BLOCKS.contains(&tag) || HEADINGS.contains(&tag) {
                                 out.push(' ');
                             }
-                            gather(ElementRef::wrap(child).expect("element node"), out);
+                            gather(element, out);
                         }
                     }
                 }
-                _ => {}
             }
         }
     }

@@ -14,6 +14,7 @@ use {
                 GUID,
                 HRESULT,
                 PCWSTR,
+                Ref,
             },
             Win32::System::Com::{
                 CLSCTX_ALL,
@@ -48,7 +49,7 @@ use {
                 MFVideoFormat_NV12,
                 MFVideoFormat_MJPG,
             },
-            Win32::UI::Shell::PropertiesSystem::PROPERTYKEY,
+            Win32::Foundation::PROPERTYKEY,
             Win32::Media::Audio::{
                 DEVICE_STATE,
                 MMDeviceEnumerator,
@@ -292,17 +293,17 @@ implement_com!{
     }
 }*/
 
-impl IMFSourceReaderCallback_Impl for SourceReaderCallback {
+impl IMFSourceReaderCallback_Impl for SourceReaderCallback_Impl {
     fn OnReadSample(
         &self,
         _hrstatus: HRESULT,
         _dwstreamindex: u32,
         _dwstreamflags: u32,
         _lltimestamp: i64,
-        psample: Option<&IMFSample>
+        psample: Ref<'_, IMFSample>
     ) -> crate::windows::core::Result<()> {
         unsafe{
-            if let Some(sample) = psample{
+            if let Some(sample) = psample.as_ref(){
                 if let Ok(buffer) = sample.GetBufferByIndex(0){
                     let config = self.config.lock().unwrap();
                     if let Some(config) = &*config{
@@ -360,7 +361,7 @@ impl IMFSourceReaderCallback_Impl for SourceReaderCallback {
     fn OnEvent(
         &self,
         _dwstreamindex: u32,
-        _pevent: Option<&IMFMediaEvent>
+        _pevent: Ref<'_, IMFMediaEvent>
     ) -> crate::windows::core::Result<()> {
         Ok(())
     }
@@ -381,7 +382,7 @@ implement_com!{
     }
 }*/
 
-impl IMMNotificationClient_Impl for MediaFoundationChangeListener {
+impl IMMNotificationClient_Impl for MediaFoundationChangeListener_Impl {
     fn OnDeviceStateChanged(&self, _pwstrdeviceid: &PCWSTR, _dwnewstate: DEVICE_STATE) -> crate::windows::core::Result<()> {
         self.change_signal.set();
         Ok(())

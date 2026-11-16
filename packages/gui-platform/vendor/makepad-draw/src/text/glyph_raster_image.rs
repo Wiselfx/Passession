@@ -3,7 +3,6 @@ use {
         geom::{Point, Rect, Size},
         image::{Bgra, SubimageMut},
     },
-    makepad_rustybuzz as rustybuzz,
     rustybuzz::ttf_parser,
 };
 
@@ -49,7 +48,7 @@ impl<'a> GlyphRasterImage<'a> {
     }
 
     fn decode_size_png(&self) -> Size<usize> {
-        let decoder = png::Decoder::new(self.data);
+        let decoder = png::Decoder::new(std::io::Cursor::new(self.data));
         let reader = decoder.read_info().unwrap();
         let info = reader.info();
         Size {
@@ -65,9 +64,9 @@ impl<'a> GlyphRasterImage<'a> {
     }
 
     fn decode_png(&self, image: &mut SubimageMut<Bgra>) {
-        let decoder = png::Decoder::new(self.data);
+        let decoder = png::Decoder::new(std::io::Cursor::new(self.data));
         let mut reader = decoder.read_info().unwrap();
-        let mut buffer = vec![0; reader.output_buffer_size()];
+        let mut buffer = vec![0; reader.output_buffer_size().expect("glyph PNG output size fits usize")];
         let output_info = reader.next_frame(&mut buffer).unwrap();
         let info = reader.info();
         let height = info.height as usize;

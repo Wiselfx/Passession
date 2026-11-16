@@ -285,7 +285,7 @@ impl AutomationService {
         } else {
             let id = loop {
                 let mut bytes = [0u8; 4];
-                rand::thread_rng().fill_bytes(&mut bytes);
+                rand::rng().fill_bytes(&mut bytes);
                 let id = hex::encode(bytes);
                 if store.get(&id).await?.is_none() {
                     break id;

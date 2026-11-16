@@ -75,6 +75,9 @@ makepad-platform = { path = "packages/gui-platform/vendor/makepad-platform" }
 makepad-draw = { path = "packages/gui-platform/vendor/makepad-draw" }
 makepad-widgets = { path = "packages/gui-platform/vendor/makepad-widgets" }
 makepad-shader-compiler = { path = "packages/gui-platform/vendor/makepad-shader-compiler" }
+makepad-vector = { path = "packages/gui-platform/vendor/makepad-vector" }
+# Keep the Secret Service store on the existing Tokio runtime.
+zbus-secret-service-keyring-store = { path = "packages/gui-platform/vendor/zbus-secret-service-keyring-store" }
 # libghostty-vt-sys build-script patch: packages/terminal/vendor/VENDORED.md.
 libghostty-vt-sys = { path = "packages/terminal/vendor/libghostty-vt-sys" }
 # Preserve authored sequence-event order when laying out Mermaid groups.

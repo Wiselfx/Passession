@@ -1,5 +1,4 @@
 use {
-    makepad_rustybuzz as rustybuzz,
     rustybuzz::ttf_parser,
     std::{fmt, marker::PhantomPinned, mem, pin::Pin, sync::Arc},
 };

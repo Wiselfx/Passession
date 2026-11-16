@@ -15,7 +15,7 @@ use {
         log,
         error,
         windows::{
-            core::HRESULT,
+            core::{BOOL, HRESULT},
             core::PCWSTR,
             core::PCSTR,
             //core::IntoParam,
@@ -92,7 +92,6 @@ use {
                     S_OK,
                     HWND,
                     HINSTANCE,
-                    BOOL,
                     FARPROC,
                     DRAGDROP_S_DROP,
                     DRAGDROP_S_CANCEL,
@@ -169,7 +168,7 @@ pub fn set_dark_appearance(dark: bool) {
         apply_dark_caption(hwnd);
         // Windows 10 repaints the caption only once its frame changes.
         unsafe {
-            let _ = SetWindowPos(hwnd, HWND(0), 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
 }
@@ -263,9 +262,9 @@ impl Win32App {
         // Paseo: the executable's icon resource 1 labels the caption, taskbar and Alt+Tab.
         // Upstream used the stock Windows logo, which stays the fallback without one.
         let app_icon = PCWSTR(1 as *const u16);
-        let icon = unsafe {LoadIconW(instance, app_icon).or_else(|_| LoadIconW(None, IDI_WINLOGO)).unwrap()};
+        let icon = unsafe {LoadIconW(Some(instance), app_icon).or_else(|_| LoadIconW(None, IDI_WINLOGO)).unwrap()};
         let small_icon = unsafe {
-            LoadImageW(instance, app_icon, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR)
+            LoadImageW(Some(instance), app_icon, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR)
                 .map(|handle| HICON(handle.0))
                 .unwrap_or(icon)
         };
@@ -286,7 +285,7 @@ impl Win32App {
         
         unsafe {
             RegisterClassExW(&class);
-            let _ = IsGUIThread(TRUE);
+            let _ = IsGUIThread(true);
             
             // initialize COM using OleInitialize to allow Drag&Drop and other shell features
             OleInitialize(None).unwrap();
@@ -576,11 +575,11 @@ impl Win32App {
             self.current_cursor = Some(cursor);
             unsafe {
                 if win32_cursor == PCWSTR::null() {
-                    ShowCursor(FALSE);
+                    ShowCursor(false);
                 }
                 else {
-                    SetCursor(LoadCursorW(None, win32_cursor).unwrap());
-                    ShowCursor(TRUE);
+                    SetCursor(Some(LoadCursorW(None, win32_cursor).unwrap()));
+                    ShowCursor(true);
                 }
             }
             //TODO
@@ -597,7 +596,7 @@ impl Win32App {
                 SetCursor(None);
             }
             else if let Ok(handle) = LoadCursorW(None, win32_cursor) {
-                SetCursor(handle);
+                SetCursor(Some(handle));
             }
         }
     }
@@ -758,7 +757,7 @@ impl DpiFunctions {
     
     pub fn hwnd_dpi_factor(&self, hwnd: HWND) -> f32 {
         unsafe {
-            let hdc = GetDC(hwnd);
+            let hdc = GetDC(Some(hwnd));
             if hdc.is_invalid() {
                 panic!("`GetDC` returned null!");
             }
@@ -790,7 +789,7 @@ impl DpiFunctions {
                 if IsProcessDPIAware() == TRUE {
                     // If the process is DPI aware, then scaling must be handled by the application using
                     // this DPI value.
-                    GetDeviceCaps(hdc, LOGPIXELSX) as u32
+                    GetDeviceCaps(Some(hdc), LOGPIXELSX) as u32
                 } else {
                     // If the process is DPI unaware, then scaling is performed by the OS; we thus return
                     // 96 (scale factor 1.0) to prevent the window from being re-scaled by both the

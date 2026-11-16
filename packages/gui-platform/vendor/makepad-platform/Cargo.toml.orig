@@ -62,11 +62,11 @@ path = "../libs/futures_legacy"
 version = "1.0.0"
 
 [target.'cfg(windows)'.dependencies.windows-core]
-version = "0.56"
+version = "0.61"
 
 [target.'cfg(windows)'.dependencies.windows]
 #path = "../libs/windows"
-version = "0.56"
+version = "0.61"
 features = [
     "Win32_Foundation", 
     "Win32_UI_WindowsAndMessaging",
@@ -107,8 +107,7 @@ features = [
     "Web_Http",
     "Web_Http_Headers",
     "Storage_Streams",
-    "implement"
 ]
 
-[target.'cfg(windows)'.dependencies.windows-targets]
-version = "0.48.3"
+[target.'cfg(windows)'.dependencies.windows-future]
+version = "0.2"

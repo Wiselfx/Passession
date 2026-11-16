@@ -72,7 +72,7 @@ fn message_id() -> String {
     };
     const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let mut bytes = [0u8; 14];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let suffix: String = bytes
         .iter()
         .map(|b| ALPHABET[(b % 62) as usize] as char)

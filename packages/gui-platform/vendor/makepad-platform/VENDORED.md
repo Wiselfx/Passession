@@ -461,3 +461,26 @@ These patches only remove compiler warnings; they change no behavior.
   colocation payload in `os/linux/openxr_anchor.rs` is kept as published under a
   reasoned `#[allow(dead_code)]`, since only its `_start_colocation_*`
   placeholders reference it.
+
+## windows 0.61
+
+`Cargo.toml` and `Cargo.toml.orig` move `windows` and `windows-core` from 0.56 to
+the 0.61 the GUI already uses, drop the `implement` feature and the direct
+`windows-targets` 0.48 dependency, and add `windows-future` 0.2. The lockfile no
+longer carries a second `windows` generation.
+
+The `os/windows/*.rs` changes follow the 0.61 API: COM `*_Impl` traits are
+implemented on the generated `*_Impl` types, interface parameters arrive as
+`Ref<'_, T>`, optional handles are `Option` (`Some(hwnd)`, `None` for a null
+window), `BOOL` comes from `windows::core`, `PROPERTYKEY` from
+`Win32::Foundation`, DXGI flags are typed, and `HANDLE`/`HDROP` wrap pointers.
+Three changes are not mechanical:
+
+- `wasapi.rs` reads the endpoint's friendly name with `PropVariantToBSTR` and
+  clears the `PROPVARIANT` afterwards, instead of formatting it.
+- `WasapiBaseRef` is `Send`: its event handle is a process-wide kernel object
+  that the worker threads already signal and wait on.
+- `win32_window.rs` maps a failed `CreateWindowExW`, now a `Result`, to the
+  null `HWND` 0.56 returned on failure.
+
+`winrt_midi.rs` stores the WinRT event token as the `i64` 0.61 returns.

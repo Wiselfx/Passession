@@ -165,7 +165,7 @@ impl TerminalService {
         }
         options.env = env;
         let mut random = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut random);
+        rand::rng().fill_bytes(&mut random);
         let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random);
         let terminal = Terminal::spawn(options, token, self.changed.clone()).await?;
         let admitted = {

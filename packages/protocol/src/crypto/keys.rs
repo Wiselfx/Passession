@@ -1,7 +1,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crypto_secretbox::{AeadInPlace, Kdf, KeyInit, XSalsa20Poly1305};
 use curve25519_dalek::montgomery::MontgomeryPoint;
-use rand::{RngCore, rngs::OsRng};
+use rand::{TryRngCore, rngs::OsRng};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 

@@ -13,12 +13,11 @@ metadata.makepad-auto-version = "N0YGjn7dnhc4DEHmww9lwuYwMVI="
 makepad-draw = { path = "../draw", version = "1.0.0" }
 makepad-derive-widget = {path = "./derive_widget", version="1.0.0"}
 
-makepad-zune-jpeg ={ version = "0.3.17 ",  path = "../libs/zune-jpeg" }
-makepad-zune-png ={ version = "0.4.10", path = "../libs/zune-png"  }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 makepad-html ={ path = "../libs/html", version = "1.0.0" }
 unicode-segmentation = "1.11.0"
-pulldown-cmark = { version = "0.12.2", default-features = false, features = ["simd"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["simd"] }
 
 makepad-fonts-emoji = {path = "./fonts/emoji", version = "1.0.0"}
 makepad-fonts-chinese-regular = {path = "./fonts/chinese_regular", version = "1.0.1"}

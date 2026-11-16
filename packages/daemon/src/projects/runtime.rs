@@ -382,7 +382,7 @@ pub async fn allocate_workspace_service_port(
     {
         let (start, end) = parse_port_range(range)?;
         let count = u32::from(end) - u32::from(start) + 1;
-        let start_offset = rand::thread_rng().gen_range(0..count);
+        let start_offset = rand::rng().random_range(0..count);
         for offset in 0..count {
             let port = (u32::from(start) + (start_offset + offset) % count) as u16;
             if !reserved_ports.contains(&port)

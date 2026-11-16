@@ -5,7 +5,6 @@ use {
     crate::{
         //implement_com,
         makepad_live_id::*,
-        os::windows::win32_app::FALSE,
         audio::*,
         thread::SignalToUI,
         windows::{
@@ -14,6 +13,7 @@ use {
             Win32::Foundation::{
                 WAIT_OBJECT_0,
                 HANDLE,
+                PROPERTYKEY,
             },
             Win32::System::Com::{
                 STGM_READ,
@@ -23,7 +23,10 @@ use {
                 CLSCTX_ALL,
                 //STGM_READ,
             },
-            Win32::UI::Shell::PropertiesSystem::PROPERTYKEY,
+            Win32::System::Com::StructuredStorage::{
+                PropVariantClear,
+                PropVariantToBSTR,
+            },
             Win32::Media::KernelStreaming::WAVE_FORMAT_EXTENSIBLE,
             Win32::Media::Multimedia::{
                 KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
@@ -234,8 +237,9 @@ impl WasapiAccess {
     unsafe fn get_device_descs(device: &IMMDevice) -> (String, String) {
         let dev_id = device.GetId().unwrap();
         let props = device.OpenPropertyStore(STGM_READ).unwrap();
-        let value = props.GetValue(&PKEY_Device_FriendlyName).unwrap();
-        let dev_name = value.to_string();
+        let mut value = props.GetValue(&PKEY_Device_FriendlyName).unwrap();
+        let dev_name = PropVariantToBSTR(&value).unwrap_or_default().to_string();
+        let _ = PropVariantClear(&mut value);
         //assert!(value.Anonymous.Anonymous.vt == VT_LPWSTR);
         //let dev_name = value.Anonymous.Anonymous.Anonymous.pwszVal;
         (dev_name.to_string(), dev_id.to_string().unwrap())
@@ -328,6 +332,9 @@ struct WasapiBaseRef {
     event: HANDLE,
 }
 
+// The event is a process-wide kernel object; worker threads signal and wait on it.
+unsafe impl Send for WasapiBaseRef {}
+
 struct WasapiBase {
     device_id: AudioDeviceId,
     device: IMMDevice,
@@ -383,7 +390,7 @@ impl WasapiBase {
                 return Err(())
             }
             
-            let event = CreateEventA(None, FALSE, FALSE, None).unwrap();
+            let event = CreateEventA(None, false, false, None).unwrap();
             client.SetEventHandle(event).unwrap();
             client.Start().unwrap();
             
@@ -533,7 +540,7 @@ implement_com!{
     }
 }*/
 
-impl IMMNotificationClient_Impl for WasapiChangeListener {
+impl IMMNotificationClient_Impl for WasapiChangeListener_Impl {
     fn OnDeviceStateChanged(&self, _pwstrdeviceid: &PCWSTR, _dwnewstate: DEVICE_STATE) -> crate::windows::core::Result<()> {
         self.change_signal.set();
         Ok(())

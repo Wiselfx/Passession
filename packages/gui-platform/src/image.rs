@@ -41,7 +41,10 @@ pub fn decode_png_rgba(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info()?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| anyhow::anyhow!("PNG dimensions exceed addressable memory."))?;
+    let mut buffer = vec![0; size];
     let info = reader.next_frame(&mut buffer)?;
     buffer.truncate(info.buffer_size());
     let rgba = match info.color_type {

@@ -178,3 +178,18 @@ rect. Overlay children recorded by the list's last draw then fail the
 `begin_maybe` repaints the list instead of replaying it. The client's retained
 shell layers (`packages/gui/src/common/layer.rs`) release a pane or page that is
 hidden for a frame.
+
+## Standard rustybuzz, ttf-parser and PNG
+
+`Cargo.toml` and `Cargo.toml.orig` replace `makepad-rustybuzz` 0.8.0, Makepad's
+rustybuzz fork with its own `makepad-ttf-parser`, with the standard `rustybuzz`
+0.20. Its `rustybuzz::ttf_parser` is the `ttf-parser` 0.25 this crate already
+required directly, so faces, outlines and shaping use one parser shared with
+makepad-vector and the GUI's resvg. `src/cx_draw.rs`, `src/text/{font,font_face,
+glyph_outline,glyph_raster_image,shaper}.rs` and `paseo_font_tests.rs` drop the
+`makepad_rustybuzz as rustybuzz` alias or name `rustybuzz::` directly.
+
+`png` moves from 0.17 to the 0.18 the GUI uses. In `src/text/glyph_raster_image.rs`,
+`Decoder::new` takes a `Cursor` over the glyph bytes, and `output_buffer_size`
+now returns `Option`; a bitmap glyph whose decoded size does not fit `usize`
+panics with a message, as other glyph PNG decode failures already do.

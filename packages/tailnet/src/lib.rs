@@ -352,7 +352,7 @@ impl Manager {
             .create(true)
             .truncate(false)
             .open(config.state_dir.join("runtime.lock"))?;
-        fs2::FileExt::try_lock_exclusive(&lease).context(
+        lease.try_lock().context(
             "Tailscale state is in use by another process or a node still shutting down",
         )?;
         let key = Zeroizing::new(
@@ -583,7 +583,7 @@ mod tests {
             .write(true)
             .open(directory.path().join("runtime.lock"))
             .unwrap();
-        fs2::FileExt::try_lock_exclusive(&lease).unwrap();
+        lease.try_lock().unwrap();
         manager.disconnect().unwrap();
     }
     #[test]

@@ -6,7 +6,6 @@ use {
     crate::{
         windows::{
             core::implement,
-            core,
             Win32::{
                 System::Com::{
                     FORMATETC,
@@ -175,9 +174,9 @@ implement_com!{
 
 // IEnumFORMATETC implementation for EnumFormatEtc, which hosts a list of FORMATETCs that can be queried by COM and DoDragDrop
 
-impl IEnumFORMATETC_Impl for EnumFormatEtc {
+impl IEnumFORMATETC_Impl for EnumFormatEtc_Impl {
 
-    fn Next(&self, celt: u32, rgelt: *mut FORMATETC, pceltfetched: *mut u32) -> core::HRESULT {
+    fn Next(&self, celt: u32, rgelt: *mut FORMATETC, pceltfetched: *mut u32) -> windows_core::HRESULT {
 
         // get reference to slice from rgelt pointer
         let out_formats = unsafe { std::slice::from_raw_parts_mut(rgelt,256) };  // rgelt actually points to an array of FORMATETCs
@@ -216,7 +215,7 @@ impl IEnumFORMATETC_Impl for EnumFormatEtc {
         }
     }
 
-    fn Skip(&self, celt: u32) -> core::Result<()> {
+    fn Skip(&self, celt: u32) -> windows_core::Result<()> {
 
         // figure out how many formats are still remaining and need to be skipped
         let n_avail = self.formats.len() - *self.index.borrow();
@@ -230,7 +229,7 @@ impl IEnumFORMATETC_Impl for EnumFormatEtc {
         Ok(())
     }
 
-    fn Reset(&self) -> core::Result<()> {
+    fn Reset(&self) -> windows_core::Result<()> {
 
         // reset the iterator
         self.index.replace(0);
@@ -238,7 +237,7 @@ impl IEnumFORMATETC_Impl for EnumFormatEtc {
         Ok(())
     }
 
-    fn Clone(&self) -> core::Result<IEnumFORMATETC> {
+    fn Clone(&self) -> windows_core::Result<IEnumFORMATETC> {
 
         // nope.
         Err(E_UNEXPECTED.into())

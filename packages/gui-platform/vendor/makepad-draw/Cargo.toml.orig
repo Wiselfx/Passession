@@ -14,14 +14,12 @@ makepad-platform = { path = "../platform", version = "1.0.0" }
 makepad-vector = { path = "./vector", version = "1.0.0" }
 makepad-html ={ path = "../libs/html", version = "1.0.0" }
 
-# HACK(eddyb) only a git dep until https://github.com/RazrFalcon/rustybuzz/pull/71
-# ends up being published in a release (only affects build times, not behavior).
-makepad-rustybuzz = { version = "0.8.0", path = "../libs/rustybuzz" }
+rustybuzz = "0.20"
 unicode-bidi = "0.3"
 ab_glyph_rasterizer = "0.1.8"
 sdfer = "0.2.1"
 fxhash = "0.2.1"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.11.0"
-png = "0.17.13"
+png = "0.18"
 ttf-parser = "0.25.1"

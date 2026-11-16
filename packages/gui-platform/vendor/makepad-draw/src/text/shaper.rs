@@ -4,7 +4,6 @@ use {
         slice::SliceExt,
         substr::Substr,
     },
-    makepad_rustybuzz as rustybuzz,
     rustybuzz::UnicodeBuffer,
     std::{
         collections::{HashMap, VecDeque},

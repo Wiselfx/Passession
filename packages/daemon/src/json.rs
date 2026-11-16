@@ -3,46 +3,69 @@
 //! but cannot represent JavaScript's isolated UTF-16 surrogate code units.
 use anyhow::{Context, Result};
 use icu_casemap::CaseMapper;
-use icu_collator::{CaseLevel, Collator, CollatorOptions, Numeric, Strength};
-use icu_locid::Locale;
+use icu_collator::options::{CaseLevel, CollatorOptions, Strength};
+use icu_collator::preferences::CollationNumericOrdering;
+use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
+use icu_locale_core::Locale;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
 static DEFAULT_LOCALE: LazyLock<Locale> = LazyLock::new(default_locale);
-thread_local! {
-    // ICU4X 1.x's owned provider payloads are not Send/Sync. A thread-local
-    // collator avoids rebuilding it for each key comparison without unsafe sharing.
-    static COLLATOR: Collator = Collator::try_new(
-        &(*DEFAULT_LOCALE).clone().into(),
-        CollatorOptions::new(),
-    ).expect("compiled ICU collation data must contain the default locale fallback");
-    static NUMERIC_BASE_COLLATOR: Collator = {
-        let mut options = CollatorOptions::new();
-        options.numeric = Some(Numeric::On);
-        options.strength = Some(Strength::Primary);
-        options.case_level = Some(CaseLevel::Off);
-        Collator::try_new(&(*DEFAULT_LOCALE).clone().into(), options)
-            .expect("compiled ICU numeric collation data must contain the default locale fallback")
-    };
-    static CASE_MAPPER: CaseMapper = const { CaseMapper::new() };
+static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+    Collator::try_new(
+        collator_preferences(&DEFAULT_LOCALE),
+        CollatorOptions::default(),
+    )
+    .expect("compiled ICU collation data must contain the default locale fallback")
+});
+static NUMERIC_BASE_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+    Collator::try_new(
+        numeric_base_preferences(&DEFAULT_LOCALE),
+        numeric_base_options(),
+    )
+    .expect("compiled ICU numeric collation data must contain the default locale fallback")
+});
+
+fn collator_preferences(locale: &Locale) -> CollatorPreferences {
+    let mut preferences = CollatorPreferences::from(locale);
+    // Locale selects the collation data; numeric and case-first options remain
+    // application defaults rather than inheriting locale extension keywords.
+    preferences.case_first = None;
+    preferences.numeric_ordering = None;
+    preferences
+}
+
+/// `numeric: true` overrides any `-u-kn` keyword in the locale, as in ECMA-402.
+fn numeric_base_preferences(locale: &Locale) -> CollatorPreferences {
+    let mut preferences = collator_preferences(locale);
+    preferences.numeric_ordering = Some(CollationNumericOrdering::True);
+    preferences
+}
+fn numeric_base_options() -> CollatorOptions {
+    let mut options = CollatorOptions::default();
+    options.strength = Some(Strength::Primary);
+    options.case_level = Some(CaseLevel::Off);
+    options
 }
 
 /// Same default-locale comparison as `String.prototype.localeCompare` without options.
 /// Collation equality deliberately has no ordinal tie-breaker: JS Array.sort is stable.
 pub fn locale_compare(left: &str, right: &str) -> Ordering {
-    COLLATOR.with(|collator| collator.compare(left, right))
+    COLLATOR.compare(left, right)
 }
 
 /// `localeCompare(other, undefined, { numeric: true, sensitivity: "base" })`.
 pub fn numeric_base_locale_compare(left: &str, right: &str) -> Ordering {
-    NUMERIC_BASE_COLLATOR.with(|collator| collator.compare(left, right))
+    NUMERIC_BASE_COLLATOR.compare(left, right)
 }
 
 /// `String.prototype.toLocaleLowerCase()` using the same process-default locale.
 pub fn locale_lowercase(value: &str) -> String {
-    CASE_MAPPER.with(|mapper| mapper.lowercase_to_string(value, &DEFAULT_LOCALE.id))
+    CaseMapper::new()
+        .lowercase_to_string(value, &DEFAULT_LOCALE.id)
+        .into_owned()
 }
 
 /// JSON.stringify over JSON values: array-index properties precede other properties,
@@ -56,11 +79,9 @@ pub fn stringify(value: &Value) -> Result<String> {
 /// The receipt replacer recursively sorts object entries with localeCompare, then
 /// Object.fromEntries/JSON.stringify reorder array-index keys numerically once more.
 pub fn canonical_stringify(value: &Value) -> Result<String> {
-    COLLATOR.with(|collator| {
-        let mut output = String::new();
-        write_value(value, &mut output, Some(collator))?;
-        Ok(output)
-    })
+    let mut output = String::new();
+    write_value(value, &mut output, Some(&*COLLATOR))?;
+    Ok(output)
 }
 
 pub fn fingerprint(value: &Value) -> Result<String> {
@@ -69,7 +90,11 @@ pub fn fingerprint(value: &Value) -> Result<String> {
     )))
 }
 
-fn write_value(value: &Value, output: &mut String, collator: Option<&Collator>) -> Result<()> {
+fn write_value(
+    value: &Value,
+    output: &mut String,
+    collator: Option<&CollatorBorrowed<'_>>,
+) -> Result<()> {
     match value {
         Value::Null => output.push_str("null"),
         Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
@@ -258,7 +283,8 @@ mod tests {
     use serde_json::json;
     fn canonical_en(value: &Value) -> Result<String> {
         let locale: Locale = "en-US".parse().unwrap();
-        let collator = Collator::try_new(&locale.into(), CollatorOptions::new()).unwrap();
+        let collator =
+            Collator::try_new(collator_preferences(&locale), CollatorOptions::default()).unwrap();
         let mut output = String::new();
         write_value(value, &mut output, Some(&collator))?;
         Ok(output)
@@ -352,13 +378,18 @@ mod tests {
         );
     }
     #[test]
-    fn numeric_base_collation_ignores_case_and_accents() {
-        let mut options = CollatorOptions::new();
-        options.numeric = Some(Numeric::On);
-        options.strength = Some(Strength::Primary);
-        options.case_level = Some(CaseLevel::Off);
+    fn locale_keywords_do_not_override_default_collation_options() {
+        let locale: Locale = "en-US-u-kf-upper-kn".parse().unwrap();
         let collator =
-            Collator::try_new(&"en-US".parse::<Locale>().unwrap().into(), options).unwrap();
+            Collator::try_new(collator_preferences(&locale), CollatorOptions::default()).unwrap();
+        assert_eq!(collator.compare("2", "10"), Ordering::Greater);
+        assert_eq!(collator.compare("a", "A"), Ordering::Less);
+    }
+    #[test]
+    fn numeric_base_collation_ignores_case_and_accents() {
+        let locale: Locale = "en-US".parse().unwrap();
+        let collator =
+            Collator::try_new(numeric_base_preferences(&locale), numeric_base_options()).unwrap();
         assert_eq!(collator.compare("task2", "task10"), Ordering::Less);
         assert_eq!(collator.compare("É2", "e2"), Ordering::Equal);
     }

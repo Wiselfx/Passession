@@ -23,7 +23,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use paseo_protocol::crypto::KeyPair;
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -184,7 +184,7 @@ impl TransportService {
         *self.keypair.write().unwrap() = Some(keypair);
         *self.config.write().unwrap() = config;
         let mut credential_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut credential_bytes);
+        rand::rngs::OsRng.unwrap_err().fill_bytes(&mut credential_bytes);
         let credential = URL_SAFE_NO_PAD.encode(credential_bytes);
         storage::write_private(
             &home.join("local-credential"),

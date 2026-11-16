@@ -13,7 +13,7 @@ crypto_secretbox = { version = "0.1", features = ["salsa20"] }
 curve25519-dalek = "4"
 hmac = "0.12"
 jsonschema = { version = "0.60.2", default-features = false }
-rand = "0.8"
+rand = { version = "0.9", default-features = false, features = ["os_rng"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"

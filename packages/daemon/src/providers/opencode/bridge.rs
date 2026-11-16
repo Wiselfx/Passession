@@ -11,7 +11,7 @@ use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -57,7 +57,7 @@ impl Bridge {
         let plugin_url = materialize_plugin(home, generation).await?;
         let manifest = manifest(&catalog)?;
         let mut secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut secret);
+        rand::rngs::OsRng.unwrap_err().fill_bytes(&mut secret);
         let state = Arc::new(State {
             authorization: format!("Bearer {}", hex::encode(secret)),
             manifest,

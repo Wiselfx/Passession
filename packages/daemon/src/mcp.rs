@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 pub use protocol::{McpHttpResponse, stdio_socket_bridge};
-use rand::RngCore;
+use rand::{RngCore, TryRngCore};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -111,7 +111,7 @@ impl McpService {
         };
         if enabled {
             let mut bytes = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut bytes);
+            rand::rngs::OsRng.unwrap_err().fill_bytes(&mut bytes);
             let token = hex::encode(bytes);
             let grant = Arc::new(Grant {
                 agent_id: agent_id.to_owned(),

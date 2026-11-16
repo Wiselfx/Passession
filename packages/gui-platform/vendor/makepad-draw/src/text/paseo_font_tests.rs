@@ -177,9 +177,9 @@ fn arabic_fallback_retains_contextual_glyphs_and_cluster_ownership() {
     let Some(data) = system_fixture("MAKEPAD_TEST_ARABIC_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") else { return };
     let parsed = FontFace::from_data_and_index(Arc::new(data.clone()), 0).unwrap();
     let text = "العربية";
-    let mut buffer = makepad_rustybuzz::UnicodeBuffer::new();
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
     buffer.push_str(text);
-    let expected = makepad_rustybuzz::shape(parsed.as_rustybuzz_face(), &[], buffer);
+    let expected = rustybuzz::shape(parsed.as_rustybuzz_face(), &[], buffer);
     let mut expected: Vec<_> = expected.glyph_infos().iter().map(|glyph| (glyph.cluster as usize, glyph.glyph_id as u16)).collect();
     expected.sort_by_key(|glyph| glyph.0);
     assert!(expected.iter().all(|glyph| glyph.1 != 0), "fixture must cover Arabic");
