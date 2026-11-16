@@ -57,6 +57,10 @@ env:
   RECOVERY_RUN_ID: ${{ github.event.inputs.recovery_run_id || '' }}
   ROLLOUT_HOURS: ${{ github.event.inputs.rollout_hours || '36' }}
   NOTICE_SUPPLEMENT_SHA: ${{ github.event.inputs.notice_supplement_sha || '' }}
+  # actions/checkout runs `git init`; a named default branch avoids git's hint.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
 
 jobs:
   source:
@@ -161,6 +165,9 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: actions/download-artifact@v8
+        env:
+          # download-artifact v8 itself calls the deprecated Buffer().
+          NODE_OPTIONS: --no-deprecation
         with:
           name: native-component-plan
           path: artifacts
@@ -434,12 +441,17 @@ jobs:
           shared-key: release-xtask
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - uses: actions/download-artifact@v8
+        env:
+          # download-artifact v8 itself calls the deprecated Buffer().
+          NODE_OPTIONS: --no-deprecation
         with:
           name: native-component-plan
           path: artifacts
       - name: Download current build artifacts
         if: needs.native.result == 'success'
         uses: actions/download-artifact@v8
+        env:
+          NODE_OPTIONS: --no-deprecation
         with:
           pattern: native-release-*
           merge-multiple: true

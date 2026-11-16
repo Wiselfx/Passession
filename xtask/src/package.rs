@@ -93,7 +93,10 @@ fn debian_depends(payload: &Path) -> Result<String> {
     let mut shlibdeps = command("dpkg-shlibdeps")?;
     shlibdeps
         .current_dir(work.path())
-        .args(["-O", "--ignore-missing-info"])
+        // Only "symbol not found": bundled distro libraries carry their own
+        // unused links, and libpaseo_tailscale keeps libpthread/libresolv for
+        // glibc before 2.34, which a newer build host reports as useless.
+        .args(["-O", "--ignore-missing-info", "--warnings=1"])
         // Bundled daemon libraries resolve through their own RPATH.
         .arg(format!(
             "-l{}",
@@ -102,7 +105,16 @@ fn debian_depends(payload: &Path) -> Result<String> {
     for elf in &elves {
         shlibdeps.arg(format!("-e{}", elf.display()));
     }
-    let output = capture(&mut shlibdeps)?;
+    let run = shlibdeps.output().context("Starting dpkg-shlibdeps")?;
+    for line in shlibdeps_notices(&String::from_utf8_lossy(&run.stderr)) {
+        eprintln!("{line}");
+    }
+    ensure!(
+        run.status.success(),
+        "dpkg-shlibdeps exited with {}",
+        run.status
+    );
+    let output = String::from_utf8(run.stdout)?;
     let depends = output
         .lines()
         .find_map(|line| line.strip_prefix("shlibs:Depends="))
@@ -124,6 +136,34 @@ fn debian_depends(payload: &Path) -> Result<String> {
         }
     }
     Ok(fields.join(", "))
+}
+
+/// dpkg-shlibdeps stderr minus the usrmerge loader diversion (Ubuntu 24.04+):
+/// libc6 diverts `/lib64/ld-linux-*` to `*.usr-is-merged`, which dpkg-shlibdeps
+/// reports as "diversions involved" although the dependencies are unaffected.
+/// Any other diversion keeps its warning and details.
+fn shlibdeps_notices(stderr: &str) -> Vec<&str> {
+    let mut kept = Vec::new();
+    let mut lines = stderr.lines().peekable();
+    while let Some(line) = lines.next() {
+        if !line.ends_with("warning: diversions involved - output may be incorrect") {
+            kept.push(line);
+            continue;
+        }
+        let mut details = Vec::new();
+        while let Some(detail) = lines.next_if(|next| next.starts_with(" diversion by ")) {
+            details.push(detail);
+        }
+        let loader_only = !details.is_empty()
+            && details.iter().all(|detail| {
+                detail.starts_with(" diversion by libc6 ") && detail.contains("/ld-linux")
+            });
+        if !loader_only {
+            kept.push(line);
+            kept.extend(details);
+        }
+    }
+    kept
 }
 
 /// Optional idle-time, XSMP logout and system-font discovery libraries.
@@ -511,6 +551,24 @@ pub fn daemon(args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shlibdeps_notices_drop_only_the_usrmerge_loader_diversion() {
+        let header = "dpkg-shlibdeps: warning: diversions involved - output may be incorrect";
+        let stderr = format!(
+            "{header}\n diversion by libc6 from: /lib64/ld-linux-x86-64.so.2\n\
+             {header}\n diversion by libc6 to: /lib64/ld-linux-x86-64.so.2.usr-is-merged\n\
+             dpkg-shlibdeps: warning: symbol foo used by x found in none of the libraries\n\
+             {header}\n diversion by local from: /usr/lib/libfoo.so.1"
+        );
+        assert_eq!(
+            shlibdeps_notices(&stderr),
+            [
+                "dpkg-shlibdeps: warning: symbol foo used by x found in none of the libraries",
+                header,
+                " diversion by local from: /usr/lib/libfoo.so.1",
+            ]
+        );
+    }
     #[test]
     fn archive_roundtrip_retains_payload_and_executable_mode() {
         let directory = tempfile::tempdir().unwrap();
