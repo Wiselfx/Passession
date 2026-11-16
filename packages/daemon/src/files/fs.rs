@@ -139,6 +139,7 @@ pub fn filesystem_space(path: &Path) -> std::io::Result<(u64, u64)> {
         use std::os::windows::ffi::OsStrExt;
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         let (mut available, mut total) = (0u64, 0u64);
+        // SAFETY: `wide` is NUL-terminated and the out-pointers are valid u64s.
         let ok = unsafe {
             windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
                 wide.as_ptr(),
@@ -151,6 +152,11 @@ pub fn filesystem_space(path: &Path) -> std::io::Result<(u64, u64)> {
             return Err(std::io::Error::last_os_error());
         }
         Ok((available, total))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err(std::io::ErrorKind::Unsupported.into())
     }
 }
 pub fn open_no_follow(path: &Path) -> Result<File> {

@@ -610,7 +610,7 @@ fn ensure_space(directory: &Path, needed: u64) -> Result<()> {
     let required = needed
         .checked_add(SPACE_HEADROOM)
         .context("Runtime size overflow")?;
-    let available = available_space(directory)?;
+    let (available, _) = crate::files::filesystem_space(directory)?;
     if available < required {
         bail!(
             "Insufficient free space to stage the runtime in {}: {required} bytes required, {available} available",
@@ -618,42 +618,6 @@ fn ensure_space(directory: &Path, needed: u64) -> Result<()> {
         )
     }
     Ok(())
-}
-
-#[cfg(unix)]
-#[allow(clippy::useless_conversion)]
-fn available_space(directory: &Path) -> Result<u64> {
-    let stat = nix::sys::statvfs::statvfs(directory)?;
-    Ok(u64::from(stat.blocks_available()).saturating_mul(u64::from(stat.fragment_size())))
-}
-
-#[cfg(windows)]
-fn available_space(directory: &Path) -> Result<u64> {
-    use std::os::windows::ffi::OsStrExt;
-    let wide = directory
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let mut available = 0u64;
-    // SAFETY: `wide` is NUL-terminated and the out-pointer is a valid u64.
-    let ok = unsafe {
-        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
-            wide.as_ptr(),
-            &mut available,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    if ok == 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    Ok(available)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn available_space(_: &Path) -> Result<u64> {
-    bail!("Native updates are unsupported on this platform")
 }
 
 /// Normalize modes independent of umask, then make file metadata and every
@@ -965,8 +929,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("component");
         local_runtime(&root, "2.0.0", &elf(b"shared daemon component"));
-        write(&root.join("desktop-runtime.json"),
-            br#"{"executable":"paseo","cliShimPath":"paseo","workingDirectory":"."}"#, 0o644);
+        write(
+            &root.join("desktop-runtime.json"),
+            br#"{"executable":"paseo","cliShimPath":"paseo","workingDirectory":"."}"#,
+            0o644,
+        );
         let identity = inspect_runtime(&root).await.unwrap();
         assert_eq!(identity.version, "2.0.0");
         edit_identity(&root, "installationKind", json!("desktop-bundled"));
