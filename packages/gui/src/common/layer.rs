@@ -1,0 +1,117 @@
+//! Retained display layers: the shell's equivalent of Android `RenderNode`s and iOS
+//! `CALayer`s.
+//!
+//! Each shell region (chrome, sidebar, every pane root, the page) paints into its own
+//! [`Layer`], a sibling under the window's draw list. Invalidation stays local:
+//!
+//! - A widget that redraws an area it drew (`self.redraw(cx)`, `area.redraw(cx)`) repaints
+//!   only the layer that holds it. The window list re-runs its cheap composition; every
+//!   other layer replays its retained draw calls, shell hit regions and overlay children.
+//! - A layer also repaints when its rect or its `inputs` key changes, when the shell
+//!   invalidates it for a shared-state change it presents (`common::state_delta`), after it
+//!   was hidden for a frame, and on the theme/font/locale `Cx::redraw_all`.
+//!
+//! Widgets keep the ordinary Makepad contract — redraw yourself when your own data changes —
+//! and never call `Cx::redraw_all` for local changes.
+
+use std::collections::HashMap;
+
+use makepad_widgets::*;
+
+use super::paint::HitMap;
+
+#[derive(Default)]
+pub struct Layer {
+    list: Option<DrawList2d>,
+    inputs: u64,
+    attached: bool,
+    visited: bool,
+    hit_mark: usize,
+    hits: Vec<(Rect, String)>,
+    tooltips: Vec<(String, String)>,
+}
+
+impl Layer {
+    /// Repaints the layer on the next frame.
+    pub fn invalidate(&self, cx: &mut Cx) {
+        if let Some(list) = &self.list {
+            list.redraw(cx);
+        }
+    }
+
+    /// Shell hit ids recorded by the last paint.
+    pub fn owns_hit(&self, id: &str) -> bool {
+        self.hits.iter().any(|(_, hit)| hit == id)
+    }
+
+    /// Opens the layer at `rect`. `inputs` digests values the paint reads that do not reach it
+    /// through its own areas (focus, activity); a different key repaints.
+    ///
+    /// True: paint now, then close with [`Layer::end`]. False: the retained paint is still
+    /// valid and its hit regions and tooltips were replayed into `hits`/`tooltips`.
+    pub fn begin(
+        &mut self,
+        cx: &mut Cx2d,
+        rect: Rect,
+        inputs: u64,
+        hits: &mut HitMap<String>,
+        tooltips: &mut HashMap<String, String>,
+    ) -> bool {
+        self.visited = true;
+        self.attached = true;
+        let inputs_changed = std::mem::replace(&mut self.inputs, inputs) != inputs;
+        let list = self.list.get_or_insert_with(|| DrawList2d::new(cx));
+        // Always evaluated: it also records the rect the next frame compares against.
+        let dirty = cx.will_redraw(list, Walk::abs_rect(rect));
+        if list.begin_maybe(cx, dirty || inputs_changed).is_ok() {
+            self.hit_mark = hits.len();
+            return true;
+        }
+        hits.replay(&self.hits);
+        for (id, tip) in &self.tooltips {
+            tooltips.insert(id.clone(), tip.clone());
+        }
+        false
+    }
+
+    /// Closes a paint opened by [`Layer::begin`] and keeps its hit regions for replay.
+    pub fn end(
+        &mut self,
+        cx: &mut Cx2d,
+        hits: &HitMap<String>,
+        tooltips: &HashMap<String, String>,
+    ) {
+        if let Some(list) = &mut self.list {
+            list.end(cx);
+        }
+        self.hits.clear();
+        self.hits.extend_from_slice(hits.since(self.hit_mark));
+        self.tooltips.clear();
+        for (_, id) in &self.hits {
+            if let Some(tip) = tooltips.get(id) {
+                self.tooltips.push((id.clone(), tip.clone()));
+            }
+        }
+    }
+
+    /// Ends the shell frame: a layer the frame did not open is detached, so its overlay
+    /// children disappear with it and it repaints when shown again.
+    pub fn finish_frame(&mut self, cx: &mut Cx2d) {
+        if std::mem::take(&mut self.visited) {
+            return;
+        }
+        if std::mem::take(&mut self.attached)
+            && let Some(list) = &mut self.list
+        {
+            list.release(cx);
+            self.hits.clear();
+            self.tooltips.clear();
+        }
+    }
+}
+
+/// Digest of the values a layer's paint reads outside its own areas.
+pub fn inputs(values: impl std::hash::Hash) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(values)
+}

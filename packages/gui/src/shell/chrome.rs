@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::common::paint::{Font, TextSpec, rect};
 use crate::common::provider_icon::ProviderIcon;
 use crate::common::widgets::{StatusBucket, agent_live_status_bucket, paint_status_badge};
-use crate::common::{PanelTarget, Route, UiContext, clock, icons, json as j, tr, tr_args};
+use crate::common::{PanelTarget, Route, UiContext, clock, icons, json as j, layer, tr, tr_args};
 use crate::shell::hosts::{self, Host};
 use crate::shell::layout::{Axis, CompactDestination, Node};
 use crate::shell::ui::{Ui, Variant};
@@ -45,6 +45,19 @@ pub struct ChromeState {
     pub drop_pane: Option<String>,
     /// A touch that started in a pane: (touch id, pane, start) until it lifts as a tap.
     pub touch_focus: Option<(u64, String, DVec2)>,
+    /// Regions the last chrome paint laid out, each painted into its own retained layer.
+    pub slots: Vec<Slot>,
+    /// The compact Explorer is drawn inside the overlay layer: its root paints inline.
+    pub overlay_pass: bool,
+}
+
+/// A region laid out by the chrome paint that owns a retained layer (`common::layer`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Slot {
+    Sidebar(Rect),
+    Root { key: String, rect: Rect },
+    Page(Rect),
+    Sessions(Rect),
 }
 
 #[derive(Clone, Debug)]
@@ -272,31 +285,75 @@ pub(crate) fn text_line_height(height: f64, font_size: f64) -> f64 {
     height * (theme::current_typography().ui_size(font_size) / font_size).max(1.0)
 }
 
+/// Composes one window from retained layers: the chrome, then the sidebar, pane-root and
+/// page layers it laid out. Only invalidated layers repaint; the others replay their retained
+/// draw calls and shell hit regions.
 pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
-    let p = theme::current_palette();
-    let t = theme::current_typography();
-    let state = scope.data.get::<UiContext>().map(|ui| ui.state.clone());
     shell.data.hits.clear();
     shell.data.tooltips.clear();
-    shell.data.chrome.splits.clear();
-    shell.data.chrome.pane_rects.clear();
-    shell.data.chrome.tab_bars.clear();
-    shell.data.chrome.tab_rects.clear();
-    shell.data.chrome.tab_overflow.clear();
-    shell.data.chrome.sidebar_rect = Rect::default();
-    shell.data.sidebar.viewport = Rect::default();
+    // Safe-area and keyboard insets move the chrome without changing the window rect.
+    let insets = crate::shell::platform::safe_insets();
+    let inputs = layer::inputs([
+        insets.top.to_bits(),
+        insets.bottom.to_bits(),
+        insets.left.to_bits(),
+        insets.right.to_bits(),
+        insets.keyboard.to_bits(),
+        u64::from(insets.keyboard_visible),
+    ]);
+    if shell.layers.chrome.begin(
+        cx,
+        r,
+        inputs,
+        &mut shell.data.hits,
+        &mut shell.data.tooltips,
+    ) {
+        let p = theme::current_palette();
+        let sidebar_destination = shell.data.compact
+            && shell.data.layout.compact_destination == CompactDestination::Sidebar;
+        let background = if sidebar_destination {
+            p.sidebar
+        } else {
+            p.background
+        };
+        // The window background (and pointer capture) opens the chrome's box batch.
+        shell.layers.bg = shell
+            .painter
+            .capture_box(cx, r, background, Vec4::default(), 0.0, 0.0);
+        draw_chrome(shell, cx, scope, r);
+        shell
+            .layers
+            .chrome
+            .end(cx, &shell.data.hits, &shell.data.tooltips);
+    }
+    let slots = shell.data.chrome.slots.clone();
+    if !slots.iter().any(|slot| matches!(slot, Slot::Sidebar(_))) {
+        shell.data.sidebar.viewport = Rect::default();
+    }
+    for slot in slots {
+        draw_slot(shell, cx, scope, slot);
+    }
+    shell.layers.finish_frame(cx);
+    for panel in shell.data.panels.values_mut() {
+        panel.layer.finish_frame(cx);
+    }
+}
 
+/// Header, banner, tab strips, dividers and empty states; records the layered regions.
+fn draw_chrome(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
+    let p = theme::current_palette();
+    let state = scope.data.get::<UiContext>().map(|ui| ui.state.clone());
+    let chrome = &mut shell.data.chrome;
+    chrome.splits.clear();
+    chrome.pane_rects.clear();
+    chrome.tab_bars.clear();
+    chrome.tab_rects.clear();
+    chrome.tab_overflow.clear();
+    chrome.sidebar_rect = Rect::default();
+    chrome.slots.clear();
     let compact = shell.data.compact;
     let sidebar_destination =
         compact && shell.data.layout.compact_destination == CompactDestination::Sidebar;
-    let background = if sidebar_destination {
-        p.sidebar
-    } else {
-        p.background
-    };
-    shell.data.bg_area = shell
-        .painter
-        .capture_box(cx, r, background, Vec4::default(), 0.0, 0.0);
 
     let Some(state) = state else {
         draw_startup_error(shell, cx, r, &p);
@@ -314,7 +371,7 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
 
     // Settings is a pushed full-window route.
     if let Some(crate::shell::Page::Settings { .. }) = &shell.data.page {
-        draw_page(shell, cx, scope, body);
+        draw_page(shell, cx, body);
         return;
     }
     let page_shown = shell.data.page.is_some();
@@ -355,7 +412,52 @@ pub fn draw(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
     } else {
         draw_wide(shell, cx, scope, &state, content, page_shown);
     }
-    let _ = t;
+}
+
+fn draw_slot(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, slot: Slot) {
+    match slot {
+        Slot::Sidebar(r) => {
+            let Some(state) = scope.data.get::<UiContext>().map(|ui| ui.state.clone()) else {
+                return;
+            };
+            if shell
+                .layers
+                .sidebar
+                .begin(cx, r, 0, &mut shell.data.hits, &mut shell.data.tooltips)
+            {
+                open_batches(shell, cx, r);
+                shell.data.sidebar.viewport = Rect::default();
+                sidebar::draw(shell, cx, scope, &state, r);
+                shell
+                    .layers
+                    .sidebar
+                    .end(cx, &shell.data.hits, &shell.data.tooltips);
+            }
+        }
+        Slot::Root { key, rect } => paint_root(shell, cx, scope, &key, rect, true),
+        Slot::Page(r) => paint_page(shell, cx, scope, r),
+        Slot::Sessions(r) => {
+            if shell
+                .layers
+                .sessions
+                .begin(cx, r, 0, &mut shell.data.hits, &mut shell.data.tooltips)
+            {
+                open_batches(shell, cx, r);
+                crate::shell::sheets::history::draw_page(shell, cx, scope, r);
+                shell
+                    .layers
+                    .sessions
+                    .end(cx, &shell.data.hits, &shell.data.tooltips);
+            }
+        }
+    }
+}
+
+/// Makepad appends a primitive to its list's earliest compatible batch, so the first batch of
+/// each shader fixes their stacking. Opening a layer with a transparent box batch keeps
+/// backgrounds under text and icons, as when every region shared the window list.
+fn open_batches(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect) {
+    shell.painter.draw_box.paint(cx, r, Vec4::default(), 0.0);
 }
 
 fn draw_startup_error(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect, p: &Palette) {
@@ -853,7 +955,7 @@ fn draw_wide(
     if sidebar_w > 0.0 {
         let side = rect(x, content.pos.y, sidebar_w, content.size.y);
         shell.data.chrome.sidebar_rect = side;
-        sidebar::draw(shell, cx, scope, state, side);
+        shell.data.chrome.slots.push(Slot::Sidebar(side));
         x += sidebar_w;
         let handle = rect(x, content.pos.y, 5.0, content.size.y);
         shell.painter.fill(cx, handle, p.border, 0.0);
@@ -868,7 +970,7 @@ fn draw_wide(
         };
     let main = rect(x, content.pos.y, main_right - x, content.size.y);
     if page_shown {
-        draw_page(shell, cx, scope, main);
+        draw_page(shell, cx, main);
     } else {
         let tree = shell.data.layout.tree.clone();
         draw_node(shell, cx, scope, state, &tree, main);
@@ -1025,11 +1127,12 @@ fn draw_pane(
         draw_empty(shell, cx, content, has_sessions);
         return;
     };
-    draw_root(shell, cx, scope, &key, content);
+    place_root(shell, cx, scope, &key, content);
 }
 
-/// Mounts (first time) and draws a tab root in `r`.
-pub fn draw_root(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, key: &str, r: Rect) {
+/// Mounts (first time) a tab root and lays it out in `r`: its own layer, or inline while the
+/// overlay draws the compact Explorer.
+fn place_root(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, key: &str, r: Rect) {
     if !shell.data.panels.contains_key(key) {
         let Some(target) = shell.data.layout.target(key).cloned() else {
             return;
@@ -1049,7 +1152,28 @@ pub fn draw_root(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, key: 
             }
         }
     }
+    if shell.data.chrome.overlay_pass {
+        paint_root(shell, cx, scope, key, r, false);
+    } else {
+        shell.data.chrome.slots.push(Slot::Root {
+            key: key.to_string(),
+            rect: r,
+        });
+    }
+}
+
+/// Draws a mounted tab root in `r`, in its retained layer when `layered`.
+fn paint_root(
+    shell: &mut PaseoShell,
+    cx: &mut Cx2d,
+    scope: &mut Scope,
+    key: &str,
+    r: Rect,
+    layered: bool,
+) {
     let focused = focused_tab(shell).as_deref() == Some(key);
+    let app_active = !shell.data.app_inactive;
+    let compact = shell.data.compact;
     let Some(panel) = shell.data.panels.get_mut(key) else {
         return;
     };
@@ -1068,12 +1192,31 @@ pub fn draw_root(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, key: 
         ui.activity = crate::common::PanelActivity {
             visible: true,
             focused,
-            app_active: !shell.data.app_inactive,
+            app_active,
         };
     }
-    cx.begin_turtle(Walk::abs_rect(r), Layout::default());
-    widget.draw_walk_all(cx, scope, Walk::fill());
-    cx.end_turtle();
+    // Focus, activity and width class reach the root through `UiContext`, not its areas.
+    let inputs = layer::inputs((focused, app_active, compact));
+    if !layered
+        || panel.layer.begin(
+            cx,
+            r,
+            inputs,
+            &mut shell.data.hits,
+            &mut shell.data.tooltips,
+        )
+    {
+        if layered {
+            // See `open_batches`; `panel` borrows `shell.data`.
+            shell.painter.draw_box.paint(cx, r, Vec4::default(), 0.0);
+        }
+        cx.begin_turtle(Walk::abs_rect(r), Layout::default());
+        widget.draw_walk_all(cx, scope, Walk::fill());
+        cx.end_turtle();
+        if layered {
+            panel.layer.end(cx, &shell.data.hits, &shell.data.tooltips);
+        }
+    }
     if let Some(ui) = scope.data.get_mut::<UiContext>() {
         ui.target = None;
         ui.tab_key = None;
@@ -1580,12 +1723,13 @@ pub fn tab_icon(
     ui.icon(cx, r, icons::for_tab_kind(&target.kind), r.size.y, color);
 }
 
-fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
+/// Lays out the shown page: the sessions page (shell-drawn) or a mounted page root.
+fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, r: Rect) {
     let Some(page) = shell.data.page.clone() else {
         return;
     };
     if matches!(page, crate::shell::Page::Sessions { .. }) {
-        crate::shell::sheets::history::draw_page(shell, cx, scope, r);
+        shell.data.chrome.slots.push(Slot::Sessions(r));
         return;
     }
     if shell
@@ -1597,7 +1741,11 @@ fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) 
         let widget = panels::page_widget(cx, &shell.templates, &page);
         shell.data.page_root = Some((page.clone(), widget));
     }
-    let Some((_, widget)) = shell.data.page_root.clone() else {
+    shell.data.chrome.slots.push(Slot::Page(r));
+}
+
+fn paint_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) {
+    let Some((page, widget)) = shell.data.page_root.clone() else {
         return;
     };
     if let Some(ui) = scope.data.get_mut::<UiContext>() {
@@ -1606,9 +1754,24 @@ fn draw_page(shell: &mut PaseoShell, cx: &mut Cx2d, scope: &mut Scope, r: Rect) 
         ui.tab_key = None;
         ui.activity = crate::common::PanelActivity::default();
     }
-    cx.begin_turtle(Walk::abs_rect(r), Layout::default());
-    widget.draw_walk_all(cx, scope, Walk::fill());
-    cx.end_turtle();
+    // A different page root replaces the retained paint.
+    let inputs = layer::inputs(widget.widget_uid().0);
+    if shell.layers.page.begin(
+        cx,
+        r,
+        inputs,
+        &mut shell.data.hits,
+        &mut shell.data.tooltips,
+    ) {
+        open_batches(shell, cx, r);
+        cx.begin_turtle(Walk::abs_rect(r), Layout::default());
+        widget.draw_walk_all(cx, scope, Walk::fill());
+        cx.end_turtle();
+        shell
+            .layers
+            .page
+            .end(cx, &shell.data.hits, &shell.data.tooltips);
+    }
 }
 
 fn draw_compact(
@@ -1620,13 +1783,13 @@ fn draw_compact(
     page_shown: bool,
 ) {
     if page_shown {
-        draw_page(shell, cx, scope, content);
+        draw_page(shell, cx, content);
         return;
     }
     match shell.data.layout.compact_destination {
         CompactDestination::Sidebar => {
             shell.data.chrome.sidebar_rect = content;
-            sidebar::draw(shell, cx, scope, state, content);
+            shell.data.chrome.slots.push(Slot::Sidebar(content));
         }
         _ => {
             let pane = shell.data.layout.focused().clone();
@@ -1690,6 +1853,14 @@ pub fn draw_compact_explorer(
     );
     shell.data.chrome.explorer_rect = inner;
     let (keys, selected) = explorer_keys(shell);
+    // The overlay repaints with every window composition while the chrome geometry is
+    // retained with the chrome layer: replace only the Explorer's own entries.
+    let chrome = &mut shell.data.chrome;
+    chrome.pane_rects.retain(|(pane, _)| pane != "explorer");
+    chrome.tab_bars.retain(|(pane, _)| pane != "explorer");
+    chrome.tab_rects.retain(|(pane, _, _)| pane != "explorer");
+    chrome.tab_overflow.retain(|(pane, _)| pane != "explorer");
+    chrome.overlay_pass = true;
     // The compact Explorer's tab rail lives in the overlay layer's hit map.
     std::mem::swap(&mut shell.painter, &mut shell.overlay_painter);
     let hits = std::mem::take(&mut shell.data.hits);
@@ -1705,6 +1876,7 @@ pub fn draw_compact_explorer(
         inner,
         true,
     );
+    shell.data.chrome.overlay_pass = false;
     shell.data.overlays.hits = std::mem::replace(&mut shell.data.hits, hits);
     std::mem::swap(&mut shell.painter, &mut shell.overlay_painter);
 }
@@ -1734,7 +1906,7 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
     if !sidebar_visible {
         shell.data.sidebar.stop_motion();
     }
-    let area = shell.data.bg_area;
+    let area = shell.layers.bg;
     match event.hits(cx, area) {
         Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
             let hover = shell.data.hits.at(e.abs);
@@ -1755,15 +1927,15 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
             };
             cx.set_cursor(cursor);
             if hover != shell.data.pointer.hover {
-                shell.data.pointer.hover = hover.clone();
-                crate::shell::overlays::hover_tooltip(shell, cx, hover, e.abs);
-                shell.redraw(cx);
+                let previous = std::mem::replace(&mut shell.data.pointer.hover, hover.clone());
+                crate::shell::overlays::hover_tooltip(shell, cx, hover.clone(), e.abs);
+                shell.redraw_hit_owners(cx, &[previous.as_deref(), hover.as_deref()]);
             }
         }
         Hit::FingerHoverOut(_) => {
-            if shell.data.pointer.hover.take().is_some() {
+            if let Some(previous) = shell.data.pointer.hover.take() {
                 crate::shell::overlays::hover_tooltip(shell, cx, None, DVec2::default());
-                shell.redraw(cx);
+                shell.redraw_hit_owners(cx, &[Some(previous.as_str())]);
             }
         }
         Hit::FingerDown(fe) => {
@@ -1792,14 +1964,15 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
                 shell.data.sidebar.touch_down(fe.abs, fe.time);
             }
             start_drag(shell, id.as_deref(), fe.abs);
-            shell.data.pointer.pressed = id;
-            shell.redraw(cx);
+            let previous = std::mem::replace(&mut shell.data.pointer.pressed, id.clone());
+            shell.redraw_hit_owners(cx, &[previous.as_deref(), id.as_deref()]);
         }
         Hit::FingerMove(fe) => {
             if fe.device.is_touch() && shell.data.sidebar.touch_move(fe.abs, fe.time) {
-                shell.data.pointer.pressed = None;
+                let previous = shell.data.pointer.pressed.take();
                 shell.data.chrome.edge_start = None;
-                shell.redraw(cx);
+                shell.layers.sidebar.invalidate(cx);
+                shell.redraw_hit_owners(cx, &[previous.as_deref()]);
                 return;
             }
             if update_drag(shell, cx, fe.abs, fe.time) {
@@ -1844,19 +2017,29 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
                 shell.redraw(cx);
                 return;
             }
-            if let Some(id) = pressed
+            let clicked = if let Some(id) = pressed.as_deref()
                 && fe.is_over
                 && !fe.has_long_press_occurred
                 && (!fe.device.is_touch() || fe.was_tap())
-                && shell.data.hits.at(fe.abs).as_deref() == Some(id.as_str())
+                && shell.data.hits.at(fe.abs).as_deref() == Some(id)
                 && let Some(ui) = scope.data.get_mut::<UiContext>()
             {
-                commands::click(shell, cx, ui, &id, fe.modifiers);
+                commands::click(shell, cx, ui, id, fe.modifiers);
+                true
+            } else {
+                false
+            };
+            let hover = if fe.device.has_hovers() {
+                None
+            } else {
+                shell.data.pointer.hover.take()
+            };
+            if clicked {
+                // A command can change anything the shell presents.
+                shell.redraw(cx);
+            } else {
+                shell.redraw_hit_owners(cx, &[pressed.as_deref(), hover.as_deref()]);
             }
-            if !fe.device.has_hovers() {
-                shell.data.pointer.hover = None;
-            }
-            shell.redraw(cx);
         }
         Hit::FingerScroll(e) => {
             if sidebar_visible && shell.data.chrome.sidebar_rect.contains(e.abs) {

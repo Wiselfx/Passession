@@ -180,6 +180,8 @@ pub struct Layout {
     openers: HashMap<String, String>,
     /// Changes since the last save request.
     pub dirty: bool,
+    /// Bumped by every recorded change; the shell repaints its chrome when it moves.
+    pub revision: u64,
 }
 
 impl Default for Layout {
@@ -204,6 +206,7 @@ impl Default for Layout {
             navigation_serial: 0,
             openers: HashMap::new(),
             dirty: false,
+            revision: 0,
         }
     }
 }
@@ -277,6 +280,7 @@ impl Layout {
 
     fn changed(&mut self) {
         self.dirty = true;
+        self.revision += 1;
     }
 
     fn upsert(&mut self, target: PanelTarget) {

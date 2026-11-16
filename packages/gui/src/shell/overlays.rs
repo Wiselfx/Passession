@@ -519,7 +519,7 @@ fn show_toast(
         rect: Rect::default(),
         action_rect: Rect::default(),
     });
-    cx.redraw_all();
+    overlays.area.redraw(cx);
 }
 
 /// Removes the toast; a queued info toast takes its place.
@@ -529,7 +529,7 @@ fn dismiss_toast(overlays: &mut Overlays, cx: &mut Cx) {
     }
     match overlays.queued_toast.take() {
         Some(next) => show_toast(overlays, cx, next, false, None),
-        None => cx.redraw_all(),
+        None => overlays.area.redraw(cx),
     }
 }
 
@@ -618,7 +618,7 @@ pub fn handle_timers(overlays: &mut Overlays, cx: &mut Cx, event: &Event) {
     }
     if overlays.tooltip_timer.is_event(event).is_some() {
         overlays.tooltip = overlays.tooltip_pending.take();
-        cx.redraw_all();
+        overlays.area.redraw(cx);
     }
     if overlays.spin.is_event(event).is_some() {
         overlays.area.redraw(cx);
@@ -664,7 +664,7 @@ pub fn show_tooltip(overlays: &mut Overlays, cx: &mut Cx, tip: Option<Tip>) {
         overlays.tooltip_pending = Some(tip);
     }
     if had {
-        cx.redraw_all();
+        overlays.area.redraw(cx);
     }
 }
 
@@ -2026,7 +2026,7 @@ fn draw_sheet(
     }
     if (height - *content_height).abs() > 0.5 {
         *content_height = height;
-        shell.redraw(cx);
+        shell.data.overlays.area.redraw(cx);
     }
 }
 
@@ -2173,7 +2173,7 @@ fn draw_draggable_sheet(
     }
     if (height - *content_height).abs() > 0.5 {
         *content_height = height;
-        shell.redraw(cx);
+        shell.data.overlays.area.redraw(cx);
     }
 }
 
@@ -2254,7 +2254,7 @@ fn draw_fade_sheet(
     shell.overlay_painter.set_alpha(1.0);
     if (height - *content_height).abs() > 0.5 {
         *content_height = height;
-        shell.redraw(cx);
+        shell.data.overlays.area.redraw(cx);
     }
 }
 
@@ -2573,7 +2573,7 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         && scroll_viewport(shell).contains(e.abs)
     {
         scroll_top(shell, e.scroll.y);
-        shell.redraw(cx);
+        shell.data.overlays.area.redraw(cx);
     }
     // Compact draggable sheets already combine resizing and scrolling below.
     let draggable = shell.data.overlays.stack.last().is_some_and(|top| {
@@ -2592,7 +2592,7 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
             {
                 shell.data.overlays.pointer.pressed = None;
                 scroll_top(shell, dy);
-                shell.redraw(cx);
+                shell.data.overlays.area.redraw(cx);
             }
         } else {
             shell.data.overlays.touch_scroll.reset();
@@ -2608,7 +2608,7 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, scope: &
         overlays.pointer.handle_hit(cx, swept, &overlays.hits)
     };
     if redraw {
-        shell.redraw(cx);
+        shell.data.overlays.area.redraw(cx);
     }
     match press {
         Some(Press::Click(id, _)) => click(shell, cx, scope, &id),

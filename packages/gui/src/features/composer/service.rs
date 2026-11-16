@@ -172,6 +172,11 @@ pub struct ComposerService {
     notices: HashMap<u64, Vec<PanelNotice>>,
     pub(super) effects: Vec<UiEffect>,
     revision: u64,
+    /// Bumped when a decoded image texture is installed (`texture_revision`).
+    texture_revision: u64,
+    /// Counts `image_texture` lookups that missed (still decoding); consumers compare it
+    /// across their draw to learn they drew a placeholder.
+    texture_misses: u64,
     collected: bool,
     next_panel: u64,
     /// Request id of the last full flush handed to the core, for `flush_drafts`.
@@ -198,6 +203,8 @@ impl ComposerService {
             notices: HashMap::new(),
             effects: Vec::new(),
             revision: 0,
+            texture_revision: 0,
+            texture_misses: 0,
             collected: false,
             next_panel: 0,
             persist_error: None,
@@ -229,6 +236,19 @@ impl ComposerService {
 
     pub(super) fn bump(&mut self) {
         self.revision += 1;
+    }
+
+    /// Revision of the installed decoded image textures.
+    pub fn texture_revision(&self) -> u64 {
+        self.texture_revision
+    }
+
+    pub fn texture_misses(&self) -> u64 {
+        self.texture_misses
+    }
+
+    pub(super) fn note_texture_miss(&mut self) {
+        self.texture_misses += 1;
     }
 
     pub fn allocate_panel(&mut self) -> u64 {
@@ -792,11 +812,16 @@ impl ComposerService {
     }
 
     pub fn poll_background(&mut self, cx: &mut Cx) {
-        let mut any = false;
         while let Some(result) = self.blobs.try_recv() {
-            any = true;
             match result {
-                BlobResult::Decoded { key, result } => self.blobs.install(cx, key, result),
+                // Composer pills/overlays redraw through the revision; other consumers
+                // compare `texture_revision` after drawing a placeholder.
+                BlobResult::Decoded { key, result } => {
+                    self.blobs.install(cx, key, result);
+                    self.texture_revision += 1;
+                    self.bump();
+                }
+                // `notify` bumps the revision for the owning panel.
                 BlobResult::Stored { token, images } => {
                     if let Some(panel) = self.blob_owners.remove(&token) {
                         self.notify(Some(panel), PanelNotice::ImagesStored { token, images });
@@ -808,9 +833,6 @@ impl ComposerService {
                     }
                 }
             }
-        }
-        if any {
-            self.bump();
         }
     }
 

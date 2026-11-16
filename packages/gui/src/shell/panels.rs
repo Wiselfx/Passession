@@ -4,6 +4,7 @@
 
 use makepad_widgets::*;
 
+use crate::common::layer::Layer;
 use crate::common::{PanelTarget, UiContext, json as j};
 use crate::features::command_center::CommandCenterPanelWidgetRefExt;
 use crate::features::composer::CreationPanelWidgetRefExt;
@@ -109,6 +110,8 @@ pub struct Panel {
     pub target: PanelTarget,
     pub visible: bool,
     pub focused: bool,
+    /// The root paints into its own retained layer (`common::layer`).
+    pub layer: Layer,
 }
 
 fn chat_target(target: &PanelTarget) -> timeline::ChatTarget {
@@ -211,6 +214,7 @@ pub fn mount(cx: &mut Cx, templates: &PanelTemplates, target: &PanelTarget) -> O
         target: target.clone(),
         visible: false,
         focused: false,
+        layer: Layer::default(),
     };
     retarget(cx, &panel);
     Some(panel)

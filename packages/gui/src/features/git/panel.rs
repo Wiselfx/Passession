@@ -179,9 +179,10 @@ impl Widget for GitPanel {
         let redraw = with_store(|store| match view {
             View::Changes(changes) => {
                 let mut redraw = process && changes.process(cx, ui, store, visible);
-                if changes.handle_overlay(cx, event, ui, &mut parts, store, compact) {
-                    redraw = true;
-                } else if visible {
+                let (consumed, changed) =
+                    changes.handle_overlay(cx, event, ui, &mut parts, store, compact);
+                redraw |= changed;
+                if !consumed && visible {
                     redraw |=
                         changes.handle_pointer(cx, event, area, ui, &mut parts, store, compact);
                 }

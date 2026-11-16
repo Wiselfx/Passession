@@ -145,6 +145,8 @@ struct Slot {
     error: Option<Failure>,
     export_status: Option<ExportStatus>,
     exporting: bool,
+    /// The draw list that last drew this diagram; its current results repaint it.
+    owner: Option<DrawListId>,
 }
 
 /// Row ownership prevents a completed job from attaching to a recycled PortalList item.
@@ -203,6 +205,8 @@ struct Worker {
     cache: VecDeque<Rc<Artifact>>,
     cache_bytes: usize,
     epoch: u64,
+    /// Owners whose shown render or export state changed, repainted by `handle_event`.
+    redraw: Vec<DrawListId>,
 }
 
 impl Worker {
@@ -260,6 +264,7 @@ impl Worker {
             cache: VecDeque::new(),
             cache_bytes: 0,
             epoch: 0,
+            redraw: Vec::new(),
         }
     }
 
@@ -294,7 +299,11 @@ impl Worker {
         }
         while let Some(job) = self.exports.pop_front() {
             if !export_is_current(&job.slot, job.work.revision) {
-                set_export(&job.slot, job.work.revision, ExportStatus::Cancelled);
+                self.redraw.extend(set_export(
+                    &job.slot,
+                    job.work.revision,
+                    ExportStatus::Cancelled,
+                ));
                 continue;
             }
             let active = Active::Export(
@@ -311,14 +320,14 @@ impl Worker {
                 self.active = Some(active);
                 return;
             }
-            set_export(
+            self.redraw.extend(set_export(
                 &job.slot,
                 active_revision(&active),
                 ExportStatus::Failed(Failure::new(
                     FailureKind::Worker,
                     "The export worker is unavailable.",
                 )),
-            );
+            ));
         }
         while let Some(job) = self.pending.pop_front() {
             let Some(slot) = job.slot.upgrade() else {
@@ -342,10 +351,11 @@ impl Worker {
                 FailureKind::Worker,
                 "The diagram worker is unavailable.",
             ));
+            self.redraw.extend(slot.owner);
         }
     }
 
-    fn poll(&mut self, cx: &mut Cx) -> bool {
+    fn poll(&mut self, cx: &mut Cx) {
         let mut changed = false;
         while let Ok(done) = self.receiver.try_recv() {
             changed = true;
@@ -355,6 +365,10 @@ impl Worker {
                         let mut slot = slot.borrow_mut();
                         if current(&slot.revision, revision) {
                             slot.submitted = None;
+                            // `Ok(None)` is a job the worker skipped as already replaced.
+                            if !matches!(result, Ok(None)) {
+                                self.redraw.extend(slot.owner);
+                            }
                             match result {
                                 Ok(Some(rendered)) => {
                                     if rendered
@@ -407,7 +421,10 @@ impl Worker {
                     Finished::Export(result),
                 ) => {
                     match result {
-                        Ok(Some(_)) if desktop => set_export(&owner, revision, ExportStatus::Saved),
+                        Ok(Some(_)) if desktop => {
+                            self.redraw
+                                .extend(set_export(&owner, revision, ExportStatus::Saved));
+                        }
                         Ok(Some(path)) => {
                             if export_is_current(&owner, revision) {
                                 if let Some(platform) = paseo_gui_platform::platform() {
@@ -418,24 +435,40 @@ impl Worker {
                                         PlatformPending::Save(owner, revision, path),
                                     );
                                 } else {
-                                    set_export(
+                                    self.redraw.extend(set_export(
                                         &owner,
                                         revision,
                                         ExportStatus::Failed(Failure::new(
                                             FailureKind::Platform,
                                             "Platform services are unavailable.",
                                         )),
-                                    );
+                                    ));
                                     remove_export_file(path);
                                 }
                             } else {
-                                set_export(&owner, revision, ExportStatus::Cancelled);
+                                self.redraw.extend(set_export(
+                                    &owner,
+                                    revision,
+                                    ExportStatus::Cancelled,
+                                ));
                                 remove_export_file(path);
                             }
                             // The document picker retains its source until actual completion.
                         }
-                        Ok(None) => set_export(&owner, revision, ExportStatus::Cancelled),
-                        Err(error) => set_export(&owner, revision, ExportStatus::Failed(error)),
+                        Ok(None) => {
+                            self.redraw.extend(set_export(
+                                &owner,
+                                revision,
+                                ExportStatus::Cancelled,
+                            ));
+                        }
+                        Err(error) => {
+                            self.redraw.extend(set_export(
+                                &owner,
+                                revision,
+                                ExportStatus::Failed(error),
+                            ));
+                        }
                     }
                 }
                 _ => (),
@@ -445,25 +478,25 @@ impl Worker {
         if changed {
             self.epoch = self.epoch.wrapping_add(1);
         }
-        changed
     }
 
     fn platform_result(
         &mut self,
         request: u64,
         result: &Result<PlatformValue, paseo_gui_platform::PlatformError>,
-    ) -> bool {
+    ) {
         let Some(pending) = self.platform.remove(&request) else {
-            return false;
+            return;
         };
-        match pending {
+        let shown = match pending {
             PlatformPending::Choose(mut job) => match result {
                 Ok(PlatformValue::SaveLocation(Some(destination))) => {
                     if export_is_current(&job.slot, job.work.revision) {
                         job.work.destination = Some(destination.clone());
                         self.exports.push_back(job);
+                        None
                     } else {
-                        set_export(&job.slot, job.work.revision, ExportStatus::Cancelled);
+                        set_export(&job.slot, job.work.revision, ExportStatus::Cancelled)
                     }
                 }
                 Ok(_) => set_export(&job.slot, job.work.revision, ExportStatus::Cancelled),
@@ -479,10 +512,10 @@ impl Worker {
                     Err(error) => set_export(&owner, revision, platform_status(error)),
                 }
             }
-        }
+        };
+        self.redraw.extend(shown);
         self.dispatch();
         self.epoch = self.epoch.wrapping_add(1);
-        true
     }
 }
 
@@ -515,51 +548,57 @@ fn export_is_current(owner: &Weak<RefCell<Slot>>, revision: u64) -> bool {
     })
 }
 
-fn set_export(owner: &Weak<RefCell<Slot>>, revision: u64, status: ExportStatus) {
-    if let Some(slot) = owner.upgrade() {
-        let mut slot = slot.borrow_mut();
-        if current(&slot.revision, revision) {
-            slot.exporting = false;
-            slot.export_status = Some(match status {
-                ExportStatus::Failed(Failure { kind, detail }) => ExportStatus::Failed(
-                    Failure::new(kind, detail.chars().take(300).collect::<String>()),
-                ),
-                status => status,
-            });
-        }
+/// Applies `status` to a still-current revision and returns the owner showing it.
+fn set_export(
+    owner: &Weak<RefCell<Slot>>,
+    revision: u64,
+    status: ExportStatus,
+) -> Option<DrawListId> {
+    let slot = owner.upgrade()?;
+    let mut slot = slot.borrow_mut();
+    if !current(&slot.revision, revision) {
+        return None;
     }
+    slot.exporting = false;
+    slot.export_status = Some(match status {
+        ExportStatus::Failed(Failure { kind, detail }) => ExportStatus::Failed(Failure::new(
+            kind,
+            detail.chars().take(300).collect::<String>(),
+        )),
+        status => status,
+    });
+    slot.owner
 }
 
 thread_local! {
     static WORKER: RefCell<Option<Worker>> = const { RefCell::new(None) };
 }
 
-/// Shell hook, before row dispatch. Completion wakes Makepad through ToUISender;
-/// redraw_all invalidates the PortalList's always-drawn row measurement pass.
+/// Shell hook, before row dispatch. Completion wakes Makepad through ToUISender.
+/// Only the draw list that last drew an affected diagram repaints (re-running its
+/// pane, including the PortalList measurement); stale results repaint nothing.
 pub fn handle_event(cx: &mut Cx, event: &Event) {
-    let changed = WORKER.with(|worker| {
+    WORKER.with(|worker| {
         let mut worker = worker.borrow_mut();
         let Some(worker) = worker.as_mut() else {
-            return false;
+            return;
         };
-        let mut changed = false;
         if matches!(event, Event::Signal) {
-            changed |= worker.poll(cx);
+            worker.poll(cx);
         }
         if let Event::Actions(actions) = event {
             for action in actions.iter() {
                 if let Some(PlatformAction::Completed { request, result }) =
                     action.downcast_ref::<PlatformAction>()
                 {
-                    changed |= worker.platform_result(*request, result);
+                    worker.platform_result(*request, result);
                 }
             }
         }
-        changed
+        for owner in worker.redraw.drain(..) {
+            cx.redraw_list(owner);
+        }
     });
-    if changed {
-        cx.redraw_all();
-    }
 }
 
 /// Changes only on completed render/export work, never on ordinary frames.
@@ -567,11 +606,18 @@ pub fn epoch() -> u64 {
     WORKER.with(|worker| worker.borrow().as_ref().map_or(0, |w| w.epoch))
 }
 
-fn request(request: &Request, source: &str, dark: bool, epoch: u64) -> Option<Rc<Artifact>> {
+fn request(
+    request: &Request,
+    owner: Option<DrawListId>,
+    source: &str,
+    dark: bool,
+    epoch: u64,
+) -> Option<Rc<Artifact>> {
     WORKER.with(|worker| {
         let mut worker = worker.borrow_mut();
         let worker = worker.get_or_insert_with(Worker::new);
         let mut slot = request.0.borrow_mut();
+        slot.owner = owner;
         if source.len() > 32 * 1024 {
             if !slot.source_too_large {
                 slot.source_too_large = true;
@@ -726,8 +772,9 @@ pub fn draw(
     opts.counter += 1;
     let key = format!("{}:mermaid:{}", opts.key, opts.counter);
     let dark = d.look.dark();
+    let owner = d.result_owner(cx);
     let req = d.state.mermaid.entry(key.clone()).or_default();
-    let artifact = request(req, source, dark, crate::theme::epoch());
+    let artifact = request(req, owner, source, dark, crate::theme::epoch());
     let (revision, error, exporting, status) = {
         let slot = req.0.borrow();
         (

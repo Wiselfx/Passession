@@ -288,6 +288,9 @@ pub struct WaAttachmentPill {
     body_hovered: bool,
     #[rust]
     disc_hovered: bool,
+    /// Composer texture revision when the image was drawn still decoding.
+    #[rust]
+    texture_wait: Option<u64>,
 }
 
 const PILL_OVERHANG: f64 = 8.0;
@@ -296,6 +299,13 @@ impl Widget for WaAttachmentPill {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if !self.visible {
             return;
+        }
+        if self
+            .texture_wait
+            .is_some_and(|rev| rev != crate::features::composer::texture_revision())
+        {
+            self.texture_wait = None;
+            self.redraw(cx);
         }
         match event.hits(cx, self.area) {
             Hit::FingerHoverIn(_) => {
@@ -373,6 +383,7 @@ impl Widget for WaAttachmentPill {
             .painter
             .capture_box(cx, frame, p.surface1, p.border_accent, 1.0, 6.0);
         let body = rect(frame.pos.x + 1.0, frame.pos.y + 1.0, body_w, 48.0);
+        self.texture_wait = None;
         match self.body.clone() {
             PillBody::Image(image) => {
                 if let Some(texture) = crate::features::composer::image_texture(cx, &image, true) {
@@ -381,6 +392,8 @@ impl Widget for WaAttachmentPill {
                         _ => (1, 1),
                     };
                     self.draw_image.paint(cx, body, &texture, size, 5.0, false);
+                } else {
+                    self.texture_wait = Some(crate::features::composer::texture_revision());
                 }
             }
             PillBody::Label {

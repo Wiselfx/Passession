@@ -647,6 +647,8 @@ impl Driver {
             value,
             drawn: false,
         });
+        // The capture phase repaints every window it records.
+        #[allow(clippy::disallowed_methods)]
         cx.redraw_all();
     }
 

@@ -24,8 +24,10 @@ use makepad_widgets::*;
 use paseo_gui_core::{CoreError, CoreEvent, RequestId};
 use serde_json::Value;
 
+use crate::common::layer::Layer;
 use crate::common::overlay::{self as overlay_api, OVERLAY_ACTION, OverlayRequest, SHELL_OWNER};
 use crate::common::paint::{HitMap, Painter};
+use crate::common::state_delta::StateDelta;
 use crate::common::{
     MAIN_WINDOW_ID, PanelActivity, Route, UiCommand, UiContext, json as j, set_compact_layout, tr,
 };
@@ -214,6 +216,9 @@ pub enum Page {
     },
 }
 
+/// Cadence (seconds) for repainting recency lists after activity-only state changes.
+const RECENCY_INTERVAL: f64 = 1.0;
+
 /// What a core response we issued means to the shell.
 #[derive(Clone, Debug)]
 pub enum Pending {
@@ -286,7 +291,6 @@ pub struct Data {
     pub hits: HitMap<String>,
     pub tooltips: HashMap<String, String>,
     pub pointer: Pointer,
-    pub bg_area: Area,
     pub overlays: overlays::Overlays,
     pub sidebar: sidebar::SidebarState,
     pub chrome: chrome::ChromeState,
@@ -323,13 +327,59 @@ pub struct Data {
     pub reveal_agent: Option<(String, String)>,
     /// The agent tab whose chat root reveals its pending permission/question on next draw.
     pub reveal_attention: Option<String>,
+    /// The layout revision the shell layers last presented.
+    pub presented_layout: u64,
+    /// Pending repaint of recency lists after activity-only state changes.
+    pub recency_timer: Timer,
+}
+
+/// The retained layers one window composes (see `common::layer`); pane roots own theirs in
+/// `panels::Panel`.
+#[derive(Default)]
+pub struct ShellLayers {
+    /// Window-wide capture box under every layer (shell pointer hits).
+    pub bg: Area,
+    /// Header, banner, tab strips, dividers and empty states.
+    pub chrome: Layer,
+    pub sidebar: Layer,
+    /// A mounted page root (Settings, Schedules, ...).
+    pub page: Layer,
+    /// The shell-drawn sessions page.
+    pub sessions: Layer,
+}
+
+impl ShellLayers {
+    fn area(&self) -> Area {
+        self.bg
+    }
+
+    /// Shell-owned presentation changed. Pane roots are not repainted: they redraw their own
+    /// areas, and a new rect, focus or shared-state change reaches them separately.
+    fn redraw(&self, cx: &mut Cx) {
+        for layer in [&self.chrome, &self.sidebar, &self.page, &self.sessions] {
+            layer.invalidate(cx);
+        }
+    }
+
+    fn finish_frame(&mut self, cx: &mut Cx2d) {
+        for layer in [
+            &mut self.chrome,
+            &mut self.sidebar,
+            &mut self.page,
+            &mut self.sessions,
+        ] {
+            layer.finish_frame(cx);
+        }
+    }
 }
 
 #[derive(Live, LiveHook, Widget)]
 pub struct PaseoShell {
-    #[redraw]
     #[live]
     painter: Painter,
+    #[redraw]
+    #[rust]
+    layers: ShellLayers,
     #[live]
     overlay_painter: Painter,
     #[live]
@@ -359,6 +409,26 @@ impl PaseoShell {
 
     fn is_main(&self) -> bool {
         self.data.window_id == MAIN_WINDOW_ID || self.data.window_id.is_empty()
+    }
+
+    /// Hover/press feedback changed for these shell hit ids: repaints only the layers that
+    /// drew them. An id no retained layer owns repaints every shell-owned layer.
+    pub(crate) fn redraw_hit_owners(&self, cx: &mut Cx, ids: &[Option<&str>]) {
+        let layers = &self.layers;
+        for id in ids.iter().flatten() {
+            match [
+                &layers.chrome,
+                &layers.sidebar,
+                &layers.page,
+                &layers.sessions,
+            ]
+            .into_iter()
+            .find(|layer| layer.owns_hit(id))
+            {
+                Some(layer) => layer.invalidate(cx),
+                None => layers.redraw(cx),
+            }
+        }
     }
 
     /// First state: restore this window's layout (Flutter `_restoreLayout`).
@@ -405,11 +475,12 @@ impl PaseoShell {
     /// Shell-level reactions to the core batch (identity remaps, responses).
     fn handle_core_batch(&mut self, cx: &mut Cx, ui: &mut UiContext) {
         let events = std::mem::take(&mut ui.events);
+        let mut published = false;
         for event in &events {
             match event {
                 CoreEvent::State { .. } => {
                     self.restore(ui);
-                    self.redraw(cx);
+                    published = true;
                 }
                 CoreEvent::HostEvent { event, .. } => {
                     let kind = j::text(event, "type");
@@ -422,9 +493,6 @@ impl PaseoShell {
                             self.redraw(cx);
                         }
                     }
-                    if kind == "agent_update" || kind == "workspace_update" {
-                        self.redraw(cx);
-                    }
                 }
                 CoreEvent::Response {
                     request_id, result, ..
@@ -433,13 +501,14 @@ impl PaseoShell {
                         commands::on_response(self, cx, ui, request_id, pending, result);
                     }
                 }
+                // Directory and connection changes reach the layers through the `State`
+                // publication the core schedules for each of them.
                 CoreEvent::Connected { .. } => {
                     if self.is_main() {
                         permissions::host_connected(self, ui);
                     }
-                    self.redraw(cx);
                 }
-                CoreEvent::Disconnected { .. } => self.redraw(cx),
+                CoreEvent::Disconnected { .. } => {}
                 CoreEvent::Error { error, .. } => {
                     if error.code != "INVALID_STATE_KEY" {
                         overlays::toast(
@@ -453,6 +522,47 @@ impl PaseoShell {
             }
         }
         ui.events = events;
+        if published {
+            self.invalidate_for_state(cx, &ui.state_delta);
+        }
+    }
+
+    /// Repaints the layers presenting what this batch's `State` publications changed. Chrome
+    /// and pane roots present content; an agent's own session also presents its activity.
+    /// Recency lists and pages present everything, but activity alone (every streamed event
+    /// moves `updatedAt`) only changes minute-granular labels and order: it repaints them on
+    /// a [`RECENCY_INTERVAL`] cadence instead of per publication.
+    fn invalidate_for_state(&mut self, cx: &mut Cx, delta: &StateDelta) {
+        if delta.is_empty() {
+            return;
+        }
+        if delta.content {
+            cx.stop_timer(self.data.recency_timer);
+            self.data.recency_timer = Timer::empty();
+            self.layers.chrome.invalidate(cx);
+            self.redraw_recency(cx);
+        } else if self.data.recency_timer.is_empty() {
+            self.data.recency_timer = cx.start_timeout(RECENCY_INTERVAL);
+        }
+        for panel in self.data.panels.values() {
+            let target = &panel.target;
+            let presents = match target.id.as_deref() {
+                Some(agent) if panels::root_kind(&target.kind) == Some(panels::RootKind::Chat) => {
+                    delta.touches_agent(&target.server_id, agent)
+                }
+                _ => delta.content,
+            };
+            if presents {
+                panel.layer.invalidate(cx);
+            }
+        }
+    }
+
+    /// Layers that list sessions or hosts with their recency.
+    fn redraw_recency(&self, cx: &mut Cx) {
+        self.layers.sidebar.invalidate(cx);
+        self.layers.page.invalidate(cx);
+        self.layers.sessions.invalidate(cx);
     }
 
     /// Applies effects pushed by feature roots, hooks and the shell itself, in order.
@@ -686,7 +796,7 @@ impl Widget for PaseoShell {
         if !ui.events.is_empty() {
             self.handle_core_batch(cx, ui);
             if sidebar::sync_terminals(&mut self.data.sidebar, ui) {
-                self.redraw(cx);
+                self.layers.sidebar.invalidate(cx);
             }
         }
         self.data.router.update(ui.preferences());
@@ -694,11 +804,15 @@ impl Widget for PaseoShell {
         if self.data.save_timer.is_event(event).is_some() {
             self.save_layout(ui);
         }
+        if self.data.recency_timer.is_event(event).is_some() {
+            self.data.recency_timer = Timer::empty();
+            self.redraw_recency(cx);
+        }
         commands::handle_platform_actions(self, cx, event, ui);
         commands::handle_window_events(self, cx, event, ui);
         overlays::handle_timers(&mut self.data.overlays, cx, event);
         if sidebar::track_modifier(&mut self.data.sidebar, event) {
-            self.redraw(cx);
+            self.layers.sidebar.invalidate(cx);
         }
 
         // Standalone tool-call sheets (timeline, drawn above the shell overlays) take input first;
@@ -807,6 +921,11 @@ impl Widget for PaseoShell {
         // and consume animation frames even when a modal temporarily owns input.
         self.data.overlays.sync_focus(cx);
         chrome::animate_explorer(self, cx, event);
+        // Any recorded layout change (tabs, focus, splits, destinations) is shell chrome.
+        if self.data.layout.revision != self.data.presented_layout {
+            self.data.presented_layout = self.data.layout.revision;
+            self.redraw(cx);
+        }
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {

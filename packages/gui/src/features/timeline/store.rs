@@ -352,10 +352,10 @@ pub fn handle_event(cx: &mut Cx, event: &Event, ui: &mut UiContext) {
         .iter()
         .any(|event| matches!(event, CoreEvent::State { .. }))
     {
-        super::images::sync_hosts(&ui.core, &ui.state);
+        super::images::sync_hosts(cx, &ui.core, &ui.state);
     }
-    if matches!(event, Event::Signal) && super::highlight::poll() {
-        cx.redraw_all();
+    if matches!(event, Event::Signal) {
+        super::highlight::poll(cx);
     }
     with_store(|store| {
         if store.core.is_none() {

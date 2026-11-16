@@ -146,6 +146,14 @@ impl Draw<'_> {
     pub fn dry(&self) -> bool {
         self.kit.dry
     }
+
+    /// The draw list a background result for this draw repaints: the owner's
+    /// area, or the list being drawn while the owner has no area yet (its first frame).
+    pub fn result_owner(&self, cx: &Cx2d) -> Option<DrawListId> {
+        self.area
+            .draw_list_id()
+            .or_else(|| cx.get_current_draw_list_id())
+    }
 }
 
 pub fn now_seconds() -> f64 {

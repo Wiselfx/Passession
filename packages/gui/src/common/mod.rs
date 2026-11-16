@@ -9,9 +9,11 @@ pub mod host_http;
 pub mod i18n;
 pub mod icons;
 pub mod json;
+pub mod layer;
 pub mod overlay;
 pub mod paint;
 pub mod provider_icon;
+pub mod state_delta;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -63,6 +65,8 @@ pub(crate) fn is_user_input(event: &Event) -> bool {
 pub struct UiContext {
     pub core: CoreHandle,
     pub state: Arc<Value>,
+    /// What the `State` publications of the current batch changed (empty without one).
+    pub state_delta: state_delta::StateDelta,
     pub events: Vec<CoreEvent>,
     pub route: Route,
     pub effects: Vec<UiEffect>,
@@ -82,6 +86,7 @@ impl UiContext {
         Self {
             core,
             state: Arc::new(Value::Null),
+            state_delta: state_delta::StateDelta::default(),
             events: Vec::new(),
             route: Route::Welcome,
             effects: Vec::new(),

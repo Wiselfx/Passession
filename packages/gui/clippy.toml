@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "makepad_platform::Cx::redraw_all", reason = "repaints every retained layer of every window; redraw the area or widget that drew the change (docs/architecture.md#rendering). Only theme, font and locale changes may allow it." },
+]

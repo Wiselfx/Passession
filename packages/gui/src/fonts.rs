@@ -240,6 +240,8 @@ impl SystemFontState {
                     }
                     drop(fonts);
                     crate::theme::bump_epoch();
+                    // Font metrics change every layer's layout.
+                    #[allow(clippy::disallowed_methods)]
                     cx.redraw_all();
                 }
                 Err(TryRecvError::Empty) => return,
@@ -363,6 +365,8 @@ impl SystemFontState {
             sources
         );
         crate::theme::bump_epoch();
+        // Font metrics change every layer's layout.
+        #[allow(clippy::disallowed_methods)]
         cx.redraw_all();
     }
 }

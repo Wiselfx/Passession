@@ -1887,8 +1887,10 @@ fn code_source(
         let colors = if d.state.markdown_paragraphs.frozen {
             None
         } else {
+            let owner = d.result_owner(cx);
             let request = d.state.fence_highlights.entry(key.clone()).or_default();
-            let colors = highlight::fence(request, text, lang, opts.syntax_theme, d.look.dark());
+            let colors =
+                highlight::fence(request, owner, text, lang, opts.syntax_theme, d.look.dark());
             if request.is_pending() {
                 find_in_matches(opts, &semantic.find_matches);
                 d.state.markdown_paragraphs.pending = true;
@@ -1922,8 +1924,9 @@ fn code_source(
         let copy = Substr::from(prepared.rich.text.clone()).substr(..prepared.rich.copy_end);
         (prepared.laidout.clone(), prepared.found, copy)
     } else {
+        let owner = d.result_owner(cx);
         let request = d.state.fence_highlights.entry(key.clone()).or_default();
-        let colors = highlight::fence(request, text, lang, opts.syntax_theme, d.look.dark());
+        let colors = highlight::fence(request, owner, text, lang, opts.syntax_theme, d.look.dark());
         let (code, spans) = code_rich(text, colors.as_ref(), p.foreground, code_size);
         let mut rich = Rich {
             text: code,

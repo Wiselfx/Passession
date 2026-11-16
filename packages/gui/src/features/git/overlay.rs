@@ -262,6 +262,8 @@ pub struct OverlayHost<P> {
     /// The backdrop area the sheet's sweep lock was taken with.
     locked: Area,
     window_modal: Option<shared::WindowModal>,
+    /// The sheet changed visibly during event handling; the owner redraws its pane.
+    changed: bool,
 }
 
 impl<P> Default for OverlayHost<P> {
@@ -285,6 +287,7 @@ impl<P> Default for OverlayHost<P> {
             touch_scroll: Default::default(),
             locked: Area::Empty,
             window_modal: None,
+            changed: false,
         }
     }
 }
@@ -298,6 +301,11 @@ impl<P> OverlayHost<P> {
     /// A sheet drawn by this host takes the pointer.
     pub fn blocks_input(&self) -> bool {
         self.sheet.is_some()
+    }
+
+    /// Whether the sheet changed visibly since the last call (the owner redraws).
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
     }
 
     /// What the open overlay was opened for.
@@ -435,7 +443,7 @@ impl<P> OverlayHost<P> {
             },
         };
         self.sheet = Some(Sheet { purpose, kind });
-        cx.redraw_all();
+        self.changed = true;
     }
 
     /// Sends a queued shared overlay to the shell under this host's owner.
@@ -462,7 +470,6 @@ impl<P> OverlayHost<P> {
         }
         let sheet = self.sheet.take()?;
         self.unlock(cx);
-        cx.redraw_all();
         Some(sheet.purpose)
     }
 
@@ -500,7 +507,7 @@ impl<P> OverlayHost<P> {
         self.touch_scroll.reset();
         let sheet = self.sheet.take()?;
         self.unlock(cx);
-        cx.redraw_all();
+        self.changed = true;
         Some(make(sheet.purpose))
     }
 
@@ -534,7 +541,7 @@ impl<P> OverlayHost<P> {
                     Some(TextInputAction::Changed(text)) => {
                         self.text = text.clone();
                         self.confirm_discard = false;
-                        cx.redraw_all();
+                        self.changed = true;
                     }
                     // Escape already went through `take_dismissal` above.
                     Some(TextInputAction::Escaped) => {}
@@ -549,22 +556,22 @@ impl<P> OverlayHost<P> {
         }
         if let Some(delta) = self.touch_scroll.handle_event(cx, event, &hit) {
             self.pressed = None;
-            self.scroll_list(cx, self.touch_scroll.origin(), delta);
+            self.scroll_list(self.touch_scroll.origin(), delta);
         }
         match hit {
             Hit::FingerHoverIn(e) | Hit::FingerHoverOver(e) => {
                 let hovered = self.hits.find(e.abs).map(|(_, hit)| hit);
                 if hovered != self.hovered {
                     self.hovered = hovered;
-                    cx.redraw_all();
+                    self.changed = true;
                 }
             }
             Hit::FingerHoverOut(_) => {
                 if self.hovered.take().is_some() {
-                    cx.redraw_all();
+                    self.changed = true;
                 }
             }
-            Hit::FingerScroll(e) => self.scroll_list(cx, e.abs, e.scroll.y),
+            Hit::FingerScroll(e) => self.scroll_list(e.abs, e.scroll.y),
             Hit::FingerDown(e) => {
                 self.pressed = self.hits.find(e.abs).map(|(_, hit)| hit);
             }
@@ -581,7 +588,7 @@ impl<P> OverlayHost<P> {
                     Some(SheetHit::KeepEditing) => {
                         self.confirm_discard = false;
                         self.focus_pending = true;
-                        cx.redraw_all();
+                        self.changed = true;
                     }
                     Some(SheetHit::Discard) => return self.finish(cx, OverlayResult::Dismissed),
                     Some(SheetHit::Confirm) => {
@@ -612,17 +619,17 @@ impl<P> OverlayHost<P> {
     fn request_dismiss(&mut self, cx: &mut Cx) -> Option<OverlayResult<P>> {
         if self.comment_edited() {
             self.confirm_discard = !self.confirm_discard;
-            cx.redraw_all();
+            self.changed = true;
             return None;
         }
         self.finish(cx, OverlayResult::Dismissed)
     }
 
-    fn scroll_list(&mut self, cx: &mut Cx, point: DVec2, delta: f64) {
+    fn scroll_list(&mut self, point: DVec2, delta: f64) {
         if self.list_rect.contains(point) {
             let max = (self.content_height - self.list_rect.size.y).max(0.0);
             self.touch_scroll.apply_delta(&mut self.scroll, delta, max);
-            cx.redraw_all();
+            self.changed = true;
         } else {
             self.touch_scroll.reset();
         }
@@ -644,7 +651,7 @@ impl<P> OverlayHost<P> {
                 if !collapsed.remove(path) {
                     collapsed.insert(path.clone());
                 }
-                cx.redraw_all();
+                self.changed = true;
                 None
             }
             TreeRow::File { index, .. } => {

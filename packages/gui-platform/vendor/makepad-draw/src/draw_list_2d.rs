@@ -220,6 +220,16 @@ impl DrawList2d {
         let will_redraw = cx.will_redraw(self, walk);
         self.begin_maybe(cx, will_redraw)
     }
+
+    /// Detaches a retained list that is not drawn this frame. Its items are cleared under
+    /// the current redraw id: overlay children recorded by its last draw no longer match
+    /// it and are pruned, and its next `begin_maybe` repaints instead of replaying.
+    pub fn release(&mut self, cx: &mut CxDraw) {
+        let redraw_id = cx.cx.redraw_id;
+        cx.cx.draw_lists[self.draw_list.id()].clear_draw_items(redraw_id);
+        cx.nav_list_clear(self.draw_list.id());
+        self.dirty_check_rect = Rect::default();
+    }
 }
 
 

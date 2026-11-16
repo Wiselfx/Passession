@@ -2095,7 +2095,6 @@ pub fn on_response(
                 let whole = write_preference(ui, &key, previous.unwrap_or(Value::Null));
                 ui.core.save_state("preferences", whole);
                 toast(shell, cx, crate::common::error_message(error), true);
-                cx.redraw_all();
             }
         }
         Pending::Sheet { sheet, tag } => sheets::route_response(shell, cx, ui, sheet, &tag, result),

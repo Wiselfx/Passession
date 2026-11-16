@@ -47,16 +47,21 @@ pub fn handle_core_events(cx: &mut Cx, ui: &mut UiContext) {
 }
 
 /// Shell hook on `Event::Signal`: background blob work (image store/decode, file stats).
+/// Owning composer panels see the service revision; other texture consumers poll
+/// `texture_revision` after drawing a placeholder.
 pub fn poll_background(cx: &mut Cx) {
-    let installed = service::with(|svc| {
-        let before = svc.revision();
-        svc.poll_background(cx);
-        svc.revision() != before
-    });
-    if installed {
-        // Timeline user rows render retained images through `image_texture` too.
-        cx.redraw_all();
-    }
+    service::with(|svc| svc.poll_background(cx));
+}
+
+/// Changes whenever a decoded image texture is installed.
+pub fn texture_revision() -> u64 {
+    service::with(|svc| svc.texture_revision())
+}
+
+/// Count of `image_texture` misses so far; a consumer that reads it before and after its
+/// draw knows it drew a placeholder and should redraw when `texture_revision` changes.
+pub fn texture_misses() -> u64 {
+    service::with(|svc| svc.texture_misses())
 }
 
 /// Shell hook before quitting/closing a window: persist the drafts now and report a send or
@@ -154,7 +159,9 @@ pub fn restore_text_if_empty(
         true
     });
     if restored {
-        cx.redraw_all();
+        // The revision bump reaches the owning ComposerPanel in its `handle_event` sync;
+        // guarantee it an event so it re-syncs and redraws itself.
+        cx.new_next_frame();
     }
 }
 
@@ -167,11 +174,16 @@ pub fn sent_message_attachments(agent_id: &str, client_message_id: &str) -> Opti
 /// `{data}`); None while it decodes off the GUI thread.
 pub fn image_texture(_cx: &mut Cx, image: &Value, thumbnail: bool) -> Option<Texture> {
     service::with(|svc| {
-        svc.blobs
+        let texture = svc
+            .blobs
             .texture(image, thumbnail)
             .ok()
             .flatten()
-            .map(|(texture, _)| texture)
+            .map(|(texture, _)| texture);
+        if texture.is_none() {
+            svc.note_texture_miss();
+        }
+        texture
     })
 }
 

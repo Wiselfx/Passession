@@ -518,7 +518,7 @@ pub fn tick(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, ui: &mut UiConte
         None => {}
     }
     let hit = if !covered && matches!(event, Event::TouchUpdate(_) | Event::LongPress(_)) {
-        event.hits(cx, shell.data.bg_area)
+        event.hits(cx, shell.layers.bg)
     } else {
         Hit::Nothing
     };

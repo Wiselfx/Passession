@@ -168,3 +168,13 @@ fixtures. The variation and `.ttc` tests read system fonts named by
 `MAKEPAD_TEST_VARIABLE_FONT` / `MAKEPAD_TEST_FONT_COLLECTION` (default: the
 Ubuntu Sans variable font and Noto Sans CJK collection paths of Ubuntu) and
 skip when the file is absent; no font resources are added.
+
+## Retained list release
+
+`DrawList2d::release` detaches a retained list that a frame did not open. It
+clears the list's items under the current redraw id and resets its dirty-check
+rect. Overlay children recorded by the list's last draw then fail the
+`Overlay::prune_stale_sublists` parent check and are removed. The next
+`begin_maybe` repaints the list instead of replaying it. The client's retained
+shell layers (`packages/gui/src/common/layer.rs`) release a pane or page that is
+hidden for a frame.

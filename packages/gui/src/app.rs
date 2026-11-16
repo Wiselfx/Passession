@@ -12,6 +12,7 @@ use paseo_gui_core::{CoreConfig, CoreEvent, GuiCore};
 use paseo_gui_platform::{TailnetPresence, TailnetPresenceState};
 use serde_json::Value;
 
+use crate::common::state_delta::StateDelta;
 use crate::common::{self, UiContext, i18n};
 use crate::fonts::{self, FontRoles, SystemFontState};
 use crate::shell::{self, PaseoShellWidgetRefExt, platform as shell_platform};
@@ -100,6 +101,9 @@ struct Runtime {
     /// The embedded Tailscale background presence last handed to the platform.
     tailnet_presence: Option<TailnetPresence>,
     core_batch_timer: Timer,
+    /// The core's last `State` publication: batch deltas compare publications, so a local
+    /// optimistic write (`write_preference`) still reaches every window with its echo.
+    published: Arc<Value>,
 }
 
 #[derive(Live, LiveHook)]
@@ -177,6 +181,7 @@ impl App {
             menu_locale: "",
             tailnet_presence: None,
             core_batch_timer: Timer::default(),
+            published: Arc::new(Value::Null),
         });
         self.ui
             .widget(id!(main_window.shell))
@@ -239,6 +244,8 @@ impl App {
             update_tray_labels();
         }
         if themed || localized {
+            // Palette, typography and strings change every layer of every window.
+            #[allow(clippy::disallowed_methods)]
             cx.redraw_all();
         }
     }
@@ -254,6 +261,9 @@ impl App {
                 platform.observe_core_event(event);
             }
             if let CoreEvent::State { state } = &event {
+                let delta = StateDelta::between(&runtime.published, state);
+                runtime.ui.state_delta.merge(delta);
+                runtime.published = state.clone();
                 runtime.ui.state = state.clone();
                 state_changed = true;
             }
@@ -512,6 +522,7 @@ impl AppMain for App {
             window.handle_event(cx, event, &mut Scope::with_data(&mut runtime.ui));
         }
         runtime.ui.events.clear();
+        runtime.ui.state_delta = StateDelta::default();
 
         if !runtime.window_ready {
             if let Some(platform) = runtime.platform.as_mut() {

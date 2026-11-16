@@ -118,7 +118,7 @@ pub fn handle_event(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, state: &
         && !shell.data.overlays.is_modal();
     let window = shell.data.window_id.clone();
     let hit = if shown && matches!(event, Event::TouchUpdate(_) | Event::LongPress(_)) {
-        event.hits(cx, shell.data.bg_area)
+        event.hits(cx, shell.layers.bg)
     } else {
         Hit::Nothing
     };

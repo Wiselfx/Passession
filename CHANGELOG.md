@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- The desktop and mobile client now repaints only the region that changed. The chrome, sidebar, each pane and the page are retained layers. Hover, scrolling, typing, streaming output and background results such as code highlighting, images, Mermaid diagrams, attachments and Git sheets repaint only the layer that shows them; other layers reuse their previous drawing. Shared-state updates repaint only the layers that present the change. A streaming session's activity timestamps repaint just that session, and recency lists refresh once per second. Window-wide repaints are reserved for theme, font and language changes and are enforced by a GUI clippy rule.
+
 ### Fixed
 
 - Finish standalone daemon activation and rollback when a descendant inherits the launcher's stderr handle. Launcher completion now follows its process exit instead of pipe EOF, with failure diagnostics captured through a temporary file. The Windows release gate also exercises a long-lived stderr-owning descendant for successful and failed launches.

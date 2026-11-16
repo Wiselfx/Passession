@@ -58,6 +58,29 @@ The primary navigation tree is **host → directory → session**. Keys include 
 
 File operations use the selected host. New Session and Add Project browse host-side directories through the daemon, never client-device paths. New work reuses an existing directory, including a user-managed Git worktree; Paseo does not create, restore or remove worktrees. Markdown and source editing are native views. Git Log reads commit history, while Commit reviews and submits selected changes; patch bodies load on demand.
 
+## Rendering
+
+Each window composes retained layers, like Android `RenderNode`s or iOS `CALayer`s. The window's own draw list holds only the background capture and the composition. The chrome (header, banner, tab strips, dividers and empty states), the sidebar, every pane root and the page each paint into their own `common::layer::Layer`. A layer that is not invalidated replays its retained draw calls, shell hit regions and overlay children instead of running its widgets again.
+
+Feature code keeps the ordinary Makepad contract: when a widget's own data changes, it redraws its own area (`self.redraw(cx)`, `area.redraw(cx)`). That repaints only the layer holding the area; nested draw lists repaint their ancestors, so a timeline row repaints its pane and the pane's list measurement. The shell repaints a layer by itself when:
+
+- its rect changes;
+- its inputs change (focus, app activity, width class, safe-area insets, a different page root);
+- it is shown again after being hidden for a frame (hidden layers are detached and their overlays pruned);
+- the layout revision moves, which repaints the chrome, sidebar and page;
+- hover or press feedback changes, which repaints the layer that drew the affected hit id;
+- a core `State` publication changes what the layer presents (`common::state_delta`).
+
+For core `State` publications, the app classifies each one once per batch:
+
+- A publication that changes content repaints the chrome and every pane root. Content means a shared slice such as preferences, the host set, a host record, or an agent beyond its activity timestamps.
+- Activity alone (`updatedAt`/`lastActivityAt`, host latency and probes) repaints only that agent's own session immediately. Recency lists (sidebar, sessions page, pages) repaint once per second.
+- Saved window layouts are ignored; each shell owns its own layout.
+
+A pane that presents another agent's recency must invalidate itself.
+
+Results that arrive in the background must repaint only the owner that drew the waiting content, such as code highlighting, images, Mermaid diagrams and decoded attachments. Record that owner's draw list or area when drawing, or compare a revision in the owner's event handling. A stale or invisible result repaints nothing. `Cx::redraw_all` repaints every layer of every window. It is reserved for theme, font and locale changes, and the GUI crate's `clippy.toml` rejects any other use.
+
 ## Desktop ownership
 
 The client talks to the Rust `desktop-host` process through structured IPC (`paseo-gui-platform`). Desktop lifecycle tracks the daemon's process-start identity and whether this application owns its supervisor. A pre-existing daemon is not treated as a child to kill on quit. Keep-running policy and owned-stop behavior are distinct from hiding or closing a window. A supervisor restart must not create a second competing daemon.

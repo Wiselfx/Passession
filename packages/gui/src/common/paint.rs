@@ -527,6 +527,20 @@ impl<T: Clone + PartialEq> HitMap<T> {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Items pushed after `mark` (a previous [`HitMap::len`]).
+    pub fn since(&self, mark: usize) -> &[(Rect, T)] {
+        self.items.get(mark..).unwrap_or_default()
+    }
+
+    /// Re-adds items recorded by an earlier frame, unclipped and in their original order.
+    pub fn replay(&mut self, items: &[(Rect, T)]) {
+        self.items.extend_from_slice(items);
+    }
 }
 
 pub fn intersect(a: Rect, b: Rect) -> Rect {

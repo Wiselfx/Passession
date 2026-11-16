@@ -2,7 +2,7 @@
 //! native parser worker with a bounded latest-per-block queue. This worker does
 //! not access Makepad fonts or UI draw state.
 
-use makepad_widgets::{ToUIReceiver, Vec4};
+use makepad_widgets::{Cx, DrawListId, ToUIReceiver, Vec4};
 use paseo_highlight::{
     ColorScheme, Highlighter, Language, StyledRange, SyntaxThemeId, get_language_for_file,
     resolve_syntax_colors,
@@ -28,6 +28,8 @@ struct FenceSlot {
     submitted: Option<u64>,
     ready: bool,
     result: Option<Colored>,
+    /// The draw list that last drew this block; a current result repaints it.
+    owner: Option<DrawListId>,
 }
 
 impl FenceSlot {
@@ -40,14 +42,18 @@ impl FenceSlot {
         }
     }
 
-    fn complete(&mut self, key: u64, result: Option<RawColored>) {
+    /// Stores a result for the current revision and returns the owner to
+    /// repaint; an obsolete result changes nothing shown.
+    fn complete(&mut self, key: u64, result: Option<RawColored>) -> Option<DrawListId> {
         if self.submitted == Some(key) {
             self.submitted = None;
         }
-        if self.key == Some(key) {
-            self.result = result.map(Rc::new);
-            self.ready = true;
+        if self.key != Some(key) {
+            return None;
         }
+        self.result = result.map(Rc::new);
+        self.ready = true;
+        self.owner
     }
 }
 
@@ -80,6 +86,8 @@ struct FenceWorker {
     receiver: ToUIReceiver<Option<RawColored>>,
     active: Option<(Weak<RefCell<FenceSlot>>, u64)>,
     pending: VecDeque<QueuedFence>,
+    /// Owners of blocks turned away by a full queue, repainted to retry once it drains.
+    deferred: Vec<DrawListId>,
 }
 
 impl FenceWorker {
@@ -106,10 +114,12 @@ impl FenceWorker {
             receiver,
             active: None,
             pending: VecDeque::new(),
+            deferred: Vec::new(),
         }
     }
 
-    fn dispatch(&mut self) {
+    /// `settled` receives owners of blocks completed as plain text without a parse.
+    fn dispatch(&mut self, mut settled: impl FnMut(DrawListId)) {
         if self.active.is_some() {
             return;
         }
@@ -131,7 +141,10 @@ impl FenceWorker {
             }
             // Match existing unsupported/parser-failure rendering: exact plain
             // text, without repeatedly scheduling a failed worker.
-            slot.borrow_mut().complete(key, None);
+            let owner = slot.borrow_mut().complete(key, None);
+            if let Some(owner) = owner {
+                settled(owner);
+            }
         }
     }
 }
@@ -141,24 +154,33 @@ thread_local! {
 }
 
 /// Collects the single active parse and starts the newest queued snapshot.
-/// The timeline signal handler redraws after completion, including settled rows.
-pub fn poll() -> bool {
+/// Each current result repaints only the draw list that drew its block, including
+/// settled rows; results for replaced revisions or dropped blocks repaint nothing.
+pub fn poll(cx: &mut Cx) {
     FENCE_WORKER.with(|worker| {
         let mut worker = worker.borrow_mut();
         let Some(worker) = worker.as_mut() else {
-            return false;
+            return;
         };
-        let mut changed = false;
+        let mut received = false;
         while let Ok(result) = worker.receiver.try_recv() {
-            changed = true;
-            if let Some((slot, key)) = worker.active.take()
-                && let Some(slot) = slot.upgrade()
-            {
-                slot.borrow_mut().complete(key, result);
+            received = true;
+            let Some((slot, key)) = worker.active.take() else {
+                continue;
+            };
+            let owner = slot
+                .upgrade()
+                .and_then(|slot| slot.borrow_mut().complete(key, result));
+            if let Some(owner) = owner {
+                cx.redraw_list(owner);
             }
         }
-        worker.dispatch();
-        changed
+        if received {
+            for owner in worker.deferred.drain(..) {
+                cx.redraw_list(owner);
+            }
+        }
+        worker.dispatch(|owner| cx.redraw_list(owner));
     })
 }
 
@@ -224,6 +246,7 @@ fn key(code: &str, language: Language, theme: &str, dark: bool) -> u64 {
 
 fn request_colors(
     request: &mut FenceRequest,
+    owner: Option<DrawListId>,
     code: &str,
     language: Option<Language>,
     theme: &str,
@@ -241,6 +264,7 @@ fn request_colors(
     {
         let mut slot = request.0.borrow_mut();
         slot.request(key);
+        slot.owner = owner;
         if slot.ready {
             return slot.result.clone();
         }
@@ -258,6 +282,12 @@ fn request_colors(
             .iter()
             .position(|job| Weak::ptr_eq(&job.slot, &slot));
         if queued.is_none() && worker.pending.len() >= PENDING_FENCES {
+            // Retried when the next result frees the queue.
+            if let Some(owner) = owner
+                && !worker.deferred.contains(&owner)
+            {
+                worker.deferred.push(owner);
+            }
             return;
         }
         let job = QueuedFence {
@@ -276,31 +306,43 @@ fn request_colors(
         } else {
             worker.pending.push_back(job);
         }
-        worker.dispatch();
+        // Requested during a draw, where repaint requests are ignored: without a
+        // worker thread each block settles as it is requested and draws plain text now.
+        worker.dispatch(|_| {});
     });
     None
 }
 /// Colors only for this source/language/theme revision. Pending revisions
 /// draw selectable plain text, as file previews do while their worker runs.
+/// `owner` is the draw list repainted when this revision's colors arrive.
 pub fn fence(
     request: &mut FenceRequest,
+    owner: Option<DrawListId>,
     code: &str,
     lang: &str,
     theme: &str,
     dark: bool,
 ) -> Option<Colored> {
-    request_colors(request, code, fence_language(lang), theme, dark)
+    request_colors(request, owner, code, fence_language(lang), theme, dark)
 }
 
 /// Colors for file content by its path (`SourceController.languageFor`).
 pub fn file(
     request: &mut FenceRequest,
+    owner: Option<DrawListId>,
     code: &str,
     path: &str,
     theme: &str,
     dark: bool,
 ) -> Option<Colored> {
-    request_colors(request, code, get_language_for_file(path), theme, dark)
+    request_colors(
+        request,
+        owner,
+        code,
+        get_language_for_file(path),
+        theme,
+        dark,
+    )
 }
 
 /// cpp/highlight/CodeBlockLanguages.cpp displayNameForLanguage.

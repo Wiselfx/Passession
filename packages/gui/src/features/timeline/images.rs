@@ -183,8 +183,15 @@ struct Images {
     order: VecDeque<String>,
     http: HashMap<RequestId, HttpImage>,
     operations: HashMap<RequestId, String>,
+    /// Changes when an acquisition settles or a route is invalidated, never on a
+    /// new `Loading` entry.
     version: u64,
     generations: HashMap<String, Option<u64>>,
+    /// Draw lists that drew each still-loading key; its outcome repaints them.
+    waiting: HashMap<String, Vec<DrawListId>>,
+    /// Owners of loading keys evicted (possibly mid-draw), repainted by `handle_event`
+    /// so they acquire again.
+    retry: Vec<DrawListId>,
 }
 
 thread_local! {
@@ -222,7 +229,8 @@ fn http_cache_key(host: &str, generation: Option<u64>, uri: &str) -> String {
 
 /// Invalidate before dispatching responses: a prior route must not satisfy the
 /// same URL after a normal/tailnet switch, reconfiguration or account change.
-pub fn sync_hosts(core: &CoreHandle, state: &serde_json::Value) {
+/// Owners still waiting on a dropped route repaint to acquire through the new one.
+pub fn sync_hosts(cx: &mut Cx, core: &CoreHandle, state: &serde_json::Value) {
     IMAGES.with(|cell| {
         let images = &mut *cell.borrow_mut();
         let generations = host_generations(state);
@@ -241,6 +249,15 @@ pub fn sync_hosts(core: &CoreHandle, state: &serde_json::Value) {
                     return true;
                 }
                 core.cancel_request(id);
+                false
+            });
+            images.waiting.retain(|key, owners| {
+                if !key.starts_with(&prefix) {
+                    return true;
+                }
+                for owner in owners.drain(..) {
+                    cx.redraw_list(owner);
+                }
                 false
             });
             images.version = images.version.wrapping_add(1);
@@ -272,10 +289,14 @@ fn decode(bytes: &[u8], mime: &str) -> Result<ImageBuffer, String> {
 fn remember(images: &mut Images, key: &str, state: ImageState) {
     images.order.retain(|k| k != key);
     images.order.push_back(key.to_owned());
+    let loading = matches!(state, ImageState::Loading);
     images.states.insert(key.to_owned(), state);
     while images.order.len() > CAPACITY {
         if let Some(oldest) = images.order.pop_front() {
             images.states.remove(&oldest);
+            if let Some(owners) = images.waiting.remove(&oldest) {
+                images.retry.extend(owners);
+            }
             images.http.retain(|id, request| {
                 if request.key != oldest {
                     return true;
@@ -285,13 +306,36 @@ fn remember(images: &mut Images, key: &str, state: ImageState) {
             });
         }
     }
-    images.version = images.version.wrapping_add(1);
+    // A new acquisition shows the placeholder its requester already drew.
+    if !loading {
+        images.version = images.version.wrapping_add(1);
+    }
+}
+
+/// Stores a settled acquisition and repaints only the draw lists that showed it loading.
+fn settle(cx: &mut Cx, images: &mut Images, key: &str, state: ImageState) {
+    remember(images, key, state);
+    for owner in images.waiting.remove(key).into_iter().flatten() {
+        cx.redraw_list(owner);
+    }
+}
+
+/// Records the draw list showing `key`'s placeholder, repainted once it settles.
+fn wait(cx: &Cx2d, images: &mut Images, key: &str) {
+    let Some(owner) = cx.get_current_draw_list_id() else {
+        return;
+    };
+    let owners = images.waiting.entry(key.to_owned()).or_default();
+    if !owners.contains(&owner) {
+        owners.push(owner);
+    }
 }
 
 /// The state of one assistant image occurrence, starting its acquisition on
-/// first sight. `occurrence` scopes file reads to the rendered message.
+/// first sight. `occurrence` scopes file reads to the rendered message. A
+/// `Loading` answer records the draw list being drawn, repainted once it settles.
 pub fn image(
-    _cx: &mut Cx,
+    cx: &mut Cx2d,
     core: Option<&CoreHandle>,
     host_id: &str,
     workspace_root: Option<&str>,
@@ -330,6 +374,9 @@ pub fn image(
         if let Some(state) = images.states.get(&key).cloned() {
             images.order.retain(|k| k != &key);
             images.order.push_back(key.clone());
+            if matches!(state, ImageState::Loading) {
+                wait(cx, images, &key);
+            }
             return state;
         }
         match resolved {
@@ -357,6 +404,7 @@ pub fn image(
                         .unwrap_or("")
                         .to_owned();
                     remember(images, &key, ImageState::Loading);
+                    wait(cx, images, &key);
                     decode_in_background(key, bytes, mime);
                     return ImageState::Loading;
                 }
@@ -377,6 +425,7 @@ pub fn image(
                     },
                 );
                 remember(images, &key, ImageState::Loading);
+                wait(cx, images, &key);
                 ImageState::Loading
             }
             ImageSource::File { cwd, path } => {
@@ -412,38 +461,44 @@ pub fn image(
                 });
                 images.operations.insert(request, key.clone());
                 remember(images, &key, ImageState::Loading);
+                wait(cx, images, &key);
                 ImageState::Loading
             }
         }
     })
 }
 
-/// Module hook: finished decodes and core-admitted HTTP/file reads.
+/// Module hook: finished decodes and core-admitted HTTP/file reads. A settled
+/// image repaints only the draw lists that showed it loading, so their pane measures
+/// the visible rows again (a completed decode replaces the Markdown loading
+/// placeholder with the raster's aspect-ratio height, including images in table
+/// cells). Responses that only start a decode, and decodes of keys no longer
+/// cached, repaint nothing.
 pub fn handle_event(
     cx: &mut Cx,
     event: &Event,
     responses: &[(RequestId, Result<serde_json::Value, String>)],
-) -> bool {
-    let mut changed = false;
-    for (request, result) in responses {
-        IMAGES.with(|cell| {
-            let images = &mut *cell.borrow_mut();
+) {
+    IMAGES.with(|cell| {
+        let images = &mut *cell.borrow_mut();
+        for owner in images.retry.drain(..) {
+            cx.redraw_list(owner);
+        }
+        for (request, result) in responses {
             if let Some(http) = images.http.remove(request) {
-                changed = true;
                 let body = result
                     .as_ref()
                     .map_err(Clone::clone)
                     .and_then(crate::common::host_http::image_body);
                 match body {
                     Ok((bytes, mime)) => decode_in_background(http.key, bytes, mime),
-                    Err(error) => remember(images, &http.key, ImageState::Error(error)),
+                    Err(error) => settle(cx, images, &http.key, ImageState::Error(error)),
                 }
-                return;
+                continue;
             }
             let Some(key) = images.operations.remove(request) else {
-                return;
+                continue;
             };
-            changed = true;
             let bytes = result.as_ref().ok().and_then(|value| {
                 let token = value.get("token")?.as_str()?;
                 FILE_BYTES.lock().unwrap().remove(token)
@@ -452,46 +507,36 @@ pub fn handle_event(
                 Some((bytes, mime)) => decode_in_background(key, bytes, mime),
                 // A failed acquisition is dropped so the next sight retries.
                 None => {
-                    images.states.remove(&key);
                     images.order.retain(|k| k != &key);
-                    images.states.insert(key, ImageState::Failed);
+                    images.states.insert(key.clone(), ImageState::Failed);
+                    images.version = images.version.wrapping_add(1);
+                    for owner in images.waiting.remove(&key).into_iter().flatten() {
+                        cx.redraw_list(owner);
+                    }
                 }
             }
-        });
-    }
-    if let Event::Signal = event {
-        let finished: Vec<Decoded> = std::mem::take(&mut *DECODED.lock().unwrap());
-        if !finished.is_empty() {
-            changed = true;
-            IMAGES.with(|cell| {
-                let images = &mut *cell.borrow_mut();
-                for done in finished {
-                    if !images.states.contains_key(&done.key) {
-                        continue;
-                    }
-                    let state = match done.result {
-                        Ok(buffer) => {
-                            let (width, height) = (buffer.width, buffer.height);
-                            ImageState::Ready {
-                                texture: buffer.into_new_texture(cx),
-                                width,
-                                height,
-                            }
-                        }
-                        Err(_) => ImageState::Failed,
-                    };
-                    remember(images, &done.key, state);
-                }
-            });
         }
-    }
-    if changed {
-        // The PortalList measures visible rows again on redraw. In particular,
-        // a completed decode replaces the Markdown loading placeholder with
-        // the raster's aspect-ratio height, including images in table cells.
-        cx.redraw_all();
-    }
-    changed
+        if let Event::Signal = event {
+            let finished: Vec<Decoded> = std::mem::take(&mut *DECODED.lock().unwrap());
+            for done in finished {
+                if !images.states.contains_key(&done.key) {
+                    continue;
+                }
+                let state = match done.result {
+                    Ok(buffer) => {
+                        let (width, height) = (buffer.width, buffer.height);
+                        ImageState::Ready {
+                            texture: buffer.into_new_texture(cx),
+                            width,
+                            height,
+                        }
+                    }
+                    Err(_) => ImageState::Failed,
+                };
+                settle(cx, images, &done.key, state);
+            }
+        }
+    });
 }
 
 /// Whether a core response belongs to an image read.

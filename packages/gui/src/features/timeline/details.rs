@@ -420,8 +420,10 @@ fn draw_block(
                     .fence_highlights
                     .insert(key.to_owned(), Default::default());
             }
+            let owner = d.result_owner(cx);
             let colors = highlight::file(
                 d.state.fence_highlights.get_mut(key).unwrap(),
+                owner,
                 content,
                 path,
                 d.look.syntax.as_str(),

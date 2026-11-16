@@ -262,7 +262,7 @@ pub fn show_tool_call_sheet(
     display_name: &str,
     detail: &Value,
 ) -> u64 {
-    let id = LAYER.with(|layer| {
+    LAYER.with(|layer| {
         let mut layers = layer.borrow_mut();
         let layer = layers.entry(window_id.to_owned()).or_default();
         if let Some(parent) = layer.sheets.last_mut() {
@@ -283,10 +283,14 @@ pub fn show_tool_call_sheet(
             bar_drag: None,
             tap: TapTarget::default(),
         });
+        // The layer's list exists from the first show so it can be repainted before its first
+        // paint: any list redraw re-runs the shell's overlay pass, which draws this layer.
+        layer
+            .list
+            .get_or_insert_with(|| DrawList2d::new(cx))
+            .redraw(cx);
         id
-    });
-    cx.redraw_all();
-    id
+    })
 }
 
 /// Whether the sheet finished opening and was drawn fully open.
@@ -302,10 +306,20 @@ pub fn tool_call_sheet_settled(id: u64) -> bool {
 pub fn close_tool_call_sheet(cx: &mut Cx, id: u64) {
     LAYER.with(|layers| {
         for layer in layers.borrow_mut().values_mut() {
+            let count = layer.sheets.len();
             layer.sheets.retain(|sheet| sheet.id != id);
+            if layer.sheets.len() != count {
+                redraw_layer(cx, layer);
+            }
         }
     });
-    cx.redraw_all();
+}
+
+/// Repaints the window's sheet layer: its list, which holds `layer.area` once painted.
+fn redraw_layer(cx: &mut Cx, layer: &Layer) {
+    if let Some(list) = &layer.list {
+        list.redraw(cx);
+    }
 }
 
 fn top_index(layer: &Layer) -> Option<usize> {
@@ -329,7 +343,7 @@ pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> b
         };
         if take_dismissal(event) {
             layer.sheets.remove(index);
-            cx.redraw_all();
+            redraw_layer(cx, layer);
             return true;
         }
         if matches!(
@@ -489,7 +503,7 @@ pub fn handle_tool_call_sheets(cx: &mut Cx, event: &Event, window_id: &str) -> b
         }
         if close {
             layer.sheets.remove(index);
-            cx.redraw_all();
+            redraw_layer(cx, layer);
         }
         true
     })

@@ -407,6 +407,10 @@ struct DeleteRun {
 
 #[derive(Live, Widget)]
 pub struct ChatPanel {
+    /// Composer texture revision of a draw that showed a still-decoding user image
+    /// (thumbnail or lightbox); redraw once it changes.
+    #[rust]
+    composer_texture_wait: Option<u64>,
     #[redraw]
     #[rust]
     area: Area,
@@ -3199,6 +3203,13 @@ impl Widget for ChatPanel {
         if self.visible && self.next_frame.is_event(event).is_some() {
             self.area.redraw(cx);
         }
+        if self
+            .composer_texture_wait
+            .is_some_and(|rev| rev != crate::features::composer::texture_revision())
+        {
+            self.composer_texture_wait = None;
+            self.area.redraw(cx);
+        }
         let modal_open = self.modal.is_some();
         let modal_input = crate::common::is_user_input(event);
         if matches!(event, Event::Foreground | Event::Resume) {
@@ -3585,6 +3596,8 @@ impl Widget for ChatPanel {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         cx.begin_turtle(walk, self.layout);
+        let texture_misses = crate::features::composer::texture_misses();
+        let texture_revision = crate::features::composer::texture_revision();
         let rect = cx.turtle().rect();
         self.content_rect = rect;
         if let Some(ui) = scope.data.get::<UiContext>() {
@@ -4108,6 +4121,9 @@ impl Widget for ChatPanel {
                 self.toast_timer = cx.start_timeout(duration);
             }
         }
+        self.composer_texture_wait = (crate::features::composer::texture_misses()
+            != texture_misses)
+            .then_some(texture_revision);
         if animating {
             self.next_frame = cx.new_next_frame();
         }

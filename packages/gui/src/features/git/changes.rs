@@ -373,7 +373,9 @@ impl ChangesView {
         }
     }
 
-    /// Routes an event to the open overlay; returns true while one is open.
+    /// Routes an event to the open overlay. Returns `(consumed, redraw)`:
+    /// `consumed` while a sheet held the pointer for this event, `redraw`
+    /// only when the sheet changed visibly or an answer arrived.
     pub fn handle_overlay(
         &mut self,
         cx: &mut Cx,
@@ -382,14 +384,18 @@ impl ChangesView {
         parts: &mut OverlayParts<'_>,
         store: &mut GitStore,
         compact: bool,
-    ) -> bool {
+    ) -> (bool, bool) {
         if !self.overlay.is_open() {
-            return false;
+            return (false, self.overlay.take_changed());
         }
-        if let Some(result) = self.overlay.handle(cx, event, parts.input) {
+        let was_open = self.overlay.blocks_input();
+        let result = self.overlay.handle(cx, event, parts.input);
+        let answered = result.is_some();
+        if let Some(result) = result {
             self.on_overlay(cx, ui, parts, store, result, compact);
         }
-        self.overlay.blocks_input()
+        let changed = self.overlay.take_changed() || answered;
+        (was_open || self.overlay.blocks_input(), changed)
     }
 
     fn on_overlay(

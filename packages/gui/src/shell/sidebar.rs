@@ -1542,7 +1542,7 @@ fn draw_tree(shell: &mut PaseoShell, cx: &mut Cx2d, state: &Value, list: Rect) {
     let max = (shell.data.sidebar.content_height - list.size.y).max(0.0);
     if let Some(offset) = reveal_offset {
         shell.data.sidebar.scroll = offset.min(max);
-        shell.redraw(cx);
+        shell.layers.sidebar.invalidate(cx);
     } else if shell.data.sidebar.scroll > max {
         shell.data.sidebar.scroll = max;
     }
@@ -1627,7 +1627,7 @@ pub fn scroll(shell: &mut PaseoShell, cx: &mut Cx, delta: f64) {
     let s = &mut shell.data.sidebar;
     s.stop_motion();
     if s.scroll_by(delta) {
-        shell.redraw(cx);
+        shell.layers.sidebar.invalidate(cx);
     }
 }
 
@@ -1645,7 +1645,7 @@ pub fn animate(shell: &mut PaseoShell, cx: &mut Cx, event: &Event) {
     };
     let changed = s.scroll_by(delta);
     if changed {
-        shell.redraw(cx);
+        shell.layers.sidebar.invalidate(cx);
     }
 }
 
@@ -1661,7 +1661,7 @@ pub fn handle_actions(shell: &mut PaseoShell, cx: &mut Cx, event: &Event, _ui: &
         shell.data.sidebar.stop_motion();
         shell.data.sidebar.query = text.trim().to_lowercase();
         shell.data.sidebar.scroll = 0.0;
-        shell.redraw(cx);
+        shell.layers.sidebar.invalidate(cx);
     }
 }
 
